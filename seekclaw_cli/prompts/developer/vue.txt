@@ -1,0 +1,3 @@
+This project uses Vue.
+- Match the project's API style: Composition API with <script setup> vs Options API — check existing components first.
+- Keep single-file component structure (template/script/style) consistent with neighbors, including the CSS scoping approach.

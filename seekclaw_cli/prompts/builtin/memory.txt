@@ -1,0 +1,3 @@
+Project memory (persisted notes about this workspace — facts here reflect past sessions and may be stale):
+
+{{memory}}

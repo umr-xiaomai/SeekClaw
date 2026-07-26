@@ -1,0 +1,181 @@
+{
+  // Seed configuration copied to ~/.seekclaw/config.json on first run. Edit freely —
+  // providers, models, capabilities and prices are user data, never hard-coded.
+  "activeProfile": "default",
+  "profiles": {
+    "default": { "strategy": "balanced" },
+    "work": { "strategy": "quality" },
+    "local": { "provider": "ollama", "strategy": "offline" }
+  },
+  "providers": [
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "kind": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKeyEnv": "ANTHROPIC_API_KEY",
+      "priority": 0,
+      "models": [
+        {
+          "id": "claude-opus-5",
+          "alias": "opus",
+          "contextWindow": 200000,
+          "maxOutput": 64000,
+          "capabilities": { "streaming": true, "toolCalling": true, "thinking": true, "vision": true, "jsonMode": true, "reasoning": true, "mcp": true },
+          "inputPricePerMTok": 15,
+          "outputPricePerMTok": 75,
+          "tags": [ "quality" ]
+        },
+        {
+          "id": "claude-sonnet-5",
+          "alias": "sonnet",
+          "contextWindow": 200000,
+          "maxOutput": 64000,
+          "capabilities": { "streaming": true, "toolCalling": true, "thinking": true, "vision": true, "jsonMode": true, "reasoning": true, "mcp": true },
+          "inputPricePerMTok": 3,
+          "outputPricePerMTok": 15,
+          "tags": [ "balanced" ]
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "kind": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "priority": 1,
+      "models": [
+        {
+          "id": "gpt-5.5",
+          "contextWindow": 400000,
+          "maxOutput": 128000,
+          "capabilities": { "streaming": true, "toolCalling": true, "vision": true, "jsonMode": true, "reasoning": true, "mcp": true },
+          "inputPricePerMTok": 1.25,
+          "outputPricePerMTok": 10,
+          "tags": [ "balanced", "quality" ]
+        },
+        {
+          "id": "gpt-5.5-mini",
+          "contextWindow": 400000,
+          "maxOutput": 128000,
+          "capabilities": { "streaming": true, "toolCalling": true, "vision": true, "jsonMode": true, "mcp": true },
+          "inputPricePerMTok": 0.25,
+          "outputPricePerMTok": 2,
+          "tags": [ "fast", "cheap" ]
+        }
+      ]
+    },
+    {
+      "id": "google",
+      "name": "Google (OpenAI-compatible endpoint)",
+      "kind": "openai",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "priority": 2,
+      "models": [
+        {
+          "id": "gemini-2.5-pro",
+          "alias": "gemini-pro",
+          "contextWindow": 1000000,
+          "maxOutput": 65536,
+          "capabilities": { "streaming": true, "toolCalling": true, "vision": true, "jsonMode": true, "reasoning": true, "mcp": true },
+          "inputPricePerMTok": 1.25,
+          "outputPricePerMTok": 10,
+          "tags": [ "quality" ]
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "alias": "gemini-flash",
+          "contextWindow": 1000000,
+          "maxOutput": 65536,
+          "capabilities": { "streaming": true, "toolCalling": true, "vision": true, "jsonMode": true, "mcp": true },
+          "inputPricePerMTok": 0.3,
+          "outputPricePerMTok": 2.5,
+          "tags": [ "fast", "cheap" ]
+        }
+      ]
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "kind": "openai",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "enabled": false,
+      "priority": 3,
+      "models": [
+        {
+          "id": "openrouter/auto",
+          "alias": "auto",
+          "contextWindow": 128000,
+          "maxOutput": 16384,
+          "capabilities": { "streaming": true, "toolCalling": true, "mcp": true },
+          "tags": [ "cheap" ]
+        }
+      ]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama (local)",
+      "kind": "openai",
+      "baseUrl": "http://localhost:11434/v1",
+      "enabled": false,
+      "priority": 4,
+      "models": [
+        {
+          "id": "qwen3",
+          "contextWindow": 32768,
+          "maxOutput": 8192,
+          "capabilities": { "streaming": true, "toolCalling": true, "mcp": true },
+          "tags": [ "offline", "cheap" ]
+        }
+      ]
+    },
+    {
+      "id": "lmstudio",
+      "name": "LM Studio (local)",
+      "kind": "openai",
+      "baseUrl": "http://localhost:1234/v1",
+      "enabled": false,
+      "priority": 5,
+      "models": [
+        {
+          "id": "local-model",
+          "contextWindow": 32768,
+          "maxOutput": 8192,
+          "capabilities": { "streaming": true, "toolCalling": false, "mcp": false },
+          "tags": [ "offline" ]
+        }
+      ]
+    }
+  ],
+  "routing": {
+    "strategies": {
+      "fast": [ "openai/gpt-5.5-mini", "google/gemini-2.5-flash" ],
+      "balanced": [ "anthropic/claude-sonnet-5", "openai/gpt-5.5", "google/gemini-2.5-pro" ],
+      "quality": [ "anthropic/claude-opus-5", "openai/gpt-5.5", "google/gemini-2.5-pro" ],
+      "cheap": [ "openai/gpt-5.5-mini", "google/gemini-2.5-flash", "openrouter/auto" ],
+      "offline": [ "ollama/qwen3", "lmstudio/local-model" ]
+    },
+    "fallback": [ "anthropic/claude-sonnet-5", "openai/gpt-5.5", "google/gemini-2.5-flash", "openrouter/auto", "ollama/qwen3" ],
+    "loadBalance": "priority",
+    "retry": {
+      "maxAttempts": 3,
+      "baseDelaySeconds": 1.0,
+      "maxDelaySeconds": 20.0,
+      "circuitBreakThreshold": 4,
+      "circuitCooldownSeconds": 60.0
+    }
+  },
+  "agent": {
+    "maxSteps": 40,
+    "autoVerify": true,
+    "maxRepairAttempts": 3,
+    "systemPrompt": "system/default",
+    "thinkingBudgetTokens": 4096,
+    "maxToolOutputChars": 60000,
+    "bashTimeoutSeconds": 180
+  },
+  "mcp": { "servers": {} }
+}

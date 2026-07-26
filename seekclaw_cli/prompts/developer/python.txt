@@ -1,0 +1,4 @@
+This is a Python workspace.
+- Check pyproject.toml/requirements.txt for the dependency manager (uv/poetry/pip) and Python version before running anything.
+- Use the project's virtual environment; never install into the system interpreter.
+- Follow existing typing and formatting conventions (ruff/black configs if present).

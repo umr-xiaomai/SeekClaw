@@ -162,3 +162,6 @@ token-cache/
 !mcp/.gitkeep
 
 .vs
+
+# SeekClaw
+.seekclaw/

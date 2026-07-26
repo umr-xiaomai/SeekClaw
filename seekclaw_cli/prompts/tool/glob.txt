@@ -1,0 +1,1 @@
+Find files by glob pattern (e.g. **/*.cs, src/**/*.ts). Results are sorted by modification time, newest first. Use this to locate files by name.

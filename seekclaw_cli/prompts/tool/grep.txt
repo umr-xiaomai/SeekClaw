@@ -1,0 +1,1 @@
+Search file contents with a regular expression. Returns path:line: text matches. Filter by glob (e.g. *.cs) and cap with max_results. Use this to find symbols, usages and configuration keys.

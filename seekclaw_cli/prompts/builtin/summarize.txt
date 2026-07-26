@@ -1,0 +1,6 @@
+Summarize the conversation so far for context compression. Keep:
+- the user's goals and constraints
+- decisions made and their reasons
+- files created or modified (paths)
+- unresolved problems and next steps
+Drop pleasantries and superseded intermediate states. Output plain text under 400 words.

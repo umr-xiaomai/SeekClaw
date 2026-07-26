@@ -1,0 +1,3 @@
+This is a Go workspace.
+- Validate with `go build ./...` and `go vet ./...`; run tests with `go test ./...`.
+- Follow standard Go style: early returns, errors wrapped with %w, table-driven tests.

@@ -1,3 +1,5 @@
 <Solution>
+  <Project Path="seekclaw_runtime/seekclaw_runtime.csproj" />
   <Project Path="seekclaw_cli/seekclaw_cli.csproj" />
+  <Project Path="seekclaw_tests/seekclaw_tests.csproj" />
 </Solution>

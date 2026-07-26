@@ -1,0 +1,1 @@
+Run a shell command in the workspace (bash when available, cmd.exe otherwise on Windows). Use for builds, tests, git and package managers. Output is truncated when huge; prefer quiet flags. Never run interactive commands that wait for input.

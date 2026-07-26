@@ -1,0 +1,4 @@
+This is a Unity project.
+- Never edit files under Library/ or Temp/; .meta files move together with their assets.
+- MonoBehaviour lifecycle matters: prefer Awake for self-setup, Start for cross-object wiring; cache component lookups.
+- Serialized field renames break scenes/prefabs — use [FormerlySerializedAs] when renaming.

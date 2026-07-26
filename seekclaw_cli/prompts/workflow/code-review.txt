@@ -1,0 +1,6 @@
+Review the pending changes in this workspace.
+1. Run `git diff` (and `git diff --staged`) to see what changed.
+2. Read every touched file with enough surrounding context to judge correctness.
+3. Report findings ordered by severity: bugs and logic errors first, then robustness, then style.
+4. For each finding give file:line, the problem, and a concrete fix.
+5. Do not modify files unless the user asks you to apply the fixes.
