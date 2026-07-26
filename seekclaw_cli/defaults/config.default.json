@@ -133,6 +133,24 @@
       ]
     },
     {
+      "id": "mimo",
+      "name": "MiMo (Xiaomi)",
+      "kind": "openai",
+      "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+      "apiKey": "tp-c7gzw59e0ynnh778ioo9o4pq95ykjn7amxj7vkbfgpb40agj",
+      "priority": 3,
+      "models": [
+        {
+          "id": "mimo-v2-pro",
+          "alias": "mimo",
+          "contextWindow": 128000,
+          "maxOutput": 8192,
+          "capabilities": { "streaming": true, "toolCalling": true, "vision": true, "jsonMode": true, "mcp": true },
+          "tags": [ "balanced" ]
+        }
+      ]
+    },
+    {
       "id": "lmstudio",
       "name": "LM Studio (local)",
       "kind": "openai",
@@ -153,12 +171,12 @@
   "routing": {
     "strategies": {
       "fast": [ "openai/gpt-5.5-mini", "google/gemini-2.5-flash" ],
-      "balanced": [ "anthropic/claude-sonnet-5", "openai/gpt-5.5", "google/gemini-2.5-pro" ],
-      "quality": [ "anthropic/claude-opus-5", "openai/gpt-5.5", "google/gemini-2.5-pro" ],
+      "balanced": [ "anthropic/claude-sonnet-5", "openai/gpt-5.5", "google/gemini-2.5-pro", "mimo/mimo-v2-pro" ],
+      "quality": [ "anthropic/claude-opus-5", "openai/gpt-5.5", "google/gemini-2.5-pro", "mimo/mimo-v2-pro" ],
       "cheap": [ "openai/gpt-5.5-mini", "google/gemini-2.5-flash", "openrouter/auto" ],
       "offline": [ "ollama/qwen3", "lmstudio/local-model" ]
     },
-    "fallback": [ "anthropic/claude-sonnet-5", "openai/gpt-5.5", "google/gemini-2.5-flash", "openrouter/auto", "ollama/qwen3" ],
+    "fallback": [ "anthropic/claude-sonnet-5", "openai/gpt-5.5", "google/gemini-2.5-flash", "mimo/mimo-v2-pro", "openrouter/auto", "ollama/qwen3" ],
     "loadBalance": "priority",
     "retry": {
       "maxAttempts": 3,

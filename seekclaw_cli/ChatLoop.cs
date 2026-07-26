@@ -1,5 +1,6 @@
 using SeekClaw.Cli.Ui;
 using SeekClaw.Runtime;
+using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Sessions;
 
 namespace SeekClaw.Cli;
@@ -10,9 +11,11 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
     private static readonly SlashCommand[] ReplCommands =
     [
         new("/model", "[provider/model]", "Show or switch the active model", SubmitsOnSelect: false),
+        new("/cd", "<directory>", "Change working directory", SubmitsOnSelect: false),
         new("/clear", "", "Start a new session", SubmitsOnSelect: true),
         new("/usage", "", "Token and cost statistics", SubmitsOnSelect: true),
         new("/session", "", "Current session info", SubmitsOnSelect: true),
+        new("/print", "config", "Print configuration", SubmitsOnSelect: true),
         new("/help", "", "Show available commands", SubmitsOnSelect: true),
         new("/exit", "", "Leave SeekClaw", SubmitsOnSelect: true),
     ];
@@ -219,6 +222,43 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
                 }
                 return false;
 
+            case "/cd":
+                if (parts.Length > 1 && parts[1].Length > 0)
+                {
+                    var targetDir = parts[1];
+                    // Support ~ for home directory
+                    if (targetDir.StartsWith("~"))
+                        targetDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), targetDir[1..]);
+
+                    // Resolve relative paths
+                    if (!Path.IsPathRooted(targetDir))
+                        targetDir = Path.Combine(runtime.Workspace.Root, targetDir);
+
+                    try
+                    {
+                        targetDir = Path.GetFullPath(targetDir);
+                        if (Directory.Exists(targetDir))
+                        {
+                            Directory.SetCurrentDirectory(targetDir);
+                            runtime.RefreshWorkspace(targetDir);
+                            renderer.WriteLine($"cd → {runtime.Workspace.Root}".Style(Ansi.Green));
+                        }
+                        else
+                        {
+                            renderer.WriteLine($"directory not found: {targetDir}".Style(Ansi.Red));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        renderer.WriteLine($"error: {ex.Message}".Style(Ansi.Red));
+                    }
+                }
+                else
+                {
+                    renderer.WriteLine(runtime.Workspace.Root);
+                }
+                return false;
+
             case "/usage":
             {
                 var aggregates = runtime.Usage.Aggregate();
@@ -228,15 +268,28 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
                 return false;
             }
 
+            case "/print":
+                if (parts.Length > 1 && parts[1].Equals("config", StringComparison.OrdinalIgnoreCase))
+                {
+                    renderer.WriteLine(SeekClawPaths.ConfigFile);
+                }
+                else
+                {
+                    renderer.WriteLine("usage: /print config".Style(Ansi.Dim));
+                }
+                return false;
+
             case "/session":
                 renderer.WriteLine($"session {session.Header.Id} · {session.Messages.Count} messages · {session.FilePath}".Style(Ansi.Dim));
                 return false;
 
             case "/help":
                 renderer.WriteLine("/model [ref]   show or switch the active model".Style(Ansi.Dim));
+                renderer.WriteLine("/cd <dir>      change working directory".Style(Ansi.Dim));
                 renderer.WriteLine("/clear         start a new session".Style(Ansi.Dim));
                 renderer.WriteLine("/usage         token/cost statistics".Style(Ansi.Dim));
                 renderer.WriteLine("/session       current session info".Style(Ansi.Dim));
+                renderer.WriteLine("/print config  print configuration file path".Style(Ansi.Dim));
                 renderer.WriteLine("/exit          leave".Style(Ansi.Dim));
                 return false;
 

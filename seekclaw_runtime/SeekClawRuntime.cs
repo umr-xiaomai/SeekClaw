@@ -61,9 +61,9 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     }
 
     /// <summary>Re-detects the workspace (used after directory changes or init).</summary>
-    public void RefreshWorkspace()
+    public void RefreshWorkspace(string? startDirectory = null)
     {
-        Workspace = Workspaces.Detect(Workspace.Root);
+        Workspace = Workspaces.Detect(startDirectory ?? Directory.GetCurrentDirectory());
         Prompts.SetWorkspaceRoot(Workspace.PromptsDir);
         Skills.Attach(Workspace);
     }
