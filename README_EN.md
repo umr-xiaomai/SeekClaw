@@ -1,4 +1,4 @@
-# SeekClaw
+<h1 align="center">SeekClaw</h1>
 
 <div align="center">
 
@@ -24,11 +24,13 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 ## ✨ Features
 
 ### 🚀 Runtime First Architecture
+
 - **Clean Architecture**: Separation of concerns with `seekclaw_runtime` as the core and `seekclaw_cli` as the default frontend
 - **Plugin System**: Extensible through Tools, Skills, and MCP (Model Context Protocol)
 - **Event-Driven**: Decoupled rendering and business logic via event bus
 
 ### 🤖 Multi-Provider Support
+
 - **OpenAI Compatible**: GPT-5.5, GPT-5.5-mini, and all OpenAI-compatible APIs
 - **Anthropic**: Claude Opus, Claude Sonnet, Claude Haiku
 - **Google**: Gemini Pro, Gemini Flash
@@ -37,22 +39,26 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 - **Failover**: Automatic retry with exponential backoff and circuit breaker
 
 ### 🛠️ Tool Ecosystem
+
 - **Built-in Tools**: File operations (read/write/edit), search (grep/glob), bash execution
 - **MCP Support**: stdio and SSE transports with automatic tool/prompt/resource discovery
 - **Skills**: Directory-based skill system with prompt injection and workflow support
 
 ### 💻 Modern Terminal Experience
+
 - **Game-style Rendering**: 30-60 FPS refresh with double buffering
 - **Streaming Output**: Real-time token streaming with thinking/reasoning display
 - **Live UI**: Spinner, progress bars, tool status, and markdown rendering
 - **Incremental Updates**: No flickering, no scrolling, smooth animations
 
 ### 📁 Workspace Management
+
 - **Project Detection**: Automatic recognition of Git, .NET, Node.js, Python, Rust, Go, Unity, Vue projects
 - **Isolated Config**: Per-workspace configuration, sessions, cache, and memory
 - **Bootstrap**: Automatic project setup with `.seekclaw/` directory structure
 
 ### 🔧 Developer Experience
+
 - **Session Management**: JSONL-based session persistence and restoration
 - **Memory System**: Workspace-specific memory with automatic context injection
 - **Verification**: Automatic build/check/repair cycle after code modifications
@@ -61,10 +67,12 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 ## 📦 Installation
 
 ### Prerequisites
+
 - .NET 10.0 SDK or later
 - Git (for workspace detection)
 
 ### Build from Source
+
 ```bash
 git clone https://github.com/umr-xiaomai/SeekClaw.git
 cd SeekClaw
@@ -72,6 +80,7 @@ dotnet build
 ```
 
 ### Run
+
 ```bash
 # Interactive chat mode
 dotnet run --project seekclaw_cli
@@ -95,7 +104,7 @@ dotnet run --project seekclaw_cli -- --model "openai/gpt-5.5"
 flowchart TD
     subgraph Frontends[Frontends]
         CLI[seekclaw_cli<br/>System.CommandLine + Rendering Engine]
-        GUI[GUI / Web / IDE<br/>(Future)]
+        GUI[GUI / Web / IDE<br/>Future]
     end
 
     subgraph Runtime[seekclaw_runtime]
@@ -176,7 +185,9 @@ SeekClaw/
 ## ⚙️ Configuration
 
 ### Global Configuration
+
 Located at `~/.seekclaw/config.json`:
+
 ```json
 {
   "providers": {
@@ -203,7 +214,9 @@ Located at `~/.seekclaw/config.json`:
 ```
 
 ### Workspace Configuration
+
 Each project can have `.seekclaw/config.json` to override:
+
 - Provider and model selection
 - Temperature and context settings
 - Tool permissions
@@ -213,6 +226,7 @@ Each project can have `.seekclaw/config.json` to override:
 ## 🎯 Usage Examples
 
 ### Interactive Chat
+
 ```bash
 seekclaw chat
 # or simply
@@ -220,6 +234,7 @@ seekclaw
 ```
 
 ### One-shot Tasks
+
 ```bash
 seekclaw "Refactor the authentication module to use JWT"
 seekclaw "Write unit tests for the UserService class"
@@ -227,6 +242,7 @@ seekclaw "Fix the build errors in the project"
 ```
 
 ### Provider Management
+
 ```bash
 seekclaw provider list
 seekclaw provider add openai --api-key sk-...
@@ -235,6 +251,7 @@ seekclaw provider use anthropic
 ```
 
 ### Model Management
+
 ```bash
 seekclaw model list
 seekclaw model use openai/gpt-5.5
@@ -243,6 +260,7 @@ seekclaw model search "fast coding model"
 ```
 
 ### Session Management
+
 ```bash
 seekclaw session list
 seekclaw session resume <session-id>
@@ -250,6 +268,7 @@ seekclaw session export <session-id> --format json
 ```
 
 ### Health Check
+
 ```bash
 seekclaw doctor
 ```
@@ -257,7 +276,9 @@ seekclaw doctor
 ## 🔌 Extending SeekClaw
 
 ### Adding Tools
+
 Implement the `ITool` interface:
+
 ```csharp
 public class MyTool : ITool
 {
@@ -276,7 +297,9 @@ public class MyTool : ITool
 ```
 
 ### Creating Skills
+
 Create a directory in `skills/`:
+
 ```
 skills/
   my-skill/
@@ -286,7 +309,9 @@ skills/
 ```
 
 ### MCP Servers
+
 Configure in `mcp/servers.json`:
+
 ```json
 {
   "servers": {
@@ -312,6 +337,7 @@ dotnet test seekclaw_tests --filter "ClassName=ProviderTests"
 ## 📊 Monitoring
 
 SeekClaw includes built-in monitoring:
+
 - **Usage Tracking**: Token counts, costs, response times
 - **Health Checks**: Provider availability and latency
 - **Circuit Breaker**: Automatic failure detection and recovery
@@ -326,6 +352,7 @@ SeekClaw includes built-in monitoring:
 5. Open a Pull Request
 
 ### Development Guidelines
+
 - Follow SOLID principles
 - Maintain clean architecture
 - Write unit tests for new features

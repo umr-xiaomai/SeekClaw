@@ -1,4 +1,4 @@
-# SeekClaw
+<h1 align="center">SeekClaw</h1>
 
 <div align="center">
 
@@ -24,11 +24,13 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 ## ✨ 功能特性
 
 ### 🚀 Runtime First 架构
+
 - **清洁架构**：以 `seekclaw_runtime` 为核心，`seekclaw_cli` 作为默认前端，关注点分离
 - **插件系统**：通过 Tools、Skills 和 MCP（Model Context Protocol）实现可扩展性
 - **事件驱动**：通过事件总线实现渲染与业务逻辑解耦
 
 ### 🤖 多提供商支持
+
 - **OpenAI 兼容**：GPT-5.5、GPT-5.5-mini 及所有 OpenAI 兼容 API
 - **Anthropic**：Claude Opus、Claude Sonnet、Claude Haiku
 - **Google**：Gemini Pro、Gemini Flash
@@ -37,22 +39,26 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 - **故障转移**：自动重试、指数退避和熔断器机制
 
 ### 🛠️ 工具生态系统
+
 - **内置工具**：文件操作（读/写/编辑）、搜索（grep/glob）、bash 执行
 - **MCP 支持**：stdio 和 SSE 传输，自动发现工具/提示/资源
 - **技能系统**：基于目录的技能系统，支持提示注入和工作流
 
 ### 💻 现代化终端体验
+
 - **游戏式渲染**：30-60 FPS 刷新率，双缓冲技术
 - **流式输出**：实时 token 流式传输，显示思考/推理过程
 - **实时 UI**：加载动画、进度条、工具状态和 Markdown 渲染
 - **增量更新**：无闪烁、无滚动、平滑动画
 
 ### 📁 工作区管理
+
 - **项目识别**：自动识别 Git、.NET、Node.js、Python、Rust、Go、Unity、Vue 项目
 - **隔离配置**：每个工作区独立的配置、会话、缓存和内存
 - **自动初始化**：自动创建 `.seekclaw/` 目录结构
 
 ### 🔧 开发者体验
+
 - **会话管理**：基于 JSONL 的会话持久化和恢复
 - **内存系统**：工作区特定的内存，自动上下文注入
 - **验证机制**：代码修改后自动构建/检查/修复循环
@@ -61,10 +67,12 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 ## 📦 安装
 
 ### 前置要求
+
 - .NET 10.0 SDK 或更高版本
 - Git（用于工作区检测）
 
 ### 从源码构建
+
 ```bash
 git clone https://github.com/umr-xiaomai/SeekClaw.git
 cd SeekClaw
@@ -72,6 +80,7 @@ dotnet build
 ```
 
 ### 运行
+
 ```bash
 # 交互式聊天模式
 dotnet run --project seekclaw_cli
@@ -95,7 +104,7 @@ dotnet run --project seekclaw_cli -- --model "openai/gpt-5.5"
 flowchart TD
     subgraph Frontends[前端]
         CLI[seekclaw_cli<br/>System.CommandLine + 渲染引擎]
-        GUI[GUI / Web / IDE<br/>（未来）]
+        GUI[GUI / Web / IDE<br/>未来]
     end
 
     subgraph Runtime[seekclaw_runtime]
@@ -176,7 +185,9 @@ SeekClaw/
 ## ⚙️ 配置
 
 ### 全局配置
+
 位于 `~/.seekclaw/config.json`：
+
 ```json
 {
   "providers": {
@@ -203,7 +214,9 @@ SeekClaw/
 ```
 
 ### 工作区配置
+
 每个项目可以在 `.seekclaw/config.json` 中覆盖：
+
 - 提供商和模型选择
 - 温度和上下文设置
 - 工具权限
@@ -213,6 +226,7 @@ SeekClaw/
 ## 🎯 使用示例
 
 ### 交互式聊天
+
 ```bash
 seekclaw chat
 # 或直接
@@ -220,6 +234,7 @@ seekclaw
 ```
 
 ### 单次任务
+
 ```bash
 seekclaw "将认证模块重构为使用 JWT"
 seekclaw "为 UserService 类编写单元测试"
@@ -227,6 +242,7 @@ seekclaw "修复项目中的构建错误"
 ```
 
 ### 提供商管理
+
 ```bash
 seekclaw provider list
 seekclaw provider add openai --api-key sk-...
@@ -235,6 +251,7 @@ seekclaw provider use anthropic
 ```
 
 ### 模型管理
+
 ```bash
 seekclaw model list
 seekclaw model use openai/gpt-5.5
@@ -243,6 +260,7 @@ seekclaw model search "快速编码模型"
 ```
 
 ### 会话管理
+
 ```bash
 seekclaw session list
 seekclaw session resume <session-id>
@@ -250,6 +268,7 @@ seekclaw session export <session-id> --format json
 ```
 
 ### 健康检查
+
 ```bash
 seekclaw doctor
 ```
@@ -257,7 +276,9 @@ seekclaw doctor
 ## 🔌 扩展 SeekClaw
 
 ### 添加工具
+
 实现 `ITool` 接口：
+
 ```csharp
 public class MyTool : ITool
 {
@@ -276,7 +297,9 @@ public class MyTool : ITool
 ```
 
 ### 创建技能
+
 在 `skills/` 目录中创建：
+
 ```
 skills/
   my-skill/
@@ -286,7 +309,9 @@ skills/
 ```
 
 ### MCP 服务器
+
 在 `mcp/servers.json` 中配置：
+
 ```json
 {
   "servers": {
@@ -312,6 +337,7 @@ dotnet test seekclaw_tests --filter "ClassName=ProviderTests"
 ## 📊 监控
 
 SeekClaw 包含内置监控：
+
 - **使用统计**：Token 计数、成本、响应时间
 - **健康检查**：提供商可用性和延迟
 - **熔断器**：自动故障检测和恢复
@@ -326,6 +352,7 @@ SeekClaw 包含内置监控：
 5. 创建 Pull Request
 
 ### 开发规范
+
 - 遵循 SOLID 原则
 - 保持清洁架构
 - 为新功能编写单元测试
