@@ -37,6 +37,10 @@ public sealed class TerminalRenderer : IDisposable
     private decimal _sessionCost;
     private int _spinnerTick;
 
+    // Track displayed buffer lengths to avoid replicating content each frame.
+    private int _thinkingBufferLength;
+    private int _streamBufferLength;
+
     public TerminalRenderer(IEventBus bus, TextWriter? output = null)
     {
         VirtualTerminal.Enable();
@@ -78,6 +82,8 @@ public sealed class TerminalRenderer : IDisposable
                 _turnClock.Restart();
                 _streamBuffer.Clear();
                 _thinkingBuffer.Clear();
+                _thinkingBufferLength = 0;
+                _streamBufferLength = 0;
                 _activeTools.Clear();
                 _status = "Thinking";
                 _statusDetail = "";
@@ -102,6 +108,7 @@ public sealed class TerminalRenderer : IDisposable
                     scrollback.Add($"✻ thought for {_turnClock.Elapsed.TotalSeconds:0.0}s".Style(Ansi.Gray));
                 _thinkingActive = false;
                 _thinkingBuffer.Clear();
+                _thinkingBufferLength = 0;
                 break;
 
             case AssistantTextDeltaEvent delta:
@@ -111,6 +118,7 @@ public sealed class TerminalRenderer : IDisposable
             case AssistantMessageCompletedEvent message:
                 // Replace the streamed tail with the fully rendered markdown in scrollback.
                 _streamBuffer.Clear();
+                _streamBufferLength = 0;
                 scrollback.Add("");
                 scrollback.AddRange(MarkdownAnsi.Render(message.Text, SafeWidth() - 2));
                 break;
@@ -171,6 +179,7 @@ public sealed class TerminalRenderer : IDisposable
                     scrollback.Add("");
                     scrollback.AddRange(MarkdownAnsi.Render(_streamBuffer.ToString(), SafeWidth() - 2));
                     _streamBuffer.Clear();
+                    _streamBufferLength = 0;
                 }
                 if (completed.Cancelled)
                     scrollback.Add("— cancelled —".Style(Ansi.Yellow));
@@ -197,11 +206,11 @@ public sealed class TerminalRenderer : IDisposable
 
         if (_thinkingActive)
         {
-            foreach (var line in Tail(_thinkingBuffer, 3))
+            foreach (var line in TailIncremental(_thinkingBuffer, 3, ref _thinkingBufferLength))
                 lines.Add(("✻ " + line).Style(Ansi.Gray + Ansi.Italic));
         }
 
-        foreach (var line in Tail(_streamBuffer, 6))
+        foreach (var line in TailIncremental(_streamBuffer, 6, ref _streamBufferLength))
             lines.Add(line);
 
         var elapsedText = _turnClock.Elapsed.TotalSeconds >= 1 ? $" · {_turnClock.Elapsed.TotalSeconds:0}s" : "";
@@ -217,6 +226,33 @@ public sealed class TerminalRenderer : IDisposable
     }
 
     private string Spinner() => SpinnerFrames[_spinnerTick % SpinnerFrames.Length];
+
+    /// <summary>
+    /// Returns only the new content added to the buffer since last call.
+    /// Uses character position rather than line count to avoid edge cases.
+    /// </summary>
+    private IEnumerable<string> TailIncremental(StringBuilder buffer, int maxLines, ref int lastLength)
+    {
+        // If buffer is now shorter, it was reset - start from the beginning
+        if (buffer.Length < lastLength)
+            lastLength = 0;
+
+        // Extract only the new content
+        var newContent = buffer.ToString(lastLength, buffer.Length - lastLength);
+        lastLength = buffer.Length;
+
+        if (newContent.Length == 0) return [];
+
+        // Split into lines and return, limiting to maxLines
+        var lines = newContent.Split('\n');
+
+        // Remove last empty entry if the content ends with \n
+        if (lines.Length > 0 && lines[^1].Length == 0)
+            lines = lines[..^1];
+
+        // Return only the last maxLines
+        return lines.TakeLast(maxLines).Select(l => l.TrimEnd('\r'));
+    }
 
     private static IEnumerable<string> Tail(StringBuilder buffer, int maxLines)
     {

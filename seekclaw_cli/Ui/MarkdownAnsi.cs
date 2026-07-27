@@ -1,5 +1,6 @@
 using System.Text;
 using Markdig;
+using Markdig.Extensions.Tables;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 
@@ -80,6 +81,10 @@ public static class MarkdownAnsi
                     lines.Add(indent + new string('─', Math.Max(10, width - indent.Length - 2)).Style(Ansi.Gray));
                     break;
 
+                case Table table:
+                    RenderTable(table, lines, indent, width);
+                    break;
+
                 case ParagraphBlock paragraph:
                     lines.AddRange(Wrap(RenderInlines(paragraph.Inline), width - indent.Length)
                         .Select(l => indent + l));
@@ -92,6 +97,68 @@ public static class MarkdownAnsi
                 case LeafBlock leaf:
                     lines.AddRange(Wrap(RenderInlines(leaf.Inline), width - indent.Length).Select(l => indent + l));
                     break;
+            }
+        }
+    }
+
+    private static void RenderTable(Table table, List<string> lines, string indent, int width)
+    {
+        // Collect all cell contents
+        var rows = new List<List<string>>();
+        foreach (var row in table.OfType<TableRow>())
+        {
+            var cells = new List<string>();
+            foreach (var cell in row.OfType<TableCell>())
+            {
+                var cellLines = new List<string>();
+                RenderBlocks(cell, cellLines, "", width);
+                cells.Add(string.Join(" ", cellLines.Select(l => l.Trim())));
+            }
+            rows.Add(cells);
+        }
+
+        if (rows.Count == 0) return;
+
+        // Calculate column widths
+        var colCount = rows.Max(r => r.Count);
+        var colWidths = new int[colCount];
+        foreach (var row in rows)
+            for (var i = 0; i < row.Count; i++)
+                colWidths[i] = Math.Max(colWidths[i], Ansi.VisibleLength(row[i]));
+
+        // Clamp column widths
+        var maxColWidth = Math.Max(20, (width - colCount * 3 - 1) / colCount);
+        for (var i = 0; i < colCount; i++)
+            colWidths[i] = Math.Min(colWidths[i], maxColWidth);
+
+        // Render table
+        var isHeader = true;
+        foreach (var row in rows)
+        {
+            var sb = new StringBuilder(indent + "│");
+            for (var i = 0; i < colCount; i++)
+            {
+                var cellContent = i < row.Count ? row[i] : "";
+                var visibleLen = Ansi.VisibleLength(cellContent);
+                var padding = Math.Max(0, colWidths[i] - visibleLen);
+                sb.Append(' ');
+                sb.Append(isHeader ? cellContent.Style(Ansi.Bold) : cellContent);
+                sb.Append(new string(' ', padding + 1));
+                sb.Append('│');
+            }
+            lines.Add(sb.ToString());
+
+            // Add separator after header
+            if (isHeader)
+            {
+                var sep = new StringBuilder(indent + "├");
+                for (var i = 0; i < colCount; i++)
+                {
+                    sep.Append(new string('─', colWidths[i] + 2));
+                    sep.Append(i < colCount - 1 ? '┼' : '┤');
+                }
+                lines.Add(sep.ToString());
+                isHeader = false;
             }
         }
     }
