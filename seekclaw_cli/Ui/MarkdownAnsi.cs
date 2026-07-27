@@ -166,10 +166,25 @@ public static class MarkdownAnsi
     private static void RenderCode(LeafBlock code, List<string> lines, string indent)
     {
         var language = (code as FencedCodeBlock)?.Info;
-        lines.Add(indent + ("╭─ " + (string.IsNullOrWhiteSpace(language) ? "code" : language)).Style(Ansi.Gray));
-        foreach (var line in code.Lines.Lines[..code.Lines.Count])
-            lines.Add(indent + "│ ".Style(Ansi.Gray) + line.Slice.ToString().Style(Ansi.Yellow));
-        lines.Add(indent + "╰─".Style(Ansi.Gray));
+        var lineNumColor = Ansi.Rgb(100, 100, 100); // Dim gray for line numbers
+
+        // Top border with language label
+        var langLabel = string.IsNullOrWhiteSpace(language) ? "" : $" {language}";
+        lines.Add((indent + "┌" + new string('─', Math.Max(20, Math.Min(40, langLabel.Length + 2)))).Style(Ansi.Gray));
+        if (!string.IsNullOrWhiteSpace(langLabel))
+            lines.Add((indent + "│" + langLabel).Style(Ansi.Gray));
+
+        // Code lines with line numbers
+        var codeLines = code.Lines.Lines[..code.Lines.Count];
+        for (var i = 0; i < codeLines.Length; i++)
+        {
+            var lineNum = (i + 1).ToString().PadLeft(3);
+            var content = codeLines[i].Slice.ToString();
+            lines.Add((indent + "│ " + lineNum.Style(lineNumColor) + "  " + content).Style(Ansi.Cyan));
+        }
+
+        // Bottom border
+        lines.Add((indent + "└" + new string('─', Math.Max(20, Math.Min(40, (language?.Length ?? 0) + 4)))).Style(Ansi.Gray));
     }
 
     private static string RenderInlines(ContainerInline? container)

@@ -25,6 +25,7 @@ public sealed class TerminalRenderer : IDisposable
     // Render-thread-only state (mutated exclusively inside the loop).
     private readonly StringBuilder _streamBuffer = new();
     private readonly StringBuilder _thinkingBuffer = new();
+    private readonly StringBuilder _toolOutputBuffer = new();  // For ToolCallProgressEvent
     private readonly Dictionary<string, (string Name, string Args, long StartedAt)> _activeTools = [];
     private readonly Stopwatch _turnClock = new();
     private bool _turnActive;
@@ -40,6 +41,7 @@ public sealed class TerminalRenderer : IDisposable
     // Track displayed buffer lengths to avoid replicating content each frame.
     private int _thinkingBufferLength;
     private int _streamBufferLength;
+    private int _toolOutputBufferLength;
 
     public TerminalRenderer(IEventBus bus, TextWriter? output = null)
     {
@@ -82,8 +84,10 @@ public sealed class TerminalRenderer : IDisposable
                 _turnClock.Restart();
                 _streamBuffer.Clear();
                 _thinkingBuffer.Clear();
+                _toolOutputBuffer.Clear();
                 _thinkingBufferLength = 0;
                 _streamBufferLength = 0;
+                _toolOutputBufferLength = 0;
                 _activeTools.Clear();
                 _status = "Thinking";
                 _statusDetail = "";
@@ -105,7 +109,15 @@ public sealed class TerminalRenderer : IDisposable
 
             case ThinkingCompletedEvent:
                 if (_thinkingActive && _thinkingBuffer.Length > 0)
-                    scrollback.Add($"✻ thought for {_turnClock.Elapsed.TotalSeconds:0.0}s".Style(Ansi.Gray));
+                {
+                    scrollback.Add("");
+                    scrollback.Add("✨ Thinking Complete".Style(Ansi.Cyan));
+                    var thinkingLines = _thinkingBuffer.ToString().Split('\n');
+                    foreach (var line in thinkingLines.Where(l => l.Length > 0))
+                        scrollback.Add(("  " + line).Style(Ansi.Gray + Ansi.Italic));
+                    scrollback.Add("─────────────────────────────────".Style(Ansi.Gray));
+                    scrollback.Add("");
+                }
                 _thinkingActive = false;
                 _thinkingBuffer.Clear();
                 _thinkingBufferLength = 0;
@@ -125,14 +137,39 @@ public sealed class TerminalRenderer : IDisposable
 
             case ToolCallStartedEvent tool:
                 _activeTools[tool.CallId] = (tool.ToolName, tool.ArgumentSummary, Environment.TickCount64);
+                _toolOutputBuffer.Clear();
+                _toolOutputBufferLength = 0;
+                break;
+
+            case ToolCallProgressEvent progress:
+                _toolOutputBuffer.Append(progress.Message);
                 break;
 
             case ToolCallCompletedEvent done:
             {
                 _activeTools.Remove(done.CallId);
+
+                // If there's accumulated tool output, add it to scrollback as a formatted block
+                if (_toolOutputBuffer.Length > 0)
+                {
+                    scrollback.Add("");
+                    scrollback.Add(("► " + done.ToolName).Style(Ansi.Blue + Ansi.Bold));
+                    var toolLines = _toolOutputBuffer.ToString().Split('\n');
+                    foreach (var line in toolLines.Where(l => l.Length > 0))
+                    {
+                        if (line.Length > 100)
+                            scrollback.Add(("  " + line[..97] + "...").Style(Ansi.Dim));
+                        else
+                            scrollback.Add(("  " + line).Style(Ansi.Dim));
+                    }
+                    _toolOutputBuffer.Clear();
+                    _toolOutputBufferLength = 0;
+                }
+
                 var mark = done.Success ? "✓".Style(Ansi.Green) : "✗".Style(Ansi.Red);
                 var duration = done.Duration.TotalSeconds >= 0.1 ? $" ({done.Duration.TotalSeconds:0.0}s)" : "";
-                scrollback.Add($"{mark} {done.ToolName.Style(Ansi.Bold)} {done.ResultSummary.Style(Ansi.Dim)}{duration.Style(Ansi.Gray)}");
+                scrollback.Add($"{mark} {done.ResultSummary.Style(Ansi.Dim)}{duration.Style(Ansi.Gray)}");
+                scrollback.Add("");
                 break;
             }
 
@@ -206,12 +243,23 @@ public sealed class TerminalRenderer : IDisposable
 
         if (_thinkingActive)
         {
+            lines.Add("═══════════════════════════════════".Style(Ansi.Gray));
+            lines.Add("✨ Thinking...".Style(Ansi.Cyan + Ansi.Italic));
             foreach (var line in TailIncremental(_thinkingBuffer, 3, ref _thinkingBufferLength))
-                lines.Add(("✻ " + line).Style(Ansi.Gray + Ansi.Italic));
+                lines.Add(("  " + line).Style(Ansi.Gray + Ansi.Italic));
         }
 
         foreach (var line in TailIncremental(_streamBuffer, 6, ref _streamBufferLength))
             lines.Add(line);
+
+        // Show tool output if any tool is active
+        if (_toolOutputBuffer.Length > 0)
+        {
+            lines.Add("───────────────────────────────────".Style(Ansi.Gray));
+            lines.Add("» Tool Output".Style(Ansi.Blue + Ansi.Dim));
+            foreach (var line in TailIncremental(_toolOutputBuffer, 4, ref _toolOutputBufferLength))
+                lines.Add(("  " + line).Style(Ansi.Dim));
+        }
 
         var elapsedText = _turnClock.Elapsed.TotalSeconds >= 1 ? $" · {_turnClock.Elapsed.TotalSeconds:0}s" : "";
         var detail = _statusDetail.Length > 0 ? $" {_statusDetail}" : "";

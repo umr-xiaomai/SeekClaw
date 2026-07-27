@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.FileSystemGlobbing;
+using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Prompts;
 
 namespace SeekClaw.Runtime.Tools.Builtin;
@@ -24,7 +25,7 @@ public sealed class ListDirTool(IPromptProvider prompts) : BuiltinTool(prompts)
         var depth = Math.Clamp(GetInt(arguments, "depth") ?? 2, 1, 6);
         var sb = new StringBuilder();
         var entries = 0;
-        AppendTree(path, "", depth, sb, ref entries);
+        AppendTree(path, "", depth, sb, ref entries, context);
 
         var output = entries == 0 ? "(empty directory)" : sb.ToString();
         return Task.FromResult(ToolResult.Ok(
@@ -32,7 +33,7 @@ public sealed class ListDirTool(IPromptProvider prompts) : BuiltinTool(prompts)
             $"Listed {entries} entries under {Path.GetRelativePath(context.Workspace.Root, path)}"));
     }
 
-    private static void AppendTree(string dir, string indent, int depth, StringBuilder sb, ref int entries)
+    private static void AppendTree(string dir, string indent, int depth, StringBuilder sb, ref int entries, ToolContext context)
     {
         if (depth == 0 || entries > 500) return;
 
@@ -50,7 +51,7 @@ public sealed class ListDirTool(IPromptProvider prompts) : BuiltinTool(prompts)
             if (FileWalker.IgnoredDirectories.Contains(name)) continue;
             if (++entries > 500) return;
             sb.Append(indent).Append(name).AppendLine("/");
-            AppendTree(subdir, indent + "  ", depth - 1, sb, ref entries);
+            AppendTree(subdir, indent + "  ", depth - 1, sb, ref entries, context);
         }
 
         foreach (var file in files)
@@ -58,6 +59,10 @@ public sealed class ListDirTool(IPromptProvider prompts) : BuiltinTool(prompts)
             if (++entries > 500) return;
             sb.Append(indent).AppendLine(Path.GetFileName(file));
         }
+
+        // Send progress periodically
+        if (entries % 100 == 0)
+            context.Events.Publish(new ToolCallProgressEvent(context.CallId, $"[{entries}] Listing…"));
     }
 }
 
@@ -140,6 +145,10 @@ public sealed class GrepTool(IPromptProvider prompts) : BuiltinTool(prompts)
         var sb = new StringBuilder();
         var hits = 0;
         var searchRoot = File.Exists(target) ? Path.GetDirectoryName(target)! : target;
+        var currentResultChunkSb = new StringBuilder();
+
+        // Stream results with progress every 10 matches
+        const int resultChunk = 10;
 
         foreach (var file in files)
         {
@@ -161,13 +170,26 @@ public sealed class GrepTool(IPromptProvider prompts) : BuiltinTool(prompts)
                 if (!isMatch) continue;
 
                 var display = line.Length > 400 ? line[..400] + "…" : line;
-                sb.Append(Path.GetRelativePath(context.Workspace.Root, file))
-                  .Append(':').Append(lineNumber).Append(": ").AppendLine(display.TrimEnd());
-                if (++hits >= maxResults) goto Done;
+                var result = $"{Path.GetRelativePath(context.Workspace.Root, file)}:{lineNumber}: {display.TrimEnd()}";
+                sb.AppendLine(result);
+                currentResultChunkSb.AppendLine(result);
+
+                ++hits;
+
+                // Send progress event every resultChunk results
+                if (hits % resultChunk == 0 || hits >= maxResults)
+                {
+                    context.Events.Publish(new ToolCallProgressEvent(
+                        context.CallId,
+                        currentResultChunkSb.ToString()));
+                    currentResultChunkSb.Clear();
+                }
+
+                if (hits >= maxResults) break;
             }
+            if (hits >= maxResults) break;
         }
 
-        Done:
         var output = hits == 0 ? "No matches found." : sb.ToString();
         return Task.FromResult(ToolResult.Ok(context.Truncate(output, "matches"), $"{hits} matches for /{patternText}/"));
     }

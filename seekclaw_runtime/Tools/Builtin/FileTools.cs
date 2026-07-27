@@ -48,10 +48,32 @@ public sealed class ReadFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
 
         var lines = File.ReadLines(path).Skip(offset - 1).Take(limit).ToList();
         var sb = new StringBuilder();
-        for (var i = 0; i < lines.Count; i++)
+
+        // Send file content in chunks with progress events
+        const int chunkSize = 50; // lines per chunk
+        var chunks = (lines.Count + chunkSize - 1) / chunkSize;
+
+        for (var chunk = 0; chunk < chunks; chunk++)
         {
-            var line = lines[i].Length > 2000 ? lines[i][..2000] + "…" : lines[i];
-            sb.Append(offset + i).Append('\t').AppendLine(line);
+            var start = chunk * chunkSize;
+            var end = Math.Min(start + chunkSize, lines.Count);
+
+            var chunkSb = new StringBuilder();
+            for (var i = start; i < end; i++)
+            {
+                var line = lines[i].Length > 2000 ? lines[i][..2000] + "…" : lines[i];
+                chunkSb.Append(offset + i).Append('\t').AppendLine(line);
+            }
+
+            sb.Append(chunkSb);
+
+            // Send progress event for UI display
+            if (chunks > 1)
+                context.Events.Publish(new ToolCallProgressEvent(
+                    context.CallId,
+                    $"[{end}/{lines.Count}] Reading…\n{chunkSb}"));
+            else if (chunks == 1)
+                context.Events.Publish(new ToolCallProgressEvent(context.CallId, chunkSb.ToString()));
         }
 
         var output = sb.Length == 0 ? "(empty file)" : context.Truncate(sb.ToString(), "file");
