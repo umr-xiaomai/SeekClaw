@@ -38,31 +38,39 @@ public sealed class DaemonServer(SeekClawRuntime runtime)
             {
                 break;
             }
-            catch (IOException)
+            catch (Exception)
             {
-                // client vanished — accept the next one
+                await Task.Delay(100, ct).ConfigureAwait(false);
             }
         }
     }
 
     private async Task ServeNamedPipeAsync(CancellationToken ct)
     {
-        await using var pipe = new NamedPipeServerStream(
-            PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        var pipe = new NamedPipeServerStream(
+            PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         await pipe.WaitForConnectionAsync(ct).ConfigureAwait(false);
-        await HandleConnectionAsync(pipe, ct).ConfigureAwait(false);
+        _ = Task.Run(async () =>
+        {
+            await using (pipe)
+                await HandleConnectionAsync(pipe, ct).ConfigureAwait(false);
+        }, ct);
     }
 
     private async Task ServeUnixSocketAsync(CancellationToken ct)
     {
-        File.Delete(SocketPath);
+        if (File.Exists(SocketPath)) File.Delete(SocketPath);
         using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         listener.Bind(new UnixDomainSocketEndPoint(SocketPath));
-        listener.Listen(1);
+        listener.Listen(10);
 
-        using var socket = await listener.AcceptAsync(ct).ConfigureAwait(false);
-        await using var stream = new NetworkStream(socket, ownsSocket: false);
-        await HandleConnectionAsync(stream, ct).ConfigureAwait(false);
+        var socket = await listener.AcceptAsync(ct).ConfigureAwait(false);
+        _ = Task.Run(async () =>
+        {
+            using (socket)
+            await using (var stream = new NetworkStream(socket, ownsSocket: false))
+                await HandleConnectionAsync(stream, ct).ConfigureAwait(false);
+        }, ct);
     }
 
     private async Task HandleConnectionAsync(Stream stream, CancellationToken ct)
@@ -115,6 +123,74 @@ public sealed class DaemonServer(SeekClawRuntime runtime)
                     await WriteAsync(writer, id,
                         result.Error is null ? "done" : "error",
                         result.Error ?? result.Text, ct).ConfigureAwait(false);
+                    break;
+                }
+
+                case "session.list":
+                {
+                    var sessions = runtime.Sessions.List(runtime.Workspace);
+                    var json = JsonSerializer.Serialize(sessions, SeekClawJsonContext.Default.ListSessionHeader);
+                    await WriteAsync(writer, id, "result", json, ct).ConfigureAwait(false);
+                    break;
+                }
+
+                case "session.resume":
+                {
+                    var sessionId = request["params"]?["id"]?.GetValue<string>();
+                    if (string.IsNullOrEmpty(sessionId))
+                    {
+                        await WriteAsync(writer, id, "error", "params.id is required", ct).ConfigureAwait(false);
+                        break;
+                    }
+                    var loaded = runtime.Sessions.Load(runtime.Workspace, sessionId);
+                    if (loaded is null)
+                    {
+                        await WriteAsync(writer, id, "error", $"Session {sessionId} not found", ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        session = loaded;
+                        await WriteAsync(writer, id, "result", $"resumed {session.Header.Id}", ct).ConfigureAwait(false);
+                    }
+                    break;
+                }
+
+                case "model.list":
+                {
+                    var models = runtime.Models.All().Select(m => m.Ref).ToList();
+                    await WriteAsync(writer, id, "result", JsonSerializer.Serialize(models, SeekClawJsonContext.Default.ListString), ct).ConfigureAwait(false);
+                    break;
+                }
+
+                case "model.switch":
+                {
+                    var modelRef = request["params"]?["model"]?.GetValue<string>();
+                    if (string.IsNullOrEmpty(modelRef))
+                    {
+                        await WriteAsync(writer, id, "error", "params.model is required", ct).ConfigureAwait(false);
+                        break;
+                    }
+                    var model = runtime.Models.Resolve(modelRef);
+                    if (model is null)
+                    {
+                        await WriteAsync(writer, id, "error", $"Unknown model {modelRef}", ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var profile = runtime.ConfigStore.Config.GetActiveProfile();
+                        profile.Provider = model.Provider.Id;
+                        profile.Model = model.Model.Id;
+                        runtime.ConfigStore.Save();
+                        await WriteAsync(writer, id, "result", $"switched to {model.Ref}", ct).ConfigureAwait(false);
+                    }
+                    break;
+                }
+
+                case "doctor":
+                {
+                    var checks = runtime.Health.RunChecks(runtime.Workspace);
+                    var summary = string.Join("\n", checks.Select(c => $"{(c.Ok ? "[OK]" : "[FAIL]")} {c.Name}: {c.Detail}"));
+                    await WriteAsync(writer, id, "result", summary, ct).ConfigureAwait(false);
                     break;
                 }
 

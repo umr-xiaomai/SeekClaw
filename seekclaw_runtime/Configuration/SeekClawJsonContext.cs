@@ -19,6 +19,8 @@ namespace SeekClaw.Runtime.Configuration;
 [JsonSerializable(typeof(SessionMessage))]
 [JsonSerializable(typeof(UsageEntry))]
 [JsonSerializable(typeof(McpConfig))]
+[JsonSerializable(typeof(List<SessionHeader>))]
+[JsonSerializable(typeof(List<string>))]
 public sealed partial class SeekClawJsonContext : JsonSerializerContext
 {
     /// <summary>Compact variant for JSONL (one object per line).</summary>

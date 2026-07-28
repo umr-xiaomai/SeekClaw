@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Prompts;
@@ -77,12 +78,42 @@ public sealed class Agent(
 
                 if (completion.ToolCalls.Count > 0)
                 {
+                    var readOnlyBatch = new List<ToolCallRequest>();
                     foreach (var call in completion.ToolCalls)
                     {
                         ct.ThrowIfCancellationRequested();
-                        var result = await ExecuteToolAsync(call, workspace, model, ct).ConfigureAwait(false);
-                        mutated |= result.ToolMutated;
-                        sessionStore.Append(session, result.Message);
+                        var resolved = toolRegistry.Resolve(call.Name);
+                        if (resolved is not null && !resolved.Mutating)
+                        {
+                            readOnlyBatch.Add(call);
+                        }
+                        else
+                        {
+                            if (readOnlyBatch.Count > 0)
+                            {
+                                var batchResults = await Task.WhenAll(readOnlyBatch.Select(c => ExecuteToolAsync(c, workspace, model, ct))).ConfigureAwait(false);
+                                foreach (var result in batchResults)
+                                {
+                                    mutated |= result.ToolMutated;
+                                    sessionStore.Append(session, result.Message);
+                                }
+                                readOnlyBatch.Clear();
+                            }
+
+                            var singleResult = await ExecuteToolAsync(call, workspace, model, ct).ConfigureAwait(false);
+                            mutated |= singleResult.ToolMutated;
+                            sessionStore.Append(session, singleResult.Message);
+                        }
+                    }
+
+                    if (readOnlyBatch.Count > 0)
+                    {
+                        var batchResults = await Task.WhenAll(readOnlyBatch.Select(c => ExecuteToolAsync(c, workspace, model, ct))).ConfigureAwait(false);
+                        foreach (var result in batchResults)
+                        {
+                            mutated |= result.ToolMutated;
+                            sessionStore.Append(session, result.Message);
+                        }
                     }
                     continue;
                 }
@@ -223,6 +254,15 @@ public sealed class Agent(
             return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
         }
 
+        var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
+        var mode = AgentModeExtensions.Parse(rawMode);
+        if (mode.IsReadOnly() && tool.Mutating)
+        {
+            var message = $"Tool execution denied: '{tool.Name}' is not allowed in {mode.ToDisplayString()}. Switch mode via '/mode edit' or '/mode auto' to allow file mutations.";
+            events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
+            return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
+        }
+
         events.Publish(new StatusEvent(tool.StatusLabel, argsSummary));
 
         JsonObject arguments;
@@ -311,15 +351,38 @@ public sealed class Agent(
             ProjectKinds = workspace.ProjectKinds,
             WorkspaceConfig = workspace.Config,
         };
-        return await promptComposer.ComposeAsync(context, ct).ConfigureAwait(false);
+        var basePrompt = await promptComposer.ComposeAsync(context, ct).ConfigureAwait(false);
+
+        var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
+        var mode = AgentModeExtensions.Parse(rawMode);
+
+        var modeInstruction = mode switch
+        {
+            AgentMode.Plan => "\n\n[MODE: PLAN]\nYou are in PLAN MODE. Focus on researching, analyzing code, and outputting structured step-by-step implementation plans. File modifications and write tools are disabled in this mode.",
+            AgentMode.ReadOnly => "\n\n[MODE: READ-ONLY]\nYou are in READ-ONLY MODE. You can read, search, and analyze files, but you cannot modify files or execute mutating commands.",
+            AgentMode.Auto => "\n\n[MODE: AUTO]\nYou are in AUTO MODE. Take full initiative to perform edits, multi-step repairs, and automatic verification loops.",
+            _ => "",
+        };
+
+        return basePrompt + modeInstruction;
     }
 
     private IReadOnlyList<ITool> ActiveTools(WorkspaceInfo workspace)
     {
+        var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
+        var mode = AgentModeExtensions.Parse(rawMode);
+
         var disabled = workspace.Config?.DisabledTools;
-        return disabled is not { Count: > 0 }
+        var available = disabled is not { Count: > 0 }
             ? toolRegistry.All
             : toolRegistry.All.Where(t => !disabled.Contains(t.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+
+        if (mode.IsReadOnly())
+        {
+            available = available.Where(t => !t.Mutating).ToList();
+        }
+
+        return available;
     }
 
     // ---------------------------------------------------------------- misc

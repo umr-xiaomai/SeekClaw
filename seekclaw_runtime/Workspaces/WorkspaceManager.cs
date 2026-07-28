@@ -16,12 +16,12 @@ public sealed class WorkspaceInfo
     public string PromptsDir => Path.Combine(SeekClawDir, "prompts");
     public string MemoryDir => Path.Combine(SeekClawDir, "memory");
     public string MemoryFile => Path.Combine(MemoryDir, "MEMORY.md");
-    public string CacheDir => Path.Combine(Root, ".cache");
-    public string SessionsDir => Path.Combine(Root, ".session");
-    public string LogsDir => Path.Combine(Root, "logs");
-    public string SkillsDir => Path.Combine(Root, "skills");
-    public string McpDir => Path.Combine(Root, "mcp");
-    public string DocsDir => Path.Combine(Root, "docs");
+    public string CacheDir => Path.Combine(SeekClawDir, "cache");
+    public string SessionsDir => Directory.Exists(Path.Combine(Root, ".session")) ? Path.Combine(Root, ".session") : Path.Combine(SeekClawDir, "sessions");
+    public string LogsDir => Path.Combine(SeekClawDir, "logs");
+    public string SkillsDir => Directory.Exists(Path.Combine(Root, "skills")) ? Path.Combine(Root, "skills") : Path.Combine(SeekClawDir, "skills");
+    public string McpDir => Directory.Exists(Path.Combine(Root, "mcp")) ? Path.Combine(Root, "mcp") : Path.Combine(SeekClawDir, "mcp");
+    public string DocsDir => Directory.Exists(Path.Combine(Root, "docs")) ? Path.Combine(Root, "docs") : Path.Combine(SeekClawDir, "docs");
 }
 
 public interface IWorkspaceManager
@@ -133,7 +133,7 @@ public sealed class WorkspaceManager : IWorkspaceManager
         }
 
         var gitignore = Path.Combine(workspace.Root, ".gitignore");
-        var required = new[] { ".cache/", ".session/", "logs/", ".seekclaw/" };
+        var required = new[] { ".seekclaw/", ".session/", ".cache/", "logs/" };
         var existing = File.Exists(gitignore) ? File.ReadAllLines(gitignore).ToList() : [];
         var missing = required.Where(entry => !existing.Any(line => line.Trim() == entry || line.Trim() == entry.TrimEnd('/'))).ToList();
         if (missing.Count > 0)

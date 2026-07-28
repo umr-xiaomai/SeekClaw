@@ -142,12 +142,12 @@ public sealed class McpManager(
 }
 
 /// <summary>Bridges a remote MCP tool into the local tool registry as mcp__server__tool.</summary>
-public sealed class McpToolAdapter(McpClient client, McpTool tool) : ITool
+public sealed class McpToolAdapter(McpClient client, McpTool tool, bool isMutating = false) : ITool
 {
     public string Name => $"mcp__{client.ServerName}__{tool.Name}";
     public string Description => tool.Description ?? $"MCP tool {tool.Name} from server {client.ServerName}.";
     public JsonObject ParameterSchema => tool.InputSchema;
-    public bool Mutating => false;
+    public bool Mutating => isMutating || InferMutating(tool.Name);
     public string StatusLabel => $"Calling {client.ServerName}";
 
     public async Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
@@ -164,5 +164,14 @@ public sealed class McpToolAdapter(McpClient client, McpTool tool) : ITool
         {
             return ToolResult.Fail(ex.Message);
         }
+    }
+
+    private static bool InferMutating(string name)
+    {
+        var n = name.ToLowerInvariant();
+        return n.Contains("write") || n.Contains("edit") || n.Contains("create") ||
+               n.Contains("delete") || n.Contains("update") || n.Contains("modify") ||
+               n.Contains("patch") || n.Contains("apply") || n.Contains("exec") ||
+               n.Contains("run") || n.Contains("git_commit") || n.Contains("git_push");
     }
 }

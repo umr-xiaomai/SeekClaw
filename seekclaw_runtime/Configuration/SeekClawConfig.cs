@@ -36,6 +36,8 @@ public sealed class ProfileConfig
     /// <summary>Routing strategy: fast | balanced | quality | cheap | offline.</summary>
     public string? Strategy { get; set; }
     public double? Temperature { get; set; }
+    /// <summary>Agent mode: edit | plan | readonly | auto.</summary>
+    public string? Mode { get; set; }
 }
 
 public sealed class ProviderConfig
@@ -127,6 +129,8 @@ public sealed class AgentConfig
     public int MaxSteps { get; set; } = 40;
     public bool AutoVerify { get; set; } = true;
     public int MaxRepairAttempts { get; set; } = 3;
+    /// <summary>Agent mode: edit | plan | readonly | auto.</summary>
+    public string Mode { get; set; } = "edit";
     /// <summary>Prompt key of the main system prompt (relative to prompts/, no extension).</summary>
     public string SystemPrompt { get; set; } = "system/default";
     public int ThinkingBudgetTokens { get; set; } = 4_096;
@@ -158,6 +162,7 @@ public sealed class WorkspaceConfig
     public string? Model { get; set; }
     public string? Strategy { get; set; }
     public double? Temperature { get; set; }
+    public string? Mode { get; set; }
     public string? SystemPrompt { get; set; }
     public List<string>? DisabledSkills { get; set; }
     public List<string>? DisabledTools { get; set; }

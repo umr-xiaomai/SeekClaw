@@ -69,9 +69,14 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
             return ("/bin/bash", ["-c", command]);
 
         var bash = FindOnPath("bash.exe");
-        return bash is not null
-            ? (bash, ["-c", command])
-            : ("cmd.exe", ["/d", "/s", "/c", command]);
+        if (bash is not null)
+            return (bash, ["-c", command]);
+
+        var pwsh = FindOnPath("pwsh.exe") ?? FindOnPath("powershell.exe");
+        if (pwsh is not null)
+            return (pwsh, ["-NoProfile", "-NonInteractive", "-Command", command]);
+
+        return ("cmd.exe", ["/d", "/s", "/c", command]);
     }
 
     private static string? FindOnPath(string fileName) =>

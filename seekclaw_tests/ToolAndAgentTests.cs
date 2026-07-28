@@ -1,5 +1,6 @@
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Tools.Builtin;
@@ -97,5 +98,46 @@ public sealed class ToolAndAgentTests
         Assert.Equal("string", schema["properties"]!["path"]!["type"]!.GetValue<string>());
         var required = schema["required"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
         Assert.Equal(["path"], required);
+    }
+
+    [Fact]
+    public void FileWalker_IgnoreMatcher_FiltersFilesAndDirectories()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "seekclaw_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, ".gitignore"), "*.log\ntemp/\n");
+            File.WriteAllText(Path.Combine(tempDir, "test.log"), "log content");
+            File.WriteAllText(Path.Combine(tempDir, "main.cs"), "code content");
+
+            var tempSub = Path.Combine(tempDir, "temp");
+            Directory.CreateDirectory(tempSub);
+            File.WriteAllText(Path.Combine(tempSub, "ignored.txt"), "ignored");
+
+            var matcher = FileWalker.IgnoreMatcher.ForRoot(tempDir);
+            Assert.True(matcher.IsIgnored(Path.Combine(tempDir, "test.log"), isDir: false));
+            Assert.False(matcher.IsIgnored(Path.Combine(tempDir, "main.cs"), isDir: false));
+            Assert.True(matcher.IsIgnored(tempSub, isDir: true));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task WebFetchTool_ExtractsTextAndStripsHtml()
+    {
+        var prompts = new FilePromptProvider();
+        var tool = new WebFetchTool(prompts);
+
+        var html = "<html><head><style>body{color:red;}</style></head><body><h1>Title</h1><p>Hello World</p></body></html>";
+        var method = typeof(WebFetchTool).GetMethod("ExtractMainText", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        var extracted = (string)method!.Invoke(null, [html])!;
+
+        Assert.DoesNotContain("color:red", extracted);
+        Assert.Contains("Title", extracted);
+        Assert.Contains("Hello World", extracted);
     }
 }

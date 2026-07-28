@@ -1,6 +1,9 @@
 using SeekClaw.Cli.Ui;
 using SeekClaw.Runtime;
+using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
 
 namespace SeekClaw.Cli;
@@ -11,7 +14,11 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
     private static readonly SlashCommand[] ReplCommands =
     [
         new("/model", "[provider/model]", "Show or switch the active model", SubmitsOnSelect: false),
+        new("/mode", "[plan|auto|readonly|edit]", "Show or switch agent execution mode", SubmitsOnSelect: false),
         new("/cd", "<directory>", "Change working directory", SubmitsOnSelect: false),
+        new("/mcp", "", "List connected MCP servers and tools", SubmitsOnSelect: true),
+        new("/skills", "", "List available skills", SubmitsOnSelect: true),
+        new("/doctor", "", "Run environment health diagnostics", SubmitsOnSelect: true),
         new("/clear", "", "Start a new session", SubmitsOnSelect: true),
         new("/usage", "", "Token and cost statistics", SubmitsOnSelect: true),
         new("/session", "", "Current session info", SubmitsOnSelect: true),
@@ -73,11 +80,12 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
         await ConnectMcpQuietlyAsync(renderer);
         renderer.Flush();
         LoadHistory();
-        var editor = new LineEditor(ReplCommands, _history);
+        var editor = new LineEditor(ReplCommands, _history, () => runtime.Workspace.Config?.Mode ?? runtime.ConfigStore.Config.Agent.Mode);
+
+        Task? activeTurnTask = null;
 
         while (!_exitRequested)
         {
-            Console.Write("\n");
             var input = editor.ReadLine();
             if (input is null) break; // Ctrl+C / Ctrl+D on an empty line, or EOF
             input = input.Trim();
@@ -90,17 +98,32 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
                 continue;
             }
 
+            // If an AI agent turn is actively running, treat input as mid-turn steering guidance!
+            if (activeTurnTask is not null && !activeTurnTask.IsCompleted)
+            {
+                var steerMsg = ChatMessage.User($"[User Steering Instruction]: {input}");
+                runtime.Sessions.Append(session, steerMsg);
+                runtime.Events.Publish(new UserSteerEvent(input));
+                continue;
+            }
+
+            // Start a new agent turn asynchronously so LineEditor remains responsive for user steering!
+            _turnCts?.Dispose();
             _turnCts = new CancellationTokenSource();
-            try
+            var currentCts = _turnCts;
+            var currentPrompt = input;
+
+            activeTurnTask = Task.Run(async () =>
             {
-                await runtime.Agent.RunTurnAsync(session, runtime.Workspace, input, _turnCts.Token);
-            }
-            finally
-            {
-                _turnCts.Dispose();
-                _turnCts = null;
-            }
-            renderer.Flush();
+                try
+                {
+                    await runtime.Agent.RunTurnAsync(session, runtime.Workspace, currentPrompt, currentCts.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    renderer.Flush();
+                }
+            });
         }
 
         renderer.WriteLine();
@@ -222,6 +245,29 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
                 }
                 return false;
 
+            case "/mode":
+                if (parts.Length > 1 && parts[1].Length > 0)
+                {
+                    var targetMode = AgentModeExtensions.Parse(parts[1]);
+                    if (runtime.Workspace.Config is not null)
+                    {
+                        runtime.Workspace.Config.Mode = targetMode.ToString().ToLowerInvariant();
+                    }
+                    var profile = runtime.ConfigStore.Config.GetActiveProfile();
+                    profile.Mode = targetMode.ToString().ToLowerInvariant();
+                    runtime.ConfigStore.Config.Agent.Mode = targetMode.ToString().ToLowerInvariant();
+                    runtime.ConfigStore.Save();
+                    renderer.WriteLine($"mode → {targetMode.ToDisplayString()}".Style(Ansi.Green));
+                }
+                else
+                {
+                    var rawMode = runtime.Workspace.Config?.Mode ?? runtime.ConfigStore.Config.Agent.Mode;
+                    var currentMode = AgentModeExtensions.Parse(rawMode);
+                    renderer.WriteLine($"current mode: {currentMode.ToDisplayString()}".Style(Ansi.Cyan));
+                    renderer.WriteLine("available modes: plan | readonly | edit | auto".Style(Ansi.Gray));
+                }
+                return false;
+
             case "/cd":
                 if (parts.Length > 1 && parts[1].Length > 0)
                 {
@@ -268,6 +314,56 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
                 return false;
             }
 
+            case "/mcp":
+            {
+                var statuses = runtime.Mcp.Status;
+                if (statuses.Count == 0)
+                {
+                    renderer.WriteLine("no mcp servers configured.".Style(Ansi.Gray));
+                }
+                else
+                {
+                    foreach (var s in statuses)
+                    {
+                        var info = s.Connected
+                            ? $"{s.Name} ({s.Transport}): {s.ToolCount} tools".Style(Ansi.Green)
+                            : $"{s.Name} ({s.Transport}): {s.Error ?? "disconnected"}".Style(Ansi.Red);
+                        renderer.WriteLine(info);
+                    }
+                }
+                return false;
+            }
+
+            case "/skills":
+            {
+                var skills = runtime.Skills.Discover(runtime.Workspace);
+                if (skills.Count == 0)
+                {
+                    renderer.WriteLine("no skills found.".Style(Ansi.Gray));
+                }
+                else
+                {
+                    foreach (var s in skills)
+                    {
+                        var status = s.Enabled ? "[enabled]".Style(Ansi.Green) : "[disabled]".Style(Ansi.Gray);
+                        renderer.WriteLine($"{s.Name} {status} · {s.Directory}");
+                    }
+                }
+                return false;
+            }
+
+            case "/doctor":
+            {
+                renderer.WriteLine("Running SeekClaw environment diagnostics...".Style(Ansi.Cyan));
+                var checks = runtime.Health.RunChecks(runtime.Workspace);
+                foreach (var check in checks)
+                {
+                    var status = check.Ok ? "[OK]".Style(Ansi.Green) : "[FAIL]".Style(Ansi.Red);
+                    renderer.WriteLine($"{status} {check.Name}: {check.Detail}");
+                }
+                return false;
+            }
+
             case "/print":
                 if (parts.Length > 1 && parts[1].Equals("config", StringComparison.OrdinalIgnoreCase))
                 {
@@ -286,6 +382,9 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
             case "/help":
                 renderer.WriteLine("/model [ref]   show or switch the active model".Style(Ansi.Dim));
                 renderer.WriteLine("/cd <dir>      change working directory".Style(Ansi.Dim));
+                renderer.WriteLine("/mcp           list connected MCP servers and tools".Style(Ansi.Dim));
+                renderer.WriteLine("/skills        list available skills".Style(Ansi.Dim));
+                renderer.WriteLine("/doctor        run runtime health diagnostics".Style(Ansi.Dim));
                 renderer.WriteLine("/clear         start a new session".Style(Ansi.Dim));
                 renderer.WriteLine("/usage         token/cost statistics".Style(Ansi.Dim));
                 renderer.WriteLine("/session       current session info".Style(Ansi.Dim));

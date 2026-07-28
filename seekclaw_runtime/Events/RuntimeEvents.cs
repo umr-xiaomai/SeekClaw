@@ -13,6 +13,8 @@ public abstract record RuntimeEvent
 
 public sealed record TurnStartedEvent(string SessionId, string UserInput) : RuntimeEvent;
 
+public sealed record UserSteerEvent(string Instruction) : RuntimeEvent;
+
 public sealed record TurnCompletedEvent(string SessionId, bool Cancelled, string? Error) : RuntimeEvent;
 
 /// <summary>High-level agent status: Thinking, Reading files, Searching, Editing, Building, Verifying…</summary>

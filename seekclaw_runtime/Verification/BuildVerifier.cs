@@ -57,9 +57,7 @@ public sealed class BuildVerifier : IVerifier
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromMinutes(10));
 
-        var (shell, args) = OperatingSystem.IsWindows()
-            ? ("cmd.exe", new[] { "/d", "/s", "/c", command })
-            : ("/bin/bash", ["-c", command]);
+        var (shell, args) = ResolveShell(command);
 
         try
         {
@@ -81,4 +79,24 @@ public sealed class BuildVerifier : IVerifier
             return new VerifyResult(false, command, "Verification timed out after 10 minutes.");
         }
     }
+
+    private static (string Shell, string[] Args) ResolveShell(string command)
+    {
+        if (!OperatingSystem.IsWindows())
+            return ("/bin/bash", ["-c", command]);
+
+        var bash = FindOnPath("bash.exe");
+        if (bash is not null) return (bash, ["-c", command]);
+
+        var pwsh = FindOnPath("pwsh.exe") ?? FindOnPath("powershell.exe");
+        if (pwsh is not null) return (pwsh, ["-NoProfile", "-NonInteractive", "-Command", command]);
+
+        return ("cmd.exe", ["/d", "/s", "/c", command]);
+    }
+
+    private static string? FindOnPath(string fileName) =>
+        (Environment.GetEnvironmentVariable("PATH") ?? "")
+        .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+        .Select(dir => Path.Combine(dir.Trim(), fileName))
+        .FirstOrDefault(File.Exists);
 }

@@ -159,22 +159,32 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
 
     private async Task DispatchLoopAsync()
     {
-        await foreach (var message in transport.Incoming.ReadAllAsync().ConfigureAwait(false))
+        try
         {
-            var idNode = message["id"];
-            if (idNode is null) continue; // notification from server — ignored
+            await foreach (var message in transport.Incoming.ReadAllAsync().ConfigureAwait(false))
+            {
+                var idNode = message["id"];
+                if (idNode is null) continue; // notification from server — ignored
 
-            long id;
-            try { id = idNode.GetValue<long>(); }
-            catch (InvalidOperationException) { continue; }
+                long id;
+                try { id = idNode.GetValue<long>(); }
+                catch (InvalidOperationException) { continue; }
 
-            if (!_pending.TryRemove(id, out var tcs)) continue;
+                if (!_pending.TryRemove(id, out var tcs)) continue;
 
-            if (message["error"] is JsonObject error)
-                tcs.TrySetException(new McpException(
-                    $"MCP server '{serverName}' error: {error["message"]?.GetValue<string>() ?? "unknown"}"));
-            else
-                tcs.TrySetResult(message["result"] as JsonObject ?? new JsonObject());
+                if (message["error"] is JsonObject error)
+                    tcs.TrySetException(new McpException(
+                        $"MCP server '{serverName}' error: {error["message"]?.GetValue<string>() ?? "unknown"}"));
+                else
+                    tcs.TrySetResult(message["result"] as JsonObject ?? new JsonObject());
+            }
+        }
+        catch (Exception ex)
+        {
+            foreach (var pending in _pending.Values)
+                pending.TrySetException(new McpException($"MCP server '{serverName}' error: {ex.Message}"));
+            _pending.Clear();
+            return;
         }
 
         foreach (var pending in _pending.Values)

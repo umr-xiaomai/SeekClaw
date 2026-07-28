@@ -1,4 +1,5 @@
 using System.Text;
+using SeekClaw.Runtime.Agents;
 
 namespace SeekClaw.Cli.Ui;
 
@@ -11,7 +12,7 @@ public sealed record SlashCommand(string Name, string ArgsHint, string Descripti
 /// (↑/↓ select · tab complete · enter run · esc dismiss), plus input history.
 /// CJK-aware cursor math; long input scrolls horizontally within one row.
 /// </summary>
-public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string> history)
+public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string> history, Func<string>? getModeText = null)
 {
     private const int MaxMenuRows = 8;
     private const string Prompt = "❯ ";
@@ -235,7 +236,7 @@ public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string
         var width = SafeWidth();
         var frame = new StringBuilder("\r\x1b[0J");
 
-        // Input line (horizontally scrolled so it always fits one terminal row).
+        // 1. Input line
         var (visible, cursorColumn) = Viewport(width - TextWidth.Of(Prompt) - 1);
         frame.Append(Prompt.Style(Ansi.Cyan + Ansi.Bold));
         if (_buffer.Length == 0)
@@ -243,8 +244,19 @@ public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string
         else
             frame.Append(visible);
 
+        frame.Append('\n');
+
+        // 2. Status Bar
+        var modeStr = getModeText?.Invoke() ?? "edit";
+        var modeDisplay = AgentModeExtensions.Parse(modeStr).ToDisplayString();
+        var statusLeft = $"  {modeDisplay} · /mode switch · / for commands".Style(Ansi.Gray);
+        var statusRight = "❖ SeekClaw ".Style(Ansi.Gray);
+        var statusPadding = Math.Max(1, width - TextWidth.Of(Ansi.StripStyles(statusLeft)) - TextWidth.Of(Ansi.StripStyles(statusRight)) - 1);
+        var statusBar = statusLeft + new string(' ', statusPadding) + statusRight;
+        frame.Append(Ansi.TruncateVisible(statusBar, width - 1));
+
         var menu = CurrentMenu();
-        var rows = 0;
+        var menuRows = 0;
         if (menu.Count > 0)
         {
             _selected = Math.Clamp(_selected, 0, menu.Count - 1);
@@ -258,20 +270,29 @@ public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string
                     ? ("❯ " + left.PadRight(nameWidth) + "  " + command.Description).Style(Ansi.Cyan + Ansi.Bold)
                     : "  " + left.PadRight(nameWidth).Style(Ansi.Bold) + "  " + command.Description.Style(Ansi.Gray);
                 frame.Append('\n').Append(Ansi.TruncateVisible(line, width - 1));
-                rows++;
+                menuRows++;
             }
 
             frame.Append('\n').Append(Ansi.TruncateVisible(
                 "  ↑/↓ select · tab complete · enter run · esc dismiss".Style(Ansi.Gray), width - 1));
-            rows++;
+            menuRows++;
         }
 
-        // Park the cursor back on the input line at the right column.
-        if (rows > 0) frame.Append("\x1b[").Append(rows).Append('A');
+        // Move cursor back up to the input line
+        var rowsToGoUp = 1 + menuRows;
+        frame.Append("\x1b[").Append(rowsToGoUp).Append('A');
         frame.Append('\r');
         if (cursorColumn > 0) frame.Append("\x1b[").Append(cursorColumn).Append('C');
 
         Console.Out.Write(frame.ToString());
+        Console.Out.Flush();
+    }
+
+    private void Finish()
+    {
+        // Clear status bar and menus, leave clean submitted input line
+        var final = "\r\x1b[0J" + Prompt.Style(Ansi.Cyan + Ansi.Bold) + _buffer + "\n";
+        Console.Out.Write(final);
         Console.Out.Flush();
     }
 
@@ -310,14 +331,6 @@ public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string
         var visible = (start > 0 ? "…" : "") + text[start..Math.Max(start, end)];
         var column = promptWidth + (start > 0 ? 1 : 0) + TextWidth.Of(text[start.._cursor]);
         return (visible, column);
-    }
-
-    private void Finish()
-    {
-        // Leave the submitted line in scrollback and erase the menu.
-        var final = "\r\x1b[0J" + Prompt.Style(Ansi.Cyan + Ansi.Bold) + _buffer + "\n";
-        Console.Out.Write(final);
-        Console.Out.Flush();
     }
 
     private int PrevIndex(int index)

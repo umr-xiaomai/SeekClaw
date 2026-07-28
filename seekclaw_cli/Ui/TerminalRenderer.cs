@@ -93,6 +93,12 @@ public sealed class TerminalRenderer : IDisposable
                 _statusDetail = "";
                 break;
 
+            case UserSteerEvent steer:
+                scrollback.Add("");
+                scrollback.Add($"↳ Steering Instruction: {steer.Instruction}".Style(Ansi.Cyan + Ansi.Bold));
+                scrollback.Add("");
+                break;
+
             case StatusEvent status:
                 _status = status.Status;
                 _statusDetail = status.Detail ?? "";
@@ -268,7 +274,7 @@ public sealed class TerminalRenderer : IDisposable
 
         var tokens = _sessionInputTokens + _sessionOutputTokens;
         var costText = _sessionCost > 0 ? $" · ${_sessionCost:0.####}" : "";
-        lines.Add($"{_modelRef}{(tokens > 0 ? $" · {tokens:N0} tok" : "")}{costText}".Style(Ansi.Gray));
+        lines.Add($"{_modelRef}{(tokens > 0 ? $" · {tokens:N0} tokens" : "")}{costText}".Style(Ansi.Gray));
 
         return lines;
     }
