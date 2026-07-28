@@ -19,7 +19,7 @@ public interface IConfigStore
 /// </summary>
 public sealed class ConfigStore : IConfigStore
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly string _configFile;
     private readonly string _stateFile;
 

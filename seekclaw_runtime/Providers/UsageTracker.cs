@@ -14,7 +14,7 @@ public interface IUsageTracker
 /// <summary>Append-only JSONL usage log with in-memory aggregation.</summary>
 public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : IUsageTracker
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly string _file = filePath ?? SeekClawPaths.UsageFile;
 
     public void Record(UsageEntry entry)

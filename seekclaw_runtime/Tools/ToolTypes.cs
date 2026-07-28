@@ -64,7 +64,7 @@ public interface IToolRegistry
 
 public sealed class ToolRegistry : IToolRegistry
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<ITool> _tools = [];
 
     public IReadOnlyList<ITool> All

@@ -21,7 +21,7 @@ public interface IEventSubscription : IDisposable
 
 public sealed class EventBus : IEventBus
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<Subscription> _subscriptions = [];
 
     public void Publish(RuntimeEvent evt)
