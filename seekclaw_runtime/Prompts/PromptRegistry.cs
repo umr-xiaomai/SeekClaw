@@ -38,7 +38,7 @@ public interface IPromptRegistry
 
 public sealed class PromptRegistry : IPromptRegistry
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<PromptContribution> _contributions = [];
 
     public IReadOnlyList<PromptContribution> All

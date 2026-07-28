@@ -24,7 +24,7 @@ public interface ISessionStore
 
 public sealed class SessionStore : ISessionStore
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
 
     public AgentSession Create(WorkspaceInfo workspace)
     {

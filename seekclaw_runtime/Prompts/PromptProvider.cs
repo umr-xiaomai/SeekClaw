@@ -28,7 +28,7 @@ public sealed class FilePromptProvider : IPromptProvider, IDisposable
 {
     private readonly ConcurrentDictionary<string, string?> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(string Root, FileSystemWatcher? Watcher)> _roots = [];
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private string? _workspaceRoot;
 
     public FilePromptProvider(IEnumerable<string>? roots = null)
