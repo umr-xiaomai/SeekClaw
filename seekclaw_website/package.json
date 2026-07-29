@@ -1,0 +1,19 @@
+{
+  "name": "seekclaw-website",
+  "version": "1.0.0",
+  "description": "Official website and documentation for SeekClaw AI Agent Runtime",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3",
+    "vue": "^3.5.13"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.27.0",
+    "lucide-vue-next": "^1.0.0"
+  }
+}

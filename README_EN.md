@@ -14,6 +14,7 @@
 
 SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring clean architecture and event-driven design. It provides a complete platform for building AI-powered coding assistants with support for multiple LLM providers, tool execution, session management, and a smooth terminal interaction experience.
 
+[🌐 Official Website & Docs](https://seekclaw.hoilai.com) •
 [中文](README.md) •
 [Getting Started](#-installation) •
 [Features](#-features) •

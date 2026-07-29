@@ -1,0 +1,31 @@
+# Node dependencies
+node_modules/
+
+# VitePress build outputs & cache
+.vitepress/dist/
+.vitepress/cache/
+dist/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor & OS files
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln.docstates
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# Local env files
+.env
+.env.local
+.env.*.local

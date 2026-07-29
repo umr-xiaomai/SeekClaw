@@ -1,0 +1,21 @@
+# Set default behavior to automatic text normalization
+* text=auto
+
+# Code and documentation files
+*.js text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+# Binary media files
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg text eol=lf
+*.woff binary
+*.woff2 binary
