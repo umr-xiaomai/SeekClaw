@@ -33,14 +33,13 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 
 ## 📸 Screenshots
 
-| Streaming Output & Reasoning | Tool Execution & Web Search |
+| Streaming Output & Reasoning | Code Generation & Documentation |
 | :---: | :---: |
-| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/streaming_reasoning.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/tool_execution_verifier_internetSearch.png" width="440"> |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/streaming_reasoning.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/code.png" width="440"> |
 
-<p align="center">
-  <b>Provider & Model Management</b><br>
-  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/provider_model_management.png" alt="Provider and Model Management" width="880">
-</p>
+| Tool Execution & Web Search | Provider & Model Management |
+| :---: | :---: |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/tool_execution_verifier_internetSearch.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/provider_model_management.png" width="440"> |
 
 ## ✨ Features
 

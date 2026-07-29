@@ -33,14 +33,13 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 
 ## 📸 界面预览
 
-| 终端流式输出与思考推理 | 工具调用与网络搜索验证 |
+| 终端流式输出与思考推理 | 代码生成与文档编写 |
 | :---: | :---: |
-| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/streaming_reasoning.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/tool_execution_verifier_internetSearch.png" width="440"> |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/streaming_reasoning.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/code.png" width="440"> |
 
-<p align="center">
-  <b>提供商与模型路由管理</b><br>
-  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/provider_model_management.png" alt="提供商与模型管理" width="880">
-</p>
+| 工具调用与网络搜索验证 | 提供商与模型路由管理 |
+| :---: | :---: |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/tool_execution_verifier_internetSearch.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/provider_model_management.png" width="440"> |
 
 ## ✨ 功能特性
 
