@@ -20,11 +20,27 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 
 [🌐 Official Website & Docs](https://seekclaw.hoilai.com) •
 [中文](README.md) •
+[Screenshots](#-screenshots) •
 [Getting Started](#-installation) •
 [Features](#-features) •
 [Contributing](#-contributing)
 
 </div>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/hero_interactive_chat.png" alt="SeekClaw Interactive Terminal UI" width="880">
+</p>
+
+## 📸 Screenshots
+
+| Streaming Output & Reasoning | Tool Execution & Web Search |
+| :---: | :---: |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/streaming_reasoning.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/tool_execution_verifier_internetSearch.png" width="440"> |
+
+<p align="center">
+  <b>Provider & Model Management</b><br>
+  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/provider_model_management.png" alt="Provider and Model Management" width="880">
+</p>
 
 ## ✨ Features
 

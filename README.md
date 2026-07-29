@@ -20,11 +20,27 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 
 [🌐 官方网站与文档](https://seekclaw.hoilai.com) •
 [English](README_EN.md) •
+[界面预览](#-界面预览) •
 [快速开始](#-安装) •
 [功能特性](#-功能特性) •
 [贡献指南](#-贡献指南)
 
 </div>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/hero_interactive_chat.png" alt="SeekClaw 交互模式界面" width="880">
+</p>
+
+## 📸 界面预览
+
+| 终端流式输出与思考推理 | 工具调用与网络搜索验证 |
+| :---: | :---: |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/streaming_reasoning.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/tool_execution_verifier_internetSearch.png" width="440"> |
+
+<p align="center">
+  <b>提供商与模型路由管理</b><br>
+  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/provider_model_management.png" alt="提供商与模型管理" width="880">
+</p>
 
 ## ✨ 功能特性
 
