@@ -116,6 +116,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                      new GlobTool(prompts),
                      new GrepTool(prompts),
                      new BashTool(prompts),
+                     new WebSearchTool(prompts),
                      new WebFetchTool(prompts),
                  })
             Tools.Register(tool);

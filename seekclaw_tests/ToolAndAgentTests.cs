@@ -140,4 +140,62 @@ public sealed class ToolAndAgentTests
         Assert.Contains("Title", extracted);
         Assert.Contains("Hello World", extracted);
     }
+
+    [Fact]
+    public void WebSearchTool_ExtractsBingResults()
+    {
+        const string html = """
+            <html><body>
+            <li class="b_algo">
+              <h2><a href="https://example.com/a">Example <strong>A</strong></a></h2>
+              <p>A useful snippet from Bing.</p>
+            </li>
+            </body></html>
+            """;
+
+        var results = WebSearchTool.ExtractBingResults(html, 5);
+
+        var result = Assert.Single(results);
+        Assert.Equal("Example A", result.Title);
+        Assert.Equal("https://example.com/a", result.Url);
+        Assert.Equal("A useful snippet from Bing.", result.Snippet);
+    }
+
+    [Fact]
+    public void WebSearchTool_ExtractsGoogleResultsAndUnwrapsUrls()
+    {
+        const string html = """
+            <html><body>
+            <a href="/url?q=https%3A%2F%2Fexample.com%2Fg&amp;sa=U"><h3>Google Result</h3></a>
+            <div class="VwiC3b">A useful snippet from Google.</div>
+            </body></html>
+            """;
+
+        var results = WebSearchTool.ExtractGoogleResults(html, 5);
+
+        var result = Assert.Single(results);
+        Assert.Equal("Google Result", result.Title);
+        Assert.Equal("https://example.com/g", result.Url);
+        Assert.Equal("A useful snippet from Google.", result.Snippet);
+    }
+
+    [Fact]
+    public void WebSearchTool_ExtractsBaiduResults()
+    {
+        const string html = """
+            <html><body>
+            <div class="result c-container">
+              <h3 class="t"><a href="https://www.baidu.com/link?url=abc">Baidu <em>Result</em></a></h3>
+              <div class="c-abstract">A useful snippet from Baidu.</div>
+            </div>
+            </body></html>
+            """;
+
+        var results = WebSearchTool.ExtractBaiduResults(html, 5);
+
+        var result = Assert.Single(results);
+        Assert.Equal("Baidu Result", result.Title);
+        Assert.Equal("https://www.baidu.com/link?url=abc", result.Url);
+        Assert.Contains("A useful snippet from Baidu.", result.Snippet);
+    }
 }

@@ -1,0 +1,1 @@
+Search the public web for current or external information. Use this before web_fetch when you do not already know the exact URL. Prefer engine=auto so SeekClaw can use Google when available and fall back to Bing or Baidu when Google is blocked. Return useful result URLs and snippets; fetch specific pages afterward when precise details or citations are needed.
