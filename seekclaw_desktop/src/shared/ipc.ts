@@ -1,0 +1,42 @@
+export type DaemonEventName =
+  | 'pong'
+  | 'delta'
+  | 'thinking'
+  | 'status'
+  | 'tool_start'
+  | 'tool_done'
+  | 'result'
+  | 'done'
+  | 'error'
+  | 'bye'
+
+export interface DaemonMessage {
+  id: number
+  event: DaemonEventName
+  data: string
+}
+
+export interface DaemonState {
+  connected: boolean
+  endpoint: string
+  error?: string
+}
+
+export interface AppInfo {
+  version: string
+  platform: 'aix' | 'darwin' | 'freebsd' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'android'
+  defaultWorkspace: string
+}
+
+export interface DesktopApi {
+  getAppInfo(): Promise<AppInfo>
+  selectWorkspace(): Promise<string | null>
+  showItemInFolder(path: string): Promise<void>
+  daemon: {
+    connect(): Promise<DaemonState>
+    disconnect(): Promise<void>
+    request(method: string, params?: Record<string, unknown>): Promise<DaemonMessage>
+    onEvent(listener: (message: DaemonMessage) => void): () => void
+    onState(listener: (state: DaemonState) => void): () => void
+  }
+}

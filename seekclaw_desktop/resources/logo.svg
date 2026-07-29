@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="clawGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="50%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#8b5cf6" />
+    </linearGradient>
+  </defs>
+  <polygon points="50,5 90,27.5 90,72.5 50,95 10,72.5 10,27.5" fill="#0b0f19" stroke="url(#clawGlow)" stroke-width="3" />
+  <path d="M25 35Q50 15 75 35Q60 55 50 78Q40 55 25 35Z" fill="none" stroke="url(#clawGlow)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="50" cy="45" r="8" fill="#10b981" />
+  <circle cx="50" cy="45" r="4" fill="#fff" />
+  <path d="M50 20v10M30 65 20 75M70 65l10 10" stroke="#06b6d4" stroke-width="3" stroke-linecap="round" />
+</svg>

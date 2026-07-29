@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "jsx": "preserve",
+    "paths": {
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@shared/*": ["./src/shared/*"]
+    },
+    "types": ["vite/client"]
+  },
+  "include": [
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.vue",
+    "src/renderer/src/**/*.d.ts",
+    "src/shared/**/*.ts"
+  ]
+}

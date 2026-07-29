@@ -1,0 +1,17 @@
+node_modules/
+dist/
+dist-electron/
+out/
+release/
+.vite/
+.electron-vite/
+.cache/
+coverage/
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+*.local
+.env
+.env.*
+!.env.example
