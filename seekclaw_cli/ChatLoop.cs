@@ -73,14 +73,19 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
     public async Task<int> RunInteractiveAsync(bool continueLast, string? resumeId)
     {
         var session = ResolveSession(continueLast, resumeId);
-        using var renderer = new TerminalRenderer(runtime.Events);
+        using var renderer = new TerminalRenderer(runtime.Events, showTurnDividers: true);
         InstallCancelHandler();
 
         PrintBanner(renderer, session, continueLast || resumeId is not null);
         await ConnectMcpQuietlyAsync(renderer);
         renderer.Flush();
         LoadHistory();
-        var editor = new LineEditor(ReplCommands, _history, () => runtime.Workspace.Config?.Mode ?? runtime.ConfigStore.Config.Agent.Mode);
+        var editor = new LineEditor(
+            ReplCommands,
+            _history,
+            () => runtime.Workspace.Config?.Mode ?? runtime.ConfigStore.Config.Agent.Mode,
+            renderer.SetInputFrame,
+            renderer.WriteLine);
 
         Task? activeTurnTask = null;
 

@@ -6,19 +6,23 @@ using SeekClaw.Runtime.Events;
 namespace SeekClaw.Cli.Ui;
 
 /// <summary>
-/// The terminal render loop. Runs on its own thread at ~30 FPS:
+/// The terminal render loop. Runs on its own thread at ~12 FPS:
 ///   Agent (business thread) → EventBus → render queue → this renderer → console.
 /// High-frequency events are coalesced per frame; the live area is updated in place,
 /// finalized output scrolls above it. The runtime never writes to the console itself.
 /// </summary>
 public sealed class TerminalRenderer : IDisposable
 {
-    private const int FrameMs = 33; // ~30 FPS
+    private const int FrameMs = 80;
+    private const int ThinkingPreviewMs = 240;
+    private const int ThinkingPreviewRows = 2;
     private static readonly string[] SpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
     private readonly IEventSubscription _subscription;
     private readonly ConcurrentQueue<string> _externalLines = new();
     private readonly LiveRegion _live;
+    private LineEditorFrame? _inputFrame;
+    private readonly bool _showTurnDividers;
     private readonly Thread _thread;
     private volatile bool _disposed;
 
@@ -26,6 +30,7 @@ public sealed class TerminalRenderer : IDisposable
     private readonly StringBuilder _streamBuffer = new();
     private readonly StringBuilder _thinkingBuffer = new();
     private readonly StringBuilder _toolOutputBuffer = new();  // For ToolCallProgressEvent
+    private readonly List<string> _thinkingPreview = [];
     private readonly Dictionary<string, (string Name, string Args, long StartedAt)> _activeTools = [];
     private readonly Stopwatch _turnClock = new();
     private bool _turnActive;
@@ -37,16 +42,14 @@ public sealed class TerminalRenderer : IDisposable
     private long _sessionOutputTokens;
     private decimal _sessionCost;
     private int _spinnerTick;
+    private long _thinkingStartedAt;
+    private long _nextThinkingPreviewAt;
 
-    // Track displayed buffer lengths to avoid replicating content each frame.
-    private int _thinkingBufferLength;
-    private int _streamBufferLength;
-    private int _toolOutputBufferLength;
-
-    public TerminalRenderer(IEventBus bus, TextWriter? output = null)
+    public TerminalRenderer(IEventBus bus, TextWriter? output = null, bool showTurnDividers = false)
     {
         VirtualTerminal.Enable();
         _live = new LiveRegion(output ?? Console.Out);
+        _showTurnDividers = showTurnDividers;
         _subscription = bus.Subscribe();
         _thread = new Thread(RenderLoop) { IsBackground = true, Name = "seekclaw-render" };
         _thread.Start();
@@ -54,6 +57,9 @@ public sealed class TerminalRenderer : IDisposable
 
     /// <summary>Thread-safe: queue plain lines into scrollback (user prompt echo, REPL notices).</summary>
     public void WriteLine(string line = "") => _externalLines.Enqueue(line);
+
+    /// <summary>Thread-safe: replaces the editable input area rendered below live agent output.</summary>
+    public void SetInputFrame(LineEditorFrame? frame) => Volatile.Write(ref _inputFrame, frame);
 
     // ---------------------------------------------------------------- render loop
 
@@ -70,7 +76,11 @@ public sealed class TerminalRenderer : IDisposable
                 Apply(evt, scrollback);
 
             _spinnerTick++;
-            _live.Update(scrollback, BuildLiveLines());
+            var live = BuildLiveLines();
+            var input = Volatile.Read(ref _inputFrame);
+            if (input is not null)
+                live.AddRange(input.Lines);
+            _live.Update(scrollback, live, input?.CursorRowsBelow ?? 0, input?.CursorColumn ?? 0);
             Thread.Sleep(FrameMs);
         }
     }
@@ -85,10 +95,10 @@ public sealed class TerminalRenderer : IDisposable
                 _streamBuffer.Clear();
                 _thinkingBuffer.Clear();
                 _toolOutputBuffer.Clear();
-                _thinkingBufferLength = 0;
-                _streamBufferLength = 0;
-                _toolOutputBufferLength = 0;
+                _thinkingPreview.Clear();
                 _activeTools.Clear();
+                _thinkingStartedAt = 0;
+                _nextThinkingPreviewAt = 0;
                 _status = "Thinking";
                 _statusDetail = "";
                 break;
@@ -109,6 +119,8 @@ public sealed class TerminalRenderer : IDisposable
                 break;
 
             case ThinkingDeltaEvent thinking:
+                if (!_thinkingActive)
+                    _thinkingStartedAt = Environment.TickCount64;
                 _thinkingActive = true;
                 _thinkingBuffer.Append(thinking.Delta);
                 break;
@@ -117,16 +129,15 @@ public sealed class TerminalRenderer : IDisposable
                 if (_thinkingActive && _thinkingBuffer.Length > 0)
                 {
                     scrollback.Add("");
-                    scrollback.Add("✨ Thinking Complete".Style(Ansi.Cyan));
+                    var elapsed = Math.Max(0, Environment.TickCount64 - _thinkingStartedAt) / 1000.0;
+                    scrollback.Add($"✻ Thought for {Math.Max(0.1, elapsed):0.0}s".Style(Ansi.Cyan + Ansi.Dim));
                     var thinkingLines = _thinkingBuffer.ToString().Split('\n');
                     foreach (var line in thinkingLines.Where(l => l.Length > 0))
                         scrollback.Add(("  " + line).Style(Ansi.Gray + Ansi.Italic));
-                    scrollback.Add("─────────────────────────────────".Style(Ansi.Gray));
-                    scrollback.Add("");
                 }
                 _thinkingActive = false;
                 _thinkingBuffer.Clear();
-                _thinkingBufferLength = 0;
+                _thinkingPreview.Clear();
                 break;
 
             case AssistantTextDeltaEvent delta:
@@ -136,7 +147,6 @@ public sealed class TerminalRenderer : IDisposable
             case AssistantMessageCompletedEvent message:
                 // Replace the streamed tail with the fully rendered markdown in scrollback.
                 _streamBuffer.Clear();
-                _streamBufferLength = 0;
                 scrollback.Add("");
                 scrollback.AddRange(MarkdownAnsi.Render(message.Text, SafeWidth() - 2));
                 break;
@@ -144,7 +154,6 @@ public sealed class TerminalRenderer : IDisposable
             case ToolCallStartedEvent tool:
                 _activeTools[tool.CallId] = (tool.ToolName, tool.ArgumentSummary, Environment.TickCount64);
                 _toolOutputBuffer.Clear();
-                _toolOutputBufferLength = 0;
                 break;
 
             case ToolCallProgressEvent progress:
@@ -169,7 +178,6 @@ public sealed class TerminalRenderer : IDisposable
                             scrollback.Add(("  " + line).Style(Ansi.Dim));
                     }
                     _toolOutputBuffer.Clear();
-                    _toolOutputBufferLength = 0;
                 }
 
                 var mark = done.Success ? "✓".Style(Ansi.Green) : "✗".Style(Ansi.Red);
@@ -222,10 +230,11 @@ public sealed class TerminalRenderer : IDisposable
                     scrollback.Add("");
                     scrollback.AddRange(MarkdownAnsi.Render(_streamBuffer.ToString(), SafeWidth() - 2));
                     _streamBuffer.Clear();
-                    _streamBufferLength = 0;
                 }
                 if (completed.Cancelled)
                     scrollback.Add("— cancelled —".Style(Ansi.Yellow));
+                if (_showTurnDividers)
+                    scrollback.Add(TurnDivider());
                 _turnActive = false;
                 _activeTools.Clear();
                 _thinkingActive = false;
@@ -249,71 +258,98 @@ public sealed class TerminalRenderer : IDisposable
 
         if (_thinkingActive)
         {
-            lines.Add("═══════════════════════════════════".Style(Ansi.Gray));
-            lines.Add("✨ Thinking...".Style(Ansi.Cyan + Ansi.Italic));
-            foreach (var line in TailIncremental(_thinkingBuffer, 3, ref _thinkingBufferLength))
+            var now = Environment.TickCount64;
+            var elapsed = now - _thinkingStartedAt >= 1000 ? $" · {(now - _thinkingStartedAt) / 1000.0:0}s" : "";
+            lines.Add($"{Spinner().Style(Ansi.Cyan)} {"Thinking…".Style(Ansi.Cyan)}{elapsed.Style(Ansi.Gray)}");
+
+            if (_thinkingPreview.Count == 0 || now >= _nextThinkingPreviewAt)
+            {
+                _thinkingPreview.Clear();
+                _thinkingPreview.AddRange(BuildStableTail(
+                    _thinkingBuffer.ToString(), Math.Max(20, SafeWidth() - 5), ThinkingPreviewRows));
+                while (_thinkingPreview.Count < ThinkingPreviewRows)
+                    _thinkingPreview.Add("");
+                _nextThinkingPreviewAt = now + ThinkingPreviewMs;
+            }
+
+            foreach (var line in _thinkingPreview)
                 lines.Add(("  " + line).Style(Ansi.Gray + Ansi.Italic));
         }
 
-        foreach (var line in TailIncremental(_streamBuffer, 6, ref _streamBufferLength))
+        foreach (var line in BuildStableTail(_streamBuffer.ToString(), Math.Max(20, SafeWidth() - 1), 6))
             lines.Add(line);
 
         // Show tool output if any tool is active
         if (_toolOutputBuffer.Length > 0)
         {
-            lines.Add("───────────────────────────────────".Style(Ansi.Gray));
             lines.Add("» Tool Output".Style(Ansi.Blue + Ansi.Dim));
-            foreach (var line in TailIncremental(_toolOutputBuffer, 4, ref _toolOutputBufferLength))
+            foreach (var line in BuildStableTail(_toolOutputBuffer.ToString(), Math.Max(20, SafeWidth() - 3), 4))
                 lines.Add(("  " + line).Style(Ansi.Dim));
         }
 
-        var elapsedText = _turnClock.Elapsed.TotalSeconds >= 1 ? $" · {_turnClock.Elapsed.TotalSeconds:0}s" : "";
-        var detail = _statusDetail.Length > 0 ? $" {_statusDetail}" : "";
-        lines.Add($"{Spinner().Style(Ansi.Cyan)} {_status.Style(Ansi.Cyan)}{detail.Style(Ansi.Dim)}{elapsedText.Style(Ansi.Gray)}"
-                  + " (ctrl+c to cancel)".Style(Ansi.Gray));
+        if (!_thinkingActive)
+        {
+            var elapsedText = _turnClock.Elapsed.TotalSeconds >= 1 ? $" · {_turnClock.Elapsed.TotalSeconds:0}s" : "";
+            var detail = _statusDetail.Length > 0 ? $" {_statusDetail}" : "";
+            lines.Add($"{Spinner().Style(Ansi.Cyan)} {_status.Style(Ansi.Cyan)}{detail.Style(Ansi.Dim)}{elapsedText.Style(Ansi.Gray)}"
+                      + " (ctrl+c to cancel)".Style(Ansi.Gray));
+        }
 
         var tokens = _sessionInputTokens + _sessionOutputTokens;
         var costText = _sessionCost > 0 ? $" · ${_sessionCost:0.####}" : "";
-        lines.Add($"{_modelRef}{(tokens > 0 ? $" · {tokens:N0} tokens" : "")}{costText}".Style(Ansi.Gray));
+        if (_modelRef.Length > 0 || tokens > 0 || costText.Length > 0)
+            lines.Add($"{_modelRef}{(tokens > 0 ? $" · {tokens:N0} tokens" : "")}{costText}".Style(Ansi.Gray));
 
         return lines;
     }
 
     private string Spinner() => SpinnerFrames[_spinnerTick % SpinnerFrames.Length];
 
-    /// <summary>
-    /// Returns only the new content added to the buffer since last call.
-    /// Uses character position rather than line count to avoid edge cases.
-    /// </summary>
-    private IEnumerable<string> TailIncremental(StringBuilder buffer, int maxLines, ref int lastLength)
+    internal static IReadOnlyList<string> BuildStableTail(string text, int lineWidth, int maxLines)
     {
-        // If buffer is now shorter, it was reset - start from the beginning
-        if (buffer.Length < lastLength)
-            lastLength = 0;
+        if (string.IsNullOrWhiteSpace(text) || lineWidth <= 0 || maxLines <= 0) return [];
 
-        // Extract only the new content
-        var newContent = buffer.ToString(lastLength, buffer.Length - lastLength);
-        lastLength = buffer.Length;
+        // Streams can be very long. Only shape enough recent text to fill the live preview.
+        var sampleLength = Math.Min(text.Length, Math.Max(256, lineWidth * maxLines * 4));
+        var start = text.Length - sampleLength;
+        if (start > 0 && char.IsLowSurrogate(text[start])) start--;
 
-        if (newContent.Length == 0) return [];
+        var lines = new List<string>();
+        var line = new StringBuilder();
+        var width = 0;
+        var pendingSpace = false;
 
-        // Split into lines and return, limiting to maxLines
-        var lines = newContent.Split('\n');
+        foreach (var rune in text.AsSpan(start).EnumerateRunes())
+        {
+            if (Rune.IsWhiteSpace(rune))
+            {
+                pendingSpace = line.Length > 0;
+                continue;
+            }
 
-        // Remove last empty entry if the content ends with \n
-        if (lines.Length > 0 && lines[^1].Length == 0)
-            lines = lines[..^1];
+            var glyph = rune.ToString();
+            var glyphWidth = TextWidth.Of(glyph);
+            var spaceWidth = pendingSpace && line.Length > 0 ? 1 : 0;
+            if (line.Length > 0 && width + spaceWidth + glyphWidth > lineWidth)
+            {
+                lines.Add(line.ToString());
+                line.Clear();
+                width = 0;
+                spaceWidth = 0;
+            }
 
-        // Return only the last maxLines
-        return lines.TakeLast(maxLines).Select(l => l.TrimEnd('\r'));
-    }
+            if (spaceWidth > 0)
+            {
+                line.Append(' ');
+                width++;
+            }
+            line.Append(glyph);
+            width += glyphWidth;
+            pendingSpace = false;
+        }
 
-    private static IEnumerable<string> Tail(StringBuilder buffer, int maxLines)
-    {
-        if (buffer.Length == 0) return [];
-        var text = buffer.ToString();
-        var lines = text.Split('\n');
-        return lines.Skip(Math.Max(0, lines.Length - maxLines)).Select(l => l.TrimEnd('\r'));
+        if (line.Length > 0) lines.Add(line.ToString());
+        return lines.TakeLast(maxLines).ToList();
     }
 
     private static IEnumerable<string> RenderDiff(string unifiedDiff)
@@ -344,6 +380,9 @@ public sealed class TerminalRenderer : IDisposable
         try { return Math.Max(40, Console.WindowWidth); }
         catch (IOException) { return 100; }
     }
+
+    private static string TurnDivider() =>
+        new string('─', Math.Max(20, SafeWidth() - 1)).Style(Ansi.Gray);
 
     /// <summary>Blocks briefly so queued frames land before the prompt is shown again.</summary>
     public void Flush()

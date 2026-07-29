@@ -6,13 +6,21 @@ namespace SeekClaw.Cli.Ui;
 /// <summary>A REPL slash command surfaced in the completion menu.</summary>
 public sealed record SlashCommand(string Name, string ArgsHint, string Description, bool SubmitsOnSelect);
 
+/// <summary>Immutable snapshot of the editable input area for the shared terminal renderer.</summary>
+public sealed record LineEditorFrame(IReadOnlyList<string> Lines, int CursorRowsBelow, int CursorColumn);
+
 /// <summary>
 /// Interactive line editor with a Claude-Code-style slash command menu:
 /// typing "/" opens a filtered command list under the input line
 /// (↑/↓ select · tab complete · enter run · esc dismiss), plus input history.
 /// CJK-aware cursor math; long input scrolls horizontally within one row.
 /// </summary>
-public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string> history, Func<string>? getModeText = null)
+public sealed class LineEditor(
+    IReadOnlyList<SlashCommand> commands,
+    List<string> history,
+    Func<string>? getModeText = null,
+    Action<LineEditorFrame?>? setFrame = null,
+    Action<string>? submitLine = null)
 {
     private const int MaxMenuRows = 8;
     private const string Prompt = "❯ ";
@@ -233,18 +241,36 @@ public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string
 
     private void Render()
     {
-        var width = SafeWidth();
+        var view = BuildFrame();
+        if (setFrame is not null)
+        {
+            setFrame(view);
+            return;
+        }
+
         var frame = new StringBuilder("\r\x1b[0J");
+        frame.Append(string.Join('\n', view.Lines));
+        if (view.CursorRowsBelow > 0) frame.Append("\x1b[").Append(view.CursorRowsBelow).Append('A');
+        frame.Append('\r');
+        if (view.CursorColumn > 0) frame.Append("\x1b[").Append(view.CursorColumn).Append('C');
+
+        Console.Out.Write(frame.ToString());
+        Console.Out.Flush();
+    }
+
+    private LineEditorFrame BuildFrame()
+    {
+        var width = SafeWidth();
+        var lines = new List<string>();
 
         // 1. Input line
         var (visible, cursorColumn) = Viewport(width - TextWidth.Of(Prompt) - 1);
-        frame.Append(Prompt.Style(Ansi.Cyan + Ansi.Bold));
+        var inputLine = new StringBuilder(Prompt.Style(Ansi.Cyan + Ansi.Bold));
         if (_buffer.Length == 0)
-            frame.Append(Placeholder.Style(Ansi.Gray));
+            inputLine.Append(Placeholder.Style(Ansi.Gray));
         else
-            frame.Append(visible);
-
-        frame.Append('\n');
+            inputLine.Append(visible);
+        lines.Add(inputLine.ToString());
 
         // 2. Status Bar
         var modeStr = getModeText?.Invoke() ?? "edit";
@@ -253,7 +279,7 @@ public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string
         var statusRight = "❖ SeekClaw ".Style(Ansi.Gray);
         var statusPadding = Math.Max(1, width - TextWidth.Of(Ansi.StripStyles(statusLeft)) - TextWidth.Of(Ansi.StripStyles(statusRight)) - 1);
         var statusBar = statusLeft + new string(' ', statusPadding) + statusRight;
-        frame.Append(Ansi.TruncateVisible(statusBar, width - 1));
+        lines.Add(Ansi.TruncateVisible(statusBar, width - 1));
 
         var menu = CurrentMenu();
         var menuRows = 0;
@@ -269,27 +295,27 @@ public sealed class LineEditor(IReadOnlyList<SlashCommand> commands, List<string
                 var line = index == _selected
                     ? ("❯ " + left.PadRight(nameWidth) + "  " + command.Description).Style(Ansi.Cyan + Ansi.Bold)
                     : "  " + left.PadRight(nameWidth).Style(Ansi.Bold) + "  " + command.Description.Style(Ansi.Gray);
-                frame.Append('\n').Append(Ansi.TruncateVisible(line, width - 1));
+                lines.Add(Ansi.TruncateVisible(line, width - 1));
                 menuRows++;
             }
 
-            frame.Append('\n').Append(Ansi.TruncateVisible(
+            lines.Add(Ansi.TruncateVisible(
                 "  ↑/↓ select · tab complete · enter run · esc dismiss".Style(Ansi.Gray), width - 1));
             menuRows++;
         }
 
-        // Move cursor back up to the input line
-        var rowsToGoUp = 1 + menuRows;
-        frame.Append("\x1b[").Append(rowsToGoUp).Append('A');
-        frame.Append('\r');
-        if (cursorColumn > 0) frame.Append("\x1b[").Append(cursorColumn).Append('C');
-
-        Console.Out.Write(frame.ToString());
-        Console.Out.Flush();
+        return new LineEditorFrame(lines, 1 + menuRows, cursorColumn);
     }
 
     private void Finish()
     {
+        if (setFrame is not null)
+        {
+            submitLine?.Invoke(Prompt.Style(Ansi.Cyan + Ansi.Bold) + _buffer);
+            setFrame(null);
+            return;
+        }
+
         // Clear status bar and menus, leave clean submitted input line
         var final = "\r\x1b[0J" + Prompt.Style(Ansi.Cyan + Ansi.Bold) + _buffer + "\n";
         Console.Out.Write(final);

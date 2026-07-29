@@ -20,6 +20,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="seekclaw_cli_tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="prompts\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="defaults\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

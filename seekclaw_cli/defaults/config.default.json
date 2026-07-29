@@ -136,8 +136,8 @@
       "id": "mimo",
       "name": "MiMo (Xiaomi)",
       "kind": "openai",
-      "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
-      "apiKey": "tp-c7gzw59e0ynnh778ioo9o4pq95ykjn7amxj7vkbfgpb40agj",
+      "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+      "apiKey": "",
       "priority": 3,
       "models": [
         {
