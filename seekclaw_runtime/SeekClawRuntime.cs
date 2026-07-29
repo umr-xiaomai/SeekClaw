@@ -46,10 +46,20 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     }
 
     public static SeekClawRuntime Create(string? startDirectory = null)
+        => CreateCore(startDirectory, null);
+
+    internal static SeekClawRuntime Create(string startDirectory, IConfigStore configStore)
+        => CreateCore(startDirectory, services => services.AddSingleton(configStore));
+
+    private static SeekClawRuntime CreateCore(
+        string? startDirectory,
+        Action<IServiceCollection>? configureServices)
     {
         SeekClawPaths.EnsureCreated();
 
-        var services = new ServiceCollection().AddSeekClawRuntime().BuildServiceProvider();
+        var serviceCollection = new ServiceCollection().AddSeekClawRuntime();
+        configureServices?.Invoke(serviceCollection);
+        var services = serviceCollection.BuildServiceProvider();
         var workspace = services.GetRequiredService<IWorkspaceManager>().Detect(startDirectory);
 
         var runtime = new SeekClawRuntime(services, workspace);

@@ -19,9 +19,32 @@ import type { ChatMessage, ProjectItem, ThreadItem } from './types'
 const makeId = (): string => crypto.randomUUID()
 const pathName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
 
+interface RuntimeSessionHeader {
+  id: string
+  title?: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface RuntimeSession {
+  id: string
+  title?: string
+  createdAt: string
+  updatedAt: string
+  messages: Array<{
+    role: 'user' | 'assistant' | 'tool'
+    text: string
+    thinking?: string
+    toolCalls?: Array<{ id: string; name: string }>
+    toolName?: string
+    toolSuccess?: boolean
+  }>
+}
+
 const appInfo = ref<AppInfo>({ version: '0.1.0', platform: 'win32', defaultWorkspace: '' })
 const sidebarOpen = ref(true)
 const settingsOpen = ref(false)
+const settingsSection = ref<'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'>('general')
 const theme = ref<'light' | 'dark'>((localStorage.getItem('seekclaw-theme') as 'light' | 'dark') || 'light')
 const daemonState = ref<DaemonState>({ connected: false, endpoint: '' })
 const projects = ref<ProjectItem[]>([])
@@ -63,10 +86,38 @@ async function connectDaemon(): Promise<void> {
   daemonState.value = await window.seekclaw.daemon.connect()
   if (!daemonState.value.connected) return
   try {
-    const response = await window.seekclaw.daemon.request('model.list')
-    const available = JSON.parse(response.data) as string[]
+    const [modelResponse, workspaceResponse, modeResponse, catalogResponse, sessionResponse] = await Promise.all([
+      window.seekclaw.daemon.request('model.list'),
+      window.seekclaw.daemon.request('workspace.get'),
+      window.seekclaw.daemon.request('agent.mode.get'),
+      window.seekclaw.daemon.request('model.catalog'),
+      window.seekclaw.daemon.request('session.list')
+    ])
+    const available = JSON.parse(modelResponse.data) as string[]
+    const catalog = JSON.parse(catalogResponse.data) as Array<{ ref: string; active: boolean }>
     models.value = available
-    if (available.length > 0 && !available.includes(activeModel.value)) activeModel.value = available[0]!
+    activeModel.value = catalog.find((model) => model.active)?.ref
+      ?? (available.includes(activeModel.value) ? activeModel.value : available[0] ?? 'balanced')
+    const workspace = JSON.parse(workspaceResponse.data) as { path: string; name: string; mode: string }
+    const currentProject = projects.value.find((project) => project.path === workspace.path)
+    const project = currentProject ?? { id: makeId(), name: workspace.name, path: workspace.path }
+    if (!currentProject) projects.value.push(project)
+    if (activeThread.value) activeThread.value.projectId = project.id
+    mode.value = modeResponse.data
+
+    const sessions = JSON.parse(sessionResponse.data) as RuntimeSessionHeader[]
+    for (const saved of sessions) {
+      if (threads.value.some((thread) => thread.sessionId === saved.id)) continue
+      threads.value.push({
+        id: `session:${saved.id}`,
+        title: saved.title || `任务 ${new Date(saved.createdAt).toLocaleString()}`,
+        projectId: project.id,
+        updatedAt: new Date(saved.updatedAt).getTime(),
+        messages: [],
+        sessionId: saved.id,
+        sessionLoaded: false
+      })
+    }
   } catch {
     models.value = []
   }
@@ -79,10 +130,55 @@ async function reconnectDaemon(): Promise<void> {
 
 async function openWorkspace(): Promise<void> {
   const path = await window.seekclaw.selectWorkspace()
-  if (!path || projects.value.some((project) => project.path === path)) return
-  const project: ProjectItem = { id: makeId(), name: pathName(path), path }
-  projects.value.push(project)
-  if (activeThread.value) activeThread.value.projectId = project.id
+  if (!path) return
+  try {
+    const response = await window.seekclaw.daemon.request('workspace.open', { path })
+    const opened = JSON.parse(response.data) as { path: string; name: string; mode: string }
+    let project = projects.value.find((item) => item.path === opened.path)
+    if (!project) {
+      project = { id: makeId(), name: opened.name || pathName(opened.path), path: opened.path }
+      projects.value.push(project)
+    }
+    bindProject(project)
+    mode.value = opened.mode
+  } catch {
+    // The Runtime keeps the previous workspace when validation or switching fails.
+  }
+}
+
+async function activateProject(project: ProjectItem): Promise<void> {
+  if (busy.value || project.path === activeProject.value?.path) return
+  try {
+    const response = await window.seekclaw.daemon.request('workspace.open', { path: project.path })
+    const opened = JSON.parse(response.data) as { path: string; mode: string }
+    const resolved = projects.value.find((item) => item.path === opened.path) ?? project
+    bindProject(resolved)
+    mode.value = opened.mode
+  } catch {
+    // Keep the active project unchanged when the Runtime rejects the switch.
+  }
+}
+
+function bindProject(project: ProjectItem): void {
+  const thread = activeThread.value
+  if (!thread || thread.messages.length > 0 || thread.sessionId) {
+    const next: ThreadItem = {
+      id: makeId(),
+      title: '新任务',
+      projectId: project.id,
+      updatedAt: Date.now(),
+      messages: []
+    }
+    threads.value.unshift(next)
+    activeThreadId.value = next.id
+    return
+  }
+  thread.projectId = project.id
+}
+
+function openSettings(section: typeof settingsSection.value = 'general'): void {
+  settingsSection.value = section
+  settingsOpen.value = true
 }
 
 function newTask(): void {
@@ -98,9 +194,47 @@ function newTask(): void {
   void nextTick(() => composer.value?.focus())
 }
 
-function selectThread(id: string): void {
+async function selectThread(id: string): Promise<void> {
   activeThreadId.value = id
-  void scrollToBottom()
+  const thread = threads.value.find((item) => item.id === id)
+  if (thread?.sessionId && !thread.sessionLoaded) {
+    try {
+      await window.seekclaw.daemon.request('session.resume', { id: thread.sessionId })
+      const response = await window.seekclaw.daemon.request('session.get', { id: thread.sessionId })
+      const saved = JSON.parse(response.data) as RuntimeSession
+      const messages: ChatMessage[] = []
+      saved.messages.forEach((item, index) => {
+        if (item.role === 'tool') {
+          const assistant = messages.findLast((message) => message.role === 'assistant')
+          if (assistant && item.toolName) {
+            assistant.tools ??= []
+            assistant.tools.push({
+              id: `${saved.id}:tool:${index}`,
+              name: item.toolName,
+              state: item.toolSuccess === false ? 'error' : 'done',
+              detail: item.text
+            })
+          }
+          return
+        }
+        messages.push({
+          id: `${saved.id}:${index}`,
+          role: item.role,
+          content: item.text,
+          thinking: item.thinking,
+          tools: item.toolCalls?.map((call) => ({ id: call.id, name: call.name, state: 'done' })),
+          state: item.role === 'assistant' ? 'done' : undefined,
+          createdAt: new Date(saved.createdAt).getTime() + index
+        })
+      })
+      thread.messages = messages
+      thread.sessionLoaded = true
+      thread.title = saved.title || thread.title
+    } catch {
+      thread.sessionLoaded = false
+    }
+  }
+  await scrollToBottom()
 }
 
 function updateThreadTitle(thread: ThreadItem, prompt: string): void {
@@ -135,6 +269,11 @@ async function sendMessage(content: string): Promise<void> {
   await scrollToBottom(true)
 
   try {
+    if (!thread.sessionId) {
+      const sessionResponse = await window.seekclaw.daemon.request('session.new')
+      thread.sessionId = sessionResponse.data
+      thread.sessionLoaded = true
+    }
     await window.seekclaw.daemon.request('chat', { message: content })
     assistant.state = 'done'
   } catch (error) {
@@ -151,6 +290,9 @@ async function sendMessage(content: string): Promise<void> {
 }
 
 function handleDaemonEvent(event: DaemonMessage): void {
+  if (event.requestMethod !== 'chat'
+      && event.requestMethod !== 'agent.runTurn'
+      && event.requestMethod !== 'agent/runTurn') return
   if (!activeAssistantId.value) return
   const message = activeThread.value?.messages.find((item) => item.id === activeAssistantId.value)
   if (!message) return
@@ -182,6 +324,10 @@ function handleDaemonEvent(event: DaemonMessage): void {
       message.state = 'done'
       if (!message.content && event.data) message.content = event.data
       break
+    case 'cancelled':
+      message.state = 'done'
+      if (!message.content && event.data) message.content = event.data
+      break
     case 'error':
       message.state = 'error'
       if (!message.content) message.content = event.data
@@ -190,12 +336,12 @@ function handleDaemonEvent(event: DaemonMessage): void {
   void scrollToBottom()
 }
 
-function stopTurn(): void {
-  const message = activeThread.value?.messages.find((item) => item.id === activeAssistantId.value)
-  if (message) message.state = 'done'
-  busy.value = false
-  activeAssistantId.value = null
-  void window.seekclaw.daemon.disconnect()
+async function stopTurn(): Promise<void> {
+  try {
+    await window.seekclaw.daemon.request('agent.cancel')
+  } catch {
+    // sendMessage owns the final error state if cancellation cannot be delivered.
+  }
 }
 
 async function changeModel(model: string): Promise<void> {
@@ -205,6 +351,16 @@ async function changeModel(model: string): Promise<void> {
     await window.seekclaw.daemon.request('model.switch', { model })
   } catch {
     daemonState.value = { ...daemonState.value, connected: false }
+  }
+}
+
+async function changeMode(nextMode: string): Promise<void> {
+  if (nextMode === mode.value) return
+  try {
+    const response = await window.seekclaw.daemon.request('agent.mode.switch', { mode: nextMode })
+    mode.value = response.data
+  } catch {
+    // Keep showing the mode that is active in the Runtime.
   }
 }
 
@@ -246,7 +402,9 @@ watch(theme, applyTheme)
         @new-task="newTask"
         @open-workspace="openWorkspace"
         @select-thread="selectThread"
-        @open-settings="settingsOpen = true"
+        @select-project="activateProject"
+        @open-extensions="openSettings('mcp')"
+        @open-settings="openSettings('general')"
       />
       <button v-if="sidebarOpen" class="sidebar-scrim" title="关闭侧栏" @click="sidebarOpen = false" />
 
@@ -305,7 +463,7 @@ watch(theme, applyTheme)
             @stop="stopTurn"
             @attach="openWorkspace"
             @change-model="changeModel"
-            @change-mode="mode = $event"
+            @change-mode="changeMode"
           />
           <p class="composer-caption">SeekClaw 可能会出错，请检查生成的代码和命令。</p>
         </footer>
@@ -317,9 +475,13 @@ watch(theme, applyTheme)
       :theme="theme"
       :daemon-connected="daemonState.connected"
       :daemon-endpoint="daemonState.endpoint"
+      :workspace-path="activeProject?.path || appInfo.defaultWorkspace"
+      :initial-section="settingsSection"
       @close="settingsOpen = false"
       @change-theme="applyTheme"
       @reconnect="reconnectDaemon"
+      @open-workspace="openWorkspace"
+      @runtime-changed="connectDaemon"
     />
   </div>
 </template>

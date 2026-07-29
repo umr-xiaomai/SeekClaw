@@ -26,6 +26,8 @@ const emit = defineEmits<{
   newTask: []
   openWorkspace: []
   selectThread: [id: string]
+  selectProject: [project: ProjectItem]
+  openExtensions: []
   openSettings: []
 }>()
 
@@ -67,7 +69,7 @@ const filteredThreads = computed(() => {
         <Clock3 :size="19" />
         <span>已安排</span>
       </button>
-      <button class="nav-item" disabled title="即将支持">
+      <button class="nav-item" @click="emit('openExtensions')">
         <Blocks :size="19" />
         <span>MCP 与技能</span>
       </button>
@@ -85,6 +87,7 @@ const filteredThreads = computed(() => {
         :key="project.id"
         class="project-row"
         :title="project.path"
+        @click="emit('selectProject', project)"
       >
         <Folder :size="18" />
         <span>{{ project.name }}</span>

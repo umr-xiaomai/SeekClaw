@@ -5,11 +5,12 @@ import { createConnection, type Socket } from 'node:net'
 import type { DaemonMessage, DaemonState } from '../shared/ipc.js'
 
 interface PendingRequest {
+  method: string
   resolve: (message: DaemonMessage) => void
   reject: (error: Error) => void
 }
 
-const TERMINAL_EVENTS = new Set(['pong', 'result', 'done', 'error', 'bye'])
+const TERMINAL_EVENTS = new Set(['pong', 'result', 'done', 'cancelled', 'error', 'bye'])
 
 export class DaemonClient extends EventEmitter {
   private socket: Socket | null = null
@@ -78,7 +79,7 @@ export class DaemonClient extends EventEmitter {
 
     const id = this.nextId++
     return new Promise<DaemonMessage>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      this.pending.set(id, { method, resolve, reject })
       this.socket!.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
         if (!error) return
         this.pending.delete(id)
@@ -122,14 +123,15 @@ export class DaemonClient extends EventEmitter {
       return
     }
 
-    this.emit('event', message)
+    const request = this.pending.get(message.id)
+    const event = request ? { ...message, requestMethod: request.method } : message
+    this.emit('event', event)
     if (!TERMINAL_EVENTS.has(message.event)) return
 
-    const request = this.pending.get(message.id)
     if (!request) return
     this.pending.delete(message.id)
     if (message.event === 'error') request.reject(new Error(message.data))
-    else request.resolve(message)
+    else request.resolve(event)
   }
 
   private rejectPending(error: Error): void {

@@ -7,6 +7,7 @@ export type DaemonEventName =
   | 'tool_done'
   | 'result'
   | 'done'
+  | 'cancelled'
   | 'error'
   | 'bye'
 
@@ -14,6 +15,7 @@ export interface DaemonMessage {
   id: number
   event: DaemonEventName
   data: string
+  requestMethod?: string
 }
 
 export interface DaemonState {

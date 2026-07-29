@@ -58,12 +58,22 @@ public sealed class SessionStore : ISessionStore
         var headers = new List<SessionHeader>();
         foreach (var file in Directory.EnumerateFiles(workspace.SessionsDir, "*.jsonl"))
         {
-            var firstLine = File.ReadLines(file).FirstOrDefault();
-            if (firstLine is null) continue;
+            using var lines = File.ReadLines(file).GetEnumerator();
+            if (!lines.MoveNext()) continue;
             try
             {
-                var header = JsonSerializer.Deserialize(firstLine, SeekClawJsonContext.Compact.SessionHeader);
-                if (header is not null) headers.Add(header);
+                var header = JsonSerializer.Deserialize(lines.Current, SeekClawJsonContext.Compact.SessionHeader);
+                if (header is null) continue;
+                header.UpdatedAt = File.GetLastWriteTimeUtc(file);
+                if (string.IsNullOrWhiteSpace(header.Title) && lines.MoveNext())
+                {
+                    var firstMessage = JsonSerializer.Deserialize(lines.Current, SeekClawJsonContext.Compact.SessionMessage);
+                    if (firstMessage?.Role == "user" && !string.IsNullOrWhiteSpace(firstMessage.Text))
+                        header.Title = firstMessage.Text.Length > 42
+                            ? firstMessage.Text[..42] + "…"
+                            : firstMessage.Text;
+                }
+                headers.Add(header);
             }
             catch (JsonException) { }
         }

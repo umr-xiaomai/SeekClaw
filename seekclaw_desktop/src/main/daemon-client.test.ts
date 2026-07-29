@@ -44,7 +44,31 @@ describe('DaemonClient', () => {
 
     expect(response.event).toBe('done')
     expect(response.data).toBe('hello')
+    expect(response.requestMethod).toBe('chat')
     expect(events.map((event) => event.event)).toEqual(['thinking', 'delta', 'done'])
   })
-})
 
+  it('treats a cancelled turn as a terminal response', async () => {
+    const suffix = `${process.pid}-${Date.now()}-cancel`
+    const endpoint = process.platform === 'win32'
+      ? String.raw`\\.\pipe\seekclaw-test-${suffix}`
+      : join(tmpdir(), `seekclaw-test-${suffix}.sock`)
+
+    const server = createServer((socket) => {
+      socket.once('data', (chunk) => {
+        const request = JSON.parse(chunk.toString().trim()) as { id: number }
+        socket.write(`${JSON.stringify({ id: request.id, event: 'cancelled', data: 'partial' })}\n`)
+      })
+    })
+    servers.push(server)
+    server.listen(endpoint)
+    await once(server, 'listening')
+
+    const client = new DaemonClient(endpoint)
+    clients.push(client)
+    const response = await client.request('chat', { message: 'hello' })
+
+    expect(response.event).toBe('cancelled')
+    expect(response.data).toBe('partial')
+  })
+})

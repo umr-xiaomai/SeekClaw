@@ -27,8 +27,13 @@ public sealed class McpManager(
     private readonly List<McpClient> _clients = [];
     private readonly List<IDisposable> _registrations = [];
     private readonly List<McpServerStatus> _status = [];
+    private readonly SemaphoreSlim _connectionGate = new(1, 1);
+    private readonly Lock _statusGate = new();
 
-    public IReadOnlyList<McpServerStatus> Status => _status;
+    public IReadOnlyList<McpServerStatus> Status
+    {
+        get { lock (_statusGate) return _status.ToList(); }
+    }
 
     public IReadOnlyDictionary<string, McpServerConfig> LoadServerConfigs(WorkspaceInfo workspace)
     {
@@ -60,28 +65,39 @@ public sealed class McpManager(
 
     public async Task<IReadOnlyList<McpServerStatus>> ConnectAllAsync(WorkspaceInfo workspace, CancellationToken ct)
     {
-        _status.Clear();
-
-        foreach (var (name, server) in LoadServerConfigs(workspace))
+        await _connectionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            if (!server.Enabled)
+            await ResetConnectionsAsync().ConfigureAwait(false);
+            lock (_statusGate) _status.Clear();
+
+            foreach (var (name, server) in LoadServerConfigs(workspace))
             {
-                _status.Add(new McpServerStatus(name, server.Transport, false, 0, "disabled"));
-                continue;
+                if (!server.Enabled)
+                {
+                    lock (_statusGate)
+                        _status.Add(new McpServerStatus(name, server.Transport, false, 0, "disabled"));
+                    continue;
+                }
+
+                try
+                {
+                    var status = await ConnectOneAsync(name, server, ct).ConfigureAwait(false);
+                    lock (_statusGate) _status.Add(status);
+                }
+                catch (Exception ex) when (ex is McpException or InvalidOperationException or IOException or HttpRequestException)
+                {
+                    lock (_statusGate)
+                        _status.Add(new McpServerStatus(name, server.Transport, false, 0, ex.Message));
+                }
             }
 
-            try
-            {
-                var status = await ConnectOneAsync(name, server, ct).ConfigureAwait(false);
-                _status.Add(status);
-            }
-            catch (Exception ex) when (ex is McpException or InvalidOperationException or IOException or HttpRequestException)
-            {
-                _status.Add(new McpServerStatus(name, server.Transport, false, 0, ex.Message));
-            }
+            return Status;
         }
-
-        return _status;
+        finally
+        {
+            _connectionGate.Release();
+        }
     }
 
     private async Task<McpServerStatus> ConnectOneAsync(string name, McpServerConfig server, CancellationToken ct)
@@ -132,6 +148,20 @@ public sealed class McpManager(
     }
 
     public async ValueTask DisposeAsync()
+    {
+        await _connectionGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await ResetConnectionsAsync().ConfigureAwait(false);
+            lock (_statusGate) _status.Clear();
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
+    private async ValueTask ResetConnectionsAsync()
     {
         foreach (var registration in _registrations) registration.Dispose();
         _registrations.Clear();

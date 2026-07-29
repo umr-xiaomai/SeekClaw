@@ -27,5 +27,6 @@ export interface ThreadItem {
   projectId: string
   updatedAt: number
   messages: ChatMessage[]
+  sessionId?: string
+  sessionLoaded?: boolean
 }
-

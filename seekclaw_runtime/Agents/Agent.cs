@@ -76,6 +76,10 @@ public sealed class Agent(
                     events.Publish(new AssistantMessageCompletedEvent(completion.Text));
                 }
 
+                // StreamOnceAsync preserves partial text on cancellation. Stop the turn after
+                // persisting that text instead of reporting the cancelled request as completed.
+                ct.ThrowIfCancellationRequested();
+
                 if (completion.ToolCalls.Count > 0)
                 {
                     var readOnlyBatch = new List<ToolCallRequest>();

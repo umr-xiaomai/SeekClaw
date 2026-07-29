@@ -416,12 +416,14 @@ public static class DaemonCommand
         command.SetAction(async (_, ct) =>
         {
             await using var rt = CliHost.CreateRuntime();
-            await rt.ConnectMcpAsync(ct);
+            var mcpConnection = rt.ConnectMcpAsync(ct);
             var endpoint = OperatingSystem.IsWindows()
                 ? $@"\\.\pipe\{DaemonServer.PipeName}"
                 : DaemonServer.SocketPath;
             AnsiConsole.MarkupLine($"[green]SeekClaw daemon listening[/] on [cyan]{Markup.Escape(endpoint)}[/] (ctrl+c to stop)");
-            await new DaemonServer(rt).RunAsync(ct);
+            var daemon = new DaemonServer(rt).RunAsync(ct);
+            try { await Task.WhenAll(daemon, mcpConnection); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
             return 0;
         });
         return command;

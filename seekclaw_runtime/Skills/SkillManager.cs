@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Workspaces;
@@ -93,7 +94,17 @@ public sealed class SkillManager : ISkillManager
     public void SetEnabled(string skillName, bool enabled)
     {
         if (enabled)
+        {
             _configStore.State.DisabledSkills.Remove(skillName);
+            if (_workspace?.Config?.DisabledSkills is { } disabled
+                && disabled.RemoveAll(name => name.Equals(skillName, StringComparison.OrdinalIgnoreCase)) > 0)
+            {
+                Directory.CreateDirectory(_workspace.SeekClawDir);
+                File.WriteAllText(
+                    Path.Combine(_workspace.SeekClawDir, "config.json"),
+                    JsonSerializer.Serialize(_workspace.Config, SeekClawJsonContext.Default.WorkspaceConfig));
+            }
+        }
         else
             _configStore.State.DisabledSkills[skillName] = "";
         _configStore.SaveState();
