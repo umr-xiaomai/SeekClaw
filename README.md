@@ -33,6 +33,18 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 
 ## 📸 界面预览
 
+### 桌面端
+
+| AI 对话与项目管理 | 模型与 Provider 管理 |
+| :---: | :---: |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/6bb61c71bc5a008a72dc4d798d03cba3.png" alt="SeekClaw Desktop AI 对话与项目管理" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/bf1ddfedd6ef3955d292d0f145ad27c1.png" alt="SeekClaw Desktop 模型与 Provider 管理" width="440"> |
+
+| Runtime 诊断与用量 | MCP Server 配置 |
+| :---: | :---: |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/00a820aabf3676b56b7bf71fde9d50ce.png" alt="SeekClaw Desktop Runtime 诊断与用量" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/d28a035e0e7c50dcc75b6ef6ca7e3072.png" alt="SeekClaw Desktop MCP Server 配置" width="440"> |
+
+### 终端
+
 | 终端流式输出与思考推理 | 代码生成与文档编写 |
 | :---: | :---: |
 | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/streaming_reasoning.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/code.png" width="440"> |

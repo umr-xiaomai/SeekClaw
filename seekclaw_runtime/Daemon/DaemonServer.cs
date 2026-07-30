@@ -26,6 +26,7 @@ public sealed class DaemonServer
     private readonly DaemonAdminApi _admin;
     private readonly WorkspaceInfo _globalWorkspace;
     private readonly Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> _runTurn;
+    private readonly CancellationTokenSource _shutdown = new();
 
     // SeekClawRuntime currently owns one mutable workspace and one global event bus.
     // A daemon therefore permits one turn or workspace mutation at a time.
@@ -56,22 +57,24 @@ public sealed class DaemonServer
 
     public async Task RunAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdown.Token);
+        var runCt = linkedCts.Token;
+        while (!runCt.IsCancellationRequested)
         {
             try
             {
                 if (OperatingSystem.IsWindows())
-                    await ServeNamedPipeAsync(ct).ConfigureAwait(false);
+                    await ServeNamedPipeAsync(runCt).ConfigureAwait(false);
                 else
-                    await ServeUnixSocketAsync(ct).ConfigureAwait(false);
+                    await ServeUnixSocketAsync(runCt).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (runCt.IsCancellationRequested)
             {
                 break;
             }
             catch (Exception)
             {
-                await Task.Delay(100, ct).ConfigureAwait(false);
+                await Task.Delay(100, runCt).ConfigureAwait(false);
             }
         }
     }
@@ -552,6 +555,7 @@ public sealed class DaemonServer
                         activeTurnCts?.Cancel();
                         if (activeTurn is not null) await ObserveAsync(activeTurn).ConfigureAwait(false);
                         await WriteAsync(writer, writerGate, id, "bye", "", ct).ConfigureAwait(false);
+                        _shutdown.Cancel();
                         return;
 
                     default:

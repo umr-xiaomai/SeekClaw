@@ -33,6 +33,18 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 
 ## 📸 Screenshots
 
+### Desktop
+
+| AI Chat & Project Management | Model & Provider Management |
+| :---: | :---: |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/6bb61c71bc5a008a72dc4d798d03cba3.png" alt="SeekClaw Desktop AI chat and project management" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/bf1ddfedd6ef3955d292d0f145ad27c1.png" alt="SeekClaw Desktop model and provider management" width="440"> |
+
+| Runtime Diagnostics & Usage | MCP Server Configuration |
+| :---: | :---: |
+| <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/00a820aabf3676b56b7bf71fde9d50ce.png" alt="SeekClaw Desktop runtime diagnostics and usage" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/d28a035e0e7c50dcc75b6ef6ca7e3072.png" alt="SeekClaw Desktop MCP server configuration" width="440"> |
+
+### Terminal
+
 | Streaming Output & Reasoning | Code Generation & Documentation |
 | :---: | :---: |
 | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/streaming_reasoning.png" width="440"> | <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/code.png" width="440"> |

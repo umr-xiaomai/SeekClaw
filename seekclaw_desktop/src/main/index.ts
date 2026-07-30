@@ -1,3 +1,5 @@
+import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { release } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
@@ -8,7 +10,85 @@ import { getGitHistory, getGitOverview, openProjectTerminal } from './project-to
 
 const daemon = new DaemonClient()
 let mainWindow: BrowserWindow | null = null
+let managedDaemon: ChildProcess | null = null
+let runtimeShutdownStarted = false
 const supportsMica = process.platform === 'win32' && Number(release().split('.')[2] ?? 0) >= 22000
+
+const delay = (milliseconds: number): Promise<void> =>
+  new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
+
+function resolveRuntimeExecutable(): string | null {
+  const executable = process.platform === 'win32' ? 'seekclaw.exe' : 'seekclaw'
+  const configured = process.env.SEEKCLAW_RUNTIME_EXECUTABLE?.trim()
+  const candidates = [
+    configured ? resolve(configured) : '',
+    app.isPackaged ? join(process.resourcesPath, 'runtime', executable) : '',
+    !app.isPackaged ? resolve(app.getAppPath(), 'runtime', 'win-x64', executable) : '',
+    !app.isPackaged
+      ? resolve(app.getAppPath(), '..', 'seekclaw_cli', 'bin', 'Debug', 'net10.0', executable)
+      : '',
+    !app.isPackaged
+      ? resolve(app.getAppPath(), '..', 'seekclaw_cli', 'bin', 'Release', 'net10.0', 'win-x64', 'publish', executable)
+      : ''
+  ].filter(Boolean)
+  return candidates.find((candidate) => existsSync(candidate)) ?? null
+}
+
+async function ensureDaemonRunning(): Promise<void> {
+  const existing = await daemon.connect()
+  if (existing.connected) return
+
+  const executable = resolveRuntimeExecutable()
+  if (!executable)
+    throw new Error('Bundled SeekClaw Runtime was not found. Rebuild the Desktop release package.')
+
+  const child = spawn(executable, ['daemon'], {
+    cwd: app.getPath('documents'),
+    env: { ...process.env, SEEKCLAW_MANAGED_BY_DESKTOP: '1' },
+    stdio: 'ignore',
+    windowsHide: true
+  })
+  managedDaemon = child
+  let startupError: Error | null = null
+  child.once('error', (error) => { startupError = error })
+  child.once('exit', () => {
+    if (managedDaemon === child) managedDaemon = null
+  })
+
+  for (let attempt = 0; attempt < 24; attempt++) {
+    await delay(attempt === 0 ? 120 : 250)
+    if (startupError) throw startupError
+    if (child.exitCode !== null) throw new Error(`SeekClaw Runtime exited with code ${child.exitCode}.`)
+    const state = await daemon.connect()
+    if (state.connected) return
+  }
+
+  if (child.exitCode === null) child.kill()
+  throw new Error('SeekClaw Runtime did not become ready in time.')
+}
+
+async function stopManagedDaemon(): Promise<void> {
+  const child = managedDaemon
+  if (!child) {
+    daemon.disconnect()
+    return
+  }
+
+  await Promise.race([
+    daemon.request('shutdown').catch(() => undefined),
+    delay(1_000)
+  ])
+  daemon.disconnect()
+
+  if (child.exitCode === null) {
+    await Promise.race([
+      new Promise<void>((resolveExit) => child.once('exit', () => resolveExit())),
+      delay(1_500)
+    ])
+  }
+  if (child.exitCode === null) child.kill()
+  if (managedDaemon === child) managedDaemon = null
+}
 
 function nativeWindowColors(): { background: string; titlebar: string; symbols: string } {
   const dark = nativeTheme.shouldUseDarkColors
@@ -116,19 +196,41 @@ function registerIpc(): void {
   daemon.on('state', (state) => mainWindow?.webContents.send('daemon:state', state))
 }
 
-app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.hoilai.seekclaw')
-  app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
-  registerIpc()
-  createWindow()
-  nativeTheme.on('updated', syncNativeWindowTheme)
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
   })
+
+  app.whenReady().then(async () => {
+    electronApp.setAppUserModelId('com.hoilai.seekclaw')
+    app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
+    registerIpc()
+    await ensureDaemonRunning().catch((error) => console.error('Unable to start SeekClaw Runtime:', error))
+    createWindow()
+    nativeTheme.on('updated', syncNativeWindowTheme)
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+}
+
+app.on('before-quit', (event) => {
+  if (!managedDaemon || runtimeShutdownStarted) {
+    daemon.disconnect()
+    return
+  }
+  event.preventDefault()
+  runtimeShutdownStarted = true
+  void stopManagedDaemon().finally(() => app.quit())
 })
 
 app.on('window-all-closed', () => {
-  daemon.disconnect()
   if (process.platform !== 'darwin') app.quit()
 })

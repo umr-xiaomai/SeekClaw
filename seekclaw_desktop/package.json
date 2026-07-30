@@ -44,6 +44,13 @@
       "out/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "runtime/win-x64",
+        "to": "runtime",
+        "filter": ["**/*"]
+      }
+    ],
     "win": {
       "icon": "resources/favicon.ico",
       "target": "nsis"
