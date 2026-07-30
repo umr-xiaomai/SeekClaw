@@ -1,57 +1,61 @@
-# 工作区管理与 Memory 记忆体系
+# 工作区、全局任务与 Memory
 
-SeekClaw 具备**智能化项目识别**与**深度记忆持久化（Memory System）**机制。无需人工繁琐设置，启动时即可自动探测项目技术栈与工程结构。
+工作区决定项目任务可访问的目录、项目类型、会话位置和项目级配置。Desktop 还提供不绑定目录的全局任务，两种范围使用独立的 Session 存储。
 
----
+## 项目工作区识别
 
-## 自动项目类型识别
+Runtime 从当前目录向上查找 `.git`、`.seekclaw`、`package.json`、`pyproject.toml`、`Cargo.toml`、`go.mod`、`*.sln` 或 `*.slnx` 等根标记，并检测以下项目类型：
 
-`IWorkspaceManager` 会分析当前工作区的特征标志文件，自动匹配最佳的开发体验与构建验证规则：
+| 类型 | 典型特征 |
+| --- | --- |
+| Git | `.git/` |
+| .NET | `*.sln`、`*.slnx`、`*.csproj` 或 `*.fsproj` |
+| Node / Vue | `package.json`，并进一步检查 Vue 依赖 |
+| Python | `pyproject.toml`、`requirements.txt` 或 `setup.py` |
+| Rust | `Cargo.toml` |
+| Go | `go.mod` |
+| Unity | `Assets/` 与 `ProjectSettings/` |
 
-| 项目类型 | 识别特征文件 | 自动推荐的构建/检查工具 |
-| --- | --- | --- |
-| **.NET** | `*.sln`, `*.csproj`, `*.fsproj` | `dotnet build`, `dotnet test` |
-| **Rust** | `Cargo.toml` | `cargo check`, `cargo test` |
-| **Node.js / Vue / React** | `package.json` | `npm run build`, `pnpm run check` |
-| **Python** | `pyproject.toml`, `requirements.txt`, `setup.py` | `pytest`, `mypy` |
-| **Go** | `go.mod` | `go build ./...`, `go test ./...` |
-| **Unity** | `Assets/`, `ProjectSettings/` | Unity BatchMode 校验 |
-| **Git 仓库** | `.git/` | 自动识别分支与 Git 修改 Diff |
+Desktop 在任务顶栏显示完整工作区目录，并把打开位置、终端、Git 变更与 Git 历史限制在该目录。
 
----
+## `.seekclaw` 目录
 
-## 隔离的 `.seekclaw/` 目录规范
+新工作区执行 `seekclaw init` 或 Desktop 初始化后，默认结构为：
 
-当在工作区运行 SeekClaw 时，系统会在该目录下保持隔离的环境与日志（可通过 `.gitignore` 忽略部分临时缓存）：
-
+```text
+<workspace>/
+└── .seekclaw/
+    ├── config.json          # 可选的工作区覆盖
+    ├── prompts/             # 项目 Prompt
+    ├── memory/
+    │   └── MEMORY.md        # 项目长期约定
+    ├── cache/
+    ├── sessions/            # JSONL Session
+    ├── logs/
+    ├── skills/
+    ├── mcp/
+    │   └── servers.json
+    └── docs/
 ```
-<workspace-root>/
-├── .seekclaw/
-│   ├── config.json              # 工作区专属配置覆盖
-│   ├── memory/
-│   │   └── MEMORY.md            # 项目知识库与架构记忆
-│   ├── prompts/                 # 工作区自定义 Prompt 覆盖
-│   └── mcp/
-│       └── servers.json         # 项目专属 MCP 配置
-├── .session/                    # 会话历史 (JSONL 格式)
-├── .cache/                      # 符号索引与临时缓存
-└── logs/                        # 运行日志
-```
 
----
+为了兼容旧工作区，如果根目录已经存在 `.session/`、`skills/`、`mcp/` 或 `docs/`，Runtime 会继续使用这些目录。初始化也会给 `.gitignore` 补充 SeekClaw 状态目录条目。
 
-## Memory 记忆体系与自动注入
+## 全局任务
 
-为了让 Agent 在跨会话开发时理解团队规范与独特架构设计，SeekClaw 会在每次组装 System Prompt 时自动注入 `.seekclaw/memory/MEMORY.md`。
+全局任务使用 `~/.seekclaw` 下的全局 Session 空间，Session 头不会写入项目路径。Runtime 会过滤所有 `RequiresWorkspace` 工具，并跳过工作区 Prompt 与自动构建验证，因此它适合通用问答而不是本地代码编辑。
 
-### 示例 `MEMORY.md`：
+一个项目或全局范围都可以没有任务。Desktop 只有在首条消息发送时才创建 Session；侧栏的“全局任务”只是展开对应列表。
+
+## Memory
+
+项目 Memory 位于 `.seekclaw/memory/MEMORY.md`。Agent 组装提示词时会读取该文件，可用于记录稳定的架构、命名、测试和发布约定：
 
 ```markdown
-# 项目特定记忆与架构规范
+# 项目约定
 
-- **数据库访问**：统一使用 Dapper 配合原生的 SQL 语句，禁止引入重型 EF Core。
-- **异常处理**：所有的 Service 必须捕获 `BusinessException` 并使用 `Result<T>` 范式返回。
-- **命名空间规范**：核心逻辑必须位于 `Company.Project.Domain` 命名空间内。
+- 数据访问统一使用 Dapper。
+- 公共 API 修改必须补充集成测试。
+- 发布前运行 `dotnet test` 与前端类型检查。
 ```
 
-Agent 会自动阅读此规范并在后续生成的代码中强制遵循，避免因为上下文断链重复犯错。
+只写长期有效且确实需要跨 Session 保留的信息；临时任务进度应留在具体 Session 中。全局任务不会注入某个项目的 Memory。

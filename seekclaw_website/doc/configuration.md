@@ -1,89 +1,137 @@
-# 全局与工作区配置参考 (Configuration Reference)
+# 配置参考
 
-SeekClaw 的所有参数均支持数据驱动与 JSON 格式配置。配置分为**全局配置**与**工作区配置**，工作区配置可覆盖全局默认值。
+SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 默认值，并允许工作区提供少量覆盖项。Desktop 与 CLI 操作的是同一份配置。
 
----
+## 文件位置
 
-## 配置文件保存路径
+| 文件 | 用途 |
+| --- | --- |
+| `~/.seekclaw/config.json` | 全局 Provider、模型、Profile、路由、Agent 和 MCP 配置 |
+| `~/.seekclaw/state.json` | 上次 Session、轮询游标和禁用 Skill 等内部状态 |
+| `~/.seekclaw/usage.jsonl` | 调用、Token、延迟和成本记录 |
+| `<workspace>/.seekclaw/config.json` | 当前项目的覆盖项 |
 
-- **全局配置文件**：`~/.seekclaw/config.json`（首次运行程序时自动基于内嵌默认配置种子化生成）。
-- **工作区覆盖文件**：`<workspace-root>/.seekclaw/config.json`。
+首次运行时，Runtime 从发布包内的 `defaults/config.default.json` 创建全局配置。Provider 与模型数据随后完全由用户管理。
 
----
+## 全局配置结构
 
-## 完整 `config.json` Schema 字段详解
+下面示例使用当前实际字段：
 
 ```json
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "providers": {
-    "openai": {
-      "apiKey": "sk-proj-xxxxxxxx",
-      "baseUrl": "https://api.openai.com/v1",
-      "organization": "org-xxxx",
-      "timeoutSeconds": 60,
-      "maxRetries": 3
-    },
-    "anthropic": {
-      "apiKey": "sk-ant-xxxxxxxx",
-      "baseUrl": "https://api.anthropic.com"
-    },
-    "google": {
-      "apiKey": "AIzaSy-xxxxxxx"
-    },
-    "ollama": {
-      "baseUrl": "http://localhost:11434"
-    }
-  },
-
+  "activeProfile": "default",
   "profiles": {
     "default": {
       "provider": "openai",
       "model": "gpt-5.5",
+      "strategy": "balanced",
       "temperature": 0.2,
-      "topP": 0.95
-    },
-    "fast-coding": {
-      "provider": "openai",
-      "model": "gpt-5.5-mini",
-      "temperature": 0.1
-    },
-    "deep-reasoning": {
-      "provider": "anthropic",
-      "model": "claude-opus",
-      "temperature": 0.3
+      "mode": "edit"
     }
   },
-
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "kind": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "proxy": null,
+      "timeoutSeconds": 120,
+      "headers": null,
+      "enabled": true,
+      "priority": 1,
+      "models": [
+        {
+          "id": "gpt-5.5",
+          "alias": null,
+          "contextWindow": 400000,
+          "maxOutput": 128000,
+          "capabilities": {
+            "streaming": true,
+            "thinking": false,
+            "vision": true,
+            "image": false,
+            "toolCalling": true,
+            "jsonMode": true,
+            "reasoning": true,
+            "embedding": false,
+            "mcp": true
+          },
+          "inputPricePerMTok": 1.25,
+          "outputPricePerMTok": 10,
+          "tags": ["balanced", "quality"]
+        }
+      ]
+    }
+  ],
   "routing": {
-    "defaultStrategy": "balanced",
-    "loadBalancing": "priority",
-    "circuitBreaker": {
-      "failureThreshold": 3,
-      "cooldownSeconds": 60
+    "strategies": {
+      "balanced": ["openai/gpt-5.5"]
+    },
+    "fallback": ["openai/gpt-5.5"],
+    "loadBalance": "priority",
+    "retry": {
+      "maxAttempts": 3,
+      "baseDelaySeconds": 1,
+      "maxDelaySeconds": 20,
+      "circuitBreakThreshold": 4,
+      "circuitCooldownSeconds": 60
     }
   },
-
   "agent": {
-    "maxSteps": 15,
+    "maxSteps": 40,
     "autoVerify": true,
     "maxRepairAttempts": 3,
-    "systemPrompt": "builtin/system-default",
-    "developerPrompt": "builtin/developer-default",
-    "contextWindowPruningRatio": 0.85
+    "mode": "edit",
+    "systemPrompt": "system/default",
+    "thinkingBudgetTokens": 4096,
+    "maxToolOutputChars": 60000,
+    "bashTimeoutSeconds": 180
   },
-
-  "ui": {
-    "targetFps": 60,
-    "theme": "cyberpunk-dark",
-    "showThinkingProcess": true,
-    "showToolArguments": true
+  "mcp": {
+    "servers": {}
   }
 }
 ```
 
----
+### Provider Key
 
-## 热重载 (Hot Reload)
+- `kind` 只能是 `openai` 或 `anthropic`。
+- `apiKey` 直接保存凭据；Desktop 会直接显示该值。
+- `apiKeyEnv` 保存环境变量名，且仅在 `apiKey` 为空时使用。环境变量值不会返回给 Desktop。
+- `organization`、`proxy`、`headers`、`timeoutSeconds` 可按服务需要设置。
 
-`seekclaw_runtime` 内部对配置与 Prompt 模板文件挂载了 `FileSystemWatcher` 监测。在编辑 `config.json` 或修改 `.seekclaw/prompts/` 模板文件后，运行时无需重启即可秒级实时重载最新配置生效。
+### 路由
+
+`loadBalance` 支持 `priority`、`roundRobin`、`leastUsed`、`lowestCost`、`fastest` 与 `sticky`。`strategies` 和 `fallback` 中的每个项目必须是 `provider/model` 引用。
+
+### Agent 模式
+
+`mode` 支持 `edit`、`plan`、`readonly` 与 `auto`。Profile 中的值可以覆盖 Agent 默认值，工作区还可以再次覆盖。
+
+## 工作区覆盖
+
+`<workspace>/.seekclaw/config.json` 使用独立的精简结构，而不是复制完整全局配置：
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "strategy": "quality",
+  "temperature": 0.2,
+  "mode": "edit",
+  "systemPrompt": "system/default",
+  "disabledSkills": ["legacy-migration"],
+  "disabledTools": [],
+  "autoVerify": true,
+  "verifyCommand": "dotnet test",
+  "mcp": { "servers": {} }
+}
+```
+
+## 重新加载行为
+
+Desktop 通过 Daemon 管理接口保存时，会立即更新该 Daemon 持有的配置。CLI 命令会持久化文件，后续 CLI 进程会读取新值；已经在运行的另一个 Daemon 不会自动感知这次外部修改。若在 CLI 或编辑器中改动 JSON，请重新连接 / 重启已有 Daemon，或通过对应管理接口更新。Prompt 文件的热加载与配置文件是不同机制。
+
+配置 JSON 损坏时，Runtime 会保留原文件用于检查，并回退到种子默认配置；先修复原文件再重启，避免无意保存回退结果。

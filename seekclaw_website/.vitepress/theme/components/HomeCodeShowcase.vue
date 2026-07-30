@@ -4,12 +4,12 @@
       <div class="header-text">
         <h3>
           <Code2 class="header-icon" :size="22" />
-          {{ isEn ? 'Developer Friendly & Data-Driven' : '极致简洁的开发者体验与数据驱动' }}
+          {{ isEn ? 'Desktop release and developer workflows' : 'Desktop 发布与开发者工作流' }}
         </h3>
         <p>
           {{ isEn 
-            ? 'Declarative JSON configuration, clean C# interfaces, and instant CLI command workflows.'
-            : '开箱即用的 CLI 交互、声明式 JSON 配置与强类型 C# 扩展接口'
+            ? 'Build a portable Desktop folder with one command, or use the CLI, JSON configuration, and strongly typed extension points.'
+            : '一条命令构建可分发 Desktop 文件夹，也可继续使用 CLI、JSON 配置与强类型扩展接口。'
           }}
         </p>
       </div>
@@ -43,21 +43,31 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useData } from 'vitepress'
-import { Code2, Terminal, FileCode, Settings, Boxes } from 'lucide-vue-next'
+import { Code2, Terminal, FileCode, Settings, Boxes, PackageCheck } from 'lucide-vue-next'
 
 const { lang } = useData()
 const isEn = computed(() => lang.value === 'en-US' || lang.value?.startsWith('en'))
 
-const activeTab = ref('cli')
+const activeTab = ref('release')
 
-const tabs = [
-  { id: 'cli', label: 'CLI Commands', icon: Terminal },
-  { id: 'tool', label: 'Custom ITool (C#)', icon: FileCode },
+const tabs = computed(() => [
+  { id: 'release', label: isEn.value ? 'Desktop Release' : 'Desktop 发布', icon: PackageCheck },
+  { id: 'cli', label: isEn.value ? 'CLI Commands' : 'CLI 命令', icon: Terminal },
+  { id: 'tool', label: isEn.value ? 'Custom ITool' : '自定义 ITool', icon: FileCode },
   { id: 'config', label: 'config.json', icon: Settings },
   { id: 'mcp', label: 'MCP Servers', icon: Boxes }
-]
+])
 
-const codeSnippets = {
+const zhSnippets = {
+  release: {
+    filename: 'build.cmd',
+    lang: 'batch',
+    code: `:: Windows 双击或从终端运行
+build.cmd
+
+:: 构建结果（分发整个文件夹）
+publish\\SeekClaw-win-x64\\SeekClaw.exe`
+  },
   cli: {
     filename: 'terminal.sh',
     lang: 'bash',
@@ -82,13 +92,13 @@ seekclaw doctor`
     public string Description => "执行底层自定义诊断操作";
     public bool Mutating => false;
     public string StatusLabel => "正在运行自定义诊断...";
-    public JsonElement ParameterSchema => /* JSON Schema */;
+    public JsonObject ParameterSchema => /* JSON Schema */;
 
     public async Task<ToolResult> ExecuteAsync(
         JsonObject args, ToolContext ctx, CancellationToken ct)
     {
         // 核心逻辑与权限隔离
-        return ToolResult.Success("操作完成");
+        return ToolResult.Ok("操作完成");
     }
 }`
   },
@@ -96,18 +106,18 @@ seekclaw doctor`
     filename: '~/.seekclaw/config.json',
     lang: 'json',
     code: `{
-  "providers": {
-    "openai": {
+  "activeProfile": "default",
+  "providers": [
+    {
+      "id": "openai",
+      "kind": "openai",
       "apiKey": "sk-proj-xxxxxxxx",
-      "baseUrl": "https://api.openai.com/v1"
+      "baseUrl": "https://api.openai.com/v1",
+      "models": [{ "id": "gpt-5.5" }]
     }
-  },
+  ],
   "profiles": {
     "default": { "provider": "openai", "model": "gpt-5.5" }
-  },
-  "agent": {
-    "autoVerify": true,
-    "maxRepairAttempts": 3
   }
 }`
   },
@@ -126,7 +136,54 @@ seekclaw doctor`
   }
 }
 
-const currentTabData = computed(() => codeSnippets[activeTab.value])
+const enSnippets = {
+  ...zhSnippets,
+  release: {
+    filename: 'build.cmd',
+    lang: 'batch',
+    code: `:: Double-click on Windows or run from a terminal
+build.cmd
+
+:: Output (distribute the complete folder)
+publish\\SeekClaw-win-x64\\SeekClaw.exe`
+  },
+  cli: {
+    filename: 'terminal.sh',
+    lang: 'bash',
+    code: `# Start the interactive Agent loop
+seekclaw chat
+
+# Run a one-shot refactor with automatic verification
+seekclaw "Refactor UserService.cs to use dependency injection"
+
+# Switch the active model
+seekclaw model use anthropic/claude-opus-5
+
+# Diagnose the local Runtime
+seekclaw doctor`
+  },
+  tool: {
+    filename: 'CustomTool.cs',
+    lang: 'csharp',
+    code: `public class CustomTool : ITool
+{
+    public string Name => "custom_tool";
+    public string Description => "Run a custom diagnostic";
+    public bool Mutating => false;
+    public string StatusLabel => "Running diagnostics...";
+    public JsonObject ParameterSchema => /* JSON Schema */;
+
+    public async Task<ToolResult> ExecuteAsync(
+        JsonObject args, ToolContext ctx, CancellationToken ct)
+    {
+        return ToolResult.Ok("Done");
+    }
+}`
+  }
+}
+
+const codeSnippets = computed(() => isEn.value ? enSnippets : zhSnippets)
+const currentTabData = computed(() => codeSnippets.value[activeTab.value])
 </script>
 
 <style scoped>

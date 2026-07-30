@@ -1,40 +1,25 @@
 # 架构设计与 Runtime First 原则
 
-SeekClaw 的核心设计遵循 **Runtime First** 原则与**清洁架构（Clean Architecture）**。本文将深入讲解 SeekClaw 的模块切分、事件驱动机制、双缓冲游戏式终端渲染引擎与 Agent 生命周期。
+SeekClaw 的核心设计遵循 **Runtime First** 原则与**清洁架构（Clean Architecture）**。Desktop 与 CLI 是两个正式前端：它们复用同一套 Runtime 能力，但针对图形界面和终端分别承担不同的展示职责。
 
 ---
 
 ## 总体架构图
 
-```
-+-----------------------------------------------------------------------+
-|                            前端表示层 (Frontends)                       |
-|   +---------------------------------+   +-------------------------+   |
-|   | seekclaw_cli (System.CommandLine)|   | GUI / Web / IDE 插件    |   |
-|   +---------------------------------+   +-------------------------+   |
-+------------------------------------|----------------------------------+
-                                     |  (Daemon IPC / Direct Facade)
-+------------------------------------v----------------------------------+
-|                      SeekClaw Core Runtime (seekclaw_runtime)         |
-|                                                                       |
-|   +---------------------------------------------------------------+   |
-|   | SeekClawRuntime (Facade 组合根)                                |   |
-|   +---------------------------------------------------------------+   |
-|                               |                                       |
-|   +---------------------------v-----------------------------------+   |
-|   |                       Agent 主循环 (Agent Loop)               |   |
-|   +---------------------------------------------------------------+   |
-|         |                     |                    |                  |
-|   +-----v-------+     +-------v------+     +-------v------+           |
-|   | EventBus    |     | Provider     |     | ToolRegistry |           |
-|   | (Channel)   |     | Manager      |     | (Plugins)    |           |
-|   +-------------+     +--------------+     +--------------+           |
-|         |                     |                    |                  |
-|   +-----v-------+     +-------v------+     +-------v------+           |
-|   | Terminal    |     | MCP Manager  |     | Build        |           |
-|   | Renderer    |     | (stdio/SSE)  |     | Verifier     |           |
-|   +-------------+     +--------------+     +--------------+           |
-+-----------------------------------------------------------------------+
+```mermaid
+flowchart TB
+    Desktop["seekclaw_desktop<br/>Electron + Vue"] -->|"JSONL IPC 2.0"| Daemon["DaemonServer<br/>Named Pipe / Unix Socket"]
+    CLI["seekclaw_cli<br/>System.CommandLine + TerminalRenderer"] -->|"Direct Facade"| Runtime
+    Daemon --> Runtime["SeekClawRuntime<br/>.NET 10 Composition Root"]
+
+    Runtime --> Agent["Agent Loop + ContextPlanner"]
+    Runtime --> Provider["ProviderManager + ModelRegistry"]
+    Runtime --> Tools["ToolRegistry + Skills + MCP"]
+    Runtime --> State["Workspace + Session + Config + Usage"]
+    Runtime --> Verify["BuildVerifier"]
+    Agent --> Bus[(EventBus)]
+    Bus --> CLI
+    Bus --> Daemon
 ```
 
 ---
@@ -43,7 +28,17 @@ SeekClaw 的核心设计遵循 **Runtime First** 原则与**清洁架构（Clean
 
 1. **关注点分离**：业务逻辑、LLM 路由、上下文剪裁、工具执行、会话存储与代码构建校验全部内聚于 `seekclaw_runtime` 模块。
 2. **零 Console 侵入**：`seekclaw_runtime` 中的任何底层类（如 ProviderManager、ToolRegistry）**一律严禁直接调用 `Console.WriteLine`**。所有的状态变更均通过 `IEventBus` 发布强类型事件。
-3. **多端适配**：当前 `seekclaw_cli` 是默认终端前端；未来 GUI、Web 或 IDE 插件可通过相同的 `SeekClawRuntime` Facade 或 Daemon IPC 协议直接无缝对接。
+3. **多端适配**：`seekclaw_cli` 通过 Facade 直接使用 Runtime；`seekclaw_desktop` 通过 Daemon IPC 2.0 使用 Runtime。后续 Web 或 IDE 客户端可以复用相同协议。
+
+## 前端职责
+
+| 组件 | 当前职责 |
+| --- | --- |
+| `seekclaw_desktop` | Electron 主进程管理窗口、打包 Runtime 和 Daemon 生命周期；Vue 渲染项目、任务、设置、Git 与诊断界面。 |
+| `seekclaw_cli` | 命令解析、交互式终端、单次任务、配置管理命令，以及 `daemon` 进程入口。 |
+| `seekclaw_runtime` | Agent 循环、Provider 路由、工具执行、会话、工作区、配置、用量、MCP、Skills 与构建验证。 |
+
+发布版 Desktop 会先尝试连接既有 Daemon；连接失败时启动包内的自包含 `seekclaw.exe daemon`。Desktop 退出时仅向自己启动的 Daemon 发送 `shutdown`，随后等待其优雅结束。
 
 ---
 

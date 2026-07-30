@@ -1,42 +1,47 @@
 # SeekClaw 文档中心
 
-欢迎来到 **SeekClaw** 官方技术文档中心！
+SeekClaw 是基于 **.NET 10**、本地优先且可扩展的通用 AI Agent Runtime，采用 Runtime First 与事件驱动架构。它能围绕目标持续思考，使用本地工具、网页、MCP 与 Skills 完成真实任务。你可以通过 Windows Desktop 或 CLI 使用同一套 Runtime、配置、工具与会话数据。
 
-SeekClaw 是基于 **.NET 10.0** 构建的高性能 AI Agent 运行时，采用**清洁架构（Clean Architecture）**与**事件驱动设计**。它为构建 AI 驱动的自动编码助手、CLI 终端体验和智能化开发工具提供了完整平台。
+![SeekClaw Desktop 主界面](/screenshots/desktop/chat-and-projects.png)
 
----
+## 现在可以做什么
 
-## 核心特色与设计原则
-
-| 特性 | 描述 |
+| 能力 | 说明 |
 | --- | --- |
-| **Runtime First 架构** | 核心业务完全置于 `seekclaw_runtime` 库，`seekclaw_cli` 仅作为默认前端终端展示，方便扩展 GUI / Web / IDE 插件。 |
-| **多模型与智能路由** | 原生兼容 OpenAI、Anthropic Claude、Google Gemini，以及本地 Ollama / LM Studio 模型。支持 Fast / Balanced / Quality / Offline 等策略与自动熔断降级。 |
-| **游戏级终端渲染** | 30-60 FPS 双缓冲控制台渲染，支持 Token 流式增量显示、实时思维链（Thinking Process）及动态 Spinner。 |
-| **开放插件与 MCP 协议** | 内置文本读取/编辑/正则搜索/Bash 工具，支持规范的 Model Context Protocol (MCP)，实现外接 MCP 服务器扩展。 |
-| **自动构建与修复自愈** | 修改项目代码后自动触发 .NET / Rust / Node / Go / Python 构建验证，编译失败自动再注入 Agent 循环自我修复。 |
-| **工作区与 Session 持久化** | 自动识别 Git、.NET、Vue、Python 等项目架构，独立 `.seekclaw/` 目录隔离，支持 JSONL 格式会话恢复。 |
+| **Desktop 与 CLI 双前端** | Desktop 提供项目侧栏、全局任务、归档、模型设置、Git 与终端入口；CLI 保留完整的终端交互和管理命令。 |
+| **项目任务与全局任务** | 项目任务可连接文件、终端、Git 与专属 Memory；不绑定目录的全局任务适合调研、写作、知识整理及日常工作。 |
+| **多 Provider 与路由** | 支持 Anthropic 与 OpenAI 两种线协议，并可接入 OpenAI-compatible 服务，包括 Google、OpenRouter、Ollama、MiMo 和 LM Studio。 |
+| **Tools、Skills 与 MCP** | 内置文件、搜索、Shell 和网络工具，可通过 Skills 与 stdio / SSE MCP Server 扩展。 |
+| **会话与工作区持久化** | 会话按工作区保存为 JSONL，支持恢复、归档和删除；项目元数据隔离在 `.seekclaw/`。 |
+| **自动验证与修复** | 文件修改后可触发 .NET、Node、Rust、Go 或 Python 等项目的构建检查，并把错误反馈给 Agent 修复。 |
+| **诊断与用量** | Desktop 和 CLI 都能检查 Runtime / Provider 状态；Desktop 汇总调用、Token、延迟和成本。 |
 
----
+## 选择使用方式
 
-## 文档导航索引
+### Desktop
 
-快捷导航至您感兴趣的技术主题：
+适合日常图形化使用。发布包已包含自包含 Runtime，启动 `SeekClaw.exe` 后会自动连接或启动 Daemon，终端用户无需安装 .NET。
 
-- **快速开始与环境要求**：查看 [快速开始指南](/doc/quickstart)
-- **深入架构设计**：了解 [Runtime First 原则与渲染循环](/doc/architecture)
-- **提供商配置与路由**：配置 [OpenAI / Anthropic / Gemini / Ollama](/doc/providers)
-- **CLI 命令行大全**：掌握 [seekclaw 命令与参数说明](/doc/cli)
-- **工具与 MCP 生态**：学习 [内置工具使用与自定义 Tool 开发](/doc/tools) 和 [MCP 整合](/doc/mcp)
-- **技能与工作区内存**：配置 [Skill 模板](/doc/skills) 与 [Memory 体系](/doc/workspace)
-- **构建验证与修复**：了解 [BuildVerifier 机制](/doc/verification)
-- **全局配置参数**：参考 [Configuration schema](/doc/configuration)
-- **Daemon 守护进程**：集成 [IPC Protocol 接入 GUI/IDE](/doc/daemon)
-- **常见诊断与 FAQ**：运行 [Doctor 与排错](/doc/faq)
+- [Desktop 使用、设置与发布](/doc/desktop)
+- [5 分钟快速开始](/doc/quickstart)
 
----
+### CLI
 
-## 项目开源许可
+适合终端工作流、自动化管理和调试 Runtime。源码运行需要 .NET 10 SDK。
 
-SeekClaw 采用自由开放的 [MIT License](https://opensource.org/licenses/MIT) 开源许可。
-仓库代码托管于 GitHub: [umr-xiaomai/SeekClaw](https://github.com/umr-xiaomai/SeekClaw)。
+- [CLI 命令参考](/doc/cli)
+- [配置参考](/doc/configuration)
+
+## 深入阅读
+
+- [Runtime First 架构与 Agent 生命周期](/doc/architecture)
+- [Provider、模型与智能路由](/doc/providers)
+- [内置工具](/doc/tools)、[Skills](/doc/skills) 与 [MCP](/doc/mcp)
+- [工作区与 Memory](/doc/workspace)
+- [构建验证与自动修复](/doc/verification)
+- [Daemon 与 IPC 2.0 协议](/doc/daemon)
+- [常见问题与排错](/doc/faq)
+
+## 开源许可
+
+SeekClaw 使用 [MIT License](https://opensource.org/licenses/MIT)，源码托管于 [GitHub](https://github.com/umr-xiaomai/SeekClaw)。

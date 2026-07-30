@@ -7,7 +7,7 @@
         <span class="dot green"></span>
       </div>
       <div class="terminal-title">
-        <span class="badge">SeekClaw CLI v1.0.0 (.NET 10.0 AOT)</span>
+        <span class="badge">SeekClaw CLI / Runtime (.NET 10)</span>
         <span class="fps">
           <Zap class="icon-inline" :size="13" /> 60 FPS Double-Buffered Live Region
         </span>
@@ -21,7 +21,7 @@
 
     <div class="terminal-body" ref="bodyRef">
       <div class="line prompt">
-        <span class="ps1">$ seekclaw</span> "将 UserService.cs 重构为支持 JWT 密钥轮转与单元测试"
+        <span class="ps1">$ seekclaw</span> "{{ isEn ? 'Refactor UserService.cs for JWT key rotation and add tests' : '将 UserService.cs 重构为支持 JWT 密钥轮转与单元测试' }}"
       </div>
 
       <div v-for="(log, idx) in visibleLogs" :key="idx" class="log-entry" :class="log.type">
@@ -31,15 +31,15 @@
         </div>
 
         <div v-else-if="log.type === 'route'" class="route-line">
-          <span class="tag cyan">[ModelRegistry]</span> 智能路由计算完成 -> 推荐候选链:
+          <span class="tag cyan">[ModelRegistry]</span> {{ isEn ? 'Candidate route:' : '推荐候选链：' }}
           <span class="model-badge primary">OpenAI / gpt-5.5 (Primary)</span>
           <span class="arrow">➔</span>
-          <span class="model-badge secondary">Anthropic / claude-opus (Fallback)</span>
+          <span class="model-badge secondary">Anthropic / claude-opus-5 (Fallback)</span>
         </div>
 
         <div v-else-if="log.type === 'thinking'" class="thinking-block">
           <div class="thinking-title">
-            <Brain class="icon-inline" :size="14" /> SeekClaw Agent 实时思考推理流...
+            <Brain class="icon-inline" :size="14" /> {{ isEn ? 'SeekClaw Agent reasoning stream...' : 'SeekClaw Agent 实时思考推理流…' }}
           </div>
           <p class="thinking-content">{{ log.text }}</p>
         </div>
@@ -91,7 +91,7 @@ const visibleLogs = ref([])
 const currentText = ref('')
 const isTyping = ref(false)
 
-const scriptSteps = [
+const zhScriptSteps = [
   { type: 'status', text: '正在识别工作区配置: Git / .NET 10.0 (C# / ASP.NET Core)...' },
   { type: 'route', text: '' },
   { type: 'thinking', text: '首先分析当前 UserService.cs 的实现。调用 read_file 工具读取 Services/UserService.cs，检查现有的 GenerateToken 方法和配置依赖。' },
@@ -107,7 +107,7 @@ const scriptSteps = [
     type: 'tool', 
     name: 'edit_file', 
     status: 'COMPLETED',
-    args: '{"path": "Services/UserService.cs", "startLine": 12, "endLine": 25}',
+    args: '{"path": "Services/UserService.cs", "old_string": "JwtHandler.Create(u, \\"legacy-secret-123\\")", "new_string": "keyRotation.SignToken(u)"}',
     output: '+ public class UserService(IKeyRotationService keyRotation) {\n+     public string IssueToken(User u) => keyRotation.SignToken(u);\n+ }'
   },
   { type: 'verification', status: 'running', text: '触发代码构建自动验证: dotnet build seekclaw_tests...' },
@@ -115,11 +115,33 @@ const scriptSteps = [
   { type: 'text', text: '已重构 UserService.cs 并实现动态 JWT 密钥轮转服务，增加单元测试防护。' }
 ]
 
+const enScriptSteps = [
+  { type: 'status', text: 'Detecting workspace: Git / .NET 10 (C# / ASP.NET Core)...' },
+  { type: 'route', text: '' },
+  { type: 'thinking', text: 'Inspect UserService.cs first. Read Services/UserService.cs and review the existing token generation and configuration dependencies.' },
+  {
+    type: 'tool', name: 'read_file', status: 'COMPLETED',
+    args: '{"path": "Services/UserService.cs"}',
+    output: 'public class UserService {\n  public string IssueToken(User u) => JwtHandler.Create(u, "legacy-secret-123");\n}'
+  },
+  { type: 'thinking', text: 'A hard-coded secret was found. Introduce IKeyRotationService, inject the active key set, and add coverage.' },
+  {
+    type: 'tool', name: 'edit_file', status: 'COMPLETED',
+    args: '{"path": "Services/UserService.cs", "old_string": "JwtHandler.Create(u, \\"legacy-secret-123\\")", "new_string": "keyRotation.SignToken(u)"}',
+    output: '+ public class UserService(IKeyRotationService keyRotation) {\n+     public string IssueToken(User u) => keyRotation.SignToken(u);\n+ }'
+  },
+  { type: 'verification', status: 'running', text: 'Running automatic verification: dotnet build seekclaw_tests...' },
+  { type: 'verification', status: 'success', text: 'Build passed with 0 errors and 0 warnings. All tests passed (42/42).' },
+  { type: 'text', text: 'Refactored UserService.cs for dynamic JWT key rotation and added regression tests.' }
+]
+
+const scriptSteps = computed(() => isEn.value ? enScriptSteps : zhScriptSteps)
+
 const runAnimation = async () => {
   visibleLogs.value = []
   isTyping.value = true
   
-  for (const step of scriptSteps) {
+  for (const step of scriptSteps.value) {
     await new Promise(r => setTimeout(r, 600))
     visibleLogs.value.push(step)
     await nextTick()

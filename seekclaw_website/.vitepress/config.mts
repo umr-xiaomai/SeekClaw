@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: 'SeekClaw',
-  description: '基于 .NET 10.0 的现代化、高性能 AI Agent 运行时',
+  description: '本地优先、开源、可扩展的通用 AI Agent Runtime',
   cleanUrls: true,
 
   head: [
@@ -17,13 +17,14 @@ export default defineConfig({
       label: '简体中文',
       lang: 'zh-CN',
       title: 'SeekClaw',
-      description: '基于 .NET 10.0 的现代化、高性能 AI Agent 运行时',
+      description: '本地优先、开源、可扩展的通用 AI Agent Runtime',
       themeConfig: {
         logo: '/logo.png',
         siteTitle: 'SeekClaw',
         nav: [
           { text: '首页', link: '/' },
           { text: '文档中心', link: '/doc/' },
+          { text: 'Desktop', link: '/doc/desktop' },
           { text: '架构指南', link: '/doc/architecture' },
           { text: 'CLI 命令', link: '/doc/cli' },
           {
@@ -42,6 +43,7 @@ export default defineConfig({
               items: [
                 { text: '项目概览', link: '/doc/' },
                 { text: '快速开始', link: '/doc/quickstart' },
+                { text: 'Desktop 桌面端', link: '/doc/desktop' },
                 { text: '架构设计 (Runtime First)', link: '/doc/architecture' }
               ]
             },
@@ -94,13 +96,14 @@ export default defineConfig({
       lang: 'en-US',
       link: '/en/',
       title: 'SeekClaw',
-      description: 'Modern, High-Performance AI Agent Runtime built on .NET 10.0',
+      description: 'A local-first, open-source, extensible general-purpose AI Agent Runtime',
       themeConfig: {
         logo: '/logo.png',
         siteTitle: 'SeekClaw',
         nav: [
           { text: 'Home', link: '/en/' },
           { text: 'Docs', link: '/en/doc/' },
+          { text: 'Desktop', link: '/en/doc/desktop' },
           { text: 'Architecture', link: '/en/doc/architecture' },
           { text: 'CLI Reference', link: '/en/doc/cli' },
           {
@@ -119,6 +122,7 @@ export default defineConfig({
               items: [
                 { text: 'Overview', link: '/en/doc/' },
                 { text: 'Quick Start', link: '/en/doc/quickstart' },
+                { text: 'Desktop Client', link: '/en/doc/desktop' },
                 { text: 'Architecture (Runtime First)', link: '/en/doc/architecture' }
               ]
             },

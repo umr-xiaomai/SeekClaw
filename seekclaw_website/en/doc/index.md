@@ -1,40 +1,47 @@
 # SeekClaw Documentation
 
-Welcome to the **SeekClaw** official technical documentation!
+SeekClaw is a local-first, extensible general-purpose AI Agent Runtime built on **.NET 10** with a Runtime First, event-driven architecture. It can reason toward a goal and use local tools, the web, MCP, and Skills to finish real work. Windows Desktop and CLI share the same Runtime, configuration, tools, and session data.
 
-SeekClaw is a high-performance AI Agent runtime built on **.NET 10.0**, utilizing **Clean Architecture** and an **event-driven design**. It provides a comprehensive platform for building AI-powered coding assistants, CLI terminal experiences, and intelligent developer tools.
+![SeekClaw Desktop main window](/screenshots/desktop/chat-and-projects.png)
 
----
+## What SeekClaw provides today
 
-## Core Principles & Design Features
-
-| Feature | Description |
+| Capability | Description |
 | --- | --- |
-| **Runtime First Architecture** | All business logic is encapsulated in `seekclaw_runtime`. `seekclaw_cli` serves purely as the default terminal frontend, making GUI, Web, and IDE integrations easy. |
-| **Multi-Provider & Smart Routing** | Native support for OpenAI, Anthropic Claude, Google Gemini, and local Ollama / LM Studio with Fast, Balanced, Quality, and Offline strategies with circuit breakers. |
-| **60 FPS Terminal Renderer** | 30-60 FPS double-buffered console rendering, supporting real-time streaming tokens, live thinking processes, and status spinners. |
-| **Open Tools & MCP Protocol** | Built-in file read/write/edit, regex search, and bash execution tools, fully implementing the Model Context Protocol (MCP). |
-| **Auto-Build & Self-Healing** | Automatically triggers .NET, Rust, Node, Go, or Python build verifications after code edits, feeding compilation errors back to the agent for self-repair. |
-| **Workspace & Session State** | Auto-detects project types, maintains isolated `.seekclaw/` workspace environments, and supports JSONL session persistence. |
+| **Desktop and CLI clients** | Desktop provides project navigation, global tasks, archives, model settings, Git, and terminal shortcuts. CLI retains the full terminal and administration workflow. |
+| **Project and global tasks** | Project tasks connect files, terminals, Git, and dedicated Memory. Directory-free global tasks support research, writing, knowledge work, and everyday tasks. |
+| **Providers and routing** | Supports Anthropic and OpenAI wire protocols plus OpenAI-compatible services such as Google, OpenRouter, Ollama, MiMo, and LM Studio. |
+| **Tools, Skills, and MCP** | Includes file, search, shell, and web tools and can be extended with Skills and stdio / SSE MCP servers. |
+| **Session and workspace state** | Sessions are stored per workspace as JSONL and can be resumed, archived, or removed. Project metadata is isolated under `.seekclaw/`. |
+| **Verification and repair** | Code changes can trigger checks for .NET, Node, Rust, Go, Python, and other projects, with failures returned to the Agent for repair. |
+| **Diagnostics and usage** | Desktop and CLI inspect Runtime and Provider health; Desktop also aggregates calls, tokens, latency, and cost. |
 
----
+## Choose a client
 
-## Documentation Navigation Index
+### Desktop
 
-- **Quick Start Guide**: Learn about [Quick Start](/en/doc/quickstart)
-- **Architecture Design**: Understand [Runtime First & Render Loop](/en/doc/architecture)
-- **Providers & Routing**: Configure [OpenAI, Anthropic, Gemini, Ollama](/en/doc/providers)
-- **CLI Reference**: Master [seekclaw commands and parameters](/en/doc/cli)
-- **Tools & MCP**: Explore [Built-in Tools](/en/doc/tools) and [MCP Integration](/en/doc/mcp)
-- **Skills & Memory**: Configure [Skill Templates](/en/doc/skills) and [Memory System](/en/doc/workspace)
-- **Verification & Repair**: Read about [BuildVerifier Mechanism](/en/doc/verification)
-- **Configuration Reference**: Check [Configuration Schema](/en/doc/configuration)
-- **Daemon Server**: Integrate [IPC Protocol for GUI/IDE](/en/doc/daemon)
-- **FAQ & Diagnostics**: Run [Doctor & Troubleshooting](/en/doc/faq)
+Best for everyday graphical use. The release folder includes a self-contained Runtime. Launching `SeekClaw.exe` connects to or starts the Daemon automatically, and end users do not need .NET installed.
 
----
+- [Desktop usage, settings, and release builds](/en/doc/desktop)
+- [Five-minute quick start](/en/doc/quickstart)
 
-## Open Source License
+### CLI
 
-SeekClaw is licensed under the open-source [MIT License](https://opensource.org/licenses/MIT).
-Source code is hosted on GitHub: [umr-xiaomai/SeekClaw](https://github.com/umr-xiaomai/SeekClaw).
+Best for terminal workflows, scripted administration, and Runtime debugging. Running from source requires the .NET 10 SDK.
+
+- [CLI command reference](/en/doc/cli)
+- [Configuration reference](/en/doc/configuration)
+
+## Explore the Runtime
+
+- [Runtime First architecture and Agent lifecycle](/en/doc/architecture)
+- [Providers, models, and smart routing](/en/doc/providers)
+- [Built-in tools](/en/doc/tools), [Skills](/en/doc/skills), and [MCP](/en/doc/mcp)
+- [Workspace and Memory](/en/doc/workspace)
+- [Build verification and automatic repair](/en/doc/verification)
+- [Daemon and IPC 2.0 protocol](/en/doc/daemon)
+- [FAQ and troubleshooting](/en/doc/faq)
+
+## License
+
+SeekClaw is available under the [MIT License](https://opensource.org/licenses/MIT). Source code is hosted on [GitHub](https://github.com/umr-xiaomai/SeekClaw).

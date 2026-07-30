@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,10 +21,61 @@ RUNTIME_STAGE = DESKTOP_DIR / "runtime" / "win-x64"
 BUILDER_OUTPUT = DESKTOP_DIR / "release"
 UNPACKED_OUTPUT = BUILDER_OUTPUT / "win-unpacked"
 FINAL_OUTPUT = REPO_ROOT / "publish" / "SeekClaw-win-x64"
+DESKTOP_PACKAGE_FILE = DESKTOP_DIR / "package.json"
+VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
 class BuildError(RuntimeError):
     """Raised when a release prerequisite or output is missing."""
+
+
+def read_desktop_version(package_file: Path = DESKTOP_PACKAGE_FILE) -> str:
+    try:
+        package = json.loads(package_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BuildError(f"Could not read Desktop package metadata: {package_file}") from error
+
+    version = package.get("version")
+    if not isinstance(version, str) or not VERSION_PATTERN.fullmatch(version):
+        raise BuildError(
+            f"Desktop version must use major.minor.patch format, found: {version!r}"
+        )
+    return version
+
+
+def next_patch_version(version: str) -> str:
+    match = VERSION_PATTERN.fullmatch(version)
+    if not match:
+        raise BuildError(f"Desktop version must use major.minor.patch format, found: {version!r}")
+    major, minor, patch = (int(part) for part in match.groups())
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def write_desktop_version(version: str, package_file: Path = DESKTOP_PACKAGE_FILE) -> None:
+    if not VERSION_PATTERN.fullmatch(version):
+        raise BuildError(f"Desktop version must use major.minor.patch format, found: {version!r}")
+
+    try:
+        contents = package_file.read_text(encoding="utf-8")
+        package = json.loads(contents)
+    except (OSError, json.JSONDecodeError) as error:
+        raise BuildError(f"Could not read Desktop package metadata: {package_file}") from error
+
+    current_version = package.get("version")
+    if not isinstance(current_version, str):
+        raise BuildError(f"Desktop package metadata has no string version: {package_file}")
+
+    pattern = re.compile(
+        rf'(?m)^(\s*"version"\s*:\s*)"{re.escape(current_version)}"(\s*,\s*)$'
+    )
+    updated, replacements = pattern.subn(rf'\g<1>"{version}"\g<2>', contents, count=1)
+    if replacements != 1:
+        raise BuildError(f"Could not update Desktop version in: {package_file}")
+
+    try:
+        package_file.write_text(updated, encoding="utf-8")
+    except OSError as error:
+        raise BuildError(f"Could not write Desktop package metadata: {package_file}") from error
 
 
 def workspace_path(path: Path) -> Path:
@@ -101,11 +154,17 @@ def main() -> int:
             "https://npmmirror.com/mirrors/electron-builder-binaries/"
         )
 
-    reset_directory(RUNTIME_STAGE)
-    reset_directory(FINAL_OUTPUT)
-    remove_directory(BUILDER_OUTPUT)
+    previous_version = read_desktop_version()
+    release_version = next_patch_version(previous_version)
+    version_committed = False
+    write_desktop_version(release_version)
+    print(f"Desktop version: {previous_version} -> {release_version}")
 
     try:
+        reset_directory(RUNTIME_STAGE)
+        reset_directory(FINAL_OUTPUT)
+        remove_directory(BUILDER_OUTPUT)
+
         if not args.skip_install:
             run(pnpm, ["install", "--frozen-lockfile"], DESKTOP_DIR, build_env)
 
@@ -149,10 +208,17 @@ def main() -> int:
         if not runtime_executable.is_file():
             raise BuildError(f"Bundled Runtime executable is missing: {runtime_executable}")
 
-        print(f"\nSeekClaw release is ready:\n{FINAL_OUTPUT}")
+        version_committed = True
+        print(f"\nSeekClaw {release_version} release is ready:\n{FINAL_OUTPUT}")
         print(f"Run: {desktop_executable}")
         return 0
     finally:
+        if not version_committed:
+            write_desktop_version(previous_version)
+            print(
+                f"Restored Desktop version to {previous_version} because the build did not finish.",
+                file=sys.stderr,
+            )
         remove_directory(DESKTOP_DIR / "runtime")
         remove_directory(BUILDER_OUTPUT)
 

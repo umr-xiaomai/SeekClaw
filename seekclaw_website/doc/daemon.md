@@ -54,21 +54,26 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 
 | 方法 | 参数 | 说明 |
 | --- | --- | --- |
-| `session.list` | 无 | 列出当前工作区的 Session |
-| `session.get` | `{ "id": "..." }` | 读取 Session 及其消息 |
-| `session.resume` | `{ "id": "..." }` | 恢复 Session |
-| `session.new` | 无 | 创建并绑定一个新 Session |
+| `session.list` | `{ "workspace": "...", "global": false, "includeArchived": true }` | 按工作区或全局范围列出 Session |
+| `session.get` | `{ "id": "...", "workspace": "..." }` | 读取 Session 及其消息 |
+| `session.update` | `{ "id": "...", "title": "..." }` | 更新标题等 Session 元数据 |
+| `session.archive` | `{ "id": "...", "archived": true }` | 归档或恢复 Session |
+| `session.delete` | `{ "id": "..." }` | 永久删除 Session |
+| `session.resume` | `{ "id": "...", "global": false }` | 恢复 Session |
+| `session.new` | `{ "global": false }` | 创建并绑定一个新 Session |
 | `model.list` | 无 | 列出可用的 `provider/model` 引用 |
 | `model.catalog` | 无 | 返回模型详情、能力和活动状态 |
 | `model.switch` | `{ "model": "provider/model" }` | 切换并持久化模型 |
 | `model.test` | `{ "model": "provider/model" }` | 发送最小真实请求测试模型 |
 | `doctor` | 无 | 返回 Runtime 健康检查摘要 |
 | `doctor.run` | 无 | 返回结构化 Runtime 与 Provider 检查 |
-| `shutdown` | 无 | 结束当前连接 |
+| `shutdown` | 无 | 取消活动 turn，返回 `bye` 并优雅停止 Daemon |
+
+Session 方法可传 `workspace` 指向具体项目，也可传 `global: true` 使用不绑定目录的全局 Session 空间。`includeArchived` 控制列表是否包含已归档任务。Desktop 在第一次发送消息时才调用 `session.new`，因此新建一个空白任务不会产生无内容的 Session。
 
 ## Desktop 管理方法
 
-Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直接读取配置文件。Provider 的 API Key 和 MCP 环境变量值不会通过查询方法返回。
+Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直接读取配置文件。显式存储的 Provider `apiKey` 会通过 `provider.list` 返回，以便 Desktop 直接显示和编辑；`apiKeyEnv` 指向的环境变量值不会被解析并返回。MCP 环境变量仅返回键名，不返回值。
 
 | 方法 | 说明 |
 | --- | --- |
@@ -81,3 +86,7 @@ Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直�
 Daemon 会先建立 IPC 监听，再在后台初始化 MCP。`mcp.reload`、MCP 配置修改和工作区切换都会先注销旧工具与 Prompt，再串行连接新配置。
 
 当前 Daemon 共享一个 `SeekClawRuntime`、一个活动工作区和一个事件总线，因此全局只允许一个 Agent turn。其他连接在 Runtime 忙碌时会收到明确的 `error`；这是协议保证，不应通过并行请求绕过。
+
+## Desktop 的 Daemon 生命周期
+
+打包版 Desktop 启动时先连接本地端点。若没有 Daemon，它会从 `resources/runtime` 启动自包含 Runtime，并在 24 次短间隔探测内等待端点就绪。Desktop 只记录自己创建的子进程；退出时向该实例发送 `shutdown`，等待其退出，超时后才终止进程。若启动时连接的是外部 Daemon，退出 Desktop 只断开连接。

@@ -1,102 +1,71 @@
-# 工具生态系统与内置工具 (Tools)
+# 内置工具与扩展
 
-SeekClaw 给 AI Agent 赋予了与真实操作系统、文件系统和编译工具交互的能力。本文详细介绍内置工具的种类、执行安全控制以及如何开发自定义 C# 原生 `ITool` 工具。
+Runtime 当前注册 9 个内置工具。文件和命令工具需要具体工作区；网络工具可用于不绑定目录的全局任务。
 
----
+## 内置工具
 
-## 内置核心工具矩阵
-
-SeekClaw 运行时自带 7 大高频编码与探针工具：
-
-| 工具名称 | 作用描述 | 变动性 (`Mutating`) | 状态标签 (`StatusLabel`) |
+| 工具 | 作用 | 修改状态 | 需要工作区 |
 | --- | --- | --- | --- |
-| `read_file` | 读取指定文件的完整内容或特定行号区间 | 否 (`false`) | *"正在读取文件..."* |
-| `write_file` | 创建新文件或覆盖写入已有文件 | 是 (`true`) | *"正在写入文件..."* |
-| `edit_file` | 对现存文件进行精准行替换或 Patch 修改 | 是 (`true`) | *"正在编辑代码块..."* |
-| `list_dir` | 列出指定目录下的文件与子目录列表 | 否 (`false`) | *"正在检索目录..."* |
-| `glob` | 使用 Glob 模式匹配文件（如 `**/*.cs`） | 否 (`false`) | *"正在搜寻文件匹配..."* |
-| `grep` | 基于 Ripgrep / 正则表达式高效搜索文本 | 否 (`false`) | *"正在全文检索代码..."* |
-| `bash` | 在当前工作区执行原生系统 Shell 命令 | 视命令而定 (`true`) | *"正在执行终端命令..."* |
+| `read_file` | 按行读取文件，支持 `offset` / `limit` | 否 | 是 |
+| `write_file` | 创建或覆盖完整文件 | 是 | 是 |
+| `edit_file` | 用唯一 `old_string` 替换为 `new_string` | 是 | 是 |
+| `list_dir` | 按指定深度列出目录树 | 否 | 是 |
+| `glob` | 匹配文件路径，最多返回最近的 200 项 | 否 | 是 |
+| `grep` | 正则搜索文件内容，可按 Glob 过滤 | 否 | 是 |
+| `bash` | 在工作区运行 Shell 命令 | 是 | 是 |
+| `web_search` | 使用 Google、Bing 或百度搜索 | 否 | 否 |
+| `web_fetch` | 提取 HTTP / HTTPS 页面正文 | 否 | 否 |
 
----
+工具描述从 `prompts/tool/<name>.txt` 加载，可以随 Prompt 更新；参数由 JSON Schema 校验。工具输出预算会根据模型上下文窗口调整，并受 `agent.maxToolOutputChars` 上限保护。
 
-## 工具入参 JSON Schema 规范
+## `edit_file` 参数
 
-以 `edit_file` 为例，工具入参包含强类型约束，确保 LLM 输出的准确性：
+当前 `edit_file` 使用文本匹配，而不是行号 Patch：
 
 ```json
 {
-  "name": "edit_file",
-  "description": "修改现有文件的内容区块",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "path": { "type": "string", "description": "相对或绝对文件路径" },
-      "startLine": { "type": "integer", "description": "起始替换行号 (1-indexed)" },
-      "endLine": { "type": "integer", "description": "结束替换行号 (1-indexed)" },
-      "replacementContent": { "type": "string", "description": "替换后的新代码文本" }
-    },
-    "required": ["path", "startLine", "endLine", "replacementContent"]
-  }
+  "path": "src/UserService.cs",
+  "old_string": "public bool IsActive => false;",
+  "new_string": "public bool IsActive => status.IsActive;",
+  "replace_all": false
 }
 ```
 
----
+`old_string` 必须匹配；默认要求只出现一次。多处匹配时，应增加上下文使其唯一，或明确设置 `replace_all: true`。修改完成后会发布统一 Diff 事件，供 Desktop 与 CLI 展示。
 
-## 自定义 C# 原生 Tool 开发
+## 模式与作用域
 
-通过实现 `ITool` 接口，开发者可轻松为 `seekclaw_runtime` 增加自定义业务工具：
+- 全局任务过滤 `RequiresWorkspace: true` 的工具，仅保留网络等无工作区工具。
+- `plan` 和 `readonly` 模式过滤所有 `Mutating: true` 工具。
+- `edit` 与 `auto` 模式允许修改工具；修改成功后可触发构建验证。
+- 工作区 `disabledTools` 可以按名称禁用工具。
+
+## 自定义 C# Tool
+
+自定义工具实现 `ITool` 并注册到 `IToolRegistry`：
 
 ```csharp
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using SeekClaw.Runtime.Tools;
-
-namespace SeekClaw.CustomTools;
-
-public class SqlQueryTool : ITool
+public sealed class ProjectSummaryTool : ITool
 {
-    public string Name => "sql_query";
-    public string Description => "在开发数据库中执行只读 SQL 查询";
-    
-    // 标记该工具是否更改外部状态
+    public string Name => "project_summary";
+    public string Description => "Summarize the current project";
+    public JsonObject ParameterSchema => ToolSchema.Object(
+        ("depth", ToolSchema.Integer("Maximum directory depth"), false));
     public bool Mutating => false;
-    
-    // 终端 UI 显示的状态文本
-    public string StatusLabel => "正在查询 SQL 数据库...";
+    public bool RequiresWorkspace => true;
+    public string StatusLabel => "Inspecting project";
 
-    // 工具入参 JSON Schema 声明
-    public JsonElement ParameterSchema => JsonSerializer.SerializeToElement(new
+    public Task<ToolResult> ExecuteAsync(
+        JsonObject arguments,
+        ToolContext context,
+        CancellationToken ct)
     {
-        type = "object",
-        properties = new
-        {
-            query = new { type = "string", description = "要执行的 SELECT 语句" }
-        },
-        required = new[] { "query" }
-    });
-
-    public async Task<ToolResult> ExecuteAsync(
-        JsonObject args, ToolContext ctx, CancellationToken ct)
-    {
-        string sql = args["query"]?.GetValue<string>() ?? "";
-        
-        // 校验只读原则
-        if (sql.Contains("DROP", StringComparison.OrdinalIgnoreCase) ||
-            sql.Contains("DELETE", StringComparison.OrdinalIgnoreCase))
-        {
-            return ToolResult.Error("安全规则拦截：不允许执行破坏性 SQL 语句");
-        }
-
-        // 执行查询逻辑...
-        string data = await ExecuteQueryAsync(sql, ct);
-        return ToolResult.Success(data);
+        var summary = $"Workspace: {context.Workspace.Root}";
+        return Task.FromResult(ToolResult.Ok(summary));
     }
 }
+
+using var registration = toolRegistry.Register(new ProjectSummaryTool());
 ```
 
-### 注册工具：
-```csharp
-// 在 SeekClawRuntime 初始化时挂载
-toolRegistry.Register(new SqlQueryTool());
-```
+注册返回的 `IDisposable` 用于注销工具；MCP 重载也依赖这一机制清理旧注册。

@@ -1,98 +1,109 @@
-# 多提供商与智能路由 (Providers & Routing)
+# Provider、模型与智能路由
 
-SeekClaw 内置对全球主流云端大模型 API 以及本地离线 LLM 的全量接入支持。本文详细介绍提供商配置、模型注册表、智能路由策略与自动熔断退避机制。
+SeekClaw 把“服务地址与凭据”和“模型能力”都作为可编辑配置。默认配置提供常用服务模板，你可以在 Desktop、CLI 或 `~/.seekclaw/config.json` 中增加任何兼容服务。
 
----
+## 协议与预置 Provider
 
-## 支持的 LLM 提供商列表
+Runtime 当前实现两种线协议：
 
-| 提供商标识 | 支持模型示例 | 协议规范 | 场景特点 |
+- `anthropic`：Anthropic Messages API；
+- `openai`：OpenAI Chat Completions API，也用于所有 OpenAI-compatible 服务。
+
+首次初始化的模板包括：
+
+| Provider ID | 线协议 | 默认地址 | 默认状态 |
 | --- | --- | --- | --- |
-| `openai` | `gpt-5.5`, `gpt-5.5-mini`, `deepseek-v3`, `qwen2.5` | OpenAI REST API | 云端高性能、函数调用规范 |
-| `anthropic` | `claude-opus`, `claude-sonnet`, `claude-haiku` | Anthropic Messages API | 深度逻辑推理、长文本理解 |
-| `google` | `gemini-pro`, `gemini-flash` | Gemini REST API | 海量 Context Window、极高吞吐 |
-| `ollama` | `llama3.3`, `qwen2.5-coder`, `deepseek-r1:14b` | Ollama Local API | 100% 离线隐私安全、零 Token 资费 |
-| `lmstudio` | 自定义本地 GGUF / ExLlama 模型 | OpenAI 兼容接口 | 本地 GPU 部署调试 |
+| `anthropic` | Anthropic | `https://api.anthropic.com` | 启用 |
+| `openai` | OpenAI | `https://api.openai.com/v1` | 启用 |
+| `google` | OpenAI compatible | `https://generativelanguage.googleapis.com/v1beta/openai` | 启用 |
+| `mimo` | OpenAI compatible | `https://token-plan-cn.xiaomimimo.com/v1` | 启用 |
+| `openrouter` | OpenAI compatible | `https://openrouter.ai/api/v1` | 默认禁用 |
+| `ollama` | OpenAI compatible | `http://localhost:11434/v1` | 默认禁用 |
+| `lmstudio` | OpenAI compatible | `http://localhost:1234/v1` | 默认禁用 |
 
----
+DeepSeek、Azure OpenAI、企业网关或其他兼容服务可以通过新增 `kind: "openai"` 的 Provider 接入。模型 ID、上下文窗口、最大输出、能力标签与价格均属于用户配置，不被 Runtime 写死。
 
-## 智能路由策略 (Routing Strategies)
+## 在 Desktop 中配置
 
-SeekClaw 拒绝死板硬编码模型。运行时包含 **智能候选链构建器**，根据任务场景策略与模型能力位（ModelCapabilities）自动选择最佳模型：
+进入“设置 → 模型与 Provider”，可以管理 Provider、Profile 与模型目录：
+
+![Desktop 模型与 Provider 管理](/screenshots/desktop/providers-and-models.png)
+
+1. 点击“+ Provider”或编辑现有项。
+2. 选择 `openai` 或 `anthropic` 协议，填写 ID、名称、Base URL 和模型 ID。
+3. 直接填写 API Key，或填写提供 Key 的环境变量名。
+4. 根据需要配置代理、超时、优先级和启用状态。
+5. 保存后点击“测试”；确认可用后切换活动 Provider 或模型。
+
+显式写入配置文件的 `apiKey` 会由 Desktop 直接读取、显示和修改。`apiKeyEnv` 指向的环境变量值只在 Runtime 中解析，不会返回到界面。换言之，Key 输入框为空不代表环境变量无效。
+
+请求失败时，Runtime 会保留 Provider 名称、HTTP 状态和响应正文。例如协议不兼容、工具调用消息缺少对应结果、模型 ID 错误等 400 响应会完整展示，方便按服务端提示修复。
+
+## 配置文件结构
+
+Provider 是数组，模型属于对应 Provider：
 
 ```json
-"routing": {
-  "defaultStrategy": "balanced",
-  "strategies": {
-    "fast": {
-      "candidates": ["openai/gpt-5.5-mini", "anthropic/claude-haiku", "google/gemini-flash"]
-    },
-    "balanced": {
-      "candidates": ["openai/gpt-5.5", "anthropic/claude-sonnet"]
-    },
-    "quality": {
-      "candidates": ["anthropic/claude-opus", "openai/gpt-5.5"]
-    },
-    "offline": {
-      "candidates": ["ollama/qwen2.5-coder", "ollama/deepseek-r1:14b"]
+{
+  "activeProfile": "default",
+  "profiles": {
+    "default": { "provider": "deepseek", "model": "deepseek-chat", "strategy": "balanced" }
+  },
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "kind": "openai",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "enabled": true,
+      "priority": 0,
+      "timeoutSeconds": 120,
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "contextWindow": 128000,
+          "maxOutput": 8192,
+          "capabilities": { "streaming": true, "toolCalling": true }
+        }
+      ]
     }
-  }
+  ]
 }
 ```
 
-### 负载均衡算法：
-- **priority**：按候选链优先级从高到低顺序尝试。
-- **roundRobin**：在同级候选健康节点间轮询分流。
-- **leastUsed**：优先调度当前请求并发数最小的提供商。
-- **fastest**：基于历史响应延迟记录选出首 Token 最快节点。
+需要直接保存 Key 时可使用 `"apiKey": "sk-..."`，但不要把包含凭据的个人全局配置提交到仓库。
 
----
+## Profile 与路由
 
-## 故障转移与熔断机制 (Circuit Breaker)
+Profile 可固定 Provider / 模型，也可以只指定策略让 Runtime 构建候选链。默认策略为：
 
-为应对云端 API 偶尔出现的超时、速率限制（Rate Limit 429）或服务不可用（5xx），SeekClaw 内置了电信级熔断退避防护：
+- `fast`：低延迟；
+- `balanced`：质量、速度和成本的平衡；
+- `quality`：优先高能力模型；
+- `cheap`：优先低成本模型；
+- `offline`：优先 Ollama 或 LM Studio。
 
-```
-                             +-------------------+
-                             |   Closed (正常)    |
-                             +---------+---------+
-                                       |
-                                连续失败超过 N 次
-                                       |
-                                       v
-                             +-------------------+
-                             |    Open (熔断)    | <--- 自动切至候选链下一个 Candidate
-                             +---------+---------+
-                                       |
-                                冷却时间过后 (如 60s)
-                                       |
-                                       v
-                             +-------------------+
-                             |  HalfOpen (半开)  |
-                             +-------------------+
-```
+默认负载方式是 `priority`。候选请求支持指数退避、最大尝试次数、熔断阈值和冷却时间。首个流式 Token 到达后，Runtime 不会在同一回答中途切换 Provider，以避免拼接两个模型的输出。
 
-### 运行特征：
-- **指数退避与抖动**：重试等待时间按 1s, 2s, 4s, 8s (带有 random jitter) 自动递增。
-- **首 Token 到达提交**：一旦模型开始流式返回 Token（First Byte Arrived），任务即视为被提供商成功受理，后续不再中途更换候选节点。
-- **健康检查器 (HealthChecker)**：后台定期对各个 Provider 进行存活心跳探测。
-
----
-
-## 命令行配置管理示例
+## CLI 管理
 
 ```bash
-# 查看所有已注册提供商
+# 查看 Provider
 seekclaw provider list
 
-# 添加新的 OpenAI 兼容服务商 (例如 DeepSeek)
-seekclaw provider add deepseek \
-  --api-key "sk-xxxxxxxx" \
-  --base-url "https://api.deepseek.com/v1"
+# 添加 OpenAI-compatible Provider
+seekclaw provider add --id deepseek --kind openai \
+  --api-key "sk-..." \
+  --base-url "https://api.deepseek.com/v1" \
+  --model "deepseek-chat"
 
-# 测试特定提供商的连通性
+# 检查连通性
 seekclaw provider test deepseek
 
-# 实时查询已使用 Token 与费用统计
+# 查看模型与累计用量
+seekclaw model list
 seekclaw usage
 ```
+
+完整字段见 [配置参考](/doc/configuration)，连接问题见 [常见问题与排错](/doc/faq)。

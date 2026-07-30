@@ -1,54 +1,58 @@
-# 构建验证与自动自我修复 (Build Verification & Auto-Repair)
+# 构建验证与自动修复
 
-传统的 AI 编码助手最常见的问题是："看似修改了代码，但生成的内容包含语法错误或破坏了现有的单元测试，需要人工打断并手工修错"。
+当项目任务中的修改工具成功执行后，Agent 在准备完成回答前运行 `BuildVerifier`。验证失败会把命令与错误输出作为 `builtin/repair` Prompt 追加到同一 Session，并在限制内继续修复。
 
-SeekClaw 引入了 **BuildVerifier 闭环与自愈修复循环（Auto-Repair Loop）**。
-
----
-
-## 自愈闭环工作流
+## 流程
 
 ```mermaid
 flowchart TD
-    A[Agent 产生文件修改] --> B{工作区配置了 AutoVerify?}
-    B -- 否 --> C[完成本 Turn 任务]
-    B -- 是 --> D[BuildVerifier 自动执行项目构建/测试命令]
-    D --> E{构建/测试是否成功?}
-    E -- 成功 --> C
-    E -- 失败 --> F{尝试修复次数 < MaxRepairAttempts?}
-    F -- 超出限制 --> G[终止循环，返回完整报错日志给用户]
-    F -- 允许重试 --> H[抽取编译 Error & StackTrace]
-    H --> I[注入 builtin/repair 专有 Prompt 模板]
-    I --> A
+    A["修改工具成功"] --> B{"项目任务且 AutoVerify?"}
+    B -- 否 --> Z["完成 turn"]
+    B -- 是 --> C["解析验证命令"]
+    C --> D["执行，最长 10 分钟"]
+    D --> E{"退出码为 0?"}
+    E -- 是 --> Z
+    E -- 否 --> F{"未达到 MaxRepairAttempts?"}
+    F -- 是 --> G["把命令和错误注入 repair Prompt"]
+    G --> A
+    F -- 否 --> Z
 ```
 
----
+全局任务不会运行构建验证。`plan` / `readonly` 模式没有修改工具，因此也不会触发。
 
-## 验证策略配置选项
+## 默认命令
 
-全局或工作区 `.seekclaw/config.json` 中可配置自愈参数：
+| 检测类型 | 当前默认命令 |
+| --- | --- |
+| .NET | `dotnet build --nologo -v q` |
+| Rust | `cargo check --quiet` |
+| Go | `go build ./...` |
+| Node | 仅当 `package.json` 包含 `build` script 时运行 `npm run build` |
+
+Python 与 Unity 当前没有内置默认验证命令，可通过工作区覆盖设置。
+
+## 配置
+
+全局 `~/.seekclaw/config.json`：
 
 ```json
-"agent": {
-  "autoVerify": true,
-  "maxRepairAttempts": 3,
-  "verificationCommand": "dotnet build seekclaw_tests"
+{
+  "agent": {
+    "autoVerify": true,
+    "maxRepairAttempts": 3
+  }
 }
 ```
 
-### 自动识别逻辑：
-如果未显式提供 `verificationCommand`，SeekClaw 会根据 `WorkspaceManager` 检测到的项目类型智能推导默认验证命令：
-- `.NET`: `dotnet build`
-- `Rust`: `cargo check`
-- `Node.js`: `npm run build` 或 `pnpm run check`
-- `Python`: `pytest`
+工作区 `.seekclaw/config.json`：
 
----
+```json
+{
+  "autoVerify": true,
+  "verifyCommand": "dotnet test"
+}
+```
 
-## 防幻觉与无掩盖原则
+`verifyCommand` 是工作区字段，不是全局 `agent.verificationCommand`。命令在工作区根目录执行；Windows 优先使用 Bash，其次 PowerShell，最后 `cmd.exe`，其他系统使用 `/bin/bash -c`。
 
-SeekClaw 的 `BuildVerifier` 遵循严肃的技术规范：
-
-- **拒绝静默吞异常**：如果构建超时或报错，必须完整提取编译器打出的标准错误输出 (stderr) 与绝对行号。
-- **专有 Repair 提示**：自愈 Prompt 中包含精确指令，禁止 Agent 通过删除单元测试、注释断言或返回伪装 Dummy 数据来“掩盖”构建失败。
-- **有界退避**：达到 `MaxRepairAttempts`（默认 3 次）后立即停止，向开发者呈现真实的错误上下文，避免死循环消耗 Token。
+标准输出与标准错误会合并，超过 8,000 字符时保留末尾内容，因为编译器错误通常位于末尾。验证事件会同步显示在 Desktop 或 CLI；达到修复次数后结束循环并保留真实失败信息。

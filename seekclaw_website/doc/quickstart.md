@@ -1,123 +1,97 @@
-# 快速开始指南
+# 快速开始
 
-本指南帮助您在 5 分钟内快速安装、配置并开始使用 SeekClaw AI Agent 运行时。
+最快的使用方式是运行已打包的 Windows Desktop。需要终端工作流或开发 SeekClaw 本身时，再选择 CLI 或源码构建。
 
----
+## 方式一：使用 Desktop（推荐）
 
-## 前置要求
+### 1. 启动
 
-在构建和运行 SeekClaw 之前，请确保您的系统中已安装以下环境：
+获取 `SeekClaw-win-x64` 发布文件夹，保留其中的全部文件，然后运行：
 
-1. **.NET 10.0 SDK** 或更高版本
-   - 检查命令：`dotnet --version`
-2. **Git**（用于工作区项目类型自动检测与仓库感知）
-   - 检查命令：`git --version`
-3. 一个或多个 **LLM API Key**（如 OpenAI, Anthropic, Gemini, 或本地安装的 Ollama / LM Studio）
+```text
+SeekClaw-win-x64\SeekClaw.exe
+```
 
----
+发布包内已经包含 .NET Runtime。Desktop 会自动连接现有 Daemon，或启动 `resources\runtime\seekclaw.exe`，无需用户手动打开 Runtime。
 
-## 从源码构建
+### 2. 配置模型
 
-复制 SeekClaw GitHub 仓库源码并进行编译：
+1. 打开左下角设置入口。
+2. 进入“模型与 Provider”。
+3. 编辑一个 Provider，填写 API Key、Base URL 与模型列表。
+4. 保存后点击“测试”，再选择“使用”或切换活动模型。
 
-```bash
-# 1. 克隆代码仓库
+显式保存的 API Key 会在 Desktop 中直接显示和编辑。通过环境变量配置的 Key 不会反向显示其值。
+
+### 3. 创建任务
+
+- 点击“新建任务”并选择项目目录，可让 Agent 使用文件、终端和 Git 能力。
+- 展开“全局任务”并新建不绑定目录的任务，可进行不涉及本地项目的对话。
+- 点击新任务页的预提示词只会填入输入框，确认内容后再手动发送。
+
+更多界面与发布说明见 [Desktop 指南](/doc/desktop)。
+
+## 方式二：从源码构建 Desktop 发布包
+
+构建机器需要：
+
+- Windows x64；
+- .NET 10 SDK；
+- Node.js 与 pnpm；
+- Python 3；
+- 可访问 Electron 二进制镜像的网络。
+
+```powershell
 git clone https://github.com/umr-xiaomai/SeekClaw.git
 cd SeekClaw
+build.cmd
+```
 
-# 2. 编译项目
+Windows 用户可以直接双击 `build.cmd`。它会启动 `build.py`，编译并测试最新 Runtime 与 Desktop，最终生成：
+
+```text
+publish\SeekClaw-win-x64\SeekClaw.exe
+```
+
+分发时必须复制整个 `SeekClaw-win-x64` 文件夹。
+
+## 方式三：运行 CLI
+
+CLI 源码运行需要 .NET 10 SDK；Git 用于仓库感知和项目工具。
+
+```bash
+git clone https://github.com/umr-xiaomai/SeekClaw.git
+cd SeekClaw
 dotnet build
-```
 
----
-
-## 极速配置 API Key
-
-SeekClaw 支持交互式配置或直接编辑配置文件。
-
-### 方式 A：通过 CLI 命令行添加（推荐）
-
-```bash
-# 添加 OpenAI API Key
-dotnet run --project seekclaw_cli -- provider add openai --api-key "sk-proj-xxxxxxxx"
-
-# 添加 Anthropic API Key
-dotnet run --project seekclaw_cli -- provider add anthropic --api-key "sk-ant-xxxxxxxx"
-
-# 测试提供商连接状态
+# 配置并测试 Provider
+dotnet run --project seekclaw_cli -- provider add --id openai --kind openai --base-url "https://api.openai.com/v1" --api-key "sk-..." --model "gpt-5.5"
 dotnet run --project seekclaw_cli -- provider test openai
-```
 
-### 方式 B：手工编辑全局配置文件
-
-配置文件默认创建于用户家目录 `~/.seekclaw/config.json`：
-
-```json
-{
-  "providers": {
-    "openai": {
-      "apiKey": "sk-proj-xxxxxxxx",
-      "baseUrl": "https://api.openai.com/v1"
-    },
-    "anthropic": {
-      "apiKey": "sk-ant-xxxxxxxx"
-    }
-  },
-  "profiles": {
-    "default": {
-      "provider": "openai",
-      "model": "gpt-5.5"
-    }
-  }
-}
-```
-
----
-
-## 运行 SeekClaw
-
-### 1. 交互式 Chat 聊天模式
-
-直接启动 SeekClaw 终端应用，进入无缝对流交互：
-
-```bash
+# 进入交互模式
 dotnet run --project seekclaw_cli
 ```
 
-在交互模式中，您可以输入自然语言任务指令（如 *"帮我重构 UserService.cs 并补全单元测试"*）。SeekClaw 将自动流式推理、展示思考过程、调用文件操作工具，并在修改后自动进行代码编译校验。
-
-### 2. 单次指令模式 (Single Shot)
-
-通过命令行参数直接执行单次自动化任务：
+也可以直接执行单次任务：
 
 ```bash
 dotnet run --project seekclaw_cli -- "分析当前项目的架构与依赖关系"
 ```
 
-### 3. 会话恢复与继续
+恢复会话或指定模型：
 
 ```bash
-# 继续上一次中断的会话
 dotnet run --project seekclaw_cli -- --continue
-
-# 恢复特定的 Session ID
 dotnet run --project seekclaw_cli -- --resume <session-id>
+dotnet run --project seekclaw_cli -- --model "anthropic/claude-sonnet-5" -- "检查并修复测试"
 ```
 
-### 4. 覆盖指定模型
+## 诊断
 
-```bash
-dotnet run --project seekclaw_cli -- --model "anthropic/claude-opus" -- "帮我重构底层锁逻辑"
-```
-
----
-
-## 系统运行状况诊断 (Doctor)
-
-若遇到连接问题，可随时运行医生诊断命令：
+Desktop 用户可打开“设置 → 诊断与用量”。CLI 用户运行：
 
 ```bash
 dotnet run --project seekclaw_cli -- doctor
 ```
 
-系统将自动检查 .NET 环境、配置文件合法性、供应商连通性、内置 Prompt 模板状态及全局缓存权限。
+诊断会检查工作区、配置、Provider 连通性、Memory 和运行目录。如果请求失败，当前版本会保留 Provider 返回的 HTTP 状态与完整错误内容，便于定位模型协议或消息格式问题。

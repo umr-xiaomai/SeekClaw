@@ -1,187 +1,279 @@
 <template>
-  <div class="arch-overview seek-glass-card">
-    <div class="arch-header">
-      <h3>
-        <Building2 class="icon-header" :size="22" /> Runtime First 清洁架构理念
-      </h3>
-      <p>核心业务逻辑完全与 UI 界面解耦。所有功能均封装于 <code>seekclaw_runtime</code> 核心库，前端 CLI / GUI / Web / IDE 插件均通过统一 Facade 或 Daemon IPC 协议接入。</p>
+  <section class="runtime-section">
+    <div class="runtime-copy">
+      <span class="eyebrow">OPEN AGENT RUNTIME</span>
+      <h2>{{ isEn ? 'Build around your models, tools, and data' : '开放的 Agent Runtime' }}</h2>
+      <p>
+        {{ isEn
+          ? 'SeekClaw keeps the orchestration layer open. Choose the models you trust, connect the tools you need, and keep task state under your control.'
+          : 'SeekClaw 将编排层保持开放：选择你信任的模型，连接任务需要的工具，并把任务状态掌握在自己手中。'
+        }}
+      </p>
+      <a :href="isEn ? '/en/doc/architecture' : '/doc/architecture'">
+        {{ isEn ? 'How the Runtime works' : '了解 Runtime 架构' }} <ArrowRight :size="16" />
+      </a>
     </div>
 
-    <div class="layers-container">
-      <div 
-        v-for="layer in layers" 
-        :key="layer.id" 
-        class="layer-card" 
-        :class="{ active: activeLayer === layer.id }"
-        @mouseenter="activeLayer = layer.id"
-      >
-        <div class="layer-top">
-          <component :is="layer.icon" class="layer-icon" :size="18" />
-          <span class="layer-badge">{{ layer.tag }}</span>
+    <div class="runtime-visual" :aria-label="isEn ? 'SeekClaw Runtime flow' : 'SeekClaw Runtime 流程'">
+      <div class="flow-row">
+        <div class="flow-group compact">
+          <span class="flow-label">MODELS</span>
+          <div class="chip-row">
+            <span>Anthropic</span><span>OpenAI</span><span>Local</span>
+          </div>
         </div>
-        <h4>{{ layer.title }}</h4>
-        <p class="layer-sub">{{ layer.subtitle }}</p>
-        <ul class="detail-list">
-          <li v-for="item in layer.details" :key="item">{{ item }}</li>
-        </ul>
+        <ArrowRight class="flow-arrow" :size="19" />
+        <div class="runtime-core">
+          <Sparkles :size="22" />
+          <div><strong>SeekClaw</strong><small>Agent Runtime</small></div>
+        </div>
+        <ArrowRight class="flow-arrow" :size="19" />
+        <div class="flow-group compact">
+          <span class="flow-label">CAPABILITIES</span>
+          <div class="chip-row">
+            <span>Tools</span><span>MCP</span><span>Skills</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="output-line" />
+      <div class="output-row">
+        <span><Monitor :size="16" /> Desktop</span>
+        <span><Terminal :size="16" /> CLI</span>
+        <span><Database :size="16" /> {{ isEn ? 'Local state' : '本地状态' }}</span>
       </div>
     </div>
-  </div>
+
+    <div class="runtime-facts">
+      <article v-for="fact in facts" :key="fact.title">
+        <strong>{{ fact.title }}</strong>
+        <span>{{ fact.description }}</span>
+      </article>
+    </div>
+  </section>
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { Building2, Terminal, Cpu, Boxes, RefreshCw } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { useData } from 'vitepress'
+import { ArrowRight, Database, Monitor, Sparkles, Terminal } from 'lucide-vue-next'
 
-const activeLayer = ref('runtime')
+const { lang } = useData()
+const isEn = computed(() => lang.value === 'en-US' || lang.value?.startsWith('en'))
 
-const layers = [
-  {
-    id: 'frontend',
-    icon: Terminal,
-    tag: '前端表示层 (Frontends)',
-    title: 'seekclaw_cli & 未来 GUI/Web',
-    subtitle: '专注于高帧率流式交互与终端 ANSI 双缓冲渲染',
-    details: [
-      'System.CommandLine 命令解析引擎',
-      'Spectre.Console 游戏式 30-60 FPS 渲染循环',
-      '纯事件驱动订阅，不侵入任何 Agent 业务逻辑'
-    ]
-  },
-  {
-    id: 'runtime',
-    icon: Cpu,
-    tag: '核心运行时 (seekclaw_runtime)',
-    title: 'SeekClawRuntime 组合根 & Agent 循环',
-    subtitle: '基于 .NET 10.0 的高性能核心控制中枢',
-    details: [
-      'ContextPlanner 上下文窗口智能剪裁',
-      'PromptComposer 多层提示模板引擎 (FileSystemWatcher 热加载)',
-      'SessionStore JSONL 会话持久化与断点恢复',
-      'WorkspaceManager 项目自动识别与 Memory 系统'
-    ]
-  },
-  {
-    id: 'plugins',
-    icon: Boxes,
-    tag: '可扩展插件生态 (Plugins & MCP)',
-    title: 'Tools + Skills + MCP Protocol',
-    subtitle: '原生工具库与开放模型上下文协议 (MCP)',
-    details: [
-      'ToolRegistry 原生 Tool 接口与入参校验',
-      'SkillManager YAML + Prompt.txt 目录化技能管理',
-      'McpManager stdio 与 SSE 传输支持 (JSON-RPC 2.0)'
-    ]
-  },
-  {
-    id: 'verifier',
-    icon: RefreshCw,
-    tag: '自我修复循环 (Build Verification)',
-    title: 'BuildVerifier 容错自愈',
-    subtitle: '多语言构建检测与错误再注入修复机制',
-    details: [
-      '自动检测 Git / .NET / Node / Rust / Go / Python 构建命令',
-      '编译/检查失败时捕获错误日志反馈回 Agent 循环',
-      '配置上限内自动调整重试，无需人工干预补错'
-    ]
-  }
-]
+const facts = computed(() => isEn.value ? [
+  { title: 'Any model', description: 'Cloud APIs, compatible providers, and local inference.' },
+  { title: 'Any tool', description: 'Built-ins, web access, MCP servers, and reusable Skills.' },
+  { title: 'Local control', description: 'Persistent tasks, sessions, memory, and diagnostics.' }
+] : [
+  { title: '任意模型', description: '云端 API、兼容 Provider 与本地推理。' },
+  { title: '任意工具', description: '内置工具、网页、MCP Server 与 Skills。' },
+  { title: '本地掌控', description: '持久化任务、Session、Memory 与诊断。' }
+])
 </script>
 
 <style scoped>
-.arch-overview {
-  margin: 3rem 0;
-  border-radius: 16px;
-  padding: 2rem;
-}
-
-.arch-header h3 {
-  font-size: 1.5rem;
-  color: var(--seek-text-primary);
-  font-weight: 800;
-  margin-bottom: 0.5rem;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.icon-header {
-  color: #7c3aed;
-}
-
-.arch-header p {
-  color: var(--seek-text-secondary);
-  margin-bottom: 1.5rem;
-  line-height: 1.6;
-}
-
-.layers-container {
+.runtime-section {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 1.25rem;
-}
-
-.layer-card {
-  background: var(--vp-c-bg-soft);
-  border: 1px solid var(--seek-card-border);
-  border-radius: 12px;
-  padding: 1.25rem;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
+  grid-template-columns: minmax(0, 0.75fr) minmax(480px, 1.25fr);
+  gap: 2rem 4rem;
+  margin-top: 1rem;
+  padding: clamp(2rem, 5vw, 4rem);
   overflow: hidden;
+  border: 1px solid #26352f;
+  border-radius: 22px;
+  background: #0c1512;
+  color: #fff;
 }
 
-.layer-card:hover, .layer-card.active {
-  border-color: rgba(139, 92, 246, 0.5);
-  transform: translateY(-4px);
-  box-shadow: 0 10px 25px -5px rgba(139, 92, 246, 0.18);
+.eyebrow {
+  color: #52d7a0;
+  font-size: 0.68rem;
+  font-weight: 760;
+  letter-spacing: 0.12em;
 }
 
-.layer-top {
+.runtime-copy h2 {
+  margin: 0.7rem 0 0;
+  color: #f4fbf8;
+  font-size: clamp(2.1rem, 4vw, 3.25rem);
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+}
+
+.runtime-copy p {
+  margin: 1rem 0 0;
+  color: #a9bdb5;
+  font-size: 0.92rem;
+  line-height: 1.75;
+}
+
+.runtime-copy a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 1.5rem;
+  color: #6ee7b7;
+  font-size: 0.84rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.runtime-visual {
+  align-self: center;
+  padding: 1.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.flow-row,
+.output-row,
+.chip-row,
+.runtime-core {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
 }
 
-.layer-icon {
-  color: #7c3aed;
+.flow-row {
+  justify-content: center;
+  gap: 0.8rem;
 }
 
-.layer-badge {
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: #7c3aed;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.flow-group {
+  min-width: 0;
+  flex: 1;
 }
 
-.dark .layer-badge, .dark .layer-icon {
-  color: #a78bfa;
+.flow-label {
+  display: block;
+  margin-bottom: 0.55rem;
+  color: #70867e;
+  font-size: 0.56rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-align: center;
 }
 
-.layer-card h4 {
-  font-size: 1.1rem;
-  color: var(--seek-text-primary);
-  margin-bottom: 4px;
-  font-weight: 700;
+.chip-row {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
 }
 
-.layer-sub {
-  font-size: 0.8rem;
-  color: var(--seek-text-muted);
-  margin-bottom: 12px;
+.chip-row span,
+.output-row span {
+  padding: 0.38rem 0.48rem;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #a9bdb5;
+  font-size: 0.61rem;
 }
 
-.detail-list {
-  padding-left: 1.2rem;
-  margin: 0;
+.flow-arrow {
+  flex: 0 0 auto;
+  color: #49685c;
 }
 
-.detail-list li {
-  font-size: 0.8rem;
-  color: var(--seek-text-secondary);
-  margin-bottom: 6px;
-  line-height: 1.4;
+.runtime-core {
+  flex: 0 0 auto;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(110, 231, 183, 0.24);
+  border-radius: 11px;
+  background: rgba(16, 185, 129, 0.09);
+  color: #6ee7b7;
+}
+
+.runtime-core div {
+  display: grid;
+}
+
+.runtime-core strong {
+  color: #f4fbf8;
+  font-size: 0.78rem;
+}
+
+.runtime-core small {
+  color: #789086;
+  font-size: 0.56rem;
+}
+
+.output-line {
+  width: 1px;
+  height: 28px;
+  margin: 0 auto;
+  background: #365449;
+}
+
+.output-row {
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.output-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.runtime-facts {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 0.75rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.runtime-facts article {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem;
+  background: #0c1512;
+}
+
+.runtime-facts strong {
+  color: #edf8f3;
+  font-size: 0.79rem;
+}
+
+.runtime-facts span {
+  color: #789086;
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 920px) {
+  .runtime-section {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .runtime-section {
+    padding: 1.5rem;
+    border-radius: 16px;
+  }
+
+  .flow-row {
+    flex-direction: column;
+  }
+
+  .flow-arrow {
+    transform: rotate(90deg);
+  }
+
+  .flow-group {
+    width: 100%;
+  }
+
+  .runtime-facts {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

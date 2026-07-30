@@ -54,21 +54,26 @@ Streaming events are `thinking`, `delta`, `status`, `tool_start`, and `tool_done
 
 | Method | Parameters | Description |
 | --- | --- | --- |
-| `session.list` | none | Lists sessions in the active workspace |
-| `session.get` | `{ "id": "..." }` | Reads a session and its messages |
-| `session.resume` | `{ "id": "..." }` | Resumes a session |
-| `session.new` | none | Creates and binds a new session |
+| `session.list` | `{ "workspace": "...", "global": false, "includeArchived": true }` | Lists sessions in a project or global scope |
+| `session.get` | `{ "id": "...", "workspace": "..." }` | Reads a session and its messages |
+| `session.update` | `{ "id": "...", "title": "..." }` | Updates title and other session metadata |
+| `session.archive` | `{ "id": "...", "archived": true }` | Archives or restores a session |
+| `session.delete` | `{ "id": "..." }` | Permanently deletes a session |
+| `session.resume` | `{ "id": "...", "global": false }` | Resumes a session |
+| `session.new` | `{ "global": false }` | Creates and binds a new session |
 | `model.list` | none | Lists available `provider/model` references |
 | `model.catalog` | none | Returns model details, capabilities, and active state |
 | `model.switch` | `{ "model": "provider/model" }` | Switches and persists the model |
 | `model.test` | `{ "model": "provider/model" }` | Sends a minimal real request through the model |
 | `doctor` | none | Returns a Runtime health-check summary |
 | `doctor.run` | none | Returns structured Runtime and Provider checks |
-| `shutdown` | none | Ends the current connection |
+| `shutdown` | none | Cancels an active turn, returns `bye`, and gracefully stops the Daemon |
+
+Session methods accept `workspace` for a concrete project or `global: true` for the directory-free global session store. `includeArchived` controls whether archived tasks are returned. Desktop waits until the first message to call `session.new`, so creating an empty task does not create an empty Runtime Session.
 
 ## Desktop Administration Methods
 
-The Desktop settings workbench uses structured methods to manage the same configuration as the CLI without reading configuration files directly. Provider API keys and MCP environment variable values are never returned by query methods.
+The Desktop settings workbench uses structured methods to manage the same configuration as the CLI without reading configuration files directly. An explicitly stored Provider `apiKey` is returned by `provider.list` so Desktop can display and edit it. The value referenced by `apiKeyEnv` is not resolved and returned. MCP environment variables expose names only, never values.
 
 | Method | Description |
 | --- | --- |
@@ -81,3 +86,7 @@ The Desktop settings workbench uses structured methods to manage the same config
 The Daemon starts listening before MCP initialization continues in the background. `mcp.reload`, MCP configuration changes, and workspace switches unregister old tools and prompts before serially connecting the new configuration.
 
 The current Daemon shares one `SeekClawRuntime`, one active workspace, and one event bus, so it allows one Agent turn globally. Other connections receive an explicit `error` while the Runtime is busy; clients should not attempt to bypass this protocol guarantee with parallel requests.
+
+## Desktop Daemon lifecycle
+
+Packaged Desktop first connects to the local endpoint. If no Daemon is present, it starts the self-contained Runtime under `resources/runtime` and probes for readiness using 24 short attempts. Desktop tracks only the child process it creates. On exit it sends `shutdown`, waits for graceful termination, and kills the child only after a timeout. If Desktop connected to an externally started Daemon, exiting Desktop only disconnects the client.

@@ -2,9 +2,9 @@
   <div class="provider-matrix seek-glass-card">
     <div class="matrix-header">
       <h3>
-        <Bot class="icon-header" :size="22" /> 多模型提供商支持与路由矩阵
+        <Bot class="icon-header" :size="22" /> {{ isEn ? 'Provider protocols and model routing' : 'Provider 协议与模型路由' }}
       </h3>
-      <p>统一接口无缝对接顶级云端 LLM 与本地开源模型，支持多维度负载均衡与熔断避障</p>
+      <p>{{ isEn ? 'Use Anthropic and OpenAI wire protocols with cloud, compatible, and local model endpoints.' : '通过 Anthropic 与 OpenAI 两种线协议，统一接入云端、兼容接口与本地模型。' }}</p>
     </div>
 
     <div class="providers-grid">
@@ -14,7 +14,7 @@
           <span class="provider-name">{{ p.name }}</span>
           <span class="status-pill" :class="p.status">{{ p.statusLabel }}</span>
         </div>
-        <p class="models-list"><strong>支持模型:</strong> {{ p.models }}</p>
+        <p class="models-list"><strong>{{ isEn ? 'Examples:' : '示例：' }}</strong> {{ p.models }}</p>
         <div class="features-tags">
           <span v-for="f in p.features" :key="f" class="tag-chip">{{ f }}</span>
         </div>
@@ -23,32 +23,14 @@
 
     <div class="routing-strategies">
       <h4>
-        <Zap class="icon-sub" :size="18" /> 智能路由策略 (Routing Strategies)
+        <Zap class="icon-sub" :size="18" /> {{ isEn ? 'Routing strategies' : '智能路由策略' }}
       </h4>
       <div class="strategies-grid">
-        <div class="strategy-item">
-          <span class="badge fast">
-            <Zap :size="12" class="badge-icon" /> 快速 (Fast)
+        <div v-for="strategy in strategies" :key="strategy.id" class="strategy-item">
+          <span class="badge" :class="strategy.id">
+            <component :is="strategy.icon" :size="12" class="badge-icon" /> {{ strategy.label }}
           </span>
-          <p>优先调度低延迟小模型（如 GPT-5.5-mini / Claude Haiku / Gemini Flash），适合小修改与代码格式化。</p>
-        </div>
-        <div class="strategy-item">
-          <span class="badge balanced">
-            <Scale :size="12" class="badge-icon" /> 均衡 (Balanced)
-          </span>
-          <p>兼顾代码质量与推理成本，在速度与深度之间自动取得最佳权衡。</p>
-        </div>
-        <div class="strategy-item">
-          <span class="badge quality">
-            <Brain :size="12" class="badge-icon" /> 质量 (Quality)
-          </span>
-          <p>调度顶级旗舰大模型（如 GPT-5.5 / Claude Opus），用于复杂重构、架构规划与疑难 Debug。</p>
-        </div>
-        <div class="strategy-item">
-          <span class="badge offline">
-            <ShieldCheck :size="12" class="badge-icon" /> 离线 (Offline)
-          </span>
-          <p>零外网访问，完全路由至本地 Ollama 或 LM Studio 本地部署模型，确保商业代码隐私安全。</p>
+          <p>{{ strategy.description }}</p>
         </div>
       </div>
     </div>
@@ -56,42 +38,68 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useData } from 'vitepress'
 import { Bot, Zap, Scale, Brain, ShieldCheck, Cpu, Server, Layers } from 'lucide-vue-next'
 
-const providers = [
+const { lang } = useData()
+const isEn = computed(() => lang.value === 'en-US' || lang.value?.startsWith('en'))
+
+const zhProviders = [
   {
-    name: 'OpenAI 兼容接口',
+    name: 'OpenAI',
     icon: Cpu,
     status: 'online',
-    statusLabel: '原生态支持',
-    models: 'GPT-5.5, GPT-5.5-mini, DeepSeek V3/R1, Qwen 2.5',
-    features: ['流式 Token', '工具调用 (Function Calling)', 'JSON Schema 约束']
+    statusLabel: 'OpenAI 协议',
+    models: 'GPT-5.5、GPT-5.5-mini',
+    features: ['流式输出', '工具调用', 'JSON Mode']
   },
   {
-    name: 'Anthropic Claude',
+    name: 'Anthropic',
     icon: Brain,
     status: 'online',
-    statusLabel: '原生态支持',
-    models: 'Claude Opus, Claude Sonnet, Claude Haiku',
-    features: ['系统 Prompt 增强', '长上下文推理', '多轮思维链']
+    statusLabel: 'Anthropic 协议',
+    models: 'Claude Opus 5、Claude Sonnet 5',
+    features: ['Messages API', 'Thinking', '长上下文']
   },
   {
-    name: 'Google Gemini',
+    name: 'OpenAI-compatible',
     icon: Layers,
     status: 'online',
-    statusLabel: '原生态支持',
-    models: 'Gemini Pro, Gemini Flash',
-    features: ['超长 Context Window', '高并发吞吐', '多模态准备']
+    statusLabel: '可编辑模板',
+    models: 'Google、MiMo、OpenRouter、DeepSeek',
+    features: ['自定义 Base URL', '代理与超时', '自定义模型']
   },
   {
     name: 'Ollama & LM Studio',
     icon: Server,
     status: 'local',
-    statusLabel: '本地局域网',
-    models: 'Llama 3.3, DeepSeek R1 Local, Mistral',
-    features: ['零网络出境', '本地 GPU 加速', '离线降级备选']
+    statusLabel: '本地',
+    models: 'Ollama qwen3、LM Studio local-model',
+    features: ['offline 策略', '本地服务', '无需云端 Key']
   }
 ]
+
+const enProviders = [
+  { name: 'OpenAI', icon: Cpu, status: 'online', statusLabel: 'OpenAI protocol', models: 'GPT-5.5, GPT-5.5-mini', features: ['Streaming', 'Tool calls', 'JSON mode'] },
+  { name: 'Anthropic', icon: Brain, status: 'online', statusLabel: 'Anthropic protocol', models: 'Claude Opus 5, Claude Sonnet 5', features: ['Messages API', 'Thinking', 'Long context'] },
+  { name: 'OpenAI-compatible', icon: Layers, status: 'online', statusLabel: 'Editable templates', models: 'Google, MiMo, OpenRouter, DeepSeek', features: ['Custom Base URL', 'Proxy and timeout', 'Custom models'] },
+  { name: 'Ollama & LM Studio', icon: Server, status: 'local', statusLabel: 'Local', models: 'Ollama qwen3, LM Studio local-model', features: ['Offline strategy', 'Local endpoint', 'No cloud key'] }
+]
+
+const providers = computed(() => isEn.value ? enProviders : zhProviders)
+
+const strategies = computed(() => isEn.value ? [
+  { id: 'fast', icon: Zap, label: 'Fast', description: 'Prioritizes low-latency models for small changes and quick analysis.' },
+  { id: 'balanced', icon: Scale, label: 'Balanced', description: 'Balances quality, latency, and cost for everyday work.' },
+  { id: 'quality', icon: Brain, label: 'Quality', description: 'Prioritizes high-capability models for complex refactors.' },
+  { id: 'offline', icon: ShieldCheck, label: 'Offline', description: 'Routes to local Ollama or LM Studio models.' }
+] : [
+  { id: 'fast', icon: Zap, label: '快速 Fast', description: '优先低延迟模型，适合小修改与快速分析。' },
+  { id: 'balanced', icon: Scale, label: '均衡 Balanced', description: '平衡质量、延迟和成本，适合日常任务。' },
+  { id: 'quality', icon: Brain, label: '质量 Quality', description: '优先高能力模型，适合复杂重构与架构分析。' },
+  { id: 'offline', icon: ShieldCheck, label: '离线 Offline', description: '把请求路由到本地 Ollama 或 LM Studio。' }
+])
 </script>
 
 <style scoped>
