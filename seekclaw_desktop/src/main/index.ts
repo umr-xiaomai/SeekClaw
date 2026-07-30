@@ -115,8 +115,8 @@ function syncNativeWindowTheme(): void {
 function createWindow(): void {
   const colors = nativeWindowColors()
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 920,
+    width: 1280,
+    height: 820,
     minWidth: 760,
     minHeight: 620,
     show: false,
