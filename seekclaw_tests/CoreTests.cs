@@ -86,6 +86,30 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void SessionStore_UpdatesArchivesRestoresAndDeletesSessions()
+    {
+        var workspace = NewWorkspace("session-lifecycle");
+        var store = new SessionStore();
+        var session = store.Create(workspace);
+        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("original title"));
+
+        var renamed = store.UpdateMetadata(workspace, session.Header.Id, title: "Renamed task");
+        Assert.Equal("Renamed task", renamed.Title);
+
+        var archived = store.UpdateMetadata(workspace, session.Header.Id, archived: true);
+        Assert.True(archived.Archived);
+        Assert.Empty(store.List(workspace));
+        Assert.Equal(session.Header.Id, Assert.Single(store.List(workspace, includeArchived: true)).Id);
+        Assert.Null(store.LoadLatest(workspace));
+
+        store.UpdateMetadata(workspace, session.Header.Id, archived: false);
+        Assert.Equal("Renamed task", Assert.Single(store.List(workspace)).Title);
+
+        store.Delete(workspace, session.Header.Id);
+        Assert.Null(store.Load(workspace, session.Header.Id));
+    }
+
+    [Fact]
     public void SkillManager_DiscoversWorkspaceSkills_AndTogglesEnabled()
     {
         var workspace = NewWorkspace();

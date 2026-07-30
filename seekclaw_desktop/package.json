@@ -45,6 +45,7 @@
       "package.json"
     ],
     "win": {
+      "icon": "resources/favicon.ico",
       "target": "nsis"
     },
     "mac": {

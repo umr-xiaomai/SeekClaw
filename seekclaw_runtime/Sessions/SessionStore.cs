@@ -18,8 +18,10 @@ public interface ISessionStore
     AgentSession Create(WorkspaceInfo workspace);
     AgentSession? Load(WorkspaceInfo workspace, string sessionId);
     AgentSession? LoadLatest(WorkspaceInfo workspace);
-    IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace);
+    IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace, bool includeArchived = false);
     void Append(AgentSession session, ChatMessage message);
+    SessionHeader UpdateMetadata(WorkspaceInfo workspace, string sessionId, string? title = null, bool? archived = null);
+    void Delete(WorkspaceInfo workspace, string sessionId);
 }
 
 public sealed class SessionStore : ISessionStore
@@ -38,21 +40,18 @@ public sealed class SessionStore : ISessionStore
 
     public AgentSession? Load(WorkspaceInfo workspace, string sessionId)
     {
-        var file = Path.Combine(workspace.SessionsDir, sessionId + ".jsonl");
+        var file = SessionFile(workspace, sessionId);
         return File.Exists(file) ? LoadFile(file) : null;
     }
 
     public AgentSession? LoadLatest(WorkspaceInfo workspace)
     {
         if (!Directory.Exists(workspace.SessionsDir)) return null;
-        var latest = Directory.EnumerateFiles(workspace.SessionsDir, "*.jsonl")
-            .Select(f => new FileInfo(f))
-            .OrderByDescending(f => f.LastWriteTimeUtc)
-            .FirstOrDefault();
-        return latest is null ? null : LoadFile(latest.FullName);
+        var latest = List(workspace).FirstOrDefault();
+        return latest is null ? null : Load(workspace, latest.Id);
     }
 
-    public IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace)
+    public IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace, bool includeArchived = false)
     {
         if (!Directory.Exists(workspace.SessionsDir)) return [];
         var headers = new List<SessionHeader>();
@@ -64,6 +63,7 @@ public sealed class SessionStore : ISessionStore
             {
                 var header = JsonSerializer.Deserialize(lines.Current, SeekClawJsonContext.Compact.SessionHeader);
                 if (header is null) continue;
+                if (header.Archived && !includeArchived) continue;
                 header.UpdatedAt = File.GetLastWriteTimeUtc(file);
                 if (string.IsNullOrWhiteSpace(header.Title) && lines.MoveNext())
                 {
@@ -87,6 +87,44 @@ public sealed class SessionStore : ISessionStore
         lock (_gate)
             File.AppendAllText(session.FilePath,
                 JsonSerializer.Serialize(record, SeekClawJsonContext.Compact.SessionMessage) + Environment.NewLine);
+    }
+
+    public SessionHeader UpdateMetadata(
+        WorkspaceInfo workspace,
+        string sessionId,
+        string? title = null,
+        bool? archived = null)
+    {
+        var file = SessionFile(workspace, sessionId);
+        lock (_gate)
+        {
+            if (!File.Exists(file))
+                throw new FileNotFoundException($"Session not found: {sessionId}", file);
+
+            var lines = File.ReadAllLines(file);
+            if (lines.Length == 0)
+                throw new InvalidDataException($"Session header is missing: {sessionId}");
+
+            var header = JsonSerializer.Deserialize(lines[0], SeekClawJsonContext.Compact.SessionHeader)
+                         ?? throw new InvalidDataException($"Session header is invalid: {sessionId}");
+            if (title is not null) header.Title = string.IsNullOrWhiteSpace(title) ? null : title.Trim();
+            if (archived is not null) header.Archived = archived.Value;
+            header.UpdatedAt = DateTimeOffset.UtcNow;
+            lines[0] = JsonSerializer.Serialize(header, SeekClawJsonContext.Compact.SessionHeader);
+            File.WriteAllLines(file, lines);
+            return header;
+        }
+    }
+
+    public void Delete(WorkspaceInfo workspace, string sessionId)
+    {
+        var file = SessionFile(workspace, sessionId);
+        lock (_gate)
+        {
+            if (!File.Exists(file))
+                throw new FileNotFoundException($"Session not found: {sessionId}", file);
+            File.Delete(file);
+        }
     }
 
     private AgentSession? LoadFile(string file)
@@ -148,5 +186,13 @@ public sealed class SessionStore : ISessionStore
             ToolName = record.ToolName,
             ToolSuccess = record.ToolSuccess ?? true,
         };
+    }
+
+    private static string SessionFile(WorkspaceInfo workspace, string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)
+            || !string.Equals(Path.GetFileName(sessionId), sessionId, StringComparison.Ordinal))
+            throw new ArgumentException("Invalid session id.", nameof(sessionId));
+        return Path.Combine(workspace.SessionsDir, sessionId + ".jsonl");
     }
 }

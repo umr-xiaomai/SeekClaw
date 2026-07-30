@@ -404,17 +404,37 @@ public sealed class DaemonServer
                         break;
 
                     case "session.list":
-                    {
-                        var sessions = _runtime.Sessions.List(_runtime.Workspace);
-                        var json = JsonSerializer.Serialize(sessions, SeekClawJsonContext.Default.ListSessionHeader);
-                        await WriteAsync(writer, writerGate, id, "result", json, ct).ConfigureAwait(false);
+                        await RunAdminAsync(writer, writerGate, id, false,
+                            _ => Task.FromResult(_admin.ListSessions(Params(request))), ct).ConfigureAwait(false);
                         break;
-                    }
 
                     case "session.get":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _ => Task.FromResult(_admin.GetSession(Params(request))), ct).ConfigureAwait(false);
                         break;
+
+                    case "session.update":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.UpdateSession(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
+                    case "session.archive":
+                    {
+                        var sessionId = request["params"]?["id"]?.GetValue<string>();
+                        if (session?.Header.Id == sessionId) session = null;
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.ArchiveSession(Params(request))), ct).ConfigureAwait(false);
+                        break;
+                    }
+
+                    case "session.delete":
+                    {
+                        var sessionId = request["params"]?["id"]?.GetValue<string>();
+                        if (session?.Header.Id == sessionId) session = null;
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.DeleteSession(Params(request))), ct).ConfigureAwait(false);
+                        break;
+                    }
 
                     case "session.resume":
                     {
@@ -654,7 +674,8 @@ public sealed class DaemonServer
             "model.list", "model.catalog", "model.switch", "model.test",
             "mcp.list", "mcp.upsert", "mcp.remove", "mcp.reload",
             "skill.list", "skill.toggle", "usage.get", "doctor", "doctor.run",
-            "session.list", "session.get", "session.resume", "session.new", "shutdown"),
+            "session.list", "session.get", "session.update", "session.archive", "session.delete",
+            "session.resume", "session.new", "shutdown"),
     }.ToJsonString();
 
     private async Task RunAdminAsync(

@@ -377,10 +377,20 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime)
         return data.ToJsonString();
     }
 
+    public string ListSessions(JsonObject parameters)
+    {
+        var workspace = SessionWorkspace(parameters);
+        var includeArchived = parameters["includeArchived"]?.GetValue<bool?>() ?? false;
+        return JsonSerializer.Serialize(
+            runtime.Sessions.List(workspace, includeArchived),
+            SeekClawJsonContext.Default.ListSessionHeader);
+    }
+
     public string GetSession(JsonObject parameters)
     {
         var id = RequiredString(parameters, "id");
-        var session = runtime.Sessions.Load(runtime.Workspace, id)
+        var workspace = SessionWorkspace(parameters);
+        var session = runtime.Sessions.Load(workspace, id)
                       ?? throw new DaemonRequestException($"Session not found: {id}");
         var messages = new JsonArray();
         foreach (var message in session.Messages)
@@ -408,10 +418,61 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime)
         {
             ["id"] = session.Header.Id,
             ["title"] = session.Header.Title,
+            ["workspace"] = session.Header.Workspace ?? workspace.Root,
+            ["archived"] = session.Header.Archived,
             ["createdAt"] = session.Header.CreatedAt,
             ["updatedAt"] = session.Header.UpdatedAt,
             ["messages"] = messages,
         }.ToJsonString();
+    }
+
+    public string UpdateSession(JsonObject parameters)
+    {
+        var workspace = SessionWorkspace(parameters);
+        var id = RequiredString(parameters, "id");
+        var title = parameters.ContainsKey("title")
+            ? parameters["title"]?.GetValue<string>() ?? ""
+            : null;
+        try
+        {
+            var header = runtime.Sessions.UpdateMetadata(workspace, id, title: title);
+            return JsonSerializer.Serialize(header, SeekClawJsonContext.Default.SessionHeader);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)
+        {
+            throw new DaemonRequestException(ex.Message);
+        }
+    }
+
+    public string ArchiveSession(JsonObject parameters)
+    {
+        var workspace = SessionWorkspace(parameters);
+        var id = RequiredString(parameters, "id");
+        var archived = parameters["archived"]?.GetValue<bool?>() ?? true;
+        try
+        {
+            var header = runtime.Sessions.UpdateMetadata(workspace, id, archived: archived);
+            return JsonSerializer.Serialize(header, SeekClawJsonContext.Default.SessionHeader);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)
+        {
+            throw new DaemonRequestException(ex.Message);
+        }
+    }
+
+    public string DeleteSession(JsonObject parameters)
+    {
+        var workspace = SessionWorkspace(parameters);
+        var id = RequiredString(parameters, "id");
+        try
+        {
+            runtime.Sessions.Delete(workspace, id);
+            return id;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or ArgumentException)
+        {
+            throw new DaemonRequestException(ex.Message);
+        }
     }
 
     public async Task<string> DoctorAsync(CancellationToken ct)
@@ -537,6 +598,22 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime)
     {
         var value = parameters[name]?.GetValue<string>()?.Trim();
         return string.IsNullOrEmpty(value) ? null : value;
+    }
+
+    private SeekClaw.Runtime.Workspaces.WorkspaceInfo SessionWorkspace(JsonObject parameters)
+    {
+        var requested = OptionalString(parameters, "workspace");
+        if (requested is null) return runtime.Workspace;
+
+        string fullPath;
+        try { fullPath = Path.GetFullPath(requested); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new DaemonRequestException($"Invalid workspace path: {ex.Message}");
+        }
+        if (!Directory.Exists(fullPath))
+            throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
+        return runtime.Workspaces.Detect(fullPath);
     }
 
     private static JsonArray Strings(IEnumerable<string> values) =>

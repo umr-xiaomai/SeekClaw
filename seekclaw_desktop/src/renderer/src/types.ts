@@ -2,6 +2,7 @@ export interface ProjectItem {
   id: string
   name: string
   path: string
+  loaded?: boolean
 }
 
 export interface ToolActivity {
@@ -29,4 +30,5 @@ export interface ThreadItem {
   messages: ChatMessage[]
   sessionId?: string
   sessionLoaded?: boolean
+  archived?: boolean
 }

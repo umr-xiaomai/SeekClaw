@@ -184,6 +184,38 @@ public sealed class DaemonServerTests : IAsyncDisposable
         await connection.SendAsync(20, "session.get", new JsonObject { ["id"] = sessionId });
         var session = ParseData(await connection.ReadAsync());
         Assert.Equal(sessionId, session["id"]!.GetValue<string>());
+
+        await connection.SendAsync(21, "session.update", new JsonObject
+        {
+            ["id"] = sessionId,
+            ["title"] = "Desktop task",
+            ["workspace"] = workspace,
+        });
+        session = ParseData(await connection.ReadAsync());
+        Assert.Equal("Desktop task", session["title"]!.GetValue<string>());
+
+        await connection.SendAsync(22, "session.archive", new JsonObject
+        {
+            ["id"] = sessionId,
+            ["workspace"] = workspace,
+        });
+        session = ParseData(await connection.ReadAsync());
+        Assert.True(session["archived"]!.GetValue<bool>());
+
+        await connection.SendAsync(23, "session.list", new JsonObject
+        {
+            ["workspace"] = workspace,
+            ["includeArchived"] = true,
+        });
+        var sessions = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
+        Assert.Contains(sessions, item => item!["id"]!.GetValue<string>() == sessionId);
+
+        await connection.SendAsync(24, "session.delete", new JsonObject
+        {
+            ["id"] = sessionId,
+            ["workspace"] = workspace,
+        });
+        Assert.Equal(sessionId, (await connection.ReadAsync())["data"]!.GetValue<string>());
     }
 
     private async Task<TestConnection> StartServerAsync(

@@ -6,6 +6,7 @@ public sealed class SessionHeader
     public string Id { get; set; } = "";
     public string? Title { get; set; }
     public string? Workspace { get; set; }
+    public bool Archived { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

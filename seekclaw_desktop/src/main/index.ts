@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import icon from '../../resources/logo.svg?asset'
+import icon from '../../resources/logo.png?asset'
 import { DaemonClient } from './daemon-client.js'
 
 const daemon = new DaemonClient()
