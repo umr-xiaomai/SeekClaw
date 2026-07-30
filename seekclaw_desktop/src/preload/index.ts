@@ -5,6 +5,8 @@ const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke('app:info'),
   selectWorkspace: () => ipcRenderer.invoke('app:select-workspace'),
   showItemInFolder: (path) => ipcRenderer.invoke('app:show-item', path),
+  closeApp: () => ipcRenderer.invoke('app:close'),
+  setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),
   daemon: {
     connect: () => ipcRenderer.invoke('daemon:connect'),
     disconnect: () => ipcRenderer.invoke('daemon:disconnect'),
@@ -23,4 +25,3 @@ const api: DesktopApi = {
 }
 
 contextBridge.exposeInMainWorld('seekclaw', api)
-

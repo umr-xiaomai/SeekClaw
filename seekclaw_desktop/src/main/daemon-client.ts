@@ -97,11 +97,18 @@ export class DaemonClient extends EventEmitter {
       this.rejectPending(new Error('Daemon connection closed'))
       this.emit('state', { connected: false, endpoint: this.endpoint } satisfies DaemonState)
     })
-    socket.on('error', (error) => this.emit('state', {
-      connected: false,
-      endpoint: this.endpoint,
-      error: error.message
-    } satisfies DaemonState))
+    socket.on('error', (error) => {
+      if (this.socket !== socket) return
+      this.socket = null
+      this.buffer = ''
+      socket.destroy()
+      this.rejectPending(new Error(`Daemon connection failed: ${error.message}`))
+      this.emit('state', {
+        connected: false,
+        endpoint: this.endpoint,
+        error: error.message
+      } satisfies DaemonState)
+    })
   }
 
   private consume(chunk: string): void {

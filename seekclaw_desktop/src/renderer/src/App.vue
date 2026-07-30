@@ -8,13 +8,15 @@ import {
   RefreshCw
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
+import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
 import AppTitleBar from './components/AppTitleBar.vue'
 import Composer from './components/Composer.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
+import RuntimeReconnectDialog from './components/RuntimeReconnectDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
+import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import type { ChatMessage, ProjectItem, ThreadItem } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
@@ -49,13 +51,18 @@ interface RuntimeWorkspace {
   mode: string
 }
 
-const appInfo = ref<AppInfo>({ version: '0.1.0', platform: 'win32', defaultWorkspace: '' })
+const appInfo = ref<AppInfo>({ version: '0.1.0', platform: 'win32', supportsMica: false, defaultWorkspace: '' })
 const sidebarOpen = ref(true)
 const settingsOpen = ref(false)
 const settingsSection = ref<'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'>('general')
 const taskSettingsThreadId = ref('')
-const theme = ref<'light' | 'dark'>((localStorage.getItem('seekclaw-theme') as 'light' | 'dark') || 'light')
+const storedTheme = localStorage.getItem('seekclaw-theme')
+const theme = ref<AppearanceTheme>(
+  storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system' ? storedTheme : 'system')
 const daemonState = ref<DaemonState>({ connected: false, endpoint: '' })
+const reconnecting = ref(false)
+const reconnectAttempt = ref(0)
+const reconnectPrompt = ref<{ startup: boolean; error?: string } | null>(null)
 const projects = ref<ProjectItem[]>([])
 const threads = ref<ThreadItem[]>([])
 const activeThreadId = ref('')
@@ -77,9 +84,16 @@ const activeProject = computed(() => {
 const settingsThread = computed(() => threads.value.find((thread) => thread.id === taskSettingsThreadId.value))
 const settingsProject = computed(() => projects.value.find((project) => project.id === settingsThread.value?.projectId))
 const conversationTitle = computed(() => activeThread.value?.title || '新任务')
+const runtimeConnectionLabel = computed(() => {
+  if (reconnecting.value) return `正在重连 ${reconnectAttempt.value}/${RUNTIME_RECONNECT_ATTEMPTS}`
+  return daemonState.value.connected ? 'Runtime 已连接' : 'Runtime 离线'
+})
 
 let unsubscribeEvent: (() => void) | undefined
 let unsubscribeState: (() => void) | undefined
+let reconnectTask: Promise<boolean> | null = null
+let automaticReconnectPaused = false
+let appReadyForRecovery = false
 
 function loadStoredProjects(): ProjectItem[] {
   try {
@@ -115,10 +129,11 @@ function showActiveProject(): void {
   if (activeProject.value) void window.seekclaw.showItemInFolder(activeProject.value.path)
 }
 
-function applyTheme(value: 'light' | 'dark'): void {
+function applyTheme(value: AppearanceTheme): void {
   theme.value = value
   document.documentElement.dataset.theme = value
   localStorage.setItem('seekclaw-theme', value)
+  void window.seekclaw.setTheme(value)
 }
 
 async function scrollToBottom(smooth = false): Promise<void> {
@@ -169,9 +184,7 @@ async function refreshAllProjectSessions(): Promise<void> {
   await Promise.all(projects.value.map((project) => refreshProjectSessions(project).catch(() => undefined)))
 }
 
-async function connectDaemon(): Promise<void> {
-  daemonState.value = await window.seekclaw.daemon.connect()
-  if (!daemonState.value.connected) return
+async function loadRuntimeState(): Promise<void> {
   try {
     const [modelResponse, workspaceResponse, modeResponse, catalogResponse] = await Promise.all([
       window.seekclaw.daemon.request('model.list'),
@@ -207,9 +220,70 @@ async function connectDaemon(): Promise<void> {
   }
 }
 
+function handleDaemonState(state: DaemonState): void {
+  daemonState.value = state
+  if (state.connected) {
+    automaticReconnectPaused = false
+    reconnectPrompt.value = null
+    return
+  }
+  if (!appReadyForRecovery || reconnecting.value || reconnectTask || automaticReconnectPaused || reconnectPrompt.value) return
+  void runReconnectCycle(false)
+}
+
+async function runReconnectCycle(startup: boolean): Promise<boolean> {
+  if (reconnectTask) return reconnectTask
+  reconnectTask = (async () => {
+    reconnecting.value = true
+    reconnectPrompt.value = null
+    const state = await retryRuntimeConnection(
+      () => window.seekclaw.daemon.connect(),
+      { onAttempt: (attempt) => { reconnectAttempt.value = attempt } })
+    daemonState.value = state
+    if (state.connected) {
+      automaticReconnectPaused = false
+      await loadRuntimeState()
+      return true
+    }
+    reconnectPrompt.value = { startup, error: state.error }
+    return false
+  })().finally(() => {
+    reconnecting.value = false
+    reconnectAttempt.value = 0
+    reconnectTask = null
+  })
+  return reconnectTask
+}
+
 async function reconnectDaemon(): Promise<void> {
-  await window.seekclaw.daemon.disconnect()
-  await connectDaemon()
+  automaticReconnectPaused = false
+  reconnectPrompt.value = null
+  if (daemonState.value.connected) {
+    await loadRuntimeState()
+    return
+  }
+  await runReconnectCycle(false)
+}
+
+async function refreshRuntimeState(): Promise<void> {
+  if (daemonState.value.connected) await loadRuntimeState()
+  else await reconnectDaemon()
+}
+
+function continueRuntimeReconnect(): void {
+  const startup = reconnectPrompt.value?.startup ?? false
+  reconnectPrompt.value = null
+  automaticReconnectPaused = false
+  void runReconnectCycle(startup)
+}
+
+function cancelRuntimeReconnect(): void {
+  if (reconnectPrompt.value?.startup) {
+    void window.seekclaw.closeApp()
+    return
+  }
+  reconnectPrompt.value = null
+  automaticReconnectPaused = true
 }
 
 async function openWorkspace(): Promise<void> {
@@ -592,10 +666,11 @@ async function stopTurn(): Promise<void> {
 }
 
 async function changeModel(model: string): Promise<void> {
+  const previousModel = activeModel.value
   activeModel.value = model
   if (!daemonState.value.connected || model === 'balanced') return
   try { await window.seekclaw.daemon.request('model.switch', { model }) }
-  catch { daemonState.value = { ...daemonState.value, connected: false } }
+  catch { activeModel.value = previousModel }
 }
 
 async function changeMode(nextMode: string): Promise<void> {
@@ -609,18 +684,22 @@ async function changeMode(nextMode: string): Promise<void> {
 onMounted(async () => {
   applyTheme(theme.value)
   appInfo.value = await window.seekclaw.getAppInfo()
+  document.documentElement.dataset.platform = appInfo.value.platform
+  document.documentElement.dataset.material = appInfo.value.supportsMica ? 'mica' : 'solid'
   projects.value = loadStoredProjects()
   const defaultProject = ensureProject(appInfo.value.defaultWorkspace)
   selectedProjectId.value = defaultProject.id
   unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonEvent)
-  unsubscribeState = window.seekclaw.daemon.onState((state) => { daemonState.value = state })
-  await connectDaemon()
+  unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
+  appReadyForRecovery = true
+  await runReconnectCycle(true)
   if (!daemonState.value.connected) projects.value.forEach((project) => { project.loaded = true })
   if (!activeThread.value) newTask(defaultProject.id)
   composer.value?.focus()
 })
 
 onBeforeUnmount(() => {
+  appReadyForRecovery = false
   unsubscribeEvent?.()
   unsubscribeState?.()
 })
@@ -675,11 +754,12 @@ watch(projects, persistProjects, { deep: true })
               class="connection-button"
               :class="{ connected: daemonState.connected }"
               :title="daemonState.error || daemonState.endpoint"
+              :disabled="reconnecting"
               @click="reconnectDaemon"
             >
               <Circle :size="9" fill="currentColor" />
-              {{ daemonState.connected ? 'Runtime 已连接' : 'Runtime 离线' }}
-              <RefreshCw v-if="!daemonState.connected" :size="14" />
+              {{ runtimeConnectionLabel }}
+              <RefreshCw v-if="!daemonState.connected" :class="{ spin: reconnecting }" :size="14" />
             </button>
             <button class="open-location-button" :disabled="!activeProject" @click="showActiveProject">
               <FolderOpen :size="17" />
@@ -734,7 +814,7 @@ watch(projects, persistProjects, { deep: true })
       @change-theme="applyTheme"
       @reconnect="reconnectDaemon"
       @open-workspace="openWorkspace"
-      @runtime-changed="connectDaemon"
+      @runtime-changed="refreshRuntimeState"
     />
 
     <TaskSettingsDialog
@@ -746,6 +826,15 @@ watch(projects, persistProjects, { deep: true })
       @archive="settingsThread && archiveTask(settingsThread)"
       @restore="settingsThread && restoreTask(settingsThread)"
       @delete="settingsThread && deleteTask(settingsThread)"
+    />
+
+    <RuntimeReconnectDialog
+      :open="Boolean(reconnectPrompt)"
+      :startup="reconnectPrompt?.startup ?? false"
+      :endpoint="daemonState.endpoint"
+      :error="reconnectPrompt?.error"
+      @retry="continueRuntimeReconnect"
+      @cancel="cancelRuntimeReconnect"
     />
   </div>
 </template>

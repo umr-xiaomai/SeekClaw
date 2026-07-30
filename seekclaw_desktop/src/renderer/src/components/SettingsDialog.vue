@@ -11,6 +11,7 @@ import {
   KeyRound,
   LoaderCircle,
   Moon,
+  Monitor,
   Plus,
   RefreshCw,
   Save,
@@ -107,7 +108,7 @@ interface UsageInfo {
 
 const props = defineProps<{
   open: boolean
-  theme: 'light' | 'dark'
+  theme: 'system' | 'light' | 'dark'
   daemonConnected: boolean
   daemonEndpoint: string
   workspacePath: string
@@ -116,7 +117,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  changeTheme: [theme: 'light' | 'dark']
+  changeTheme: [theme: 'system' | 'light' | 'dark']
   reconnect: []
   openWorkspace: []
   runtimeChanged: []
@@ -617,6 +618,7 @@ watch(section, () => { void loadCurrentSection() })
               <div class="settings-row">
                 <div><strong>外观</strong><small>界面主题</small></div>
                 <div class="segmented-control">
+                  <button :class="{ active: theme === 'system' }" title="跟随系统" @click="emit('changeTheme', 'system')"><Monitor :size="16" /></button>
                   <button :class="{ active: theme === 'light' }" title="浅色" @click="emit('changeTheme', 'light')"><Sun :size="16" /></button>
                   <button :class="{ active: theme === 'dark' }" title="深色" @click="emit('changeTheme', 'dark')"><Moon :size="16" /></button>
                 </div>

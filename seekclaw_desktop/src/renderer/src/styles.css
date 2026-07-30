@@ -2,17 +2,17 @@
   color-scheme: light;
   font-family: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-synthesis: none;
-  --bg: #fbfbfa;
-  --sidebar: #f2f2ed;
+  --bg: #fafafa;
+  --sidebar: #f3f3f3;
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-hover: #e9e9e3;
-  --surface-active: #e3e4de;
-  --text: #252824;
-  --text-secondary: #61655f;
-  --text-muted: #92968f;
-  --border: #dedfd8;
-  --border-strong: #cfd1c9;
+  --surface-hover: #e8e8e8;
+  --surface-active: #e1e1e1;
+  --text: #252525;
+  --text-secondary: #626262;
+  --text-muted: #929292;
+  --border: #dedede;
+  --border-strong: #cecece;
   --accent: #177653;
   --accent-soft: #e2f0e9;
   --danger: #b6473f;
@@ -24,17 +24,17 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #171917;
-  --sidebar: #1d201d;
-  --surface: #202320;
-  --surface-raised: #242724;
-  --surface-hover: #2a2e2a;
-  --surface-active: #303530;
-  --text: #eceeea;
-  --text-secondary: #b3b8b1;
-  --text-muted: #7e857d;
-  --border: #323731;
-  --border-strong: #414741;
+  --bg: #181818;
+  --sidebar: #202020;
+  --surface: #242424;
+  --surface-raised: #282828;
+  --surface-hover: #303030;
+  --surface-active: #383838;
+  --text: #ededed;
+  --text-secondary: #b6b6b6;
+  --text-muted: #858585;
+  --border: #353535;
+  --border-strong: #454545;
   --accent: #4ab484;
   --accent-soft: #23392e;
   --danger: #df786f;
@@ -42,6 +42,30 @@
   --composer-shadow: 0 8px 28px rgb(0 0 0 / 25%);
   --code-bg: #111311;
   --code-text: #eef1ed;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    color-scheme: dark;
+    --bg: #181818;
+    --sidebar: #202020;
+    --surface: #242424;
+    --surface-raised: #282828;
+    --surface-hover: #303030;
+    --surface-active: #383838;
+    --text: #ededed;
+    --text-secondary: #b6b6b6;
+    --text-muted: #858585;
+    --border: #353535;
+    --border-strong: #454545;
+    --accent: #4ab484;
+    --accent-soft: #23392e;
+    --danger: #df786f;
+    --shadow: 0 12px 38px rgb(0 0 0 / 28%);
+    --composer-shadow: 0 8px 28px rgb(0 0 0 / 25%);
+    --code-bg: #111311;
+    --code-text: #eef1ed;
+  }
 }
 
 * {
@@ -63,6 +87,18 @@ body {
   font-size: 14px;
   letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
+}
+
+:root[data-material="mica"] body,
+:root[data-material="mica"] #app,
+:root[data-material="mica"] .app-shell {
+  background: transparent;
+}
+
+:root[data-material="mica"] .titlebar,
+:root[data-material="mica"] .sidebar {
+  background: transparent;
+  backdrop-filter: blur(30px) saturate(125%);
 }
 
 button,
@@ -357,7 +393,7 @@ select:focus-visible {
 .project-heading-row.active,
 .thread-heading-row:hover,
 .thread-heading-row.active {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--surface-hover) 80%, transparent);
 }
 
 .project-heading-row .project-row,
@@ -1057,6 +1093,68 @@ select:focus-visible {
   padding: 22px;
   place-items: center;
   background: rgb(14 17 14 / 32%);
+}
+
+.runtime-reconnect-backdrop {
+  z-index: 150;
+}
+
+.runtime-reconnect-dialog {
+  display: grid;
+  width: min(520px, 100%);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  padding: 22px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.runtime-alert-icon {
+  margin-top: 1px;
+  color: var(--danger);
+}
+
+.runtime-reconnect-copy {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.runtime-reconnect-copy h2,
+.runtime-reconnect-copy p {
+  margin: 0;
+}
+
+.runtime-reconnect-copy h2 {
+  font-size: 17px;
+}
+
+.runtime-reconnect-copy p,
+.runtime-reconnect-copy small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.runtime-reconnect-copy code {
+  overflow: hidden;
+  padding: 8px 9px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.runtime-reconnect-dialog footer {
+  display: flex;
+  grid-column: 2;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .task-settings-dialog {
