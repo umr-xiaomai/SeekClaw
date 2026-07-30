@@ -174,19 +174,86 @@ select:focus-visible {
   margin-left: 14px;
 }
 
-.app-menu button,
-.app-menu a {
-  padding: 5px 9px;
-  color: var(--text-secondary);
-  text-decoration: none;
-  background: transparent;
-  border-radius: 5px;
+.app-menu-group {
+  position: relative;
 }
 
-.app-menu button:hover,
-.app-menu a:hover {
+.app-menu-trigger {
+  padding: 5px 9px;
+  color: var(--text-secondary);
+  background: transparent;
+  border-radius: 8px;
+}
+
+.app-menu-trigger:hover,
+.app-menu-trigger.active {
   color: var(--text);
+  background: color-mix(in srgb, var(--surface-hover) 76%, transparent);
+}
+
+.app-menu-popup {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  width: 300px;
+  padding: 8px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%), 0 2px 7px rgb(0 0 0 / 8%);
+  backdrop-filter: blur(24px) saturate(120%);
+}
+
+.app-menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 39px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+  background: transparent;
+  border-radius: 7px;
+}
+
+.app-menu-item:hover:not(:disabled),
+.app-menu-item:focus-visible:not(:disabled) {
   background: var(--surface-hover);
+  outline: none;
+}
+
+.app-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: .55;
+}
+
+.app-menu-item kbd {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font: inherit;
+}
+
+.app-menu-separator {
+  height: 1px;
+  margin: 7px -8px;
+  background: var(--border);
+}
+
+.app-menu-popover-enter-active,
+.app-menu-popover-leave-active {
+  transition: opacity 110ms ease, transform 120ms ease;
+  transform-origin: top left;
+}
+
+.app-menu-popover-enter-from,
+.app-menu-popover-leave-to {
+  opacity: 0;
+  transform: translateY(-3px) scale(.985);
 }
 
 .drag-fill {

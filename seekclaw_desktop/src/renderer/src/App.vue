@@ -874,8 +874,15 @@ watch(projects, persistProjects, { deep: true })
       :sidebar-open="sidebarOpen"
       :project-path="globalTaskActive ? undefined : activeProject?.path"
       @toggle-sidebar="sidebarOpen = !sidebarOpen"
+      @new-task="newTask(selectedProjectId || undefined)"
       @open-workspace="openWorkspace"
+      @show-project="showActiveProject"
+      @open-settings="openSettings('general')"
       @focus-composer="composer?.focus()"
+      @open-terminal="openProjectTerminal"
+      @open-git-changes="openGitPanel('diff')"
+      @open-git-history="openGitPanel('history')"
+      @open-diagnostics="openSettings('diagnostics')"
     />
 
     <div class="app-body" :class="{ 'sidebar-collapsed': !sidebarOpen }">
