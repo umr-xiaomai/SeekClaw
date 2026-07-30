@@ -52,7 +52,15 @@ function focus(): void {
   textarea.value?.focus()
 }
 
-defineExpose({ focus })
+function setValue(nextValue: string): void {
+  value.value = nextValue
+  void nextTick(() => {
+    resize()
+    focus()
+  })
+}
+
+defineExpose({ focus, setValue })
 watch(value, resize)
 </script>
 

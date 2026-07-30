@@ -512,6 +512,7 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
         ["name"] = provider.DisplayName,
         ["kind"] = provider.Kind,
         ["baseUrl"] = provider.BaseUrl,
+        ["apiKey"] = provider.ApiKey,
         ["apiKeyConfigured"] = !string.IsNullOrWhiteSpace(provider.ResolveApiKey()),
         ["apiKeyEnv"] = provider.ApiKeyEnv,
         ["models"] = Strings(provider.Models.Select(model => model.Id)),

@@ -34,6 +34,7 @@ public static class ContextPlanner
     public static IReadOnlyList<ChatMessage> FitToWindow(
         IReadOnlyList<ChatMessage> messages, ModelConfig model, string systemPrompt)
     {
+        messages = EnsureCompleteToolTurns(messages);
         var budget = model.ContextWindow
                      - model.MaxOutput
                      - EstimateTokens(systemPrompt)
@@ -78,5 +79,61 @@ public static class ContextPlanner
                 "[Earlier conversation history was trimmed to fit the model's context window.]"));
 
         return result;
+    }
+
+    /// <summary>
+    /// Repairs interrupted or legacy history before it is sent to a provider. Every assistant
+    /// tool call must be followed immediately by exactly one result for each requested call.
+    /// Orphan results are dropped and missing results become explicit failed executions.
+    /// </summary>
+    internal static IReadOnlyList<ChatMessage> EnsureCompleteToolTurns(IReadOnlyList<ChatMessage> messages)
+    {
+        var result = new List<ChatMessage>(messages.Count);
+        var changed = false;
+
+        for (var index = 0; index < messages.Count; index++)
+        {
+            var message = messages[index];
+            if (message.Role == ChatRole.Tool)
+            {
+                changed = true;
+                continue;
+            }
+
+            result.Add(message);
+            if (message.Role != ChatRole.Assistant || message.ToolCalls is not { Count: > 0 } calls)
+                continue;
+
+            var followingResults = new List<ChatMessage>();
+            var next = index + 1;
+            while (next < messages.Count && messages[next].Role == ChatRole.Tool)
+            {
+                followingResults.Add(messages[next]);
+                next++;
+            }
+
+            var byCallId = followingResults
+                .Where(item => !string.IsNullOrWhiteSpace(item.ToolCallId))
+                .GroupBy(item => item.ToolCallId!, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            var alreadyComplete = followingResults.Count == calls.Count
+                                  && calls.Select(call => call.Id)
+                                      .SequenceEqual(followingResults.Select(item => item.ToolCallId), StringComparer.Ordinal);
+            changed |= !alreadyComplete;
+
+            foreach (var call in calls)
+            {
+                result.Add(byCallId.TryGetValue(call.Id, out var toolResult)
+                    ? toolResult
+                    : ChatMessage.ToolResult(
+                        call.Id,
+                        call.Name,
+                        "Tool execution did not complete. Retry the tool if its result is still needed.",
+                        false));
+            }
+            index = next - 1;
+        }
+
+        return changed ? result : messages;
     }
 }

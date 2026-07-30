@@ -636,6 +636,10 @@ public sealed class DaemonServer
     {
         await foreach (var evt in subscription.Reader.ReadAllAsync(ct).ConfigureAwait(false))
         {
+            // ErrorEvent is a runtime diagnostic, not a terminal protocol response. The turn
+            // result below sends the final `error` envelope with the provider's full detail.
+            // Forwarding this event as `error` would terminate desktop clients early and lose
+            // ErrorEvent.Detail (for example the HTTP status and API response message).
             var (name, data) = evt switch
             {
                 AssistantTextDeltaEvent delta => ("delta", delta.Delta),
@@ -643,7 +647,6 @@ public sealed class DaemonServer
                 StatusEvent status => ("status", status.Status),
                 ToolCallStartedEvent tool => ("tool_start", tool.ToolName),
                 ToolCallCompletedEvent tool => ("tool_done", $"{tool.ToolName}: {tool.ResultSummary}"),
-                ErrorEvent error => ("error", error.Message),
                 _ => ((string?)null, ""),
             };
             if (name is not null)

@@ -76,6 +76,38 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
+    public void AnthropicBody_GroupsAllToolResultsIntoTheImmediateUserMessage()
+    {
+        var assistant = new ChatMessage
+        {
+            Role = ChatRole.Assistant,
+            ToolCalls =
+            [
+                new ToolCallRequest("c1", "read_file", "{}"),
+                new ToolCallRequest("c2", "list_files", "{}"),
+            ],
+        };
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "anthropic", BaseUrl = "https://example.test" },
+            Model = new ModelConfig { Id = "deepseek-model" },
+            Messages =
+            [
+                ChatMessage.User("inspect"),
+                assistant,
+                ChatMessage.ToolResult("c1", "read_file", "one", true),
+                ChatMessage.ToolResult("c2", "list_files", "two", true),
+            ],
+        };
+
+        var messages = AnthropicClient.BuildBody(request)["messages"]!.AsArray();
+        Assert.Equal(3, messages.Count);
+        var results = messages[2]!["content"]!.AsArray();
+        Assert.Equal(2, results.Count);
+        Assert.Equal(["c1", "c2"], results.Select(item => item!["tool_use_id"]!.GetValue<string>()));
+    }
+
+    [Fact]
     public void Candidates_WorkspaceOverride_BeatsProfile_ThenStrategy_ThenFallback()
     {
         var profile = _store.Config.GetActiveProfile();

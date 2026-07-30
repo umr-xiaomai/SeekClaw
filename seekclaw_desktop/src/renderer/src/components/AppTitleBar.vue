@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ArrowLeft, ArrowRight, PanelLeft } from '@lucide/vue'
 
-defineProps<{ sidebarOpen: boolean }>()
+defineProps<{
+  sidebarOpen: boolean
+  projectPath?: string
+}>()
 const emit = defineEmits<{
   toggleSidebar: []
   openWorkspace: []
@@ -29,7 +32,7 @@ const emit = defineEmits<{
       <a href="https://seekclaw.hoilai.com" target="_blank" rel="noreferrer">帮助</a>
     </nav>
     <div class="drag-fill" />
-    <span class="titlebar-name">SeekClaw</span>
+    <span v-if="projectPath" class="titlebar-name" :title="projectPath">{{ projectPath }}</span>
     <div class="window-controls-space" />
   </header>
 </template>

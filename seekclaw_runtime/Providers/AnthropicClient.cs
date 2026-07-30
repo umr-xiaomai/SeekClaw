@@ -88,12 +88,13 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 message.Headers.TryAddWithoutValidation(name, value);
     }
 
-    private static JsonObject BuildBody(LlmRequest request)
+    internal static JsonObject BuildBody(LlmRequest request)
     {
         var messages = new JsonArray();
 
-        foreach (var msg in request.Messages)
+        for (var index = 0; index < request.Messages.Count; index++)
         {
+            var msg = request.Messages[index];
             switch (msg.Role)
             {
                 case ChatRole.User:
@@ -118,16 +119,27 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     break;
 
                 case ChatRole.Tool:
+                    // Anthropic requires every tool_result for an assistant tool_use turn to
+                    // appear in one immediately following user message. One user message per
+                    // result is rejected when the assistant requested multiple tools.
+                    var toolResults = new JsonArray();
+                    while (index < request.Messages.Count && request.Messages[index].Role == ChatRole.Tool)
+                    {
+                        var result = request.Messages[index];
+                        toolResults.Add((JsonNode)new JsonObject
+                        {
+                            ["type"] = "tool_result",
+                            ["tool_use_id"] = result.ToolCallId,
+                            ["content"] = result.Text,
+                            ["is_error"] = !result.ToolSuccess,
+                        });
+                        index++;
+                    }
+                    index--;
                     messages.Add((JsonNode)new JsonObject
                     {
                         ["role"] = "user",
-                        ["content"] = new JsonArray(new JsonObject
-                        {
-                            ["type"] = "tool_result",
-                            ["tool_use_id"] = msg.ToolCallId,
-                            ["content"] = msg.Text,
-                            ["is_error"] = !msg.ToolSuccess,
-                        }),
+                        ["content"] = toolResults,
                     });
                     break;
             }

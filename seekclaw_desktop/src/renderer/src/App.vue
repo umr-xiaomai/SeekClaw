@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import {
   Braces,
+  Bug,
   Circle,
   Folder,
   FolderOpen,
   Globe2,
+  Hammer,
   History,
   MoreHorizontal,
   PanelRight,
   RefreshCw,
+  Telescope,
   TerminalSquare
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -27,6 +30,12 @@ import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-re
 import type { ChatMessage, ProjectItem, ThreadItem } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
+const starterPrompts = [
+  { label: '探索并理解代码', icon: Telescope, tone: 'blue' },
+  { label: '构建新功能、应用或工具', icon: Hammer, tone: 'purple' },
+  { label: '审查代码并提出修改建议', icon: RefreshCw, tone: 'green' },
+  { label: '修复问题和失败', icon: Bug, tone: 'orange' }
+] as const
 const makeId = (): string => crypto.randomUUID()
 const pathName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
 const normalizePath = (path: string): string => path.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase()
@@ -93,7 +102,8 @@ const activeProject = computed(() => {
 const globalTaskActive = computed(() => activeThread.value ? !activeThread.value.projectId : !selectedProjectId.value)
 const settingsThread = computed(() => threads.value.find((thread) => thread.id === taskSettingsThreadId.value))
 const settingsProject = computed(() => projects.value.find((project) => project.id === settingsThread.value?.projectId))
-const conversationTitle = computed(() => activeThread.value?.title || '新任务')
+const conversationTitle = computed(() =>
+  activeThread.value?.title || activeProject.value?.name || '全局任务')
 const runtimeConnectionLabel = computed(() => {
   if (reconnecting.value) return `正在重连 ${reconnectAttempt.value}/${RUNTIME_RECONNECT_ATTEMPTS}`
   return 'Runtime 离线'
@@ -267,8 +277,6 @@ async function loadRuntimeState(): Promise<void> {
       if (recent) {
         activeThreadId.value = recent.id
         selectedProjectId.value = recent.projectId ?? ''
-      } else {
-        newTask(currentProject.id)
       }
     }
   } catch {
@@ -347,25 +355,8 @@ async function openWorkspace(): Promise<void> {
   if (!path) return
   const project = ensureProject(path)
   selectedProjectId.value = project.id
+  activeThreadId.value = ''
   await refreshProjectSessions(project).catch(() => undefined)
-  if (!threads.value.some((thread) => thread.projectId === project.id && !thread.archived)) newTask(project.id)
-}
-
-async function activateProject(project: ProjectItem): Promise<void> {
-  selectedProjectId.value = project.id
-  if (!project.loaded) await refreshProjectSessions(project).catch(() => undefined)
-}
-
-function activateGlobal(): void {
-  selectedProjectId.value = ''
-  const recent = threads.value
-    .filter((thread) => !thread.projectId && !thread.archived)
-    .sort((left, right) => right.updatedAt - left.updatedAt)[0]
-  if (recent) {
-    void selectThread(recent.id)
-  } else {
-    newTask()
-  }
 }
 
 function openSettings(section: typeof settingsSection.value = 'general'): void {
@@ -543,9 +534,11 @@ function chooseAfterRemoval(projectId?: string): void {
     .sort((left, right) => right.updatedAt - left.updatedAt)[0]
   if (fallback) {
     activeThreadId.value = fallback.id
+    selectedProjectId.value = projectId ?? ''
     return
   }
-  newTask(projectId)
+  activeThreadId.value = ''
+  selectedProjectId.value = projectId ?? ''
 }
 
 async function archiveTask(thread: ThreadItem): Promise<void> {
@@ -809,10 +802,20 @@ function handleDaemonEvent(event: DaemonMessage): void {
       break
     case 'error':
       message.state = 'error'
-      if (!message.content) message.content = event.data
+      appendModelError(message, event.data)
       break
   }
   void scrollToBottom()
+}
+
+function appendModelError(message: ChatMessage, detail: string): void {
+  const normalized = detail.trim() || 'Unknown model error'
+  if (message.content.includes(normalized)) return
+  const indentedDetail = normalized.split(/\r?\n/).map((line) => `    ${line}`).join('\n')
+  const errorBlock = `**模型请求失败**\n\n${indentedDetail}`
+  message.content = message.content.trim()
+    ? `${message.content}\n\n---\n\n${errorBlock}`
+    : errorBlock
 }
 
 async function stopTurn(): Promise<void> {
@@ -835,6 +838,10 @@ async function changeMode(nextMode: string): Promise<void> {
   } catch { /* Keep showing the active Runtime mode. */ }
 }
 
+function useStarterPrompt(prompt: string): void {
+  composer.value?.setValue(prompt)
+}
+
 onMounted(async () => {
   applyTheme(theme.value)
   appInfo.value = await window.seekclaw.getAppInfo()
@@ -848,8 +855,7 @@ onMounted(async () => {
   appReadyForRecovery = true
   await runReconnectCycle(true)
   if (!daemonState.value.connected) projects.value.forEach((project) => { project.loaded = true })
-  if (!activeThread.value) newTask(defaultProject.id)
-  composer.value?.focus()
+  if (activeThread.value) composer.value?.focus()
 })
 
 onBeforeUnmount(() => {
@@ -866,6 +872,7 @@ watch(projects, persistProjects, { deep: true })
   <div class="app-shell">
     <AppTitleBar
       :sidebar-open="sidebarOpen"
+      :project-path="globalTaskActive ? undefined : activeProject?.path"
       @toggle-sidebar="sidebarOpen = !sidebarOpen"
       @open-workspace="openWorkspace"
       @focus-composer="composer?.focus()"
@@ -883,8 +890,6 @@ watch(projects, persistProjects, { deep: true })
         @new-task="newTask"
         @open-workspace="openWorkspace"
         @select-thread="selectThread"
-        @select-project="activateProject"
-        @select-global="activateGlobal"
         @task-settings="openTaskSettings"
         @archive-task="archiveTask"
         @restore-task="restoreTask"
@@ -909,7 +914,7 @@ watch(projects, persistProjects, { deep: true })
             <Globe2 v-if="globalTaskActive" :size="20" />
             <Folder v-else :size="20" />
             <strong>{{ conversationTitle }}</strong>
-            <small>{{ activeProject?.name || '全局任务' }}</small>
+            <small v-if="activeThread">{{ activeProject?.name || '全局任务' }}</small>
           </div>
           <div class="conversation-actions">
             <button
@@ -947,9 +952,29 @@ watch(projects, persistProjects, { deep: true })
           <div v-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
             <ConversationMessage v-for="message in activeThread.messages" :key="message.id" :message="message" />
           </div>
-          <div v-else class="empty-state">
+          <div v-else-if="activeThread" class="empty-state">
             <h1>今天从哪里开始？</h1>
             <p>{{ activeProject?.name || '全局任务 · 无工作目录' }}</p>
+            <div v-if="!activeThread?.archived" class="starter-prompts" aria-label="快速开始">
+              <button
+                v-for="prompt in starterPrompts"
+                :key="prompt.label"
+                type="button"
+                class="starter-prompt-card"
+                :data-tone="prompt.tone"
+                @click="useStarterPrompt(prompt.label)"
+              >
+                <component :is="prompt.icon" :size="20" aria-hidden="true" />
+                <span>{{ prompt.label }}</span>
+              </button>
+            </div>
+          </div>
+          <div v-else class="empty-state no-task-state">
+            <h1>还没有任务</h1>
+            <p>新建一个任务以开始使用 SeekClaw</p>
+            <button class="secondary-button empty-state-action" @click="newTask(selectedProjectId || undefined)">
+              新建任务
+            </button>
           </div>
         </section>
 
@@ -957,7 +982,7 @@ watch(projects, persistProjects, { deep: true })
           <Composer
             ref="composer"
             :busy="busy"
-            :disabled="activeThread?.archived"
+            :disabled="!activeThread || activeThread.archived"
             :model="activeModel"
             :models="models"
             :mode="mode"
@@ -968,7 +993,9 @@ watch(projects, persistProjects, { deep: true })
             @change-mode="changeMode"
           />
           <p class="composer-caption">
-            {{ activeThread?.archived
+            {{ !activeThread
+              ? '选择一个任务，或新建任务开始。'
+              : activeThread.archived
               ? '此任务已归档，恢复后可继续。'
               : globalTaskActive
                 ? '全局任务不使用本地文件、终端或 Git 工具。'

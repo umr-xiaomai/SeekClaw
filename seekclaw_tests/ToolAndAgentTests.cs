@@ -60,12 +60,50 @@ public sealed class ToolAndAgentTests
     }
 
     [Fact]
+    public void ContextPlanner_RepairsMissingToolResultsFromInterruptedTurns()
+    {
+        var assistant = new ChatMessage
+        {
+            Role = ChatRole.Assistant,
+            ToolCalls =
+            [
+                new ToolCallRequest("c1", "read_file", "{}"),
+                new ToolCallRequest("c2", "list_files", "{}"),
+            ],
+        };
+        var messages = new List<ChatMessage>
+        {
+            ChatMessage.User("inspect"),
+            assistant,
+            ChatMessage.ToolResult("c1", "read_file", "one", true),
+            ChatMessage.User("continue"),
+        };
+
+        var repaired = ContextPlanner.FitToWindow(
+            messages,
+            new ModelConfig { ContextWindow = 128_000, MaxOutput = 8_000 },
+            "sys");
+
+        Assert.Equal(5, repaired.Count);
+        Assert.Equal("c1", repaired[2].ToolCallId);
+        Assert.Equal("c2", repaired[3].ToolCallId);
+        Assert.False(repaired[3].ToolSuccess);
+        Assert.Contains("did not complete", repaired[3].Text);
+        Assert.Equal("continue", repaired[4].Text);
+    }
+
+    [Fact]
     public void ContextPlanner_ShrinksOldToolOutputsFirst()
     {
         var model = new ModelConfig { ContextWindow = 12_000, MaxOutput = 2_000 };
         var messages = new List<ChatMessage>
         {
             ChatMessage.User("start"),
+            new ChatMessage
+            {
+                Role = ChatRole.Assistant,
+                ToolCalls = [new ToolCallRequest("c1", "read_file", "{}")],
+            },
             ChatMessage.ToolResult("c1", "read_file", new string('t', 60_000), true),
         };
         for (var i = 0; i < 8; i++) messages.Add(ChatMessage.User($"follow-up {i}"));

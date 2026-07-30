@@ -2,8 +2,6 @@
 import {
   Archive,
   Blocks,
-  ChevronDown,
-  ChevronRight,
   CircleHelp,
   Folder,
   Globe2,
@@ -32,8 +30,6 @@ const emit = defineEmits<{
   newTask: [projectId?: string]
   openWorkspace: []
   selectThread: [id: string]
-  selectProject: [project: ProjectItem]
-  selectGlobal: []
   taskSettings: [thread: ThreadItem]
   archiveTask: [thread: ThreadItem]
   restoreTask: [thread: ThreadItem]
@@ -77,7 +73,6 @@ const visibleGlobalThreads = computed(() => props.threads
 
 function toggleGlobal(): void {
   globalExpanded.value = !globalExpanded.value
-  emit('selectGlobal')
 }
 
 function toggleProject(project: ProjectItem): void {
@@ -85,7 +80,6 @@ function toggleProject(project: ProjectItem): void {
   if (next.has(project.id)) next.delete(project.id)
   else next.add(project.id)
   expandedProjects.value = next
-  emit('selectProject', project)
 }
 
 function toggleMenu(key: string): void {
@@ -144,22 +138,22 @@ onBeforeUnmount(() => {
 
     <nav class="primary-nav">
       <button class="nav-item is-primary" @click="emit('newTask', activeProjectId)">
-        <SquarePen :size="19" />
+        <SquarePen :size="18" />
         <span>新建任务</span>
       </button>
       <button class="nav-item" :class="{ active: showArchived }" @click="showArchived = !showArchived">
-        <Archive :size="19" />
+        <Archive :size="18" />
         <span>{{ showArchived ? '返回任务' : '已归档' }}</span>
       </button>
       <button class="nav-item" @click="emit('openExtensions')">
-        <Blocks :size="19" />
+        <Blocks :size="18" />
         <span>MCP 与技能</span>
       </button>
     </nav>
 
     <section class="sidebar-section project-section">
       <div class="section-heading">
-        <span>{{ showArchived ? '已归档任务' : '任务与项目' }}</span>
+        <span>{{ showArchived ? '已归档' : '项目' }}</span>
         <button
           v-if="showArchived"
           class="icon-button compact"
@@ -175,11 +169,9 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="project-group global-task-group">
-        <div class="project-heading-row" :class="{ active: !activeProjectId }">
+        <div class="project-heading-row">
           <button class="project-row" title="不绑定工作目录的任务" @click="toggleGlobal">
-            <ChevronDown v-if="globalExpanded" :size="15" class="project-chevron" />
-            <ChevronRight v-else :size="15" class="project-chevron" />
-            <Globe2 :size="18" />
+            <Globe2 :size="17" />
             <span>全局任务</span>
           </button>
           <button
@@ -227,10 +219,8 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-for="project in projects" :key="project.id" class="project-group">
-        <div class="project-heading-row" :class="{ active: project.id === activeProjectId }">
+        <div class="project-heading-row">
           <button class="project-row" :title="project.path" @click="toggleProject(project)">
-            <ChevronDown v-if="expandedProjects.has(project.id)" :size="15" class="project-chevron" />
-            <ChevronRight v-else :size="15" class="project-chevron" />
             <Folder :size="18" />
             <span>{{ project.name }}</span>
           </button>
@@ -293,7 +283,6 @@ onBeforeUnmount(() => {
 
     <footer class="sidebar-footer">
       <button class="account-row" @click="emit('openSettings')">
-        <span class="account-avatar">S</span>
         <span class="account-copy">
           <strong>SeekClaw Desktop</strong>
           <small>v{{ version }}</small>

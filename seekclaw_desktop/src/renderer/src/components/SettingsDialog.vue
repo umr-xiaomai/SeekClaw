@@ -44,6 +44,7 @@ interface ProviderInfo {
   name: string
   kind: 'openai' | 'anthropic'
   baseUrl: string
+  apiKey?: string
   apiKeyConfigured: boolean
   apiKeyEnv?: string
   models: string[]
@@ -381,7 +382,7 @@ function editProvider(provider: ProviderInfo): void {
     name: provider.name === provider.id ? '' : provider.name,
     kind: provider.kind,
     baseUrl: provider.baseUrl,
-    apiKey: '',
+    apiKey: provider.apiKey ?? '',
     apiKeyEnv: provider.apiKeyEnv ?? '',
     models: provider.models.join('\n'),
     enabled: provider.enabled,
@@ -395,10 +396,14 @@ function editProvider(provider: ProviderInfo): void {
 async function saveProvider(value: ProviderFormValue): Promise<void> {
   beginAction('provider.save')
   try {
-    await window.seekclaw.daemon.request('provider.upsert', {
-      ...value,
+    const { apiKey, ...provider } = value
+    const parameters: Record<string, unknown> = {
+      ...provider,
       models: value.models.split(/\r?\n|,/).map((model) => model.trim()).filter(Boolean)
-    })
+    }
+    if (apiKey.trim()) parameters.apiKey = apiKey.trim()
+    else if (editingProviderId.value) parameters.clearApiKey = true
+    await window.seekclaw.daemon.request('provider.upsert', parameters)
     providerEditorOpen.value = false
     await loadModels()
     emit('runtimeChanged')

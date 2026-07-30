@@ -62,7 +62,7 @@ function handleKeydown(event: KeyboardEvent): void {
 watch(() => props.open, (open) => {
   if (!open) return
   Object.assign(form, props.value)
-  revealKey.value = false
+  revealKey.value = true
   document.addEventListener('keydown', handleKeydown)
   void nextTick(() => firstInput.value?.focus())
 }, { immediate: true })
@@ -119,9 +119,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               </div>
               <div class="provider-form-grid">
                 <label>
-                  <FieldLabel en="API Key" zh="API 密钥" help="直接保存此 Provider 使用的访问密钥。编辑时留空将保留已经配置的密钥。" />
+                  <FieldLabel en="API Key" zh="API 密钥" help="直接查看和修改此 Provider 保存的访问密钥；清空后保存会删除密钥。" />
                   <span class="password-control">
-                    <input v-model="form.apiKey" :type="revealKey ? 'text' : 'password'" :placeholder="editingId ? '留空以保留现有密钥' : 'sk-…'" autocomplete="new-password" />
+                    <input
+                      v-model="form.apiKey"
+                      :type="revealKey ? 'text' : 'password'"
+                      placeholder="sk-…"
+                      autocomplete="new-password"
+                    />
                     <button type="button" :title="revealKey ? '隐藏 API Key' : '显示 API Key'" @click="revealKey = !revealKey">
                       <EyeOff v-if="revealKey" :size="16" /><Eye v-else :size="16" />
                     </button>

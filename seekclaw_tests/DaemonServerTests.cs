@@ -5,6 +5,7 @@ using SeekClaw.Runtime;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Daemon;
+using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Workspaces;
 
@@ -53,6 +54,24 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Contains(responses, response =>
             response["id"]!.GetValue<long>() == 1
             && response["event"]!.GetValue<string>() == "cancelled");
+    }
+
+    [Fact]
+    public async Task ChatError_ReturnsProviderDetailInsteadOfRuntimeSummary()
+    {
+        const string detail = "openai returned HTTP 401: Invalid API key supplied";
+        var connection = await StartServerAsync((_, _, _, _) =>
+        {
+            _runtime!.Events.Publish(new ErrorEvent("LLM request failed", detail));
+            return Task.FromResult(new AgentTurnResult("", false, detail));
+        });
+
+        await connection.SendAsync(4, "chat", new JsonObject { ["message"] = "hello" });
+        var response = await connection.ReadAsync();
+
+        Assert.Equal(4, response["id"]!.GetValue<long>());
+        Assert.Equal("error", response["event"]!.GetValue<string>());
+        Assert.Equal(detail, response["data"]!.GetValue<string>());
     }
 
     [Fact]
@@ -130,6 +149,36 @@ public sealed class DaemonServerTests : IAsyncDisposable
         });
         var provider = ParseData(await connection.ReadAsync());
         Assert.True(provider["apiKeyConfigured"]!.GetValue<bool>());
+        Assert.Equal("secret-test-key", provider["apiKey"]!.GetValue<string>());
+
+        // The desktop receives the directly stored key for editing. Older clients that submit
+        // an empty value still preserve it unless they explicitly request clearApiKey.
+        await connection.SendAsync(111, "provider.upsert", new JsonObject
+        {
+            ["id"] = "local",
+            ["kind"] = "openai",
+            ["baseUrl"] = "http://localhost:11434/v1",
+            ["apiKey"] = "",
+            ["models"] = new JsonArray("test-model"),
+        });
+        provider = ParseData(await connection.ReadAsync());
+        Assert.True(provider["apiKeyConfigured"]!.GetValue<bool>());
+        Assert.Equal("secret-test-key", provider["apiKey"]!.GetValue<string>());
+        var reloadedStore = new ConfigStore(
+            Path.Combine(_tempDir, "config.json"),
+            Path.Combine(_tempDir, "state.json"));
+        Assert.Equal("secret-test-key", reloadedStore.Config.FindProvider("local")!.ApiKey);
+
+        await connection.SendAsync(112, "provider.upsert", new JsonObject
+        {
+            ["id"] = "local",
+            ["kind"] = "openai",
+            ["baseUrl"] = "http://localhost:11434/v1",
+            ["clearApiKey"] = true,
+            ["models"] = new JsonArray("test-model"),
+        });
+        provider = ParseData(await connection.ReadAsync());
+        Assert.False(provider["apiKeyConfigured"]!.GetValue<bool>());
         Assert.Null(provider["apiKey"]);
 
         await connection.SendAsync(12, "profile.upsert", new JsonObject
