@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, FolderPlus, Square } from '@lucide/vue'
+import { ArrowUp, FolderPlus, Square } from '@lucide/vue'
 import { nextTick, ref, watch } from 'vue'
+import SelectMenu from './SelectMenu.vue'
 
 const props = defineProps<{
   busy: boolean
@@ -20,6 +21,12 @@ const emit = defineEmits<{
 
 const value = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
+const modeOptions = [
+  { value: 'edit', label: 'Edit', description: '可读取并修改文件' },
+  { value: 'plan', label: 'Plan', description: '先分析并制定计划' },
+  { value: 'readonly', label: 'Read only', description: '仅分析，不修改文件' },
+  { value: 'auto', label: 'Auto', description: '根据任务自动选择' }
+]
 
 function resize(): void {
   if (!textarea.value) return
@@ -64,22 +71,24 @@ watch(value, resize)
       <button class="icon-button composer-icon" title="添加工作区" @click="emit('attach')">
         <FolderPlus :size="18" />
       </button>
-      <label class="select-control">
-        <select :value="mode" :disabled="busy || disabled" aria-label="Agent 模式" @change="emit('changeMode', ($event.target as HTMLSelectElement).value)">
-          <option value="edit">Edit</option>
-          <option value="plan">Plan</option>
-          <option value="readonly">Read only</option>
-          <option value="auto">Auto</option>
-        </select>
-        <ChevronDown :size="14" />
-      </label>
-      <label class="select-control model-control">
-        <select :value="model" :disabled="busy || disabled" aria-label="模型" @change="emit('changeModel', ($event.target as HTMLSelectElement).value)">
-          <option v-if="models.length === 0" :value="model">{{ model }}</option>
-          <option v-for="item in models" :key="item" :value="item">{{ item }}</option>
-        </select>
-        <ChevronDown :size="14" />
-      </label>
+      <SelectMenu
+        class="composer-select mode-control"
+        :model-value="mode"
+        :options="modeOptions"
+        label="Agent 模式"
+        :disabled="busy || disabled"
+        :menu-min-width="220"
+        @update:model-value="emit('changeMode', $event)"
+      />
+      <SelectMenu
+        class="composer-select model-control"
+        :model-value="model"
+        :options="models.length > 0 ? models.map((item) => ({ value: item, label: item })) : [{ value: model, label: model }]"
+        label="模型"
+        :disabled="busy || disabled"
+        :menu-min-width="300"
+        @update:model-value="emit('changeModel', $event)"
+      />
       <span class="toolbar-spacer" />
       <button v-if="busy" class="send-button" title="停止" @click="emit('stop')">
         <Square :size="14" fill="currentColor" />

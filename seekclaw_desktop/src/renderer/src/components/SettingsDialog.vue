@@ -24,6 +24,8 @@ import {
 } from '@lucide/vue'
 import { computed, reactive, ref, watch } from 'vue'
 import { confirmAction } from '../confirmation'
+import ProviderEditorDialog from './ProviderEditorDialog.vue'
+import SelectMenu from './SelectMenu.vue'
 
 type SettingsSection = 'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'
 
@@ -50,6 +52,20 @@ interface ProviderInfo {
   timeoutSeconds: number
   proxy?: string
   active: boolean
+}
+
+interface ProviderFormValue {
+  id: string
+  name: string
+  kind: 'openai' | 'anthropic'
+  baseUrl: string
+  apiKey: string
+  apiKeyEnv: string
+  models: string
+  enabled: boolean
+  priority: number
+  timeoutSeconds: number
+  proxy: string
 }
 
 interface ModelInfo {
@@ -159,6 +175,36 @@ const mcpForm = reactive({
 
 const activeProfile = computed(() => profiles.value.find((profile) => profile.active))
 const activeModel = computed(() => models.value.find((model) => model.active))
+const profileOptions = computed(() => profiles.value.map((profile) => ({
+  value: profile.name,
+  label: profile.name,
+  description: profile.strategy ? `Strategy · ${profile.strategy}` : undefined
+})))
+const modelOptions = computed(() => models.value.map((model) => ({
+  value: model.ref,
+  label: model.ref,
+  description: `${model.contextWindow.toLocaleString()} context · ${model.provider}`,
+  disabled: !model.providerEnabled
+})))
+const providerOptions = computed(() => [
+  { value: '', label: '自动选择', description: 'Automatic routing' },
+  ...providers.value.map((provider) => ({ value: provider.id, label: provider.name, description: provider.id }))
+])
+const strategyOptions = [
+  { value: 'balanced', label: 'Balanced', description: '平衡质量、速度和成本' },
+  { value: 'fast', label: 'Fast', description: '优先选择响应更快的模型' },
+  { value: 'quality', label: 'Quality', description: '优先选择能力更强的模型' },
+  { value: 'cheap', label: 'Cheap', description: '优先降低调用成本' },
+  { value: 'offline', label: 'Offline', description: '仅使用离线模型' }
+]
+const mcpScopeOptions = [
+  { value: 'workspace', label: '当前工作区', description: '仅在此工作区生效' },
+  { value: 'global', label: '全局', description: '在所有工作区中生效' }
+]
+const mcpTransportOptions = [
+  { value: 'stdio', label: 'stdio', description: '通过本地子进程通信' },
+  { value: 'sse', label: 'SSE', description: '连接远程 HTTP 服务' }
+]
 const filteredModels = computed(() => {
   const query = modelQuery.value.trim().toLocaleLowerCase()
   if (!query) return models.value
@@ -318,6 +364,7 @@ async function removeProfile(profile: ProfileInfo): Promise<void> {
 }
 
 function newProvider(): void {
+  error.value = ''
   editingProviderId.value = null
   Object.assign(providerForm, {
     id: '', name: '', kind: 'openai', baseUrl: '', apiKey: '', apiKeyEnv: '',
@@ -327,6 +374,7 @@ function newProvider(): void {
 }
 
 function editProvider(provider: ProviderInfo): void {
+  error.value = ''
   editingProviderId.value = provider.id
   Object.assign(providerForm, {
     id: provider.id,
@@ -344,12 +392,12 @@ function editProvider(provider: ProviderInfo): void {
   providerEditorOpen.value = true
 }
 
-async function saveProvider(): Promise<void> {
+async function saveProvider(value: ProviderFormValue): Promise<void> {
   beginAction('provider.save')
   try {
     await window.seekclaw.daemon.request('provider.upsert', {
-      ...providerForm,
-      models: providerForm.models.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean)
+      ...value,
+      models: value.models.split(/\r?\n|,/).map((model) => model.trim()).filter(Boolean)
     })
     providerEditorOpen.value = false
     await loadModels()
@@ -359,6 +407,14 @@ async function saveProvider(): Promise<void> {
   } finally {
     endAction()
   }
+}
+
+function updateMcpScope(value: string): void {
+  if (value === 'workspace' || value === 'global') mcpForm.scope = value
+}
+
+function updateMcpTransport(value: string): void {
+  if (value === 'stdio' || value === 'sse') mcpForm.transport = value
 }
 
 async function useProvider(provider: ProviderInfo): Promise<void> {
@@ -648,9 +704,14 @@ watch(section, () => { void loadCurrentSection() })
               <div class="settings-row">
                 <div><strong>活动 Profile</strong><small>{{ activeProfile?.strategy || '未设置路由策略' }}</small></div>
                 <div class="row-actions">
-                  <select :value="activeProfile?.name" @change="switchProfile(($event.target as HTMLSelectElement).value)">
-                    <option v-for="profile in profiles" :key="profile.name" :value="profile.name">{{ profile.name }}</option>
-                  </select>
+                  <SelectMenu
+                    class="settings-select"
+                    :model-value="activeProfile?.name ?? ''"
+                    :options="profileOptions"
+                    label="活动 Profile"
+                    :menu-min-width="240"
+                    @update:model-value="switchProfile"
+                  />
                   <button class="icon-button" title="编辑 Profile" @click="activeProfile && editProfile(activeProfile)"><Settings2 :size="16" /></button>
                   <button class="icon-button" title="新增 Profile" @click="newProfile"><Plus :size="16" /></button>
                 </div>
@@ -658,9 +719,7 @@ watch(section, () => { void loadCurrentSection() })
               <div class="settings-row">
                 <div><strong>活动模型</strong><small>{{ activeModel ? `${activeModel.contextWindow.toLocaleString()} context` : '无可用模型' }}</small></div>
                 <div class="row-actions model-actions">
-                  <select v-model="selectedModel">
-                    <option v-for="model in models" :key="model.ref" :value="model.ref" :disabled="!model.providerEnabled">{{ model.ref }}</option>
-                  </select>
+                  <SelectMenu v-model="selectedModel" class="settings-select model-select" :options="modelOptions" label="活动模型" :menu-min-width="330" />
                   <button class="secondary-button" :disabled="!selectedModel" @click="testModel">测试</button>
                   <button class="secondary-button primary-action" :disabled="!selectedModel" @click="switchModel">使用</button>
                 </div>
@@ -671,9 +730,9 @@ watch(section, () => { void loadCurrentSection() })
               <div class="editor-heading"><strong>Profile</strong><button class="icon-button compact" @click="profileEditorOpen = false"><X :size="15" /></button></div>
               <div class="form-grid">
                 <label><span>名称</span><input v-model="profileForm.name" :disabled="profiles.some((item) => item.name === profileForm.name)" /></label>
-                <label><span>Provider</span><select v-model="profileForm.provider"><option value="">自动</option><option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.id }}</option></select></label>
+                <label><span>Provider</span><SelectMenu v-model="profileForm.provider" :options="providerOptions" label="Profile Provider" :menu-min-width="240" /></label>
                 <label><span>Model</span><input v-model="profileForm.model" /></label>
-                <label><span>Strategy</span><select v-model="profileForm.strategy"><option v-for="value in ['balanced','fast','quality','cheap','offline']" :key="value">{{ value }}</option></select></label>
+                <label><span>Strategy</span><SelectMenu v-model="profileForm.strategy" :options="strategyOptions" label="Profile Strategy" :menu-min-width="250" /></label>
                 <label><span>Temperature</span><input v-model="profileForm.temperature" type="number" min="0" max="2" step="0.1" /></label>
               </div>
               <div class="editor-actions">
@@ -681,28 +740,6 @@ watch(section, () => { void loadCurrentSection() })
                 <span class="toolbar-spacer" />
                 <button class="secondary-button" @click="profileEditorOpen = false">取消</button>
                 <button class="secondary-button primary-action" @click="saveProfile"><Save :size="15" /> 保存</button>
-              </div>
-            </section>
-
-            <section v-if="providerEditorOpen" class="settings-editor">
-              <div class="editor-heading"><strong>{{ editingProviderId ? '编辑 Provider' : '新增 Provider' }}</strong><button class="icon-button compact" @click="providerEditorOpen = false"><X :size="15" /></button></div>
-              <div class="form-grid">
-                <label><span>ID</span><input v-model="providerForm.id" :disabled="!!editingProviderId" placeholder="openai" /></label>
-                <label><span>名称</span><input v-model="providerForm.name" /></label>
-                <label><span>协议</span><select v-model="providerForm.kind"><option value="openai">OpenAI-compatible</option><option value="anthropic">Anthropic</option></select></label>
-                <label class="span-2"><span>Base URL</span><input v-model="providerForm.baseUrl" placeholder="https://api.openai.com/v1" /></label>
-                <label><span>API Key</span><input v-model="providerForm.apiKey" type="password" :placeholder="editingProviderId ? '••••••••' : ''" /></label>
-                <label><span>Key 环境变量</span><input v-model="providerForm.apiKeyEnv" placeholder="OPENAI_API_KEY" /></label>
-                <label class="span-2"><span>Models</span><textarea v-model="providerForm.models" rows="3" placeholder="gpt-5\ngpt-5-mini" /></label>
-                <label><span>超时（秒）</span><input v-model.number="providerForm.timeoutSeconds" type="number" min="5" /></label>
-                <label><span>优先级</span><input v-model.number="providerForm.priority" type="number" /></label>
-                <label class="span-2"><span>Proxy</span><input v-model="providerForm.proxy" placeholder="http://127.0.0.1:7890" /></label>
-                <label class="check-label"><input v-model="providerForm.enabled" type="checkbox" /><span>启用</span></label>
-              </div>
-              <div class="editor-actions">
-                <span class="toolbar-spacer" />
-                <button class="secondary-button" @click="providerEditorOpen = false">取消</button>
-                <button class="secondary-button primary-action" @click="saveProvider"><Save :size="15" /> 保存</button>
               </div>
             </section>
 
@@ -753,8 +790,8 @@ watch(section, () => { void loadCurrentSection() })
               <div class="editor-heading"><strong>{{ editingMcpName ? '编辑 MCP Server' : '新增 MCP Server' }}</strong><button class="icon-button compact" @click="mcpEditorOpen = false"><X :size="15" /></button></div>
               <div class="form-grid">
                 <label><span>名称</span><input v-model="mcpForm.name" :disabled="!!editingMcpName" placeholder="filesystem" /></label>
-                <label><span>范围</span><select v-model="mcpForm.scope"><option value="workspace">当前工作区</option><option value="global">全局</option></select></label>
-                <label><span>Transport</span><select v-model="mcpForm.transport"><option value="stdio">stdio</option><option value="sse">SSE</option></select></label>
+                <label><span>范围</span><SelectMenu :model-value="mcpForm.scope" :options="mcpScopeOptions" label="MCP 范围" @update:model-value="updateMcpScope" /></label>
+                <label><span>Transport</span><SelectMenu :model-value="mcpForm.transport" :options="mcpTransportOptions" label="MCP Transport" @update:model-value="updateMcpTransport" /></label>
                 <label v-if="mcpForm.transport === 'stdio'" class="span-2"><span>Command</span><input v-model="mcpForm.command" placeholder="npx" /></label>
                 <label v-if="mcpForm.transport === 'stdio'" class="span-2"><span>Args</span><textarea v-model="mcpForm.args" rows="3" placeholder="-y\n@modelcontextprotocol/server-filesystem" /></label>
                 <label v-else class="span-2"><span>URL</span><input v-model="mcpForm.url" placeholder="https://example.com/sse" /></label>
@@ -832,4 +869,13 @@ watch(section, () => { void loadCurrentSection() })
       </section>
     </div>
   </Transition>
+  <ProviderEditorDialog
+    :open="providerEditorOpen"
+    :editing-id="editingProviderId"
+    :value="providerForm"
+    :saving="action === 'provider.save'"
+    :error="providerEditorOpen ? error : ''"
+    @close="providerEditorOpen = false"
+    @save="saveProvider"
+  />
 </template>
