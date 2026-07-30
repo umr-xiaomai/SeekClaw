@@ -49,6 +49,8 @@ public interface ITool
     JsonObject ParameterSchema { get; }
     /// <summary>True when the tool changes files (triggers the auto build/verify cycle).</summary>
     bool Mutating { get; }
+    /// <summary>True when the tool needs a concrete local project directory.</summary>
+    bool RequiresWorkspace => true;
     /// <summary>Status label for the renderer while the tool runs (Reading files, Searching…).</summary>
     string StatusLabel { get; }
 

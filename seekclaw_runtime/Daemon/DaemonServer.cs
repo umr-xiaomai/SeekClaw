@@ -24,6 +24,7 @@ public sealed class DaemonServer
 
     private readonly SeekClawRuntime _runtime;
     private readonly DaemonAdminApi _admin;
+    private readonly WorkspaceInfo _globalWorkspace;
     private readonly Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> _runTurn;
 
     // SeekClawRuntime currently owns one mutable workspace and one global event bus.
@@ -31,16 +32,25 @@ public sealed class DaemonServer
     private readonly SemaphoreSlim _runtimeGate = new(1, 1);
 
     public DaemonServer(SeekClawRuntime runtime)
-        : this(runtime, runtime.Agent.RunTurnAsync)
+        : this(runtime, runtime.Agent.RunTurnAsync, runtime.Workspaces.CreateGlobal())
     {
     }
 
     internal DaemonServer(
         SeekClawRuntime runtime,
         Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> runTurn)
+        : this(runtime, runTurn, runtime.Workspaces.CreateGlobal())
+    {
+    }
+
+    internal DaemonServer(
+        SeekClawRuntime runtime,
+        Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> runTurn,
+        WorkspaceInfo globalWorkspace)
     {
         _runtime = runtime;
-        _admin = new DaemonAdminApi(runtime);
+        _globalWorkspace = globalWorkspace;
+        _admin = new DaemonAdminApi(runtime, globalWorkspace);
         _runTurn = runTurn;
     }
 
@@ -197,10 +207,13 @@ public sealed class DaemonServer
                             break;
                         }
 
-                        var workspace = _runtime.Workspace;
-                        if (session is not null && !string.Equals(
-                                session.Header.Workspace, workspace.Root, StringComparison.OrdinalIgnoreCase))
+                        var workspace = request["params"]?["global"]?.GetValue<bool?>() == true
+                            ? _globalWorkspace
+                            : _runtime.Workspace;
+                        if (session is not null && !SessionBelongsTo(session, workspace))
+                        {
                             session = null;
+                        }
                         session ??= _runtime.Sessions.LoadLatest(workspace)
                                     ?? _runtime.Sessions.Create(workspace);
 
@@ -421,7 +434,10 @@ public sealed class DaemonServer
                     case "session.archive":
                     {
                         var sessionId = request["params"]?["id"]?.GetValue<string>();
-                        if (session?.Header.Id == sessionId) session = null;
+                        if (session?.Header.Id == sessionId)
+                        {
+                            session = null;
+                        }
                         await RunAdminAsync(writer, writerGate, id, true,
                             _ => Task.FromResult(_admin.ArchiveSession(Params(request))), ct).ConfigureAwait(false);
                         break;
@@ -430,7 +446,10 @@ public sealed class DaemonServer
                     case "session.delete":
                     {
                         var sessionId = request["params"]?["id"]?.GetValue<string>();
-                        if (session?.Header.Id == sessionId) session = null;
+                        if (session?.Header.Id == sessionId)
+                        {
+                            session = null;
+                        }
                         await RunAdminAsync(writer, writerGate, id, true,
                             _ => Task.FromResult(_admin.DeleteSession(Params(request))), ct).ConfigureAwait(false);
                         break;
@@ -449,7 +468,10 @@ public sealed class DaemonServer
                             await WriteAsync(writer, writerGate, id, "error", "params.id is required", ct).ConfigureAwait(false);
                             break;
                         }
-                        var loaded = _runtime.Sessions.Load(_runtime.Workspace, sessionId);
+                        var workspace = request["params"]?["global"]?.GetValue<bool?>() == true
+                            ? _globalWorkspace
+                            : _runtime.Workspace;
+                        var loaded = _runtime.Sessions.Load(workspace, sessionId);
                         if (loaded is null)
                             await WriteAsync(writer, writerGate, id, "error", $"Session {sessionId} not found", ct).ConfigureAwait(false);
                         else
@@ -467,7 +489,10 @@ public sealed class DaemonServer
                             await WriteAsync(writer, writerGate, id, "error", "Cannot create a session while an agent turn is active", ct).ConfigureAwait(false);
                             break;
                         }
-                        session = _runtime.Sessions.Create(_runtime.Workspace);
+                        var workspace = request["params"]?["global"]?.GetValue<bool?>() == true
+                            ? _globalWorkspace
+                            : _runtime.Workspace;
+                        session = _runtime.Sessions.Create(workspace);
                         await WriteAsync(writer, writerGate, id, "result", session.Header.Id, ct).ConfigureAwait(false);
                         break;
                     }
@@ -560,6 +585,8 @@ public sealed class DaemonServer
 
         try
         {
+            _runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
+            _runtime.Skills.Attach(workspace);
             result = await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -572,6 +599,8 @@ public sealed class DaemonServer
         }
         finally
         {
+            _runtime.Prompts.SetWorkspaceRoot(_runtime.Workspace.PromptsDir);
+            _runtime.Skills.Attach(_runtime.Workspace);
             subscription.Dispose();
             try { await forwarder.ConfigureAwait(false); }
             catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
@@ -665,7 +694,7 @@ public sealed class DaemonServer
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
-            "model", "mcp", "skill", "usage", "session", "doctor"),
+            "model", "mcp", "skill", "usage", "session", "global-session", "doctor"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.cancel",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
@@ -705,6 +734,10 @@ public sealed class DaemonServer
         {
             await WriteAsync(writer, writerGate, id, "error", $"Invalid request: {ex.Message}", ct).ConfigureAwait(false);
         }
+        catch (Exception ex)
+        {
+            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+        }
         finally
         {
             if (exclusive) _runtimeGate.Release();
@@ -739,4 +772,9 @@ public sealed class DaemonServer
         try { await task.ConfigureAwait(false); }
         catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
     }
+
+    private static bool SessionBelongsTo(AgentSession session, WorkspaceInfo workspace) =>
+        workspace.IsGlobal
+            ? string.IsNullOrWhiteSpace(session.Header.Workspace)
+            : string.Equals(session.Header.Workspace, workspace.Root, StringComparison.OrdinalIgnoreCase);
 }

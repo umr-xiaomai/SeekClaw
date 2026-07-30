@@ -218,6 +218,49 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Equal(sessionId, (await connection.ReadAsync())["data"]!.GetValue<string>());
     }
 
+    [Fact]
+    public async Task GlobalSessions_RunWithoutAProjectAndRemainSeparateFromWorkspaceSessions()
+    {
+        var observedGlobalContext = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workspace = CreateWorkspace("project-sessions");
+        var connection = await StartServerAsync((session, context, _, _) =>
+        {
+            observedGlobalContext.SetResult();
+            Assert.True(context.IsGlobal);
+            Assert.Null(session.Header.Workspace);
+            return Task.FromResult(new AgentTurnResult("ok", false, null));
+        }, workspace);
+
+        await connection.SendAsync(30, "session.new", new JsonObject { ["global"] = true });
+        var globalId = (await connection.ReadAsync())["data"]!.GetValue<string>();
+
+        await connection.SendAsync(31, "session.get", new JsonObject
+        {
+            ["id"] = globalId,
+            ["global"] = true,
+        });
+        var globalSession = ParseData(await connection.ReadAsync());
+        Assert.Null(globalSession["workspace"]);
+
+        await connection.SendAsync(32, "session.list", new JsonObject { ["global"] = true });
+        var globalSessions = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
+        Assert.Contains(globalSessions, item => item!["id"]!.GetValue<string>() == globalId);
+
+        await connection.SendAsync(33, "session.list", new JsonObject { ["workspace"] = workspace });
+        var projectResponse = await connection.ReadAsync();
+        Assert.True(projectResponse["event"]!.GetValue<string>() == "result", projectResponse["data"]!.GetValue<string>());
+        var projectSessions = JsonNode.Parse(projectResponse["data"]!.GetValue<string>())!.AsArray();
+        Assert.DoesNotContain(projectSessions, item => item!["id"]!.GetValue<string>() == globalId);
+
+        await connection.SendAsync(34, "chat", new JsonObject
+        {
+            ["message"] = "hello without a directory",
+            ["global"] = true,
+        });
+        Assert.Equal("done", (await connection.ReadAsync())["event"]!.GetValue<string>());
+        await observedGlobalContext.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private async Task<TestConnection> StartServerAsync(
         Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> runTurn,
         string? workspace = null)
@@ -227,7 +270,8 @@ public sealed class DaemonServerTests : IAsyncDisposable
             Path.Combine(_tempDir, "config.json"),
             Path.Combine(_tempDir, "state.json"));
         _runtime = SeekClawRuntime.Create(workspace, configStore);
-        var server = new DaemonServer(_runtime, runTurn);
+        var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(_tempDir, "global-state"));
+        var server = new DaemonServer(_runtime, runTurn, globalWorkspace);
 
         var pipeName = $"seekclaw-test-{Guid.NewGuid():N}";
         var serverPipe = new NamedPipeServerStream(

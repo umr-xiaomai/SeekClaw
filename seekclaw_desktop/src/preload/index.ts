@@ -7,6 +7,11 @@ const api: DesktopApi = {
   showItemInFolder: (path) => ipcRenderer.invoke('app:show-item', path),
   closeApp: () => ipcRenderer.invoke('app:close'),
   setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),
+  project: {
+    openTerminal: (path) => ipcRenderer.invoke('project:open-terminal', path),
+    gitOverview: (path) => ipcRenderer.invoke('project:git-overview', path),
+    gitHistory: (path) => ipcRenderer.invoke('project:git-history', path)
+  },
   daemon: {
     connect: () => ipcRenderer.invoke('daemon:connect'),
     disconnect: () => ipcRenderer.invoke('daemon:disconnect'),

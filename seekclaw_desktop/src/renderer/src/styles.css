@@ -117,6 +117,12 @@ a {
 
 button {
   border: 0;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease,
+    box-shadow 160ms ease, opacity 140ms ease, transform 100ms ease;
+}
+
+button:not(:disabled):active {
+  transform: scale(0.97);
 }
 
 button:not(:disabled),
@@ -209,10 +215,11 @@ select:focus-visible {
   grid-template-columns: 292px minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
+  transition: grid-template-columns 220ms cubic-bezier(.2, .8, .2, 1);
 }
 
 .app-body.sidebar-collapsed {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 0 minmax(0, 1fr);
 }
 
 .icon-button {
@@ -251,6 +258,17 @@ select:focus-visible {
   overflow: hidden;
   background: var(--sidebar);
   border-right: 1px solid var(--border);
+}
+
+.sidebar-slide-enter-active,
+.sidebar-slide-leave-active {
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.sidebar-slide-enter-from,
+.sidebar-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-18px);
 }
 
 .sidebar-brand-row,
@@ -302,6 +320,25 @@ select:focus-visible {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 7px;
+}
+
+.collapse-enter-active,
+.collapse-leave-active {
+  overflow: hidden;
+  transition: opacity 160ms ease, max-height 190ms ease, margin 190ms ease;
+}
+
+.collapse-enter-from,
+.collapse-leave-to {
+  max-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  opacity: 0;
+}
+
+.collapse-enter-to,
+.collapse-leave-from {
+  max-height: 42px;
 }
 
 .sidebar-search input {
@@ -418,6 +455,23 @@ select:focus-visible {
   padding: 2px 0 3px 31px;
 }
 
+.project-collapse-enter-active,
+.project-collapse-leave-active {
+  overflow: hidden;
+  transition: opacity 160ms ease, max-height 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.project-collapse-enter-from,
+.project-collapse-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+
+.project-collapse-enter-to,
+.project-collapse-leave-from {
+  max-height: 900px;
+}
+
 .thread-heading-row .thread-row {
   padding: 8px 7px;
 }
@@ -446,6 +500,18 @@ select:focus-visible {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow);
+  transform-origin: top right;
+}
+
+.context-menu-enter-active,
+.context-menu-leave-active {
+  transition: opacity 130ms ease, transform 150ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.context-menu-enter-from,
+.context-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-5px) scale(.97);
 }
 
 .sidebar-context-menu button {
@@ -560,6 +626,7 @@ select:focus-visible {
 .workspace-main {
   position: relative;
   display: grid;
+  grid-column: 2;
   grid-template-rows: 58px minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
@@ -568,6 +635,16 @@ select:focus-visible {
 
 .sidebar-scrim {
   display: none;
+}
+
+.scrim-fade-enter-active,
+.scrim-fade-leave-active {
+  transition: opacity 170ms ease;
+}
+
+.scrim-fade-enter-from,
+.scrim-fade-leave-to {
+  opacity: 0;
 }
 
 .conversation-header {
@@ -629,10 +706,6 @@ select:focus-visible {
 
 .connection-button svg:first-child {
   color: var(--danger);
-}
-
-.connection-button.connected svg:first-child {
-  color: var(--accent);
 }
 
 .conversation-scroll {
@@ -1093,6 +1166,442 @@ select:focus-visible {
   padding: 22px;
   place-items: center;
   background: rgb(14 17 14 / 32%);
+}
+
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 170ms ease;
+}
+
+.modal-fade-enter-active .settings-dialog,
+.modal-fade-leave-active .settings-dialog,
+.modal-fade-enter-active .task-settings-dialog,
+.modal-fade-leave-active .task-settings-dialog,
+.modal-fade-enter-active .runtime-reconnect-dialog,
+.modal-fade-leave-active .runtime-reconnect-dialog,
+.modal-fade-enter-active .confirmation-dialog,
+.modal-fade-leave-active .confirmation-dialog {
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+
+.modal-fade-enter-from .settings-dialog,
+.modal-fade-leave-to .settings-dialog,
+.modal-fade-enter-from .task-settings-dialog,
+.modal-fade-leave-to .task-settings-dialog,
+.modal-fade-enter-from .runtime-reconnect-dialog,
+.modal-fade-leave-to .runtime-reconnect-dialog,
+.modal-fade-enter-from .confirmation-dialog,
+.modal-fade-leave-to .confirmation-dialog {
+  opacity: 0;
+  transform: translateY(10px) scale(.985);
+}
+
+.confirmation-backdrop {
+  z-index: 180;
+}
+
+.confirmation-dialog {
+  width: min(480px, 100%);
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.confirmation-dialog header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 21px 18px 18px 21px;
+}
+
+.confirmation-dialog h2,
+.confirmation-dialog p {
+  margin: 0;
+}
+
+.confirmation-dialog h2 {
+  font-size: 16px;
+}
+
+.confirmation-dialog p {
+  margin-top: 7px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.confirmation-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 50%;
+}
+
+.confirmation-icon.danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.confirmation-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 13px 18px;
+  background: var(--sidebar);
+  border-top: 1px solid var(--border);
+}
+
+.secondary-button.primary-action.confirm-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.secondary-button.primary-action.confirm-danger:hover {
+  background: color-mix(in srgb, var(--danger) 88%, black);
+  border-color: color-mix(in srgb, var(--danger) 88%, black);
+}
+
+.git-panel-layer {
+  position: fixed;
+  z-index: 70;
+  inset: 42px 0 0;
+}
+
+.git-panel-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: rgb(11 14 12 / 22%);
+}
+
+.git-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  width: min(720px, calc(100vw - 48px));
+  grid-template-rows: 62px 44px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--surface-raised);
+  border-left: 1px solid var(--border);
+  box-shadow: -14px 0 40px rgb(16 19 16 / 14%);
+}
+
+.git-panel-header,
+.git-panel-title,
+.git-panel-actions,
+.git-panel-tabs,
+.git-repository-summary,
+.git-status-row {
+  display: flex;
+  align-items: center;
+}
+
+.git-panel-header {
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 15px 0 19px;
+  border-bottom: 1px solid var(--border);
+}
+
+.git-panel-title {
+  min-width: 0;
+  gap: 11px;
+}
+
+.git-panel-title>div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.git-panel-title strong,
+.git-panel-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-panel-title strong {
+  font-size: 15px;
+}
+
+.git-panel-title small,
+.git-repository-summary small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.git-panel-actions {
+  gap: 2px;
+}
+
+.git-panel-tabs {
+  gap: 3px;
+  padding: 6px 14px;
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-panel-tabs button {
+  display: inline-flex;
+  min-height: 31px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border-radius: 6px;
+}
+
+.git-panel-tabs button:hover,
+.git-panel-tabs button.active {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.git-panel-tabs button.active {
+  font-weight: 600;
+}
+
+.git-panel-body {
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+}
+
+.git-repository-summary {
+  min-height: 52px;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 0 18px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-repository-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.git-repository-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-status-list {
+  display: grid;
+  padding: 8px 0;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-status-row {
+  min-height: 32px;
+  gap: 10px;
+  padding: 0 18px;
+}
+
+.git-status-row:hover {
+  background: var(--surface-hover);
+}
+
+.git-status-row span {
+  min-width: 52px;
+  padding: 2px 6px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 650;
+  text-align: center;
+  background: var(--accent-soft);
+  border-radius: 4px;
+}
+
+.git-status-row code {
+  min-width: 0;
+  overflow: hidden;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-diff {
+  min-width: 100%;
+  width: max-content;
+  margin: 0;
+  padding: 10px 0 26px;
+  color: var(--text-secondary);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  tab-size: 4;
+}
+
+.git-diff code {
+  display: grid;
+}
+
+.diff-line {
+  display: block;
+  min-height: 20px;
+  padding: 0 18px;
+  white-space: pre;
+}
+
+.diff-line-addition {
+  color: color-mix(in srgb, var(--accent) 85%, var(--text));
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+}
+
+.diff-line-deletion {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.diff-line-hunk {
+  color: #6676bd;
+  background: color-mix(in srgb, #6676bd 10%, transparent);
+}
+
+.diff-line-file {
+  margin-top: 12px;
+  color: var(--text);
+  font-weight: 650;
+  background: var(--surface-hover);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-line-meta {
+  color: var(--text-muted);
+}
+
+.git-panel-state {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.git-panel-state.is-error {
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+
+.git-history-list {
+  margin: 0;
+  padding: 10px 0 28px;
+  list-style: none;
+}
+
+.git-history-list li {
+  position: relative;
+  display: grid;
+  min-height: 70px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.git-history-list li:hover {
+  background: var(--surface-hover);
+}
+
+.git-history-list li::before {
+  position: absolute;
+  top: 29px;
+  bottom: -30px;
+  left: 26px;
+  width: 1px;
+  content: '';
+  background: var(--border-strong);
+}
+
+.git-history-list li:last-child::before {
+  display: none;
+}
+
+.git-history-dot {
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  background: var(--surface-raised);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+}
+
+.git-history-list div {
+  min-width: 0;
+}
+
+.git-history-list strong {
+  display: block;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-history-list p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.git-history-list code {
+  color: var(--text-secondary);
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.git-history-list time {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.drawer-enter-active,
+.drawer-leave-active {
+  transition: opacity 190ms ease;
+}
+
+.drawer-enter-active .git-panel,
+.drawer-leave-active .git-panel {
+  transition: transform 240ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.drawer-enter-from,
+.drawer-leave-to {
+  opacity: 0;
+}
+
+.drawer-enter-from .git-panel,
+.drawer-leave-to .git-panel {
+  transform: translateX(28px);
 }
 
 .runtime-reconnect-backdrop {
@@ -1840,8 +2349,13 @@ select:focus-visible {
 }
 
 @media (max-width: 900px) {
-  .app-body {
+  .app-body,
+  .app-body.sidebar-collapsed {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-main {
+    grid-column: 1;
   }
 
   .sidebar {

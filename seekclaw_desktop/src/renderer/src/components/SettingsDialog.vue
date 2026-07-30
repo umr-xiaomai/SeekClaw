@@ -23,6 +23,7 @@ import {
   X
 } from '@lucide/vue'
 import { computed, reactive, ref, watch } from 'vue'
+import { confirmAction } from '../confirmation'
 
 type SettingsSection = 'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'
 
@@ -302,7 +303,9 @@ async function saveProfile(): Promise<void> {
 }
 
 async function removeProfile(profile: ProfileInfo): Promise<void> {
-  if (!window.confirm(`删除 Profile “${profile.name}”？`)) return
+  if (!await confirmAction({
+    title: '删除 Profile', message: `删除 Profile “${profile.name}”？`, confirmLabel: '删除', danger: true
+  })) return
   beginAction('profile.remove')
   try {
     await window.seekclaw.daemon.request('profile.remove', { name: profile.name })
@@ -384,7 +387,9 @@ async function testProvider(provider: ProviderInfo): Promise<void> {
 }
 
 async function removeProvider(provider: ProviderInfo): Promise<void> {
-  if (!window.confirm(`删除 Provider “${provider.id}”？`)) return
+  if (!await confirmAction({
+    title: '删除 Provider', message: `删除 Provider “${provider.id}”？`, confirmLabel: '删除', danger: true
+  })) return
   beginAction('provider.remove')
   try {
     await window.seekclaw.daemon.request('provider.remove', { id: provider.id })
@@ -515,7 +520,9 @@ async function toggleMcp(server: McpServerInfo): Promise<void> {
 }
 
 async function removeMcp(server: McpServerInfo): Promise<void> {
-  if (!window.confirm(`删除 MCP Server “${server.name}”？`)) return
+  if (!await confirmAction({
+    title: '删除 MCP Server', message: `删除 MCP Server “${server.name}”？`, confirmLabel: '删除', danger: true
+  })) return
   beginAction('mcp.remove')
   try {
     mcpServers.value = await requestJson<McpServerInfo[]>('mcp.remove', { name: server.name, scope: server.scope })
@@ -563,8 +570,9 @@ watch(section, () => { void loadCurrentSection() })
 </script>
 
 <template>
-  <div v-if="open" class="modal-backdrop" @mousedown.self="emit('close')">
-    <section class="settings-dialog settings-workbench" role="dialog" aria-modal="true" aria-label="设置">
+  <Transition name="modal-fade">
+    <div v-if="open" class="modal-backdrop" @mousedown.self="emit('close')">
+      <section class="settings-dialog settings-workbench" role="dialog" aria-modal="true" aria-label="设置">
       <header class="settings-header">
         <div>
           <h2>设置</h2>
@@ -821,6 +829,7 @@ watch(section, () => { void loadCurrentSection() })
           <div v-else-if="notice" class="settings-feedback success"><Check :size="15" />{{ notice }}</div>
         </main>
       </div>
-    </section>
-  </div>
+      </section>
+    </div>
+  </Transition>
 </template>

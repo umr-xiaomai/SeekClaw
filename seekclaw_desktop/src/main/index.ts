@@ -4,6 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electro
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
 import { DaemonClient } from './daemon-client.js'
+import { getGitHistory, getGitOverview, openProjectTerminal } from './project-tools.js'
 
 const daemon = new DaemonClient()
 let mainWindow: BrowserWindow | null = null
@@ -101,6 +102,10 @@ function registerIpc(): void {
       syncNativeWindowTheme()
     }
   })
+
+  ipcMain.handle('project:open-terminal', (_event, path: string) => openProjectTerminal(path))
+  ipcMain.handle('project:git-overview', (_event, path: string) => getGitOverview(path))
+  ipcMain.handle('project:git-history', (_event, path: string) => getGitHistory(path))
 
   ipcMain.handle('daemon:connect', () => daemon.connect())
   ipcMain.handle('daemon:disconnect', () => daemon.disconnect())

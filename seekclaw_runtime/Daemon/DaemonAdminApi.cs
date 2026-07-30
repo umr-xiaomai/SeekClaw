@@ -2,13 +2,14 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Mcp;
+using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Daemon;
 
 internal sealed class DaemonRequestException(string message) : Exception(message);
 
 /// <summary>Structured administrative operations shared by desktop and editor clients.</summary>
-internal sealed class DaemonAdminApi(SeekClawRuntime runtime)
+internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo globalWorkspace)
 {
     public string InitializeWorkspace()
     {
@@ -382,7 +383,7 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime)
         var workspace = SessionWorkspace(parameters);
         var includeArchived = parameters["includeArchived"]?.GetValue<bool?>() ?? false;
         return JsonSerializer.Serialize(
-            runtime.Sessions.List(workspace, includeArchived),
+            runtime.Sessions.List(workspace, includeArchived).ToList(),
             SeekClawJsonContext.Default.ListSessionHeader);
     }
 
@@ -418,7 +419,7 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime)
         {
             ["id"] = session.Header.Id,
             ["title"] = session.Header.Title,
-            ["workspace"] = session.Header.Workspace ?? workspace.Root,
+            ["workspace"] = workspace.IsGlobal ? null : session.Header.Workspace ?? workspace.Root,
             ["archived"] = session.Header.Archived,
             ["createdAt"] = session.Header.CreatedAt,
             ["updatedAt"] = session.Header.UpdatedAt,
@@ -602,6 +603,7 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime)
 
     private SeekClaw.Runtime.Workspaces.WorkspaceInfo SessionWorkspace(JsonObject parameters)
     {
+        if (parameters["global"]?.GetValue<bool?>() == true) return globalWorkspace;
         var requested = OptionalString(parameters, "workspace");
         if (requested is null) return runtime.Workspace;
 

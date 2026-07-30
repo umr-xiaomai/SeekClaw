@@ -15,8 +15,9 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div v-if="open" class="modal-backdrop runtime-reconnect-backdrop">
-    <section class="runtime-reconnect-dialog" role="alertdialog" aria-modal="true" aria-labelledby="runtime-reconnect-title">
+  <Transition name="modal-fade">
+    <div v-if="open" class="modal-backdrop runtime-reconnect-backdrop">
+      <section class="runtime-reconnect-dialog" role="alertdialog" aria-modal="true" aria-labelledby="runtime-reconnect-title">
       <CircleAlert :size="28" class="runtime-alert-icon" />
       <div class="runtime-reconnect-copy">
         <h2 id="runtime-reconnect-title">{{ startup ? '无法启动 Runtime 连接' : 'Runtime 连接已中断' }}</h2>
@@ -32,6 +33,7 @@ const emit = defineEmits<{
           <RefreshCw :size="16" />继续重试
         </button>
       </footer>
-    </section>
-  </div>
+      </section>
+    </div>
+  </Transition>
 </template>

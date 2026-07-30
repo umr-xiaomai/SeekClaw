@@ -318,7 +318,7 @@ public sealed class Agent(
     // ---------------------------------------------------------------- verification
 
     private bool ShouldVerify(WorkspaceInfo workspace, AgentConfig agentConfig) =>
-        workspace.Config?.AutoVerify ?? agentConfig.AutoVerify;
+        !workspace.IsGlobal && (workspace.Config?.AutoVerify ?? agentConfig.AutoVerify);
 
     private async Task<string?> RunVerificationAsync(WorkspaceInfo workspace, int attempt, CancellationToken ct)
     {
@@ -380,6 +380,9 @@ public sealed class Agent(
         var available = disabled is not { Count: > 0 }
             ? toolRegistry.All
             : toolRegistry.All.Where(t => !disabled.Contains(t.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+
+        if (workspace.IsGlobal)
+            available = available.Where(tool => !tool.RequiresWorkspace).ToList();
 
         if (mode.IsReadOnly())
         {

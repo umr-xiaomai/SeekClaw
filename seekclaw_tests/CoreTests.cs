@@ -110,6 +110,21 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void SessionStore_PersistsGlobalSessionsWithoutWorkspaceMetadata()
+    {
+        var global = new WorkspaceManager().CreateGlobal(Path.Combine(_dir, "global-state"));
+        var store = new SessionStore();
+        var session = store.Create(global);
+
+        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("global hello"));
+
+        Assert.True(global.IsGlobal);
+        Assert.Null(session.Header.Workspace);
+        Assert.StartsWith(global.SessionsDir, session.FilePath, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("global hello", store.Load(global, session.Header.Id)!.Messages[0].Text);
+    }
+
+    [Fact]
     public void SkillManager_DiscoversWorkspaceSkills_AndTogglesEnabled()
     {
         var workspace = NewWorkspace();

@@ -32,7 +32,7 @@ public sealed class SessionStore : ISessionStore
     {
         Directory.CreateDirectory(workspace.SessionsDir);
         var id = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
-        var header = new SessionHeader { Id = id, Workspace = workspace.Root };
+        var header = new SessionHeader { Id = id, Workspace = workspace.IsGlobal ? null : workspace.Root };
         var file = Path.Combine(workspace.SessionsDir, id + ".jsonl");
         File.WriteAllText(file, JsonSerializer.Serialize(header, SeekClawJsonContext.Compact.SessionHeader) + Environment.NewLine);
         return new AgentSession { Header = header, FilePath = file };

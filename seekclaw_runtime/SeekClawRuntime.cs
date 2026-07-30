@@ -90,7 +90,9 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
         // Main system prompt — key configurable, overridable per workspace.
         registry.Register(new PromptContribution("system", PromptSlot.System, (ctx, _) =>
         {
-            var key = ctx.WorkspaceConfig?.SystemPrompt ?? configStore.Config.Agent.SystemPrompt;
+            var key = ctx.Variables.TryGetValue("scope", out var scope) && scope == "global"
+                ? "system/global"
+                : ctx.WorkspaceConfig?.SystemPrompt ?? configStore.Config.Agent.SystemPrompt;
             return ValueTask.FromResult(prompts.TryGet(key));
         }));
 

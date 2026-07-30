@@ -33,12 +33,39 @@ export interface AppInfo {
 
 export type AppearanceTheme = 'system' | 'light' | 'dark'
 
+export interface GitOverview {
+  isRepository: boolean
+  root: string
+  branch: string
+  status: string[]
+  diff: string
+  error?: string
+}
+
+export interface GitCommit {
+  hash: string
+  shortHash: string
+  author: string
+  authoredAt: string
+  subject: string
+}
+
+export interface GitHistory {
+  commits: GitCommit[]
+  error?: string
+}
+
 export interface DesktopApi {
   getAppInfo(): Promise<AppInfo>
   selectWorkspace(): Promise<string | null>
   showItemInFolder(path: string): Promise<void>
   closeApp(): Promise<void>
   setTheme(theme: AppearanceTheme): Promise<void>
+  project: {
+    openTerminal(path: string): Promise<void>
+    gitOverview(path: string): Promise<GitOverview>
+    gitHistory(path: string): Promise<GitHistory>
+  }
   daemon: {
     connect(): Promise<DaemonState>
     disconnect(): Promise<void>

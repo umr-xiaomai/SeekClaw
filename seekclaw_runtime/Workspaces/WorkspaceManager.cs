@@ -9,15 +9,18 @@ public sealed class WorkspaceInfo
     public required string Root { get; init; }
     public required IReadOnlyList<string> ProjectKinds { get; init; }
     public WorkspaceConfig? Config { get; init; }
+    public bool IsGlobal { get; init; }
 
-    public string Name => Path.GetFileName(Root.TrimEnd(Path.DirectorySeparatorChar, '/'));
+    public string Name => IsGlobal ? "Global" : Path.GetFileName(Root.TrimEnd(Path.DirectorySeparatorChar, '/'));
 
-    public string SeekClawDir => Path.Combine(Root, ".seekclaw");
+    public string SeekClawDir => IsGlobal ? Root : Path.Combine(Root, ".seekclaw");
     public string PromptsDir => Path.Combine(SeekClawDir, "prompts");
     public string MemoryDir => Path.Combine(SeekClawDir, "memory");
     public string MemoryFile => Path.Combine(MemoryDir, "MEMORY.md");
     public string CacheDir => Path.Combine(SeekClawDir, "cache");
-    public string SessionsDir => Directory.Exists(Path.Combine(Root, ".session")) ? Path.Combine(Root, ".session") : Path.Combine(SeekClawDir, "sessions");
+    public string SessionsDir => IsGlobal
+        ? Path.Combine(Root, "sessions")
+        : Directory.Exists(Path.Combine(Root, ".session")) ? Path.Combine(Root, ".session") : Path.Combine(SeekClawDir, "sessions");
     public string LogsDir => Path.Combine(SeekClawDir, "logs");
     public string SkillsDir => Directory.Exists(Path.Combine(Root, "skills")) ? Path.Combine(Root, "skills") : Path.Combine(SeekClawDir, "skills");
     public string McpDir => Directory.Exists(Path.Combine(Root, "mcp")) ? Path.Combine(Root, "mcp") : Path.Combine(SeekClawDir, "mcp");
@@ -28,6 +31,9 @@ public interface IWorkspaceManager
 {
     /// <summary>Detects the workspace containing <paramref name="startDirectory"/> (walks up to a project marker).</summary>
     WorkspaceInfo Detect(string? startDirectory = null);
+
+    /// <summary>Creates the directory-free context used by daemon clients for global tasks.</summary>
+    WorkspaceInfo CreateGlobal(string? stateRoot = null);
 
     /// <summary>Creates the standard workspace directories and .gitignore entries (seekclaw init).</summary>
     IReadOnlyList<string> Bootstrap(WorkspaceInfo workspace);
@@ -51,6 +57,14 @@ public sealed class WorkspaceManager : IWorkspaceManager
             Config = LoadWorkspaceConfig(root),
         };
     }
+
+    public WorkspaceInfo CreateGlobal(string? stateRoot = null) => new()
+    {
+        Root = Path.GetFullPath(stateRoot ?? SeekClawPaths.Home),
+        ProjectKinds = [],
+        Config = null,
+        IsGlobal = true,
+    };
 
     private static string? FindRoot(string start)
     {

@@ -35,12 +35,13 @@ function showWorkspace(): void {
 </script>
 
 <template>
-  <div v-if="open && thread && project" class="modal-backdrop task-settings-backdrop" @mousedown.self="emit('close')">
-    <section class="task-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="task-settings-title">
+  <Transition name="modal-fade">
+    <div v-if="open && thread" class="modal-backdrop task-settings-backdrop" @mousedown.self="emit('close')">
+      <section class="task-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="task-settings-title">
       <header class="task-settings-header">
         <div>
           <h2 id="task-settings-title">任务设置</h2>
-          <p>任务始终归属于创建它的项目。</p>
+          <p>{{ project ? '任务始终归属于创建它的项目。' : '全局任务不绑定项目或工作目录。' }}</p>
         </div>
         <button class="icon-button" title="关闭" @click="emit('close')"><X :size="18" /></button>
       </header>
@@ -54,12 +55,12 @@ function showWorkspace(): void {
         <div class="task-settings-field">
           <span>工作目录</span>
           <div class="workspace-path-control">
-            <input :value="project.path" readonly />
-            <button class="secondary-button" @click="showWorkspace">
+            <input :value="project?.path || '无工作目录（全局任务）'" readonly />
+            <button v-if="project" class="secondary-button" @click="showWorkspace">
               <FolderOpen :size="16" />打开
             </button>
           </div>
-          <small>工作目录由所属项目决定，避免任务在项目之间意外漂移。</small>
+          <small>{{ project ? '工作目录由所属项目决定，避免任务在项目之间意外漂移。' : '全局任务不绑定项目，也不能使用本地文件和终端工具。' }}</small>
         </div>
       </div>
 
@@ -71,6 +72,7 @@ function showWorkspace(): void {
         </div>
         <button class="secondary-button primary-action" :disabled="!title.trim()" @click="save"><Save :size="16" />保存标题</button>
       </footer>
-    </section>
-  </div>
+      </section>
+    </div>
+  </Transition>
 </template>
