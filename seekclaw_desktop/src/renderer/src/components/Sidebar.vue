@@ -7,7 +7,6 @@ import {
   Globe2,
   MoreHorizontal,
   Plus,
-  RotateCcw,
   Search,
   Settings2,
   SlidersHorizontal,
@@ -39,14 +38,13 @@ const emit = defineEmits<{
   deleteProjectTasks: [project: ProjectItem]
   archiveGlobalTasks: []
   deleteGlobalTasks: []
-  deleteArchivedTasks: []
+  openArchived: []
   openExtensions: []
   openSettings: []
 }>()
 
 const searching = ref(false)
 const query = ref('')
-const showArchived = ref(false)
 const globalExpanded = ref(true)
 const expandedProjects = ref(new Set<string>())
 const menuKey = ref('')
@@ -61,13 +59,13 @@ const normalizedQuery = computed(() => query.value.trim().toLocaleLowerCase())
 
 function visibleThreads(projectId: string): ThreadItem[] {
   return props.threads
-    .filter((thread) => thread.projectId === projectId && Boolean(thread.archived) === showArchived.value)
+    .filter((thread) => thread.projectId === projectId && !thread.archived)
     .filter((thread) => !normalizedQuery.value || thread.title.toLocaleLowerCase().includes(normalizedQuery.value))
     .sort((left, right) => right.updatedAt - left.updatedAt)
 }
 
 const visibleGlobalThreads = computed(() => props.threads
-  .filter((thread) => !thread.projectId && Boolean(thread.archived) === showArchived.value)
+  .filter((thread) => !thread.projectId && !thread.archived)
   .filter((thread) => !normalizedQuery.value || thread.title.toLocaleLowerCase().includes(normalizedQuery.value))
   .sort((left, right) => right.updatedAt - left.updatedAt))
 
@@ -141,9 +139,9 @@ onBeforeUnmount(() => {
         <SquarePen :size="18" />
         <span>新建任务</span>
       </button>
-      <button class="nav-item" :class="{ active: showArchived }" @click="showArchived = !showArchived">
+      <button class="nav-item" @click="emit('openArchived')">
         <Archive :size="18" />
-        <span>{{ showArchived ? '返回任务' : '已归档' }}</span>
+        <span>已归档</span>
       </button>
       <button class="nav-item" @click="emit('openExtensions')">
         <Blocks :size="18" />
@@ -153,17 +151,8 @@ onBeforeUnmount(() => {
 
     <section class="sidebar-section project-section">
       <div class="section-heading">
-        <span>{{ showArchived ? '已归档' : '项目' }}</span>
-        <button
-          v-if="showArchived"
-          class="icon-button compact"
-          title="删除全部归档任务"
-          :disabled="!threads.some((thread) => thread.archived)"
-          @click="emit('deleteArchivedTasks')"
-        >
-          <Trash2 :size="15" />
-        </button>
-        <button v-else class="icon-button compact" title="添加项目" @click="emit('openWorkspace')">
+        <span>项目</span>
+        <button class="icon-button compact" title="添加项目" @click="emit('openWorkspace')">
           <Plus :size="15" />
         </button>
       </div>
@@ -184,7 +173,7 @@ onBeforeUnmount(() => {
           <Transition name="context-menu">
             <div v-if="menuKey === 'global'" class="sidebar-context-menu project-menu">
               <button @click="runAction(() => emit('newTask'))"><SquarePen :size="15" />新建全局任务</button>
-              <button v-if="!showArchived" @click="runAction(() => emit('archiveGlobalTasks'))"><Archive :size="15" />归档全部任务</button>
+              <button @click="runAction(() => emit('archiveGlobalTasks'))"><Archive :size="15" />归档全部任务</button>
               <button class="danger" @click="runAction(() => emit('deleteGlobalTasks'))"><Trash2 :size="15" />删除全部任务</button>
             </div>
           </Transition>
@@ -207,8 +196,7 @@ onBeforeUnmount(() => {
               <Transition name="context-menu">
                 <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu">
                   <button @click="runAction(() => emit('taskSettings', thread))"><SlidersHorizontal :size="15" />任务设置</button>
-                  <button v-if="thread.archived" @click="runAction(() => emit('restoreTask', thread))"><RotateCcw :size="15" />恢复任务</button>
-                  <button v-else @click="runAction(() => emit('archiveTask', thread))"><Archive :size="15" />归档任务</button>
+                  <button @click="runAction(() => emit('archiveTask', thread))"><Archive :size="15" />归档任务</button>
                   <button class="danger" @click="runAction(() => emit('deleteTask', thread))"><Trash2 :size="15" />删除任务</button>
                 </div>
               </Transition>
@@ -235,7 +223,6 @@ onBeforeUnmount(() => {
             <div v-if="menuKey === `project:${project.id}`" class="sidebar-context-menu project-menu">
               <button @click="runAction(() => emit('newTask', project.id))"><SquarePen :size="15" />新建任务</button>
               <button
-                v-if="!showArchived"
                 @click="runAction(() => emit('archiveProjectTasks', project))"
               ><Archive :size="15" />归档全部任务</button>
               <button class="danger" @click="runAction(() => emit('deleteProjectTasks', project))"><Trash2 :size="15" />删除全部任务</button>
@@ -265,8 +252,7 @@ onBeforeUnmount(() => {
               <Transition name="context-menu">
                 <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu">
                   <button @click="runAction(() => emit('taskSettings', thread))"><SlidersHorizontal :size="15" />任务设置</button>
-                  <button v-if="thread.archived" @click="runAction(() => emit('restoreTask', thread))"><RotateCcw :size="15" />恢复任务</button>
-                  <button v-else @click="runAction(() => emit('archiveTask', thread))"><Archive :size="15" />归档任务</button>
+                  <button @click="runAction(() => emit('archiveTask', thread))"><Archive :size="15" />归档任务</button>
                   <button class="danger" @click="runAction(() => emit('deleteTask', thread))"><Trash2 :size="15" />删除任务</button>
                 </div>
               </Transition>

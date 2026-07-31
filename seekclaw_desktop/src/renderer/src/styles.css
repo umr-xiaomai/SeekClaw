@@ -1287,6 +1287,8 @@ select:focus-visible {
 .modal-fade-leave-active .runtime-reconnect-dialog,
 .modal-fade-enter-active .confirmation-dialog,
 .modal-fade-leave-active .confirmation-dialog,
+.modal-fade-enter-active .archived-tasks-dialog,
+.modal-fade-leave-active .archived-tasks-dialog,
 .modal-fade-enter-active .provider-editor-dialog,
 .modal-fade-leave-active .provider-editor-dialog {
   transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
@@ -1305,6 +1307,8 @@ select:focus-visible {
 .modal-fade-leave-to .runtime-reconnect-dialog,
 .modal-fade-enter-from .confirmation-dialog,
 .modal-fade-leave-to .confirmation-dialog,
+.modal-fade-enter-from .archived-tasks-dialog,
+.modal-fade-leave-to .archived-tasks-dialog,
 .modal-fade-enter-from .provider-editor-dialog,
 .modal-fade-leave-to .provider-editor-dialog {
   opacity: 0;

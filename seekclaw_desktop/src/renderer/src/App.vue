@@ -17,6 +17,7 @@ import {
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
 import AppTitleBar from './components/AppTitleBar.vue'
+import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
 import Composer from './components/Composer.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
@@ -70,6 +71,7 @@ interface RuntimeWorkspace {
 const appInfo = ref<AppInfo>({ version: '0.1.0', platform: 'win32', supportsMica: false, defaultWorkspace: '' })
 const sidebarOpen = ref(true)
 const settingsOpen = ref(false)
+const archivedTasksOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 const settingsSection = ref<'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'>('general')
@@ -362,6 +364,15 @@ async function openWorkspace(): Promise<void> {
 function openSettings(section: typeof settingsSection.value = 'general'): void {
   settingsSection.value = section
   settingsOpen.value = true
+}
+
+function openArchivedTasks(): void {
+  archivedTasksOpen.value = true
+}
+
+function selectArchivedThread(id: string): void {
+  archivedTasksOpen.value = false
+  void selectThread(id)
 }
 
 function newTask(projectId?: string): void {
@@ -906,7 +917,7 @@ watch(projects, persistProjects, { deep: true })
         @delete-project-tasks="deleteProjectTasks"
         @archive-global-tasks="archiveGlobalTasks"
         @delete-global-tasks="deleteGlobalTasks"
-        @delete-archived-tasks="deleteArchivedTasks"
+        @open-archived="openArchivedTasks"
         @open-extensions="openSettings('mcp')"
         @open-settings="openSettings('general')"
         />
@@ -1024,6 +1035,17 @@ watch(projects, persistProjects, { deep: true })
       @reconnect="reconnectDaemon"
       @open-workspace="openWorkspace"
       @runtime-changed="refreshRuntimeState"
+    />
+
+    <ArchivedTasksDialog
+      :open="archivedTasksOpen"
+      :projects="projects"
+      :threads="threads"
+      @close="archivedTasksOpen = false"
+      @select-thread="selectArchivedThread"
+      @restore-task="restoreTask"
+      @delete-task="deleteTask"
+      @delete-all="deleteArchivedTasks"
     />
 
     <TaskSettingsDialog

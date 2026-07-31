@@ -24,7 +24,7 @@ const textarea = ref<HTMLTextAreaElement | null>(null)
 const modeOptions = [
   { value: 'edit', label: 'Edit', description: '可读取并修改文件' },
   { value: 'plan', label: 'Plan', description: '先分析并制定计划' },
-  { value: 'readonly', label: 'Read only', description: '仅分析，不修改文件' },
+  { value: 'readonly', label: 'Read', description: '仅分析，不修改文件' },
   { value: 'auto', label: 'Auto', description: '根据任务自动选择' }
 ]
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_website/public/logo.png" alt="SeekClaw Logo" width="120">
+  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_website/public/logo.png" alt="SeekClaw Logo" width="60">
 </p>
 
 <h1 align="center">SeekClaw</h1>
