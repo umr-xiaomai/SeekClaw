@@ -28,7 +28,7 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 </div>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/hero_interactive_chat.png" alt="SeekClaw 交互模式界面" width="880">
+  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/31b58c99-85ba-425a-a674-a7f95607ff34.png" alt="SeekClaw 交互模式界面" width="880">
 </p>
 
 ## 📸 界面预览

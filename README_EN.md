@@ -28,7 +28,7 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 </div>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/hero_interactive_chat.png" alt="SeekClaw Interactive Terminal UI" width="880">
+  <img src="https://raw.githubusercontent.com/umr-xiaomai/SeekClaw/master/seekclaw_screenshot/31b58c99-85ba-425a-a674-a7f95607ff34.png" alt="SeekClaw Interactive Terminal UI" width="880">
 </p>
 
 ## 📸 Screenshots
