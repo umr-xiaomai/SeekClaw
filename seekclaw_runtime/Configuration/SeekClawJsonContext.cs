@@ -23,7 +23,7 @@ namespace SeekClaw.Runtime.Configuration;
 [JsonSerializable(typeof(List<string>))]
 public sealed partial class SeekClawJsonContext : JsonSerializerContext
 {
-    /// <summary>Compact variant for JSONL (one object per line).</summary>
+    /// <summary>Compact variant for embedded session payloads and protocol serialization.</summary>
     public static SeekClawJsonContext Compact { get; } = new(new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

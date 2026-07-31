@@ -86,12 +86,12 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 ### 📁 Workspace Management
 
 - **Project Detection**: Automatic recognition of Git, .NET, Node.js, Python, Rust, Go, Unity, Vue projects
-- **Isolated Config**: Per-workspace configuration, sessions, cache, and memory
+- **Isolated Config**: Per-workspace configuration, cache, and memory with workspace-scoped sessions
 - **Bootstrap**: Automatic project setup with `.seekclaw/` directory structure
 
 ### 🔧 Developer Experience
 
-- **Session Management**: JSONL-based session persistence and restoration
+- **Session Management**: SQLite-backed persistence, restoration, and concurrent access
 - **Memory System**: Workspace-specific memory with automatic context injection
 - **Verification**: Automatic build/check/repair cycle after code modifications
 - **Hot Reload**: Prompt files and configurations reload without restart
@@ -298,6 +298,8 @@ seekclaw session list
 seekclaw session resume <session-id>
 seekclaw session export <session-id> --format json
 ```
+
+Sessions and the Desktop project list are stored in `~/.seekclaw/seekclaw.db`. On first access after upgrading, legacy `.session/*.jsonl`, `.seekclaw/sessions/*.jsonl`, and global `~/.seekclaw/sessions/*.jsonl` files are imported automatically and retained as backups. Provider, model, profile, MCP, skill, and workspace configuration remains in the existing JSON/text files; usage records remain in `~/.seekclaw/usage.jsonl`.
 
 ### Health Check
 

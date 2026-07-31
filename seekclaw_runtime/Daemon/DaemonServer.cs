@@ -436,6 +436,21 @@ public sealed class DaemonServer
                             _admin.DoctorAsync, ct).ConfigureAwait(false);
                         break;
 
+                    case "project.list":
+                        await RunAdminAsync(writer, writerGate, id, false,
+                            _ => Task.FromResult(_admin.ListProjects()), ct).ConfigureAwait(false);
+                        break;
+
+                    case "project.upsert":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.UpsertProject(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
+                    case "project.remove":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.RemoveProject(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
                     case "session.list":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _ => Task.FromResult(_admin.ListSessions(Params(request))), ct).ConfigureAwait(false);
@@ -877,7 +892,7 @@ public sealed class DaemonServer
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
-            "model", "mcp", "skill", "usage", "session", "global-session", "doctor"),
+            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.cancel",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
@@ -886,6 +901,7 @@ public sealed class DaemonServer
             "model.list", "model.catalog", "model.switch", "model.test",
             "mcp.list", "mcp.upsert", "mcp.remove", "mcp.reload",
             "skill.list", "skill.toggle", "usage.get", "doctor", "doctor.run",
+            "project.list", "project.upsert", "project.remove",
             "session.list", "session.get", "session.update", "session.archive", "session.delete",
             "session.resume", "session.new", "shutdown"),
     }.ToJsonString();

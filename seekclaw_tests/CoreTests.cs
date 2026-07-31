@@ -1,5 +1,8 @@
+using System.Text.Json;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Projects;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Skills;
@@ -61,7 +64,7 @@ public sealed class CoreTests : IDisposable
     public void SessionStore_PersistsAndReloadsMessages()
     {
         var workspace = NewWorkspace();
-        var store = new SessionStore();
+        var store = NewSessionStore();
         var session = store.Create(workspace, SeekClaw.Runtime.Providers.ReasoningLevel.XHigh);
 
         store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("hello",
@@ -101,7 +104,7 @@ public sealed class CoreTests : IDisposable
     public void SessionStore_UpdatesArchivesRestoresAndDeletesSessions()
     {
         var workspace = NewWorkspace("session-lifecycle");
-        var store = new SessionStore();
+        var store = NewSessionStore();
         var session = store.Create(workspace);
         store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("original title"));
 
@@ -125,15 +128,83 @@ public sealed class CoreTests : IDisposable
     public void SessionStore_PersistsGlobalSessionsWithoutWorkspaceMetadata()
     {
         var global = new WorkspaceManager().CreateGlobal(Path.Combine(_dir, "global-state"));
-        var store = new SessionStore();
+        var store = NewSessionStore();
         var session = store.Create(global);
 
         store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("global hello"));
 
         Assert.True(global.IsGlobal);
         Assert.Null(session.Header.Workspace);
-        Assert.StartsWith(global.SessionsDir, session.FilePath, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith("seekclaw.db", session.FilePath, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("global hello", store.Load(global, session.Header.Id)!.Messages[0].Text);
+    }
+
+    [Fact]
+    public void SessionStore_ImportsLegacyJsonlOnce_AndKeepsBackupUntilDeletion()
+    {
+        var workspace = NewWorkspace("legacy-import");
+        Directory.CreateDirectory(workspace.SessionsDir);
+        var header = new SessionHeader
+        {
+            Id = "legacy-1",
+            Workspace = workspace.Root,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+        };
+        var message = new SessionMessage { Role = "user", Text = "legacy title" };
+        var file = Path.Combine(workspace.SessionsDir, "legacy-1.jsonl");
+        File.WriteAllLines(file,
+        [
+            JsonSerializer.Serialize(header, SeekClawJsonContext.Compact.SessionHeader),
+            JsonSerializer.Serialize(message, SeekClawJsonContext.Compact.SessionMessage),
+        ]);
+
+        var store = NewSessionStore();
+        var imported = store.Load(workspace, "legacy-1");
+        Assert.NotNull(imported);
+        Assert.Equal("legacy title", imported!.Messages[0].Text);
+        Assert.Equal("legacy title", Assert.Single(store.List(workspace)).Title);
+        Assert.True(File.Exists(file));
+
+        var secondStore = NewSessionStore();
+        Assert.Single(secondStore.List(workspace));
+        store.Delete(workspace, "legacy-1");
+        Assert.False(File.Exists(file));
+    }
+
+    [Fact]
+    public async Task SessionStore_AllowsConcurrentAppendsFromIsolatedStores()
+    {
+        var workspace = NewWorkspace("concurrent-sqlite");
+        var first = NewSessionStore();
+        var session = first.Create(workspace);
+        var secondStore = NewSessionStore();
+        var second = secondStore.Load(workspace, session.Header.Id)!;
+
+        var writes = Enumerable.Range(0, 100).Select(index => Task.Run(() =>
+        {
+            var target = index % 2 == 0 ? session : second;
+            (index % 2 == 0 ? first : secondStore).Append(
+                target, SeekClaw.Runtime.Providers.ChatMessage.User($"message-{index}"));
+        }));
+        await Task.WhenAll(writes);
+
+        Assert.Equal(100, first.Load(workspace, session.Header.Id)!.Messages.Count);
+    }
+
+    [Fact]
+    public void ProjectStore_DeduplicatesPathsAndRemovesProjects()
+    {
+        var root = Path.Combine(_dir, "project-store");
+        Directory.CreateDirectory(root);
+        var projects = new ProjectStore(new SeekClawDatabase(Path.Combine(_dir, "projects.db")));
+        var created = projects.Upsert("project-id", root, "First");
+        var same = projects.Upsert("another-id", root, "Renamed");
+
+        Assert.Equal(created.Id, same.Id);
+        Assert.Equal("Renamed", Assert.Single(projects.List()).Name);
+        projects.Remove(created.Id);
+        Assert.Empty(projects.List());
     }
 
     [Fact]
@@ -164,7 +235,7 @@ public sealed class CoreTests : IDisposable
         var created = new WorkspaceManager().Bootstrap(workspace);
 
         Assert.True(Directory.Exists(workspace.CacheDir));
-        Assert.True(Directory.Exists(workspace.SessionsDir));
+        Assert.False(Directory.Exists(workspace.SessionsDir));
         Assert.True(Directory.Exists(workspace.LogsDir));
         Assert.True(Directory.Exists(workspace.SkillsDir));
         Assert.True(Directory.Exists(workspace.McpDir));
@@ -185,4 +256,7 @@ public sealed class CoreTests : IDisposable
         Directory.CreateDirectory(root);
         return new WorkspaceInfo { Root = root, ProjectKinds = [] };
     }
+
+    private SessionStore NewSessionStore() =>
+        new(Path.Combine(_dir, "state", "seekclaw.db"));
 }

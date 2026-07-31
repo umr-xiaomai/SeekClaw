@@ -1,17 +1,20 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Sessions;
 
-/// <summary>A live conversation bound to a JSONL file under the workspace .session/ directory.</summary>
+/// <summary>A live conversation persisted in the central SeekClaw SQLite database.</summary>
 public sealed class AgentSession
 {
     public required SessionHeader Header { get; init; }
     public List<ChatMessage> Messages { get; } = [];
     public required string FilePath { get; init; }
+    internal string Scope { get; init; } = "";
 }
 
 public interface ISessionStore
@@ -28,79 +31,146 @@ public interface ISessionStore
         bool? archived = null,
         ReasoningLevel? reasoningLevel = null);
     void Delete(WorkspaceInfo workspace, string sessionId);
+    void DeleteAll(WorkspaceInfo workspace);
 }
 
 public sealed class SessionStore : ISessionStore
 {
-    // Isolated daemon turns create separate SessionStore instances. Keep file locks
-    // process-wide so concurrent turns cannot interleave writes to one session JSONL.
-    private static readonly ConcurrentDictionary<string, Lock> FileGates = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, Lock> SessionGates = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, Lock> MigrationGates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SeekClawDatabase _database;
+
+    public SessionStore() : this(new SeekClawDatabase()) { }
+
+    public SessionStore(string databaseFile) : this(new SeekClawDatabase(databaseFile)) { }
+
+    public SessionStore(SeekClawDatabase database) => _database = database;
 
     public AgentSession Create(WorkspaceInfo workspace, ReasoningLevel reasoningLevel = ReasoningLevel.High)
     {
-        Directory.CreateDirectory(workspace.SessionsDir);
+        EnsureLegacyImported(workspace);
         var id = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
+        var now = DateTimeOffset.UtcNow;
         var header = new SessionHeader
         {
             Id = id,
-            Workspace = workspace.IsGlobal ? null : workspace.Root,
+            Workspace = workspace.IsGlobal ? null : Path.GetFullPath(workspace.Root),
             ReasoningLevel = reasoningLevel,
+            CreatedAt = now,
+            UpdatedAt = now,
         };
-        var file = Path.Combine(workspace.SessionsDir, id + ".jsonl");
-        File.WriteAllText(file, JsonSerializer.Serialize(header, SeekClawJsonContext.Compact.SessionHeader) + Environment.NewLine);
-        return new AgentSession { Header = header, FilePath = file };
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+
+        using var connection = _database.OpenConnection();
+        InsertSession(connection, null, scope, header);
+        return NewSession(header, scope);
     }
 
     public AgentSession? Load(WorkspaceInfo workspace, string sessionId)
     {
-        var file = SessionFile(workspace, sessionId);
-        return File.Exists(file) ? LoadFile(file) : null;
+        ValidateSessionId(sessionId);
+        EnsureLegacyImported(workspace);
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+        using var connection = _database.OpenConnection();
+        var header = ReadHeader(connection, scope, sessionId);
+        if (header is null) return null;
+
+        var session = NewSession(header, scope);
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT payload_json FROM messages
+            WHERE scope = $scope AND session_id = $sessionId
+            ORDER BY id;
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        command.Parameters.AddWithValue("$sessionId", sessionId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            try
+            {
+                var record = JsonSerializer.Deserialize(
+                    reader.GetString(0), SeekClawJsonContext.Compact.SessionMessage);
+                if (record is not null) session.Messages.Add(ToMessage(record));
+            }
+            catch (JsonException) { }
+        }
+        return session;
     }
 
     public AgentSession? LoadLatest(WorkspaceInfo workspace)
     {
-        if (!Directory.Exists(workspace.SessionsDir)) return null;
         var latest = List(workspace).FirstOrDefault();
         return latest is null ? null : Load(workspace, latest.Id);
     }
 
     public IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace, bool includeArchived = false)
     {
-        if (!Directory.Exists(workspace.SessionsDir)) return [];
+        EnsureLegacyImported(workspace);
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+        using var connection = _database.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT id, title, workspace, archived, reasoning_level, created_at, updated_at
+            FROM sessions
+            WHERE scope = $scope {(includeArchived ? "" : "AND archived = 0")}
+            ORDER BY updated_at DESC;
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        using var reader = command.ExecuteReader();
         var headers = new List<SessionHeader>();
-        foreach (var file in Directory.EnumerateFiles(workspace.SessionsDir, "*.jsonl"))
-        {
-            using var lines = File.ReadLines(file).GetEnumerator();
-            if (!lines.MoveNext()) continue;
-            try
-            {
-                var header = JsonSerializer.Deserialize(lines.Current, SeekClawJsonContext.Compact.SessionHeader);
-                if (header is null) continue;
-                if (header.Archived && !includeArchived) continue;
-                header.UpdatedAt = File.GetLastWriteTimeUtc(file);
-                if (string.IsNullOrWhiteSpace(header.Title) && lines.MoveNext())
-                {
-                    var firstMessage = JsonSerializer.Deserialize(lines.Current, SeekClawJsonContext.Compact.SessionMessage);
-                    if (firstMessage?.Role == "user" && !string.IsNullOrWhiteSpace(firstMessage.Text))
-                        header.Title = firstMessage.Text.Length > 42
-                            ? firstMessage.Text[..42] + "…"
-                            : firstMessage.Text;
-                }
-                headers.Add(header);
-            }
-            catch (JsonException) { }
-        }
-        return headers.OrderByDescending(h => h.UpdatedAt).ToList();
+        while (reader.Read()) headers.Add(ReadHeader(reader));
+        return headers;
     }
 
     public void Append(AgentSession session, ChatMessage message)
     {
         var record = ToRecord(message);
-        lock (GateFor(session.FilePath))
+        var payload = JsonSerializer.Serialize(record, SeekClawJsonContext.Compact.SessionMessage);
+        var now = DateTimeOffset.UtcNow;
+        var suggestedTitle = record.Role == "user" && !string.IsNullOrWhiteSpace(record.Text)
+            ? TitleFrom(record.Text)
+            : null;
+
+        lock (GateFor(session.Scope, session.Header.Id))
         {
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(deferred: false);
+            using (var insert = connection.CreateCommand())
+            {
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    INSERT INTO messages(scope, session_id, payload_json, timestamp)
+                    VALUES($scope, $sessionId, $payload, $timestamp);
+                    """;
+                insert.Parameters.AddWithValue("$scope", session.Scope);
+                insert.Parameters.AddWithValue("$sessionId", session.Header.Id);
+                insert.Parameters.AddWithValue("$payload", payload);
+                insert.Parameters.AddWithValue("$timestamp", record.Timestamp.ToString("O"));
+                insert.ExecuteNonQuery();
+            }
+            using (var update = connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                update.CommandText = """
+                    UPDATE sessions SET
+                        updated_at = $updatedAt,
+                        title = CASE WHEN title IS NULL AND $suggestedTitle IS NOT NULL
+                            THEN $suggestedTitle ELSE title END
+                    WHERE scope = $scope AND id = $sessionId;
+                    """;
+                update.Parameters.AddWithValue("$updatedAt", now.ToString("O"));
+                update.Parameters.AddWithValue("$suggestedTitle", (object?)suggestedTitle ?? DBNull.Value);
+                update.Parameters.AddWithValue("$scope", session.Scope);
+                update.Parameters.AddWithValue("$sessionId", session.Header.Id);
+                if (update.ExecuteNonQuery() == 0)
+                    throw new FileNotFoundException($"Session not found: {session.Header.Id}", _database.FilePath);
+            }
+            transaction.Commit();
             session.Messages.Add(message);
-            File.AppendAllText(session.FilePath,
-                JsonSerializer.Serialize(record, SeekClawJsonContext.Compact.SessionMessage) + Environment.NewLine);
+            session.Header.UpdatedAt = now;
+            if (session.Header.Title is null && suggestedTitle is not null)
+                session.Header.Title = suggestedTitle;
         }
     }
 
@@ -111,65 +181,248 @@ public sealed class SessionStore : ISessionStore
         bool? archived = null,
         ReasoningLevel? reasoningLevel = null)
     {
-        var file = SessionFile(workspace, sessionId);
-        lock (GateFor(file))
+        ValidateSessionId(sessionId);
+        EnsureLegacyImported(workspace);
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+        lock (GateFor(scope, sessionId))
         {
-            if (!File.Exists(file))
-                throw new FileNotFoundException($"Session not found: {sessionId}", file);
-
-            var lines = File.ReadAllLines(file);
-            if (lines.Length == 0)
-                throw new InvalidDataException($"Session header is missing: {sessionId}");
-
-            var header = JsonSerializer.Deserialize(lines[0], SeekClawJsonContext.Compact.SessionHeader)
-                         ?? throw new InvalidDataException($"Session header is invalid: {sessionId}");
-            if (title is not null) header.Title = string.IsNullOrWhiteSpace(title) ? null : title.Trim();
-            if (archived is not null) header.Archived = archived.Value;
-            if (reasoningLevel is not null) header.ReasoningLevel = reasoningLevel.Value;
-            header.UpdatedAt = DateTimeOffset.UtcNow;
-            lines[0] = JsonSerializer.Serialize(header, SeekClawJsonContext.Compact.SessionHeader);
-            File.WriteAllLines(file, lines);
-            return header;
+            using var connection = _database.OpenConnection();
+            var assignments = new List<string> { "updated_at = $updatedAt" };
+            using var command = connection.CreateCommand();
+            command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+            if (title is not null)
+            {
+                assignments.Add("title = $title");
+                command.Parameters.AddWithValue("$title",
+                    string.IsNullOrWhiteSpace(title) ? DBNull.Value : title.Trim());
+            }
+            if (archived is not null)
+            {
+                assignments.Add("archived = $archived");
+                command.Parameters.AddWithValue("$archived", archived.Value ? 1 : 0);
+            }
+            if (reasoningLevel is not null)
+            {
+                assignments.Add("reasoning_level = $reasoningLevel");
+                command.Parameters.AddWithValue("$reasoningLevel", (int)reasoningLevel.Value);
+            }
+            command.CommandText = $"""
+                UPDATE sessions SET {string.Join(", ", assignments)}
+                WHERE scope = $scope AND id = $sessionId;
+                """;
+            command.Parameters.AddWithValue("$scope", scope);
+            command.Parameters.AddWithValue("$sessionId", sessionId);
+            if (command.ExecuteNonQuery() == 0)
+                throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
+            return ReadHeader(connection, scope, sessionId)!;
         }
     }
 
     public void Delete(WorkspaceInfo workspace, string sessionId)
     {
-        var file = SessionFile(workspace, sessionId);
-        lock (GateFor(file))
+        ValidateSessionId(sessionId);
+        EnsureLegacyImported(workspace);
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+        lock (GateFor(scope, sessionId))
         {
-            if (!File.Exists(file))
-                throw new FileNotFoundException($"Session not found: {sessionId}", file);
-            File.Delete(file);
+            using var connection = _database.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM sessions WHERE scope = $scope AND id = $sessionId;";
+            command.Parameters.AddWithValue("$scope", scope);
+            command.Parameters.AddWithValue("$sessionId", sessionId);
+            if (command.ExecuteNonQuery() == 0)
+                throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
+            DeleteLegacyFile(workspace, sessionId);
         }
     }
 
-    private AgentSession? LoadFile(string file)
+    public void DeleteAll(WorkspaceInfo workspace)
     {
-        SessionHeader? header = null;
-        var messages = new List<ChatMessage>();
-
-        foreach (var line in File.ReadLines(file))
+        EnsureLegacyImported(workspace);
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+        using (var connection = _database.OpenConnection())
+        using (var command = connection.CreateCommand())
         {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
-            {
-                if (header is null)
-                {
-                    header = JsonSerializer.Deserialize(line, SeekClawJsonContext.Compact.SessionHeader);
-                    continue;
-                }
-                var record = JsonSerializer.Deserialize(line, SeekClawJsonContext.Compact.SessionMessage);
-                if (record is not null) messages.Add(ToMessage(record));
-            }
-            catch (JsonException) { }
+            command.CommandText = "DELETE FROM sessions WHERE scope = $scope;";
+            command.Parameters.AddWithValue("$scope", scope);
+            command.ExecuteNonQuery();
         }
 
-        if (header is null) return null;
-        var session = new AgentSession { Header = header, FilePath = file };
-        session.Messages.AddRange(messages);
-        return session;
+        if (!Directory.Exists(workspace.SessionsDir)) return;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(workspace.SessionsDir, "*.jsonl"))
+                try { File.Delete(file); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
+
+    private AgentSession NewSession(SessionHeader header, string scope) => new()
+    {
+        Header = header,
+        FilePath = _database.FilePath,
+        Scope = scope,
+    };
+
+    private void EnsureLegacyImported(WorkspaceInfo workspace)
+    {
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+        lock (MigrationGates.GetOrAdd(_database.FilePath + "|" + scope, static _ => new Lock()))
+        {
+            using var connection = _database.OpenConnection();
+            using (var check = connection.CreateCommand())
+            {
+                check.CommandText = "SELECT 1 FROM migrations WHERE scope = $scope;";
+                check.Parameters.AddWithValue("$scope", scope);
+                if (check.ExecuteScalar() is not null) return;
+            }
+
+            using var transaction = connection.BeginTransaction(deferred: false);
+            if (Directory.Exists(workspace.SessionsDir))
+            {
+                foreach (var file in Directory.EnumerateFiles(workspace.SessionsDir, "*.jsonl"))
+                    ImportLegacyFile(connection, transaction, workspace, scope, file);
+            }
+            using (var mark = connection.CreateCommand())
+            {
+                mark.Transaction = transaction;
+                mark.CommandText = """
+                    INSERT OR REPLACE INTO migrations(scope, source_dir, imported_at)
+                    VALUES($scope, $sourceDir, $importedAt);
+                    """;
+                mark.Parameters.AddWithValue("$scope", scope);
+                mark.Parameters.AddWithValue("$sourceDir", Path.GetFullPath(workspace.SessionsDir));
+                mark.Parameters.AddWithValue("$importedAt", DateTimeOffset.UtcNow.ToString("O"));
+                mark.ExecuteNonQuery();
+            }
+            transaction.Commit();
+        }
+    }
+
+    private static void ImportLegacyFile(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        WorkspaceInfo workspace,
+        string scope,
+        string file)
+    {
+        try
+        {
+            using var lines = File.ReadLines(file).GetEnumerator();
+            if (!lines.MoveNext()) return;
+            var header = JsonSerializer.Deserialize(lines.Current, SeekClawJsonContext.Compact.SessionHeader);
+            if (header is null || string.IsNullOrWhiteSpace(header.Id)) return;
+            header.Workspace = workspace.IsGlobal ? null : Path.GetFullPath(workspace.Root);
+            header.UpdatedAt = File.GetLastWriteTimeUtc(file);
+
+            var records = new List<SessionMessage>();
+            while (lines.MoveNext())
+            {
+                if (string.IsNullOrWhiteSpace(lines.Current)) continue;
+                try
+                {
+                    var record = JsonSerializer.Deserialize(
+                        lines.Current, SeekClawJsonContext.Compact.SessionMessage);
+                    if (record is not null) records.Add(record);
+                }
+                catch (JsonException) { }
+            }
+            if (string.IsNullOrWhiteSpace(header.Title))
+            {
+                var firstUserText = records.FirstOrDefault(record =>
+                    record.Role == "user" && !string.IsNullOrWhiteSpace(record.Text))?.Text;
+                if (firstUserText is not null) header.Title = TitleFrom(firstUserText);
+            }
+
+            if (!InsertSession(connection, transaction, scope, header, ignoreConflict: true)) return;
+            foreach (var record in records)
+            {
+                using var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    INSERT INTO messages(scope, session_id, payload_json, timestamp)
+                    VALUES($scope, $sessionId, $payload, $timestamp);
+                    """;
+                insert.Parameters.AddWithValue("$scope", scope);
+                insert.Parameters.AddWithValue("$sessionId", header.Id);
+                insert.Parameters.AddWithValue("$payload",
+                    JsonSerializer.Serialize(record, SeekClawJsonContext.Compact.SessionMessage));
+                insert.Parameters.AddWithValue("$timestamp", record.Timestamp.ToString("O"));
+                insert.ExecuteNonQuery();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
+    }
+
+    private static bool InsertSession(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        string scope,
+        SessionHeader header,
+        bool ignoreConflict = false)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            INSERT {(ignoreConflict ? "OR IGNORE" : "")} INTO sessions(
+                scope, id, workspace, title, archived, reasoning_level, created_at, updated_at)
+            VALUES($scope, $id, $workspace, $title, $archived, $reasoningLevel, $createdAt, $updatedAt);
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        command.Parameters.AddWithValue("$id", header.Id);
+        command.Parameters.AddWithValue("$workspace", (object?)header.Workspace ?? DBNull.Value);
+        command.Parameters.AddWithValue("$title", (object?)header.Title ?? DBNull.Value);
+        command.Parameters.AddWithValue("$archived", header.Archived ? 1 : 0);
+        command.Parameters.AddWithValue("$reasoningLevel", (int)header.ReasoningLevel);
+        command.Parameters.AddWithValue("$createdAt", header.CreatedAt.ToString("O"));
+        command.Parameters.AddWithValue("$updatedAt", header.UpdatedAt.ToString("O"));
+        return command.ExecuteNonQuery() > 0;
+    }
+
+    private static SessionHeader? ReadHeader(SqliteConnection connection, string scope, string sessionId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, title, workspace, archived, reasoning_level, created_at, updated_at
+            FROM sessions WHERE scope = $scope AND id = $sessionId;
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        command.Parameters.AddWithValue("$sessionId", sessionId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadHeader(reader) : null;
+    }
+
+    private static SessionHeader ReadHeader(SqliteDataReader reader) => new()
+    {
+        Id = reader.GetString(0),
+        Title = reader.IsDBNull(1) ? null : reader.GetString(1),
+        Workspace = reader.IsDBNull(2) ? null : reader.GetString(2),
+        Archived = reader.GetInt64(3) != 0,
+        ReasoningLevel = (ReasoningLevel)reader.GetInt32(4),
+        CreatedAt = DateTimeOffset.Parse(reader.GetString(5)),
+        UpdatedAt = DateTimeOffset.Parse(reader.GetString(6)),
+    };
+
+    private static string TitleFrom(string text) =>
+        text.Length > 42 ? text[..42] + "…" : text;
+
+    private static void ValidateSessionId(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId)
+            || sessionId.Length > 128
+            || !string.Equals(Path.GetFileName(sessionId), sessionId, StringComparison.Ordinal))
+            throw new ArgumentException("Invalid session id.", nameof(sessionId));
+    }
+
+    private static void DeleteLegacyFile(WorkspaceInfo workspace, string sessionId)
+    {
+        var file = Path.Combine(workspace.SessionsDir, sessionId + ".jsonl");
+        if (File.Exists(file)) File.Delete(file);
+    }
+
+    private Lock GateFor(string scope, string sessionId) =>
+        SessionGates.GetOrAdd(_database.FilePath + "|" + scope + "|" + sessionId, static _ => new Lock());
 
     private static SessionMessage ToRecord(ChatMessage message) => new()
     {
@@ -189,9 +442,11 @@ public sealed class SessionStore : ISessionStore
             Id = image.Id,
             Name = image.Name,
         }).ToList(),
-        ToolCalls = message.ToolCalls?.Select(c => new SessionToolCall
+        ToolCalls = message.ToolCalls?.Select(call => new SessionToolCall
         {
-            Id = c.Id, Name = c.Name, ArgumentsJson = c.ArgumentsJson,
+            Id = call.Id,
+            Name = call.Name,
+            ArgumentsJson = call.ArgumentsJson,
         }).ToList(),
         ToolCallId = message.ToolCallId,
         ToolName = message.ToolName,
@@ -217,7 +472,8 @@ public sealed class SessionStore : ISessionStore
             Thinking = record.Thinking,
             ViewedImages = record.ViewedImages?.Select(image => new ChatImageReference(
                 image.Id, image.Name)).ToList(),
-            ToolCalls = record.ToolCalls?.Select(c => new ToolCallRequest(c.Id, c.Name, c.ArgumentsJson)).ToList(),
+            ToolCalls = record.ToolCalls?.Select(call =>
+                new ToolCallRequest(call.Id, call.Name, call.ArgumentsJson)).ToList(),
             ToolCallId = record.ToolCallId,
             ToolName = record.ToolName,
             ToolSuccess = record.ToolSuccess ?? true,
@@ -225,15 +481,4 @@ public sealed class SessionStore : ISessionStore
             ToolFilePath = record.ToolFilePath,
         };
     }
-
-    private static string SessionFile(WorkspaceInfo workspace, string sessionId)
-    {
-        if (string.IsNullOrWhiteSpace(sessionId)
-            || !string.Equals(Path.GetFileName(sessionId), sessionId, StringComparison.Ordinal))
-            throw new ArgumentException("Invalid session id.", nameof(sessionId));
-        return Path.Combine(workspace.SessionsDir, sessionId + ".jsonl");
-    }
-
-    private static Lock GateFor(string file) =>
-        FileGates.GetOrAdd(Path.GetFullPath(file), static _ => new Lock());
 }

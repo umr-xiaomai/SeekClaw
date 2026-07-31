@@ -363,6 +363,18 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var checks = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
         Assert.NotEmpty(checks);
 
+        await connection.SendAsync(181, "project.upsert", new JsonObject
+        {
+            ["id"] = "desktop-project",
+            ["path"] = workspace,
+            ["name"] = "Desktop project",
+        });
+        var project = ParseData(await connection.ReadAsync());
+        Assert.Equal("desktop-project", project["id"]!.GetValue<string>());
+        await connection.SendAsync(182, "project.list");
+        var projects = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
+        Assert.Contains(projects, item => item!["id"]!.GetValue<string>() == "desktop-project");
+
         await connection.SendAsync(19, "session.new", new JsonObject { ["reasoningLevel"] = "xhigh" });
         var sessionId = (await connection.ReadAsync())["data"]!.GetValue<string>();
         await connection.SendAsync(20, "session.get", new JsonObject { ["id"] = sessionId });
@@ -403,6 +415,18 @@ public sealed class DaemonServerTests : IAsyncDisposable
             ["workspace"] = workspace,
         });
         Assert.Equal(sessionId, (await connection.ReadAsync())["data"]!.GetValue<string>());
+
+        await connection.SendAsync(24_1, "session.new", new JsonObject { ["workspace"] = workspace });
+        var projectSessionId = (await connection.ReadAsync())["data"]!.GetValue<string>();
+
+        await connection.SendAsync(25, "project.remove", new JsonObject { ["id"] = "desktop-project" });
+        Assert.Equal("desktop-project", (await connection.ReadAsync())["data"]!.GetValue<string>());
+        await connection.SendAsync(26, "session.get", new JsonObject
+        {
+            ["id"] = projectSessionId,
+            ["workspace"] = workspace,
+        });
+        Assert.Equal("error", (await connection.ReadAsync())["event"]!.GetValue<string>());
     }
 
     [Fact]
@@ -456,7 +480,8 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var configStore = new ConfigStore(
             Path.Combine(_tempDir, "config.json"),
             Path.Combine(_tempDir, "state.json"));
-        _runtime = SeekClawRuntime.Create(workspace, configStore);
+        _runtime = SeekClawRuntime.Create(
+            workspace, configStore, Path.Combine(_tempDir, "seekclaw.db"));
         var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(_tempDir, "global-state"));
         var server = new DaemonServer(_runtime, runTurn, globalWorkspace);
 

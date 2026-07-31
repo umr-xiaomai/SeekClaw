@@ -158,7 +158,7 @@ public sealed class WorkspaceManager : IWorkspaceManager
         foreach (var dir in new[]
                  {
                      workspace.SeekClawDir, workspace.PromptsDir, workspace.MemoryDir,
-                     workspace.CacheDir, workspace.SessionsDir, workspace.LogsDir,
+                     workspace.CacheDir, workspace.LogsDir,
                      workspace.SkillsDir, workspace.McpDir, workspace.DocsDir,
                  })
         {

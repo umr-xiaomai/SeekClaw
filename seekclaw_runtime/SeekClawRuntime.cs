@@ -1,10 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
+using SeekClaw.Runtime.Projects;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Skills;
 using SeekClaw.Runtime.Tools;
@@ -35,6 +37,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public IToolRegistry Tools => _services.GetRequiredService<IToolRegistry>();
     public IWorkspaceManager Workspaces => _services.GetRequiredService<IWorkspaceManager>();
     public ISessionStore Sessions => _services.GetRequiredService<ISessionStore>();
+    public IProjectStore Projects => _services.GetRequiredService<IProjectStore>();
     public SkillManager Skills => _services.GetRequiredService<SkillManager>();
     public IMcpManager Mcp => _services.GetRequiredService<IMcpManager>();
     public Agent Agent => _services.GetRequiredService<Agent>();
@@ -66,8 +69,16 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
         return runtime;
     }
 
-    internal static SeekClawRuntime Create(string startDirectory, IConfigStore configStore)
-        => CreateCore(startDirectory, services => services.AddSingleton(configStore));
+    internal static SeekClawRuntime Create(
+        string startDirectory,
+        IConfigStore configStore,
+        string? databaseFile = null)
+        => CreateCore(startDirectory, services =>
+        {
+            services.AddSingleton(configStore);
+            if (databaseFile is not null)
+                services.AddSingleton(new SeekClawDatabase(databaseFile));
+        });
 
     private static SeekClawRuntime CreateCore(
         string? startDirectory,
@@ -182,7 +193,9 @@ public static class RuntimeServiceCollectionExtensions
 
         services.AddSingleton<IToolRegistry, ToolRegistry>();
         services.AddSingleton<IWorkspaceManager, WorkspaceManager>();
+        services.AddSingleton<SeekClawDatabase>();
         services.AddSingleton<ISessionStore, SessionStore>();
+        services.AddSingleton<IProjectStore, ProjectStore>();
         services.AddSingleton<IVerifier, BuildVerifier>();
         services.AddSingleton<SkillManager>();
         services.AddSingleton<ISkillManager>(sp => sp.GetRequiredService<SkillManager>());

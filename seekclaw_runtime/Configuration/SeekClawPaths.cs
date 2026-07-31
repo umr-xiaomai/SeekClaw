@@ -8,6 +8,8 @@ public static class SeekClawPaths
 
     public static string ConfigFile => Path.Combine(Home, "config.json");
     public static string StateFile => Path.Combine(Home, "state.json");
+    /// <summary>SQLite database for sessions and Desktop project metadata.</summary>
+    public static string DatabaseFile => Path.Combine(Home, "seekclaw.db");
     public static string UsageFile => Path.Combine(Home, "usage.jsonl");
     public static string LogsDir => Path.Combine(Home, "logs");
     public static string SkillsDir => Path.Combine(Home, "skills");
@@ -22,6 +24,5 @@ public static class SeekClawPaths
         Directory.CreateDirectory(Home);
         Directory.CreateDirectory(LogsDir);
         Directory.CreateDirectory(SkillsDir);
-        Directory.CreateDirectory(SessionsDir);
     }
 }

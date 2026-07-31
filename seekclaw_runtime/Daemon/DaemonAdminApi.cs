@@ -384,6 +384,51 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
         return data.ToJsonString();
     }
 
+    public string ListProjects()
+    {
+        var projects = new JsonArray();
+        foreach (var project in runtime.Projects.List())
+        {
+            projects.Add((JsonNode)new JsonObject
+            {
+                ["id"] = project.Id,
+                ["path"] = project.Path,
+                ["name"] = project.Name,
+                ["createdAt"] = project.CreatedAt,
+                ["updatedAt"] = project.UpdatedAt,
+            });
+        }
+        return projects.ToJsonString();
+    }
+
+    public string UpsertProject(JsonObject parameters)
+    {
+        var path = RequiredString(parameters, "path");
+        var project = runtime.Projects.Upsert(
+            OptionalString(parameters, "id"), path, OptionalString(parameters, "name"));
+        return new JsonObject
+        {
+            ["id"] = project.Id,
+            ["path"] = project.Path,
+            ["name"] = project.Name,
+            ["createdAt"] = project.CreatedAt,
+            ["updatedAt"] = project.UpdatedAt,
+        }.ToJsonString();
+    }
+
+    public string RemoveProject(JsonObject parameters)
+    {
+        var id = RequiredString(parameters, "id");
+        var project = runtime.Projects.Get(id)
+                      ?? throw new DaemonRequestException($"Project not found: {id}");
+        var workspace = Directory.Exists(project.Path)
+            ? runtime.Workspaces.Detect(project.Path)
+            : new WorkspaceInfo { Root = Path.GetFullPath(project.Path), ProjectKinds = [] };
+        runtime.Sessions.DeleteAll(workspace);
+        runtime.Projects.Remove(id);
+        return id;
+    }
+
     public string ListSessions(JsonObject parameters)
     {
         var workspace = SessionWorkspace(parameters);

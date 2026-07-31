@@ -32,7 +32,7 @@ import { ReasoningLevel } from './types'
 import type { ChatMessage, ImageAttachment, ProjectItem, ThreadItem, ToolActivity } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
-const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v1'
+const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v2'
 const starterPrompts = [
   { label: '探索并理解代码', icon: Telescope, tone: 'blue' },
   { label: '构建新功能、应用或工具', icon: Hammer, tone: 'purple' },
@@ -74,6 +74,14 @@ interface RuntimeWorkspace {
   path: string
   name: string
   mode: string
+}
+
+interface RuntimeProject {
+  id: string
+  path: string
+  name: string
+  createdAt: string
+  updatedAt: string
 }
 
 interface RuntimeModelCatalogItem {
@@ -164,11 +172,6 @@ function loadStoredProjects(): ProjectItem[] {
   }
 }
 
-function persistProjects(): void {
-  const saved = projects.value.map(({ id, name, path }) => ({ id, name, path }))
-  localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(saved))
-}
-
 function ensureProject(path: string, name?: string): ProjectItem {
   const existing = projects.value.find((project) => samePath(project.path, path))
   if (existing) {
@@ -178,6 +181,50 @@ function ensureProject(path: string, name?: string): ProjectItem {
   const project: ProjectItem = { id: makeId(), name: name || pathName(path), path, loaded: false }
   projects.value.push(project)
   return project
+}
+
+async function saveProject(project: ProjectItem): Promise<ProjectItem> {
+  const oldId = project.id
+  const response = await window.seekclaw.daemon.request('project.upsert', {
+    id: project.id,
+    path: project.path,
+    name: project.name
+  })
+  const saved = JSON.parse(response.data) as RuntimeProject
+  const duplicate = projects.value.find((item) => item !== project && item.id === saved.id)
+  if (duplicate) {
+    duplicate.path = saved.path
+    duplicate.name = saved.name
+    threads.value.forEach((thread) => {
+      if (thread.projectId === oldId) thread.projectId = duplicate.id
+    })
+    if (selectedProjectId.value === oldId) selectedProjectId.value = duplicate.id
+    projects.value = projects.value.filter((item) => item !== project)
+    return duplicate
+  }
+  project.id = saved.id
+  project.path = saved.path
+  project.name = saved.name
+  if (oldId !== saved.id) {
+    threads.value.forEach((thread) => {
+      if (thread.projectId === oldId) thread.projectId = saved.id
+    })
+    if (selectedProjectId.value === oldId) selectedProjectId.value = saved.id
+  }
+  return project
+}
+
+async function migrateStoredProjects(): Promise<void> {
+  if (localStorage.getItem(PROJECTS_STORAGE_KEY) === null) return
+  const stored = loadStoredProjects()
+  for (const project of stored) {
+    await window.seekclaw.daemon.request('project.upsert', {
+      id: project.id,
+      path: project.path,
+      name: project.name
+    })
+  }
+  localStorage.removeItem(PROJECTS_STORAGE_KEY)
 }
 
 function showActiveProject(): void {
@@ -350,6 +397,7 @@ async function migrateImplicitDocumentsProject(): Promise<void> {
   }
 
   if (!threads.value.some((thread) => thread.projectId === project.id)) {
+    await window.seekclaw.daemon.request('project.remove', { id: project.id })
     projects.value = projects.value.filter((item) => item.id !== project.id)
     if (selectedProjectId.value === project.id) selectedProjectId.value = ''
     if (activeThread.value?.projectId === project.id) activeThreadId.value = ''
@@ -359,19 +407,28 @@ async function migrateImplicitDocumentsProject(): Promise<void> {
 
 async function loadRuntimeState(): Promise<void> {
   try {
-    const [modelResponse, workspaceResponse, modeResponse, catalogResponse] = await Promise.all([
+    await migrateStoredProjects()
+    const [projectResponse, modelResponse, workspaceResponse, modeResponse, catalogResponse] = await Promise.all([
+      window.seekclaw.daemon.request('project.list'),
       window.seekclaw.daemon.request('model.list'),
       window.seekclaw.daemon.request('workspace.get'),
       window.seekclaw.daemon.request('agent.mode.get'),
       window.seekclaw.daemon.request('model.catalog')
     ])
+    projects.value = (JSON.parse(projectResponse.data) as RuntimeProject[]).map((project) => ({
+      id: project.id,
+      name: project.name || pathName(project.path),
+      path: project.path,
+      loaded: false
+    }))
     const available = JSON.parse(modelResponse.data) as string[]
     const catalog = JSON.parse(catalogResponse.data) as RuntimeModelCatalogItem[]
     const workspace = JSON.parse(workspaceResponse.data) as RuntimeWorkspace
     const currentProject = projects.value.find((project) => samePath(project.path, workspace.path))
     if (currentProject && workspace.name) currentProject.name = workspace.name
     runtimeWorkspacePath.value = workspace.path
-    selectedProjectId.value ||= currentProject?.id ?? ''
+    if (!projects.value.some((project) => project.id === selectedProjectId.value))
+      selectedProjectId.value = currentProject?.id ?? ''
     models.value = available
     modelCatalog.value = catalog
     activeModel.value = catalog.find((model) => model.active)?.ref
@@ -464,7 +521,7 @@ function cancelRuntimeReconnect(): void {
 async function openWorkspace(): Promise<void> {
   const path = await window.seekclaw.selectWorkspace()
   if (!path) return
-  const project = ensureProject(path)
+  const project = await saveProject(ensureProject(path))
   selectedProjectId.value = project.id
   activeThreadId.value = ''
   await refreshProjectSessions(project).catch(() => undefined)
@@ -508,6 +565,7 @@ async function ensureRuntimeProject(project: ProjectItem): Promise<void> {
   const opened = JSON.parse(response.data) as RuntimeWorkspace
   project.path = opened.path
   project.name = opened.name || project.name
+  await saveProject(project)
   runtimeWorkspacePath.value = opened.path
   mode.value = opened.mode
 }
@@ -911,15 +969,8 @@ async function deleteProject(project: ProjectItem): Promise<void> {
   })) return
 
   try {
-    await Promise.all(targets
-      .filter((thread) => thread.sessionId)
-      .map((thread) => window.seekclaw.daemon.request('session.delete', {
-        id: thread.sessionId,
-        workspace: project.path
-      })))
+    await window.seekclaw.daemon.request('project.remove', { id: project.id })
   } catch {
-    // Some concurrent deletions may already have completed. Reconcile the project and keep it
-    // visible so the user can retry instead of hiding sessions that remain on disk.
     await refreshProjectSessions(project).catch(() => undefined)
     return
   }
@@ -1122,7 +1173,6 @@ onBeforeUnmount(() => {
 })
 
 watch(theme, applyTheme)
-watch(projects, persistProjects, { deep: true })
 </script>
 
 <template>

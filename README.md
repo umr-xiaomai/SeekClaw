@@ -86,12 +86,12 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 ### 📁 工作区管理
 
 - **项目识别**：自动识别 Git、.NET、Node.js、Python、Rust、Go、Unity、Vue 项目
-- **隔离配置**：每个工作区独立的配置、会话、缓存和内存
+- **隔离配置**：每个工作区独立的配置、缓存和内存，会话按工作区作用域隔离
 - **自动初始化**：自动创建 `.seekclaw/` 目录结构
 
 ### 🔧 开发者体验
 
-- **会话管理**：基于 JSONL 的会话持久化和恢复
+- **会话管理**：基于 SQLite 的会话持久化、恢复与并发访问
 - **内存系统**：工作区特定的内存，自动上下文注入
 - **验证机制**：代码修改后自动构建/检查/修复循环
 - **热重载**：提示文件和配置无需重启即可重载
@@ -298,6 +298,8 @@ seekclaw session list
 seekclaw session resume <session-id>
 seekclaw session export <session-id> --format json
 ```
+
+会话数据和 Desktop 项目列表统一保存在 `~/.seekclaw/seekclaw.db`。升级后首次访问工作区时，旧的 `.session/*.jsonl`、`.seekclaw/sessions/*.jsonl` 或全局 `~/.seekclaw/sessions/*.jsonl` 会自动导入，原文件保留为备份。Provider、模型、Profile、MCP、Skill、工作区配置仍使用原有 JSON/文本文件，用量记录仍为 `~/.seekclaw/usage.jsonl`。
 
 ### 健康检查
 

@@ -2,7 +2,7 @@ using SeekClaw.Runtime.Providers;
 
 namespace SeekClaw.Runtime.Sessions;
 
-/// <summary>First line of a session .jsonl file.</summary>
+/// <summary>Persisted session metadata.</summary>
 public sealed class SessionHeader
 {
     public string Id { get; set; } = "";
@@ -14,7 +14,7 @@ public sealed class SessionHeader
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
-/// <summary>One conversation message, persisted as one JSONL line.</summary>
+/// <summary>Provider-neutral conversation payload persisted as JSON inside SQLite.</summary>
 public sealed class SessionMessage
 {
     /// <summary>user | assistant | tool</summary>

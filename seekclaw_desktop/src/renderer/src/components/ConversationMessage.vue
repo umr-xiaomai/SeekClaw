@@ -143,7 +143,6 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
         class="response-placeholder"
         aria-label="AI 正在思考"
       >
-        <LoaderCircle :size="15" class="thinking-spinner spin" />
         <span /><span /><span />
       </div>
     </div>

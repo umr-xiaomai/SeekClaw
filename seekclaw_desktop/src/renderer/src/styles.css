@@ -1192,10 +1192,6 @@ select:focus-visible {
   padding: 5px 0;
 }
 
-.thinking-spinner {
-  color: var(--accent);
-}
-
 .response-placeholder span {
   width: 5px;
   height: 5px;
