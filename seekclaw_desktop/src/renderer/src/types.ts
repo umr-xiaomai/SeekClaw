@@ -7,8 +7,13 @@ export interface ProjectItem {
 
 export interface ToolActivity {
   id: string
+  callId?: string
   name: string
   detail?: string
+  filePath?: string
+  diff?: string
+  addedLines?: number
+  removedLines?: number
   state: 'running' | 'done' | 'error'
 }
 
@@ -31,4 +36,10 @@ export interface ThreadItem {
   sessionId?: string
   sessionLoaded?: boolean
   archived?: boolean
+  /** True while this task has an agent turn running, independent of the selected task. */
+  running?: boolean
+  /** Local request id used to cancel this task without affecting other tasks. */
+  requestId?: number
+  /** Assistant placeholder receiving streamed output for the active turn. */
+  assistantId?: string
 }

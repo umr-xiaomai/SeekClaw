@@ -23,6 +23,8 @@ public sealed class SessionMessage
     public string? ToolCallId { get; set; }
     public string? ToolName { get; set; }
     public bool? ToolSuccess { get; set; }
+    public string? ToolDiff { get; set; }
+    public string? ToolFilePath { get; set; }
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.UtcNow;
 }
 

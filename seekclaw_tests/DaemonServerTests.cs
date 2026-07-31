@@ -38,9 +38,9 @@ public sealed class DaemonServerTests : IAsyncDisposable
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         await connection.SendAsync(3, "workspace.open", new JsonObject { ["path"] = _tempDir });
-        var busyWorkspace = await connection.ReadAsync();
-        Assert.Equal(3, busyWorkspace["id"]!.GetValue<long>());
-        Assert.Equal("error", busyWorkspace["event"]!.GetValue<string>());
+        var openedWorkspace = await connection.ReadAsync();
+        Assert.Equal(3, openedWorkspace["id"]!.GetValue<long>());
+        Assert.Equal("result", openedWorkspace["event"]!.GetValue<string>());
 
         await connection.SendAsync(2, "agent.cancel", new JsonObject { ["requestId"] = 1 });
 
@@ -54,6 +54,50 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Contains(responses, response =>
             response["id"]!.GetValue<long>() == 1
             && response["event"]!.GetValue<string>() == "cancelled");
+    }
+
+    [Fact]
+    public async Task MultipleExplicitSessions_RunConcurrently_AndCancelIndependently()
+    {
+        var startedCount = 0;
+        var bothStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<AgentTurnResult> SlowTurn(
+            AgentSession session, WorkspaceInfo workspace, string message, CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref startedCount) == 2) bothStarted.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return new AgentTurnResult("unreachable", false, null);
+        }
+
+        var connection = await StartServerAsync(SlowTurn);
+        await connection.SendAsync(10, "session.new");
+        var firstSession = (await connection.ReadAsync())["data"]!.GetValue<string>();
+        await connection.SendAsync(11, "session.new");
+        var secondSession = (await connection.ReadAsync())["data"]!.GetValue<string>();
+
+        await connection.SendAsync(1, "chat", new JsonObject
+        {
+            ["message"] = "first",
+            ["sessionId"] = firstSession,
+        });
+        await connection.SendAsync(2, "chat", new JsonObject
+        {
+            ["message"] = "second",
+            ["sessionId"] = secondSession,
+        });
+        await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await connection.SendAsync(3, "agent.cancel", new JsonObject { ["requestId"] = 1 });
+        var firstCancelled = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 1
+                        && response["event"]!.GetValue<string>() == "cancelled");
+        Assert.Equal(firstSession, firstCancelled["sessionId"]!.GetValue<string>());
+
+        await connection.SendAsync(4, "agent.cancel", new JsonObject { ["requestId"] = 2 });
+        var secondCancelled = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 2
+                        && response["event"]!.GetValue<string>() == "cancelled");
+        Assert.Equal(secondSession, secondCancelled["sessionId"]!.GetValue<string>());
     }
 
     [Fact]
@@ -395,6 +439,15 @@ public sealed class DaemonServerTests : IAsyncDisposable
             var line = await _reader.ReadLineAsync(timeout.Token);
             Assert.False(string.IsNullOrWhiteSpace(line));
             return JsonNode.Parse(line)!.AsObject();
+        }
+
+        public async Task<JsonObject> ReadUntilAsync(Func<JsonObject, bool> predicate)
+        {
+            while (true)
+            {
+                var response = await ReadAsync();
+                if (predicate(response)) return response;
+            }
         }
 
         public async ValueTask DisposeAsync()

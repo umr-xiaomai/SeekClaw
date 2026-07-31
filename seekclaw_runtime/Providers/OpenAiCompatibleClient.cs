@@ -184,6 +184,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         private readonly StringBuilder _thinking = new();
         private readonly Dictionary<int, (string Id, string Name, StringBuilder Args)> _toolCalls = [];
         private long _inputTokens;
+        private long _cachedInputTokens;
         private long _outputTokens;
         private string _finishReason = "";
 
@@ -193,6 +194,10 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             {
                 _inputTokens = usage["prompt_tokens"]?.GetValue<long>() ?? _inputTokens;
                 _outputTokens = usage["completion_tokens"]?.GetValue<long>() ?? _outputTokens;
+                _cachedInputTokens = usage["prompt_cache_hit_tokens"]?.GetValue<long>()
+                    ?? usage["cached_tokens"]?.GetValue<long>()
+                    ?? (usage["prompt_tokens_details"] as JsonObject)?["cached_tokens"]?.GetValue<long>()
+                    ?? _cachedInputTokens;
             }
 
             if (chunk?["choices"] is not JsonArray { Count: > 0 } choices) yield break;
@@ -256,7 +261,12 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                     kv.Value.Name,
                     kv.Value.Args.Length == 0 ? "{}" : kv.Value.Args.ToString()))
                 .ToList(),
-            Usage = new TokenUsage(_inputTokens, _outputTokens),
+            Usage = new TokenUsage(_inputTokens, _outputTokens)
+            {
+                // OpenAI-compatible usage.prompt_tokens already includes cached tokens.
+                TotalInputTokens = _inputTokens,
+                CachedInputTokens = _cachedInputTokens,
+            },
             FinishReason = _finishReason,
         };
     }

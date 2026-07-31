@@ -69,17 +69,20 @@ public sealed class CoreTests : IDisposable
         {
             Role = SeekClaw.Runtime.Providers.ChatRole.Assistant,
             Text = "hi!",
-            ToolCalls = [new SeekClaw.Runtime.Providers.ToolCallRequest("c1", "read_file", """{"path":"a.txt"}""")],
+            ToolCalls = [new SeekClaw.Runtime.Providers.ToolCallRequest("c1", "edit_file", """{"path":"a.txt"}""")],
         };
         store.Append(session, assistant);
-        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.ToolResult("c1", "read_file", "contents", true));
+        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.ToolResult(
+            "c1", "edit_file", "updated", true, "--- a.txt\n+++ a.txt\n-old\n+new", "a.txt"));
 
         var loaded = store.Load(workspace, session.Header.Id);
         Assert.NotNull(loaded);
         Assert.Equal(3, loaded!.Messages.Count);
         Assert.Equal("hello", loaded.Messages[0].Text);
-        Assert.Equal("read_file", loaded.Messages[1].ToolCalls![0].Name);
+        Assert.Equal("edit_file", loaded.Messages[1].ToolCalls![0].Name);
         Assert.Equal("c1", loaded.Messages[2].ToolCallId);
+        Assert.Equal("a.txt", loaded.Messages[2].ToolFilePath);
+        Assert.Contains("+new", loaded.Messages[2].ToolDiff);
 
         var latest = store.LoadLatest(workspace);
         Assert.Equal(session.Header.Id, latest!.Header.Id);

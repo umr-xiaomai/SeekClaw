@@ -105,7 +105,7 @@ public sealed class WriteFileTool(IPromptProvider prompts) : BuiltinTool(prompts
 
         var relative = Path.GetRelativePath(context.Workspace.Root, path);
         var lineCount = content.Count(c => c == '\n') + 1;
-        var diff = existed ? DiffUtil.Unified(oldText, content, relative) : "";
+        var diff = DiffUtil.Unified(oldText, content, relative);
         if (diff.Length > 0)
             context.Events.Publish(new FileDiffEvent(context.CallId, relative, diff));
 

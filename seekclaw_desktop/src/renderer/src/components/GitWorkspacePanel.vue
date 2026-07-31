@@ -10,6 +10,7 @@ const props = defineProps<{
   open: boolean
   project?: ProjectItem
   initialTab: PanelTab
+  diffOverride?: { path: string; diff: string } | null
 }>()
 
 const emit = defineEmits<{
@@ -23,7 +24,8 @@ const history = ref<GitHistory | null>(null)
 const loading = ref(false)
 const requestId = ref(0)
 
-const diffLines = computed(() => (overview.value?.diff ?? '').split(/\r?\n/).filter((line, index, lines) =>
+const displayedDiff = computed(() => props.diffOverride?.diff ?? overview.value?.diff ?? '')
+const diffLines = computed(() => displayedDiff.value.split(/\r?\n/).filter((line, index, lines) =>
   line.length > 0 || (index > 0 && index < lines.length - 1)))
 
 function diffLineClass(line: string): string {
@@ -55,7 +57,7 @@ function formatDate(value: string): string {
 }
 
 async function refresh(): Promise<void> {
-  if (!props.open || !props.project) return
+  if (!props.open || !props.project || props.diffOverride) return
   const currentRequest = ++requestId.value
   loading.value = true
   try {
@@ -75,7 +77,7 @@ function selectTab(value: PanelTab): void {
   tab.value = value
 }
 
-watch(() => [props.open, props.project?.id, props.initialTab] as const, ([open]) => {
+watch(() => [props.open, props.project?.id, props.initialTab, props.diffOverride?.path] as const, ([open]) => {
   if (!open) {
     requestId.value++
     return
@@ -98,8 +100,8 @@ watch(tab, () => {
           <div class="git-panel-title">
             <Braces :size="19" />
             <div>
-              <strong>项目更改</strong>
-              <small>{{ project?.name }}</small>
+              <strong>{{ diffOverride ? '文件 Diff' : '项目更改' }}</strong>
+              <small>{{ diffOverride?.path || project?.name }}</small>
             </div>
           </div>
           <div class="git-panel-actions">
@@ -117,13 +119,28 @@ watch(tab, () => {
           <button :class="{ active: tab === 'diff' }" role="tab" @click="selectTab('diff')">
             <Braces :size="16" />更改
           </button>
-          <button :class="{ active: tab === 'history' }" role="tab" @click="selectTab('history')">
+          <button v-if="!diffOverride" :class="{ active: tab === 'history' }" role="tab" @click="selectTab('history')">
             <History :size="16" />提交记录
           </button>
         </div>
 
         <div class="git-panel-body">
-          <div v-if="loading" class="git-panel-state"><RefreshCw :size="18" class="spin" />正在读取 Git 数据…</div>
+          <template v-if="diffOverride">
+            <div class="git-repository-summary tool-diff-summary">
+              <span><Braces :size="15" />本次修改</span>
+              <small>{{ diffOverride.path }}</small>
+            </div>
+            <pre v-if="diffLines.length" class="git-diff"><code><span
+              v-for="(line, index) in diffLines"
+              :key="`${index}:${line}`"
+              class="diff-line"
+              :class="diffLineClass(line)"
+            >{{ line }}
+</span></code></pre>
+            <div v-else class="git-panel-state">没有可显示的 Diff。</div>
+          </template>
+
+          <div v-else-if="loading" class="git-panel-state"><RefreshCw :size="18" class="spin" />正在读取 Git 数据…</div>
 
           <template v-else-if="tab === 'diff'">
             <div v-if="overview?.isRepository" class="git-repository-summary">

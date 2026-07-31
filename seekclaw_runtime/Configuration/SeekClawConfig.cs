@@ -54,6 +54,12 @@ public sealed class ProviderConfig
     public string? Proxy { get; set; }
     public int TimeoutSeconds { get; set; } = 120;
     public Dictionary<string, string>? Headers { get; set; }
+    /// <summary>
+    /// Enables provider-native prompt caching hints. OpenAI-compatible providers keep using
+    /// their automatic prefix cache; Anthropic requests add explicit cache checkpoints.
+    /// Disable this for an Anthropic-compatible endpoint that does not accept cache_control.
+    /// </summary>
+    public bool PromptCaching { get; set; } = true;
     public bool Enabled { get; set; } = true;
     public int Priority { get; set; }
     public List<ModelConfig> Models { get; set; } = [];

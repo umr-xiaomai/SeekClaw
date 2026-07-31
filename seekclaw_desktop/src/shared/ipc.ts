@@ -5,6 +5,7 @@ export type DaemonEventName =
   | 'status'
   | 'tool_start'
   | 'tool_done'
+  | 'file_diff'
   | 'result'
   | 'done'
   | 'cancelled'
@@ -15,6 +16,10 @@ export interface DaemonMessage {
   id: number
   event: DaemonEventName
   data: string
+  /** Structured metadata for tool and file-diff events. */
+  details?: Record<string, unknown>
+  /** Session that owns a streamed agent event. Present for chat turn events. */
+  sessionId?: string
   requestMethod?: string
 }
 

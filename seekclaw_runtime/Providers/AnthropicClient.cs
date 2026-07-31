@@ -153,7 +153,17 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             ["stream"] = true,
         };
 
-        if (!string.IsNullOrEmpty(request.System)) body["system"] = request.System;
+        if (!string.IsNullOrEmpty(request.System))
+        {
+            body["system"] = request.Provider.PromptCaching
+                ? new JsonArray((JsonNode)new JsonObject
+                {
+                    ["type"] = "text",
+                    ["text"] = request.System,
+                    ["cache_control"] = CacheControl(),
+                })
+                : request.System;
+        }
 
         var thinking = request.EnableThinking && request.Model.Capabilities.Thinking;
         if (thinking)
@@ -175,6 +185,11 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     ["description"] = tool.Description,
                     ["input_schema"] = tool.Parameters.DeepClone(),
                 });
+            // Tools precede system/messages in Anthropic's cache hierarchy. A checkpoint on
+            // the last definition keeps the usually-large, stable schema prefix reusable even
+            // when a custom system prompt changes.
+            if (request.Provider.PromptCaching && tools[^1] is JsonObject lastTool)
+                lastTool["cache_control"] = CacheControl();
             body["tools"] = tools;
         }
 
@@ -187,12 +202,16 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         catch (JsonException) { return new JsonObject(); }
     }
 
+    private static JsonObject CacheControl() => new() { ["type"] = "ephemeral" };
+
     private sealed class Accumulator
     {
         private readonly StringBuilder _text = new();
         private readonly StringBuilder _thinking = new();
         private readonly Dictionary<int, (string Id, string Name, StringBuilder Args)> _toolBlocks = [];
         private long _inputTokens;
+        private long _cachedInputTokens;
+        private long _cacheCreationInputTokens;
         private long _outputTokens;
         private string _finishReason = "";
 
@@ -201,8 +220,13 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             switch (type)
             {
                 case "message_start":
-                    _inputTokens = node?["message"]?["usage"]?["input_tokens"]?.GetValue<long>() ?? 0;
+                {
+                    var usage = node?["message"]?["usage"];
+                    _inputTokens = usage?["input_tokens"]?.GetValue<long>() ?? 0;
+                    _cachedInputTokens = usage?["cache_read_input_tokens"]?.GetValue<long>() ?? 0;
+                    _cacheCreationInputTokens = usage?["cache_creation_input_tokens"]?.GetValue<long>() ?? 0;
                     break;
+                }
 
                 case "content_block_start":
                 {
@@ -241,9 +265,14 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 }
 
                 case "message_delta":
+                {
                     _finishReason = node?["delta"]?["stop_reason"]?.GetValue<string>() ?? _finishReason;
-                    _outputTokens = node?["usage"]?["output_tokens"]?.GetValue<long>() ?? _outputTokens;
+                    var deltaUsage = node?["usage"];
+                    _outputTokens = deltaUsage?["output_tokens"]?.GetValue<long>() ?? _outputTokens;
+                    _cachedInputTokens = deltaUsage?["cache_read_input_tokens"]?.GetValue<long>() ?? _cachedInputTokens;
+                    _cacheCreationInputTokens = deltaUsage?["cache_creation_input_tokens"]?.GetValue<long>() ?? _cacheCreationInputTokens;
                     break;
+                }
             }
         }
 
@@ -258,7 +287,13 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     kv.Value.Name,
                     kv.Value.Args.Length == 0 ? "{}" : kv.Value.Args.ToString()))
                 .ToList(),
-            Usage = new TokenUsage(_inputTokens, _outputTokens),
+            Usage = new TokenUsage(_inputTokens, _outputTokens)
+            {
+                // Anthropic reports uncached, cache-read and cache-write input separately.
+                TotalInputTokens = _inputTokens + _cachedInputTokens + _cacheCreationInputTokens,
+                CachedInputTokens = _cachedInputTokens,
+                CacheCreationInputTokens = _cacheCreationInputTokens,
+            },
             FinishReason = _finishReason,
         };
     }

@@ -101,6 +101,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 - `apiKey` 直接保存凭据；Desktop 会直接显示该值。
 - `apiKeyEnv` 保存环境变量名，且仅在 `apiKey` 为空时使用。环境变量值不会返回给 Desktop。
 - `organization`、`proxy`、`headers`、`timeoutSeconds` 可按服务需要设置。
+- `promptCaching` 默认启用；Anthropic 协议会发送原生缓存检查点，不兼容的第三方网关可关闭。
 
 ### 路由
 

@@ -28,7 +28,7 @@ import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import { confirmAction } from './confirmation'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
-import type { ChatMessage, ProjectItem, ThreadItem } from './types'
+import type { ChatMessage, ProjectItem, ThreadItem, ToolActivity } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
 const starterPrompts = [
@@ -57,8 +57,11 @@ interface RuntimeSession extends RuntimeSessionHeader {
     text: string
     thinking?: string
     toolCalls?: Array<{ id: string; name: string }>
+    toolCallId?: string
     toolName?: string
     toolSuccess?: boolean
+    toolDiff?: string
+    toolFilePath?: string
   }>
 }
 
@@ -74,6 +77,7 @@ const settingsOpen = ref(false)
 const archivedTasksOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
+const toolDiff = ref<{ path: string; diff: string } | null>(null)
 const settingsSection = ref<'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'>('general')
 const taskSettingsThreadId = ref('')
 const storedTheme = localStorage.getItem('seekclaw-theme')
@@ -91,10 +95,11 @@ const runtimeWorkspacePath = ref('')
 const models = ref<string[]>([])
 const activeModel = ref('balanced')
 const mode = ref('edit')
-const busy = ref(false)
-const activeAssistantId = ref<string | null>(null)
+const busy = computed(() => Boolean(activeThread.value?.running))
 const scrollArea = ref<HTMLElement | null>(null)
 const composer = ref<InstanceType<typeof Composer> | null>(null)
+const autoFollowConversation = ref(true)
+const taskNotice = ref<{ threadId: string; title: string; kind: 'done' | 'error' } | null>(null)
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
 const activeProject = computed(() => {
@@ -153,7 +158,14 @@ function showActiveProject(): void {
 
 function openGitPanel(tab: 'diff' | 'history'): void {
   if (!activeProject.value) return
+  toolDiff.value = null
   gitPanelTab.value = tab
+  gitPanelOpen.value = true
+}
+
+function openToolDiff(path: string, diff: string): void {
+  toolDiff.value = { path, diff }
+  gitPanelTab.value = 'diff'
   gitPanelOpen.value = true
 }
 
@@ -169,9 +181,37 @@ function applyTheme(value: AppearanceTheme): void {
   void window.seekclaw.setTheme(value)
 }
 
-async function scrollToBottom(smooth = false): Promise<void> {
+function isNearConversationBottom(element: HTMLElement, threshold = 48): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold
+}
+
+function handleConversationScroll(): void {
+  const element = scrollArea.value
+  if (element) autoFollowConversation.value = isNearConversationBottom(element)
+}
+
+async function scrollToBottom(smooth = false, force = false): Promise<void> {
   await nextTick()
-  scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+  const element = scrollArea.value
+  if (!element || (!force && !autoFollowConversation.value)) return
+  element.scrollTo({ top: element.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+}
+
+let taskNoticeTimer: number | undefined
+
+function showTaskNotice(thread: ThreadItem, kind: 'done' | 'error'): void {
+  taskNotice.value = { threadId: thread.id, title: thread.title, kind }
+  if (taskNoticeTimer !== undefined) window.clearTimeout(taskNoticeTimer)
+  taskNoticeTimer = window.setTimeout(() => {
+    taskNotice.value = null
+    taskNoticeTimer = undefined
+  }, 4200)
+}
+
+function openTaskNotice(): void {
+  const notice = taskNotice.value
+  taskNotice.value = null
+  if (notice) void selectThread(notice.threadId)
 }
 
 async function refreshProjectSessions(project: ProjectItem): Promise<void> {
@@ -409,12 +449,19 @@ function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
       const assistant = messages.findLast((message) => message.role === 'assistant')
       if (assistant && item.toolName) {
         assistant.tools ??= []
-        assistant.tools.push({
-          id: `${saved.id}:tool:${index}`,
+        const tool = assistant.tools.find((activity) =>
+          Boolean(item.toolCallId) && (activity.callId === item.toolCallId || activity.id === item.toolCallId))
+        const hydrated: ToolActivity = tool ?? {
+          id: item.toolCallId ?? `${saved.id}:tool:${index}`,
+          callId: item.toolCallId,
           name: item.toolName,
-          state: item.toolSuccess === false ? 'error' : 'done',
-          detail: item.text
-        })
+          state: 'done'
+        }
+        hydrated.state = item.toolSuccess === false ? 'error' : 'done'
+        hydrated.detail = item.text
+        hydrated.filePath = item.toolFilePath
+        hydrated.diff = item.toolDiff
+        if (!tool) assistant.tools.push(hydrated)
       }
       return
     }
@@ -423,7 +470,12 @@ function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
       role: item.role,
       content: item.text,
       thinking: item.thinking,
-      tools: item.toolCalls?.map((call) => ({ id: call.id, name: call.name, state: 'done' })),
+      tools: item.toolCalls?.map((call) => ({
+        id: call.id,
+        callId: call.id,
+        name: call.name,
+        state: 'done'
+      })),
       state: item.role === 'assistant' ? 'done' : undefined,
       createdAt: new Date(saved.createdAt).getTime() + index
     })
@@ -435,9 +487,26 @@ function sessionScope(thread: ThreadItem, project?: ProjectItem): Record<string,
   return thread.projectId && project ? { workspace: project.path } : { global: true }
 }
 
+async function reloadThreadSession(thread: ThreadItem, project?: ProjectItem): Promise<void> {
+  if (!thread.sessionId || thread.running || !daemonState.value.connected) return
+  try {
+    const response = await window.seekclaw.daemon.request('session.get', {
+      id: thread.sessionId,
+      ...sessionScope(thread, project)
+    })
+    const saved = JSON.parse(response.data) as RuntimeSession
+    thread.messages = hydrateMessages(saved)
+    thread.sessionLoaded = true
+    thread.title = saved.title || thread.title
+    thread.archived = Boolean(saved.archived)
+  } catch {
+    thread.sessionLoaded = false
+  }
+}
+
 async function selectThread(id: string): Promise<void> {
   const thread = threads.value.find((item) => item.id === id)
-  if (!thread || busy.value) return
+  if (!thread) return
   const project = projects.value.find((item) => item.id === thread.projectId)
   if (thread.projectId && !project) return
   activeThreadId.value = id
@@ -445,9 +514,7 @@ async function selectThread(id: string): Promise<void> {
   try {
     if (project) await ensureRuntimeProject(project)
     const scope = sessionScope(thread, project)
-    if (thread.sessionId && !thread.archived)
-      await window.seekclaw.daemon.request('session.resume', { id: thread.sessionId, ...scope })
-    if (thread.sessionId && !thread.sessionLoaded) {
+    if (thread.sessionId && (!thread.sessionLoaded || !thread.running)) {
       const response = await window.seekclaw.daemon.request('session.get', {
         id: thread.sessionId,
         ...scope
@@ -461,7 +528,8 @@ async function selectThread(id: string): Promise<void> {
   } catch {
     thread.sessionLoaded = false
   }
-  await scrollToBottom()
+  autoFollowConversation.value = true
+  await scrollToBottom(false, true)
 }
 
 function updateThreadTitle(thread: ThreadItem, prompt: string): boolean {
@@ -473,7 +541,7 @@ function updateThreadTitle(thread: ThreadItem, prompt: string): boolean {
 async function sendMessage(content: string): Promise<void> {
   const thread = activeThread.value
   const project = activeProject.value
-  if (!thread || (thread.projectId && !project) || thread.archived || busy.value) return
+  if (!thread || (thread.projectId && !project) || thread.archived || thread.running) return
 
   const userMessage: ChatMessage = { id: makeId(), role: 'user', content, createdAt: Date.now() }
   const assistant: ChatMessage = {
@@ -482,9 +550,11 @@ async function sendMessage(content: string): Promise<void> {
   thread.messages.push(userMessage, assistant)
   thread.updatedAt = Date.now()
   const titleChanged = updateThreadTitle(thread, content)
-  activeAssistantId.value = assistant.id
-  busy.value = true
-  await scrollToBottom(true)
+  thread.running = true
+  thread.assistantId = assistant.id
+  thread.requestId = undefined
+  autoFollowConversation.value = true
+  await scrollToBottom(true, true)
 
   try {
     if (project) await ensureRuntimeProject(project)
@@ -495,8 +565,6 @@ async function sendMessage(content: string): Promise<void> {
       thread.sessionId = sessionResponse.data
       thread.sessionLoaded = true
       sessionCreated = true
-    } else {
-      await window.seekclaw.daemon.request('session.resume', { id: thread.sessionId, ...scope })
     }
     if (sessionCreated || titleChanged) {
       await window.seekclaw.daemon.request('session.update', {
@@ -505,8 +573,12 @@ async function sendMessage(content: string): Promise<void> {
         title: thread.title
       })
     }
-    await window.seekclaw.daemon.request('chat', { message: content, ...scope })
-    assistant.state = 'done'
+    await window.seekclaw.daemon.request('chat', {
+      message: content,
+      sessionId: thread.sessionId,
+      ...scope
+    })
+    if (assistant.state !== 'error') assistant.state = 'done'
   } catch (error) {
     assistant.state = 'error'
     if (!assistant.content) {
@@ -514,9 +586,10 @@ async function sendMessage(content: string): Promise<void> {
       assistant.content = `无法连接 SeekClaw Daemon。\n\n\`\`\`text\n${detail}\n\`\`\``
     }
   } finally {
-    busy.value = false
-    activeAssistantId.value = null
-    await scrollToBottom(true)
+    thread.running = false
+    thread.requestId = undefined
+    thread.assistantId = undefined
+    if (thread.id === activeThreadId.value) await scrollToBottom(true)
   }
 }
 
@@ -554,7 +627,7 @@ function chooseAfterRemoval(projectId?: string): void {
 
 async function archiveTask(thread: ThreadItem): Promise<void> {
   const project = projects.value.find((item) => item.id === thread.projectId)
-  if ((thread.projectId && !project) || busy.value) return
+  if ((thread.projectId && !project) || thread.running) return
   if (thread.sessionId) {
     await window.seekclaw.daemon.request('session.archive', {
       id: thread.sessionId,
@@ -571,7 +644,7 @@ async function archiveTask(thread: ThreadItem): Promise<void> {
 
 async function restoreTask(thread: ThreadItem): Promise<void> {
   const project = projects.value.find((item) => item.id === thread.projectId)
-  if ((thread.projectId && !project) || !thread.sessionId || busy.value) return
+  if ((thread.projectId && !project) || !thread.sessionId || thread.running) return
   await window.seekclaw.daemon.request('session.archive', {
     id: thread.sessionId,
     ...sessionScope(thread, project),
@@ -583,10 +656,9 @@ async function restoreTask(thread: ThreadItem): Promise<void> {
 }
 
 async function archiveProjectTasks(project: ProjectItem): Promise<void> {
-  if (busy.value) return
   if (!project.loaded) await refreshProjectSessions(project).catch(() => undefined)
   const targets = threads.value.filter((thread) => thread.projectId === project.id && !thread.archived)
-  if (targets.length === 0) return
+  if (targets.length === 0 || targets.some((thread) => thread.running)) return
   if (!await confirmAction({
     title: '归档项目任务',
     message: `归档项目“${project.name}”的全部 ${targets.length} 个任务？`,
@@ -594,30 +666,24 @@ async function archiveProjectTasks(project: ProjectItem): Promise<void> {
   })) return
 
   const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  busy.value = true
-  try {
-    for (const thread of targets) {
-      if (thread.sessionId) {
-        await window.seekclaw.daemon.request('session.archive', {
-          id: thread.sessionId,
-          workspace: project.path,
-          archived: true
-        })
-        thread.archived = true
-      } else {
-        threads.value = threads.value.filter((item) => item.id !== thread.id)
-      }
+  for (const thread of targets) {
+    if (thread.sessionId) {
+      await window.seekclaw.daemon.request('session.archive', {
+        id: thread.sessionId,
+        workspace: project.path,
+        archived: true
+      })
+      thread.archived = true
+    } else {
+      threads.value = threads.value.filter((item) => item.id !== thread.id)
     }
-    if (activeAffected) chooseAfterRemoval(project.id)
-  } finally {
-    busy.value = false
   }
+  if (activeAffected) chooseAfterRemoval(project.id)
 }
 
 async function archiveGlobalTasks(): Promise<void> {
-  if (busy.value) return
   const targets = threads.value.filter((thread) => !thread.projectId && !thread.archived)
-  if (targets.length === 0) return
+  if (targets.length === 0 || targets.some((thread) => thread.running)) return
   if (!await confirmAction({
     title: '归档全局任务',
     message: `归档全部 ${targets.length} 个全局任务？`,
@@ -625,29 +691,24 @@ async function archiveGlobalTasks(): Promise<void> {
   })) return
 
   const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  busy.value = true
-  try {
-    for (const thread of targets) {
-      if (thread.sessionId) {
-        await window.seekclaw.daemon.request('session.archive', {
-          id: thread.sessionId,
-          global: true,
-          archived: true
-        })
-        thread.archived = true
-      } else {
-        threads.value = threads.value.filter((item) => item.id !== thread.id)
-      }
+  for (const thread of targets) {
+    if (thread.sessionId) {
+      await window.seekclaw.daemon.request('session.archive', {
+        id: thread.sessionId,
+        global: true,
+        archived: true
+      })
+      thread.archived = true
+    } else {
+      threads.value = threads.value.filter((item) => item.id !== thread.id)
     }
-    if (activeAffected) chooseAfterRemoval()
-  } finally {
-    busy.value = false
   }
+  if (activeAffected) chooseAfterRemoval()
 }
 
 async function deleteTask(thread: ThreadItem): Promise<void> {
   const project = projects.value.find((item) => item.id === thread.projectId)
-  if ((thread.projectId && !project) || busy.value) return
+  if ((thread.projectId && !project) || thread.running) return
   if (!await confirmAction({
     title: '删除任务',
     message: `永久删除任务“${thread.title}”？此操作无法撤销。`,
@@ -666,9 +727,8 @@ async function deleteTask(thread: ThreadItem): Promise<void> {
 }
 
 async function deleteGlobalTasks(): Promise<void> {
-  if (busy.value) return
   const targets = threads.value.filter((thread) => !thread.projectId)
-  if (targets.length === 0) return
+  if (targets.length === 0 || targets.some((thread) => thread.running)) return
   if (!await confirmAction({
     title: '删除全部全局任务',
     message: `永久删除全部 ${targets.length} 个全局任务？此操作无法撤销。`,
@@ -677,26 +737,20 @@ async function deleteGlobalTasks(): Promise<void> {
   })) return
 
   const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  busy.value = true
-  try {
-    for (const thread of targets) {
-      if (thread.sessionId) {
-        await window.seekclaw.daemon.request('session.delete', { id: thread.sessionId, global: true })
-      }
-      threads.value = threads.value.filter((item) => item.id !== thread.id)
+  for (const thread of targets) {
+    if (thread.sessionId) {
+      await window.seekclaw.daemon.request('session.delete', { id: thread.sessionId, global: true })
     }
-    taskSettingsThreadId.value = ''
-    if (activeAffected) chooseAfterRemoval()
-  } finally {
-    busy.value = false
+    threads.value = threads.value.filter((item) => item.id !== thread.id)
   }
+  taskSettingsThreadId.value = ''
+  if (activeAffected) chooseAfterRemoval()
 }
 
 async function deleteProjectTasks(project: ProjectItem): Promise<void> {
-  if (busy.value) return
   if (!project.loaded) await refreshProjectSessions(project).catch(() => undefined)
   const targets = threads.value.filter((thread) => thread.projectId === project.id)
-  if (targets.length === 0) return
+  if (targets.length === 0 || targets.some((thread) => thread.running)) return
   if (!await confirmAction({
     title: '删除项目全部任务',
     message: `永久删除项目“${project.name}”的全部 ${targets.length} 个任务？此操作无法撤销。`,
@@ -705,28 +759,22 @@ async function deleteProjectTasks(project: ProjectItem): Promise<void> {
   })) return
 
   const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  busy.value = true
-  try {
-    for (const thread of targets) {
-      if (thread.sessionId) {
-        await window.seekclaw.daemon.request('session.delete', {
-          id: thread.sessionId,
-          workspace: project.path
-        })
-      }
-      threads.value = threads.value.filter((item) => item.id !== thread.id)
+  for (const thread of targets) {
+    if (thread.sessionId) {
+      await window.seekclaw.daemon.request('session.delete', {
+        id: thread.sessionId,
+        workspace: project.path
+      })
     }
-    taskSettingsThreadId.value = ''
-    if (activeAffected) chooseAfterRemoval(project.id)
-  } finally {
-    busy.value = false
+    threads.value = threads.value.filter((item) => item.id !== thread.id)
   }
+  taskSettingsThreadId.value = ''
+  if (activeAffected) chooseAfterRemoval(project.id)
 }
 
 async function deleteArchivedTasks(): Promise<void> {
-  if (busy.value) return
   const targets = threads.value.filter((thread) => thread.archived)
-  if (targets.length === 0) return
+  if (targets.length === 0 || targets.some((thread) => thread.running)) return
   if (!await confirmAction({
     title: '清空已归档任务',
     message: `永久删除全部 ${targets.length} 个已归档任务？此操作无法撤销。`,
@@ -735,31 +783,26 @@ async function deleteArchivedTasks(): Promise<void> {
   })) return
 
   const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  busy.value = true
-  try {
-    for (const thread of targets) {
-      const project = projects.value.find((item) => item.id === thread.projectId)
-      if (thread.sessionId && (project || !thread.projectId)) {
-        await window.seekclaw.daemon.request('session.delete', {
-          id: thread.sessionId,
-          ...sessionScope(thread, project)
-        })
+  for (const thread of targets) {
+    const project = projects.value.find((item) => item.id === thread.projectId)
+    if (thread.sessionId && (project || !thread.projectId)) {
+      await window.seekclaw.daemon.request('session.delete', {
+        id: thread.sessionId,
+        ...sessionScope(thread, project)
+      })
       }
-      threads.value = threads.value.filter((item) => item.id !== thread.id)
-    }
-    taskSettingsThreadId.value = ''
-    if (activeAffected) {
-      activeThreadId.value = ''
-      const project = projects.value.find((item) => item.id === selectedProjectId.value)
-      chooseAfterRemoval(project?.id)
-    }
-  } finally {
-    busy.value = false
+    threads.value = threads.value.filter((item) => item.id !== thread.id)
+  }
+  taskSettingsThreadId.value = ''
+  if (activeAffected) {
+    activeThreadId.value = ''
+    const project = projects.value.find((project) => project.id === selectedProjectId.value)
+    chooseAfterRemoval(project?.id)
   }
 }
 
 async function deleteProject(project: ProjectItem): Promise<void> {
-  if (busy.value) return
+  if (threads.value.some((thread) => thread.projectId === project.id && thread.running)) return
   if (!await confirmAction({
     title: '移除项目',
     message: `从 SeekClaw 中移除项目“${project.name}”？项目文件和任务记录不会从磁盘删除。`,
@@ -776,47 +819,105 @@ async function deleteProject(project: ProjectItem): Promise<void> {
 }
 
 function handleDaemonEvent(event: DaemonMessage): void {
-  if (event.requestMethod !== 'chat'
-      && event.requestMethod !== 'agent.runTurn'
-      && event.requestMethod !== 'agent/runTurn') return
-  if (!activeAssistantId.value) return
-  const message = activeThread.value?.messages.find((item) => item.id === activeAssistantId.value)
-  if (!message) return
+  const isChatRequest = event.requestMethod === 'chat'
+    || event.requestMethod === 'agent.runTurn'
+    || event.requestMethod === 'agent/runTurn'
+  if (!isChatRequest && !event.sessionId) return
+  const thread = (event.sessionId
+    ? threads.value.find((item) => item.sessionId === event.sessionId)
+    : undefined)
+    ?? threads.value.find((item) => item.requestId === event.id)
+    ?? (!event.sessionId && activeThread.value?.running ? activeThread.value : undefined)
+  if (!thread) return
+  thread.requestId ??= event.id
+  const message = thread.messages.find((item) => item.id === thread.assistantId)
+  const terminalEvent = event.event === 'done' || event.event === 'cancelled' || event.event === 'error'
+  if (!message && !terminalEvent) return
+  const isBackgroundThread = thread.id !== activeThreadId.value
+  const eventCallId = typeof event.details?.callId === 'string' ? event.details.callId : undefined
+  const findTool = () => eventCallId
+    ? message?.tools?.find((tool) => tool.callId === eventCallId || tool.id === eventCallId)
+    : message?.tools?.findLast((tool) => tool.state === 'running')
 
   switch (event.event) {
     case 'thinking':
+      if (!message) break
       message.thinking = (message.thinking ?? '') + event.data
       message.state = 'thinking'
       break
     case 'delta':
+      if (!message) break
       message.content += event.data
       message.state = 'streaming'
       break
     case 'status':
-      if (event.data.toLocaleLowerCase().includes('thinking')) message.state = 'thinking'
+      if (message && event.data.toLocaleLowerCase().includes('thinking')) message.state = 'thinking'
       break
     case 'tool_start':
-      message.tools?.push({ id: `${event.id}-${message.tools.length}`, name: event.data, state: 'running' })
+      if (!message) break
+      message.tools ??= []
+      message.tools.push({
+        id: eventCallId ?? `${event.id}-${message.tools.length}`,
+        callId: eventCallId,
+        name: event.data,
+        detail: typeof event.details?.summary === 'string' ? event.details.summary : undefined,
+        state: 'running'
+      })
       break
     case 'tool_done': {
-      const running = message.tools?.findLast((tool) => tool.state === 'running')
+      if (!message) break
+      const running = findTool()
       if (running) {
-        running.state = 'done'
-        running.detail = event.data
+        running.state = event.details?.success === false ? 'error' : 'done'
+        running.detail = event.data || running.detail
+      }
+      break
+    }
+    case 'file_diff': {
+      if (!message) break
+      const tool = findTool()
+      if (tool) {
+        const diff = typeof event.details?.diff === 'string' ? event.details.diff : ''
+        tool.filePath = event.data
+        tool.diff = diff
+        tool.addedLines = diff.split(/\r?\n/).filter((line) => line.startsWith('+') && !line.startsWith('+++')).length
+        tool.removedLines = diff.split(/\r?\n/).filter((line) => line.startsWith('-') && !line.startsWith('---')).length
       }
       break
     }
     case 'done':
     case 'cancelled':
-      message.state = 'done'
-      if (!message.content && event.data) message.content = event.data
+      if (message) {
+        message.state = 'done'
+        if (!message.content && event.data) message.content = event.data
+      }
+      thread.running = false
+      thread.requestId = undefined
+      thread.assistantId = undefined
+      if (isBackgroundThread) {
+        showTaskNotice(thread, 'done')
+      }
+      if (!message || isBackgroundThread) {
+        void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
+      }
       break
     case 'error':
-      message.state = 'error'
-      appendModelError(message, event.data)
+      if (message) {
+        message.state = 'error'
+        appendModelError(message, event.data)
+      }
+      thread.running = false
+      thread.requestId = undefined
+      thread.assistantId = undefined
+      if (isBackgroundThread) {
+        showTaskNotice(thread, 'error')
+      }
+      if (!message || isBackgroundThread) {
+        void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
+      }
       break
   }
-  void scrollToBottom()
+  if (thread.id === activeThreadId.value) void scrollToBottom()
 }
 
 function appendModelError(message: ChatMessage, detail: string): void {
@@ -830,7 +931,12 @@ function appendModelError(message: ChatMessage, detail: string): void {
 }
 
 async function stopTurn(): Promise<void> {
-  try { await window.seekclaw.daemon.request('agent.cancel') } catch { /* sendMessage owns the final state */ }
+  const thread = activeThread.value
+  if (!thread?.running) return
+  try {
+    await window.seekclaw.daemon.request('agent.cancel',
+      thread.requestId ? { requestId: thread.requestId } : {})
+  } catch { /* sendMessage owns the final state */ }
 }
 
 async function changeModel(model: string): Promise<void> {
@@ -966,9 +1072,14 @@ watch(projects, persistProjects, { deep: true })
           </div>
         </header>
 
-        <section ref="scrollArea" class="conversation-scroll">
+        <section ref="scrollArea" class="conversation-scroll" @scroll="handleConversationScroll">
           <div v-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
-            <ConversationMessage v-for="message in activeThread.messages" :key="message.id" :message="message" />
+            <ConversationMessage
+              v-for="message in activeThread.messages"
+              :key="message.id"
+              :message="message"
+              @open-diff="openToolDiff"
+            />
           </div>
           <div v-else-if="activeThread" class="empty-state">
             <h1>今天从哪里开始？</h1>
@@ -995,6 +1106,19 @@ watch(projects, persistProjects, { deep: true })
             </button>
           </div>
         </section>
+
+        <Transition name="task-notice">
+          <button
+            v-if="taskNotice"
+            type="button"
+            class="task-notice"
+            :class="{ error: taskNotice.kind === 'error' }"
+            @click="openTaskNotice"
+          >
+            <span>{{ taskNotice.kind === 'error' ? '任务执行失败' : '后台任务已完成' }}</span>
+            <small>{{ taskNotice.title }}</small>
+          </button>
+        </Transition>
 
         <footer class="composer-region">
           <Composer
@@ -1072,7 +1196,8 @@ watch(projects, persistProjects, { deep: true })
       :open="gitPanelOpen"
       :project="activeProject"
       :initial-tab="gitPanelTab"
-      @close="gitPanelOpen = false"
+      :diff-override="toolDiff"
+      @close="gitPanelOpen = false; toolDiff = null"
       @open-terminal="openProjectTerminal"
     />
 

@@ -310,8 +310,13 @@ public sealed class Agent(
             call.Id, call.Name, result.Success,
             result.Summary ?? Firstline(result.Output), stopwatch.Elapsed));
 
+        var filePath = result.FilePath is null
+            ? null
+            : Path.IsPathRooted(result.FilePath)
+                ? Path.GetRelativePath(workspace.Root, result.FilePath)
+                : result.FilePath;
         return new ToolExecution(
-            ChatMessage.ToolResult(call.Id, call.Name, result.Output, result.Success),
+            ChatMessage.ToolResult(call.Id, call.Name, result.Output, result.Success, result.Diff, filePath),
             tool.Mutating && result.Success);
     }
 
@@ -389,7 +394,9 @@ public sealed class Agent(
             available = available.Where(t => !t.Mutating).ToList();
         }
 
-        return available;
+        // The complete tool schema is part of the provider's cached prompt prefix. MCP
+        // discovery order is not a semantic concern, so canonicalize it for cache stability.
+        return available.OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
     }
 
     // ---------------------------------------------------------------- misc

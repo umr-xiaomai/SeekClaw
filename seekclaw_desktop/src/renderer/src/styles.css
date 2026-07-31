@@ -508,6 +508,13 @@ select:focus-visible {
   background: transparent;
 }
 
+.thread-running-spinner {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-muted);
+  animation: spin 1s linear infinite;
+}
+
 .project-heading-row .project-row {
   gap: 10px;
   font-size: 14px;
@@ -571,6 +578,12 @@ select:focus-visible {
   border-radius: 8px;
   box-shadow: var(--shadow);
   transform-origin: top right;
+}
+
+.sidebar-context-menu.menu-up {
+  top: auto;
+  bottom: calc(100% - 2px);
+  transform-origin: bottom right;
 }
 
 .context-menu-enter-active,
@@ -774,6 +787,58 @@ select:focus-visible {
   scrollbar-gutter: stable;
 }
 
+.task-notice {
+  position: absolute;
+  z-index: 6;
+  right: 28px;
+  bottom: 96px;
+  display: grid;
+  max-width: min(360px, calc(100% - 56px));
+  gap: 2px;
+  padding: 9px 13px;
+  color: var(--text-secondary);
+  text-align: left;
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.task-notice:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.task-notice.error {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+.task-notice span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.task-notice small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-notice-enter-active,
+.task-notice-leave-active {
+  transition: opacity 150ms ease, transform 170ms ease;
+}
+
+.task-notice-enter-from,
+.task-notice-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
 .conversation-content {
   width: min(100%, 940px);
   min-height: 100%;
@@ -845,8 +910,11 @@ select:focus-visible {
 }
 
 .tool-row {
-  width: fit-content;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   max-width: 100%;
+  overflow: hidden;
   gap: 8px;
   padding: 7px 10px;
   color: var(--text-secondary);
@@ -856,12 +924,129 @@ select:focus-visible {
   border-radius: 6px;
 }
 
+.tool-row > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .tool-row small {
+  display: block;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   color: var(--text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.change-card {
+  margin: 6px 0 18px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 3px 12px rgb(16 19 16 / 4%);
+}
+
+.change-card-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.change-card-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 9px;
+}
+
+.change-card-title {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.change-card-title strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.change-card-title span,
+.change-file-stats {
+  display: inline-flex;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.change-card-state {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.change-added {
+  color: #168542;
+}
+
+.change-removed {
+  color: #c53d3d;
+}
+
+.change-file-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  color: var(--text-secondary);
+  text-align: left;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+}
+
+.change-file-row:last-child {
+  border-bottom: 0;
+}
+
+.change-file-row:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.change-file-row::before {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  content: '';
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.change-file-path {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-file-stats {
+  flex: 0 0 auto;
 }
 
 .spin {
@@ -878,6 +1063,10 @@ select:focus-visible {
   display: flex;
   gap: 5px;
   padding: 5px 0;
+}
+
+.thinking-spinner {
+  color: var(--accent);
 }
 
 .response-placeholder span {
@@ -1518,6 +1707,14 @@ select:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tool-diff-summary {
+  justify-content: flex-start;
+}
+
+.tool-diff-summary small {
+  font-family: "Cascadia Code", Consolas, monospace;
 }
 
 .git-status-list {
@@ -2708,6 +2905,18 @@ select:focus-visible {
 
 .usage-table tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.usage-table .cache-rate {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.usage-table td small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
 }
 
 .segmented-control {

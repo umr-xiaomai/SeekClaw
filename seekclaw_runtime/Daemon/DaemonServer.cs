@@ -25,34 +25,36 @@ public sealed class DaemonServer
     private readonly SeekClawRuntime _runtime;
     private readonly DaemonAdminApi _admin;
     private readonly WorkspaceInfo _globalWorkspace;
-    private readonly Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> _runTurn;
+    private readonly Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>>? _runTurn;
+    private readonly bool _useIsolatedTurnRuntime;
     private readonly CancellationTokenSource _shutdown = new();
 
-    // SeekClawRuntime currently owns one mutable workspace and one global event bus.
-    // A daemon therefore permits one turn or workspace mutation at a time.
-    private readonly SemaphoreSlim _runtimeGate = new(1, 1);
+    // Configuration and workspace administration remains serialized, while agent turns
+    // execute concurrently in isolated runtime instances.
+    private readonly SemaphoreSlim _adminGate = new(1, 1);
 
     public DaemonServer(SeekClawRuntime runtime)
-        : this(runtime, runtime.Agent.RunTurnAsync, runtime.Workspaces.CreateGlobal())
+        : this(runtime, null, runtime.Workspaces.CreateGlobal())
     {
     }
 
     internal DaemonServer(
         SeekClawRuntime runtime,
-        Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> runTurn)
+        Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>>? runTurn)
         : this(runtime, runTurn, runtime.Workspaces.CreateGlobal())
     {
     }
 
     internal DaemonServer(
         SeekClawRuntime runtime,
-        Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> runTurn,
+        Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>>? runTurn,
         WorkspaceInfo globalWorkspace)
     {
         _runtime = runtime;
         _globalWorkspace = globalWorkspace;
         _admin = new DaemonAdminApi(runtime, globalWorkspace);
         _runTurn = runTurn;
+        _useIsolatedTurnRuntime = runTurn is null;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -129,10 +131,10 @@ public sealed class DaemonServer
         };
         using var writerGate = new SemaphoreSlim(1, 1);
 
+        // A connection can own many independent tasks. The legacy `session` field is
+        // retained only for CLI-style requests that omit an explicit sessionId.
         AgentSession? session = null;
-        Task? activeTurn = null;
-        CancellationTokenSource? activeTurnCts = null;
-        long activeTurnId = 0;
+        var activeTurns = new Dictionary<long, ActiveTurn>();
 
         try
         {
@@ -163,13 +165,13 @@ public sealed class DaemonServer
                     continue;
                 }
 
-                if (activeTurn is { IsCompleted: true })
+                foreach (var (turnId, turn) in activeTurns
+                    .Where(item => item.Value.Task?.IsCompleted == true)
+                    .ToList())
                 {
-                    await ObserveAsync(activeTurn).ConfigureAwait(false);
-                    activeTurnCts?.Dispose();
-                    activeTurn = null;
-                    activeTurnCts = null;
-                    activeTurnId = 0;
+                    if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
+                    turn.Cancellation.Dispose();
+                    activeTurns.Remove(turnId);
                 }
 
                 switch (method)
@@ -191,60 +193,53 @@ public sealed class DaemonServer
                     case "agent.runTurn":
                     case "agent/runTurn":
                     {
-                        var message = request["params"]?["message"]?.GetValue<string>()
-                                      ?? request["params"]?["prompt"]?.GetValue<string>()
+                        var parameters = Params(request);
+                        var message = parameters["message"]?.GetValue<string>()
+                                      ?? parameters["prompt"]?.GetValue<string>()
                                       ?? "";
                         if (string.IsNullOrWhiteSpace(message))
                         {
                             await WriteAsync(writer, writerGate, id, "error", "params.message is required", ct).ConfigureAwait(false);
                             break;
                         }
-                        if (activeTurn is not null)
+                        WorkspaceInfo workspace;
+                        AgentSession turnSession;
+                        var requestedSessionId = parameters["sessionId"]?.GetValue<string>();
+                        try
                         {
-                            await WriteAsync(writer, writerGate, id, "error", $"Agent is busy with request {activeTurnId}", ct).ConfigureAwait(false);
+                            workspace = ResolveWorkspace(parameters);
+                            turnSession = LoadTurnSession(workspace, requestedSessionId, ref session);
+                        }
+                        catch (DaemonRequestException ex)
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct, requestedSessionId).ConfigureAwait(false);
                             break;
                         }
-                        if (!_runtimeGate.Wait(0))
-                        {
-                            await WriteAsync(writer, writerGate, id, "error", "Runtime is busy with another request", ct).ConfigureAwait(false);
-                            break;
-                        }
-
-                        var workspace = request["params"]?["global"]?.GetValue<bool?>() == true
-                            ? _globalWorkspace
-                            : _runtime.Workspace;
-                        if (session is not null && !SessionBelongsTo(session, workspace))
-                        {
-                            session = null;
-                        }
-                        session ??= _runtime.Sessions.LoadLatest(workspace)
-                                    ?? _runtime.Sessions.Create(workspace);
-
-                        activeTurnId = id;
-                        activeTurnCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                        activeTurn = RunTurnAsync(
-                            session, workspace, message, id, writer, writerGate,
-                            activeTurnCts.Token, ct);
+                        var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        var turn = new ActiveTurn(turnSession, workspace, turnCancellation);
+                        activeTurns[id] = turn;
+                        turn.Task = RunTurnAsync(
+                            turnSession, workspace, message, id, writer, writerGate,
+                            turnCancellation.Token, ct);
                         break;
                     }
 
                     case "agent.cancel":
                     {
-                        if (activeTurn is null || activeTurnCts is null)
+                        var requestedId = request["params"]?["requestId"]?.GetValue<long?>();
+                        var targets = requestedId is { } specific
+                            ? activeTurns.Where(item => item.Key == specific).Select(item => item.Value).ToList()
+                            : activeTurns.Values.ToList();
+                        if (targets.Count == 0)
                         {
                             await WriteAsync(writer, writerGate, id, "result", "no active turn", ct).ConfigureAwait(false);
                             break;
                         }
-
-                        var requestedId = request["params"]?["requestId"]?.GetValue<long?>();
-                        if (requestedId.HasValue && requestedId.Value != activeTurnId)
-                        {
-                            await WriteAsync(writer, writerGate, id, "error", $"Request {requestedId.Value} is not active", ct).ConfigureAwait(false);
-                            break;
-                        }
-
-                        activeTurnCts.Cancel();
-                        await WriteAsync(writer, writerGate, id, "result", $"cancellation requested for {activeTurnId}", ct).ConfigureAwait(false);
+                        foreach (var target in targets) target.Cancellation.Cancel();
+                        var detail = requestedId is { } one
+                            ? $"cancellation requested for {one}"
+                            : $"cancellation requested for {targets.Count} active turns";
+                        await WriteAsync(writer, writerGate, id, "result", detail, ct).ConfigureAwait(false);
                         break;
                     }
 
@@ -274,11 +269,7 @@ public sealed class DaemonServer
                             await WriteAsync(writer, writerGate, id, "error", $"Workspace directory not found: {fullPath}", ct).ConfigureAwait(false);
                             break;
                         }
-                        if (!_runtimeGate.Wait(0))
-                        {
-                            await WriteAsync(writer, writerGate, id, "error", "Cannot switch workspace while the runtime is busy", ct).ConfigureAwait(false);
-                            break;
-                        }
+                        await _adminGate.WaitAsync(ct).ConfigureAwait(false);
 
                         try
                         {
@@ -289,7 +280,7 @@ public sealed class DaemonServer
                         }
                         finally
                         {
-                            _runtimeGate.Release();
+                            _adminGate.Release();
                         }
                         break;
                     }
@@ -306,11 +297,7 @@ public sealed class DaemonServer
                             await WriteAsync(writer, writerGate, id, "error", "params.mode must be one of: plan, readonly, edit, auto", ct).ConfigureAwait(false);
                             break;
                         }
-                        if (!_runtimeGate.Wait(0))
-                        {
-                            await WriteAsync(writer, writerGate, id, "error", "Cannot switch mode while the runtime is busy", ct).ConfigureAwait(false);
-                            break;
-                        }
+                        await _adminGate.WaitAsync(ct).ConfigureAwait(false);
 
                         try
                         {
@@ -319,7 +306,7 @@ public sealed class DaemonServer
                         }
                         finally
                         {
-                            _runtimeGate.Release();
+                            _adminGate.Release();
                         }
                         break;
                     }
@@ -460,20 +447,19 @@ public sealed class DaemonServer
 
                     case "session.resume":
                     {
-                        if (activeTurn is not null)
-                        {
-                            await WriteAsync(writer, writerGate, id, "error", "Cannot resume a session while an agent turn is active", ct).ConfigureAwait(false);
-                            break;
-                        }
                         var sessionId = request["params"]?["id"]?.GetValue<string>();
                         if (string.IsNullOrEmpty(sessionId))
                         {
                             await WriteAsync(writer, writerGate, id, "error", "params.id is required", ct).ConfigureAwait(false);
                             break;
                         }
-                        var workspace = request["params"]?["global"]?.GetValue<bool?>() == true
-                            ? _globalWorkspace
-                            : _runtime.Workspace;
+                        WorkspaceInfo workspace;
+                        try { workspace = ResolveWorkspace(Params(request)); }
+                        catch (DaemonRequestException ex)
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            break;
+                        }
                         var loaded = _runtime.Sessions.Load(workspace, sessionId);
                         if (loaded is null)
                             await WriteAsync(writer, writerGate, id, "error", $"Session {sessionId} not found", ct).ConfigureAwait(false);
@@ -487,14 +473,13 @@ public sealed class DaemonServer
 
                     case "session.new":
                     {
-                        if (activeTurn is not null)
+                        WorkspaceInfo workspace;
+                        try { workspace = ResolveWorkspace(Params(request)); }
+                        catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "Cannot create a session while an agent turn is active", ct).ConfigureAwait(false);
+                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
                             break;
                         }
-                        var workspace = request["params"]?["global"]?.GetValue<bool?>() == true
-                            ? _globalWorkspace
-                            : _runtime.Workspace;
                         session = _runtime.Sessions.Create(workspace);
                         await WriteAsync(writer, writerGate, id, "result", session.Header.Id, ct).ConfigureAwait(false);
                         break;
@@ -516,11 +501,7 @@ public sealed class DaemonServer
                             await WriteAsync(writer, writerGate, id, "error", "params.model is required", ct).ConfigureAwait(false);
                             break;
                         }
-                        if (!_runtimeGate.Wait(0))
-                        {
-                            await WriteAsync(writer, writerGate, id, "error", "Cannot switch model while the runtime is busy", ct).ConfigureAwait(false);
-                            break;
-                        }
+                        await _adminGate.WaitAsync(ct).ConfigureAwait(false);
 
                         try
                         {
@@ -538,7 +519,7 @@ public sealed class DaemonServer
                         }
                         finally
                         {
-                            _runtimeGate.Release();
+                            _adminGate.Release();
                         }
                         break;
                     }
@@ -552,8 +533,9 @@ public sealed class DaemonServer
                     }
 
                     case "shutdown":
-                        activeTurnCts?.Cancel();
-                        if (activeTurn is not null) await ObserveAsync(activeTurn).ConfigureAwait(false);
+                        foreach (var turn in activeTurns.Values) turn.Cancellation.Cancel();
+                        foreach (var turn in activeTurns.Values)
+                            if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
                         await WriteAsync(writer, writerGate, id, "bye", "", ct).ConfigureAwait(false);
                         _shutdown.Cancel();
                         return;
@@ -566,9 +548,11 @@ public sealed class DaemonServer
         }
         finally
         {
-            activeTurnCts?.Cancel();
-            if (activeTurn is not null) await ObserveAsync(activeTurn).ConfigureAwait(false);
-            activeTurnCts?.Dispose();
+            foreach (var turn in activeTurns.Values) turn.Cancellation.Cancel();
+            foreach (var turn in activeTurns.Values)
+                if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
+            foreach (var turn in activeTurns.Values) turn.Cancellation.Dispose();
+            activeTurns.Clear();
         }
     }
 
@@ -582,16 +566,26 @@ public sealed class DaemonServer
         CancellationToken turnCt,
         CancellationToken connectionCt)
     {
-        using var subscription = _runtime.Events.Subscribe();
-        var forwarder = ForwardEventsAsync(subscription, writer, writerGate, id, connectionCt);
+        await using var turnRuntime = _useIsolatedTurnRuntime
+            ? SeekClawRuntime.CreateIsolated(workspace)
+            : null;
+        var runtime = turnRuntime ?? _runtime;
+        using var subscription = runtime.Events.Subscribe();
+        var forwarder = ForwardEventsAsync(
+            subscription, writer, writerGate, id, session.Header.Id, connectionCt);
         AgentTurnResult? result = null;
         Exception? failure = null;
 
         try
         {
-            _runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
-            _runtime.Skills.Attach(workspace);
-            result = await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
+            runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
+            runtime.Skills.Attach(workspace);
+            if (_useIsolatedTurnRuntime && runtime.Mcp.LoadServerConfigs(workspace).Count > 0)
+                await runtime.Mcp.ConnectAllAsync(workspace, turnCt).ConfigureAwait(false);
+
+            result = _runTurn is null
+                ? await runtime.Agent.RunTurnAsync(session, workspace, message, turnCt).ConfigureAwait(false)
+                : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
         {
@@ -603,8 +597,6 @@ public sealed class DaemonServer
         }
         finally
         {
-            _runtime.Prompts.SetWorkspaceRoot(_runtime.Workspace.PromptsDir);
-            _runtime.Skills.Attach(_runtime.Workspace);
             subscription.Dispose();
             try { await forwarder.ConfigureAwait(false); }
             catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
@@ -613,21 +605,17 @@ public sealed class DaemonServer
         try
         {
             if (failure is not null)
-                await WriteAsync(writer, writerGate, id, "error", failure.Message, connectionCt).ConfigureAwait(false);
+                await WriteAsync(writer, writerGate, id, "error", failure.Message, connectionCt, session.Header.Id).ConfigureAwait(false);
             else if (result!.Cancelled)
-                await WriteAsync(writer, writerGate, id, "cancelled", result.Text, connectionCt).ConfigureAwait(false);
+                await WriteAsync(writer, writerGate, id, "cancelled", result.Text, connectionCt, session.Header.Id).ConfigureAwait(false);
             else
                 await WriteAsync(writer, writerGate, id,
                     result.Error is null ? "done" : "error",
-                    result.Error ?? result.Text, connectionCt).ConfigureAwait(false);
+                    result.Error ?? result.Text, connectionCt, session.Header.Id).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
         {
             // The client disconnected while the turn was ending.
-        }
-        finally
-        {
-            _runtimeGate.Release();
         }
     }
 
@@ -636,6 +624,7 @@ public sealed class DaemonServer
         StreamWriter writer,
         SemaphoreSlim writerGate,
         long id,
+        string sessionId,
         CancellationToken ct)
     {
         await foreach (var evt in subscription.Reader.ReadAllAsync(ct).ConfigureAwait(false))
@@ -644,18 +633,91 @@ public sealed class DaemonServer
             // result below sends the final `error` envelope with the provider's full detail.
             // Forwarding this event as `error` would terminate desktop clients early and lose
             // ErrorEvent.Detail (for example the HTTP status and API response message).
-            var (name, data) = evt switch
+            var payload = evt switch
             {
-                AssistantTextDeltaEvent delta => ("delta", delta.Delta),
-                ThinkingDeltaEvent thinking => ("thinking", thinking.Delta),
-                StatusEvent status => ("status", status.Status),
-                ToolCallStartedEvent tool => ("tool_start", tool.ToolName),
-                ToolCallCompletedEvent tool => ("tool_done", $"{tool.ToolName}: {tool.ResultSummary}"),
-                _ => ((string?)null, ""),
+                AssistantTextDeltaEvent delta => (Name: (string?)"delta", Data: delta.Delta, Details: (JsonObject?)null),
+                ThinkingDeltaEvent thinking => (Name: (string?)"thinking", Data: thinking.Delta, Details: (JsonObject?)null),
+                StatusEvent status => (Name: (string?)"status", Data: status.Status, Details: (JsonObject?)null),
+                ToolCallStartedEvent tool => (
+                    Name: (string?)"tool_start",
+                    Data: tool.ToolName,
+                    Details: new JsonObject
+                    {
+                        ["callId"] = tool.CallId,
+                        ["summary"] = tool.ArgumentSummary,
+                    }),
+                ToolCallCompletedEvent tool => (
+                    Name: (string?)"tool_done",
+                    Data: tool.ResultSummary,
+                    Details: new JsonObject
+                    {
+                        ["callId"] = tool.CallId,
+                        ["success"] = tool.Success,
+                        ["durationMs"] = tool.Duration.TotalMilliseconds,
+                    }),
+                FileDiffEvent diff => (
+                    Name: (string?)"file_diff",
+                    Data: diff.FilePath,
+                    Details: new JsonObject
+                    {
+                        ["callId"] = diff.CallId,
+                        ["diff"] = diff.UnifiedDiff,
+                    }),
+                _ => (Name: (string?)null, Data: "", Details: (JsonObject?)null),
             };
-            if (name is not null)
-                await WriteAsync(writer, writerGate, id, name, data, ct).ConfigureAwait(false);
+            if (payload.Name is not null)
+                await WriteAsync(writer, writerGate, id, payload.Name, payload.Data, ct, sessionId, payload.Details).ConfigureAwait(false);
         }
+    }
+
+    private WorkspaceInfo ResolveWorkspace(JsonObject parameters)
+    {
+        if (parameters["global"]?.GetValue<bool?>() == true)
+            return _globalWorkspace;
+
+        var path = parameters["workspace"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(path)) return _runtime.Workspace;
+
+        string fullPath;
+        try { fullPath = Path.GetFullPath(path); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new DaemonRequestException($"Invalid workspace path: {ex.Message}");
+        }
+
+        if (!Directory.Exists(fullPath))
+            throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
+        return _runtime.Workspaces.Detect(fullPath);
+    }
+
+    private AgentSession LoadTurnSession(
+        WorkspaceInfo workspace,
+        string? requestedSessionId,
+        ref AgentSession? legacySession)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedSessionId))
+        {
+            var loaded = _runtime.Sessions.Load(workspace, requestedSessionId);
+            return loaded ?? throw new DaemonRequestException($"Session {requestedSessionId} not found");
+        }
+
+        if (legacySession is not null && SessionBelongsTo(legacySession, workspace))
+            return legacySession;
+
+        legacySession = _runtime.Sessions.LoadLatest(workspace)
+                        ?? _runtime.Sessions.Create(workspace);
+        return legacySession;
+    }
+
+    private sealed class ActiveTurn(
+        AgentSession session,
+        WorkspaceInfo workspace,
+        CancellationTokenSource cancellation)
+    {
+        public AgentSession Session { get; } = session;
+        public WorkspaceInfo Workspace { get; } = workspace;
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+        public Task? Task { get; set; }
     }
 
     private string CurrentMode() =>
@@ -700,7 +762,7 @@ public sealed class DaemonServer
         ["version"] = ProtocolVersion,
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
-            "chat", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
+            "chat", "concurrent-turns", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
             "model", "mcp", "skill", "usage", "session", "global-session", "doctor"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.cancel",
@@ -722,11 +784,7 @@ public sealed class DaemonServer
         Func<CancellationToken, Task<string>> action,
         CancellationToken ct)
     {
-        if (exclusive && !_runtimeGate.Wait(0))
-        {
-            await WriteAsync(writer, writerGate, id, "error", "Runtime is busy with an active turn", ct).ConfigureAwait(false);
-            return;
-        }
+        if (exclusive) await _adminGate.WaitAsync(ct).ConfigureAwait(false);
 
         try
         {
@@ -747,7 +805,7 @@ public sealed class DaemonServer
         }
         finally
         {
-            if (exclusive) _runtimeGate.Release();
+            if (exclusive) _adminGate.Release();
         }
     }
 
@@ -760,9 +818,13 @@ public sealed class DaemonServer
         long id,
         string eventName,
         string data,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? sessionId = null,
+        JsonObject? details = null)
     {
         var payload = new JsonObject { ["id"] = id, ["event"] = eventName, ["data"] = data };
+        if (!string.IsNullOrWhiteSpace(sessionId)) payload["sessionId"] = sessionId;
+        if (details is not null) payload["details"] = details;
         await writerGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {

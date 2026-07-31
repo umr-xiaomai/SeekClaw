@@ -16,11 +16,30 @@ public sealed class ChatMessage
     public string? ToolCallId { get; init; }
     public string? ToolName { get; init; }
     public bool ToolSuccess { get; init; } = true;
+    /// <summary>Unified diff produced by a mutating tool result.</summary>
+    public string? ToolDiff { get; init; }
+    /// <summary>Workspace-relative file path associated with ToolDiff.</summary>
+    public string? ToolFilePath { get; init; }
 
     public static ChatMessage User(string text) => new() { Role = ChatRole.User, Text = text };
     public static ChatMessage Assistant(string text) => new() { Role = ChatRole.Assistant, Text = text };
-    public static ChatMessage ToolResult(string callId, string toolName, string text, bool success) =>
-        new() { Role = ChatRole.Tool, ToolCallId = callId, ToolName = toolName, Text = text, ToolSuccess = success };
+    public static ChatMessage ToolResult(
+        string callId,
+        string toolName,
+        string text,
+        bool success,
+        string? diff = null,
+        string? filePath = null) =>
+        new()
+        {
+            Role = ChatRole.Tool,
+            ToolCallId = callId,
+            ToolName = toolName,
+            Text = text,
+            ToolSuccess = success,
+            ToolDiff = diff,
+            ToolFilePath = filePath,
+        };
 }
 
 public sealed record ToolCallRequest(string Id, string Name, string ArgumentsJson);
@@ -66,7 +85,16 @@ public sealed record LlmCompletion
 
 public sealed record TokenUsage(long InputTokens, long OutputTokens)
 {
-    public long Total => InputTokens + OutputTokens;
+    /// <summary>
+    /// Total prompt tokens before cache discounts. Some providers report cached tokens outside
+    /// InputTokens, so consumers should use this value when calculating a cache hit rate.
+    /// </summary>
+    public long TotalInputTokens { get; init; } = InputTokens;
+    /// <summary>Input tokens served from the provider's prompt/context cache.</summary>
+    public long CachedInputTokens { get; init; }
+    /// <summary>Input tokens written to a provider cache, when reported by the provider.</summary>
+    public long CacheCreationInputTokens { get; init; }
+    public long Total => TotalInputTokens + OutputTokens;
 }
 
 /// <summary>Thrown by LLM clients for transport / API errors, carrying retryability info.</summary>

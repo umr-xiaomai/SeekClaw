@@ -10,10 +10,10 @@ The SeekClaw Daemon exposes the Runtime to desktop clients, IDE plugins, and oth
 Every request and response must end with a newline. A connection remains able to send control requests while an Agent turn is streaming.
 
 ```json
-{"id":1,"method":"chat","params":{"message":"Analyze this project"}}
-{"id":1,"event":"thinking","data":"Inspecting the project structure"}
-{"id":1,"event":"delta","data":"This is a .NET project."}
-{"id":1,"event":"done","data":"This is a .NET project."}
+{"id":1,"method":"chat","params":{"sessionId":"20260731-120000-a1b2c3","message":"Analyze this project"}}
+{"id":1,"event":"thinking","sessionId":"20260731-120000-a1b2c3","data":"Inspecting the project structure"}
+{"id":1,"event":"delta","sessionId":"20260731-120000-a1b2c3","data":"This is a .NET project."}
+{"id":1,"event":"done","sessionId":"20260731-120000-a1b2c3","data":"This is a .NET project."}
 ```
 
 Responses use a stable event envelope: `id` identifies the request, `event` identifies the event type, and `data` is always a string. Structured `result` data is encoded as a JSON string and must be parsed once more by the client.
@@ -30,7 +30,7 @@ Responses use a stable event envelope: `id` identifies the request, `event` iden
 | `agent.mode.get` | none | Returns `plan`, `readonly`, `edit`, or `auto` |
 | `agent.mode.switch` | `{ "mode": "edit" }` | Switches and persists the Agent mode |
 
-`workspace.open` clears the resumed session for that connection. Workspace, mode, and model changes return an `error` while a turn is active so the execution context cannot change midway through a turn.
+`workspace.open` clears the legacy resumed session for that connection. New `chat` requests should include both `sessionId` and (for project tasks) `workspace`; the turn then captures its own workspace and cannot be affected by later workspace changes.
 
 ## Running and Cancelling Turns
 
@@ -41,7 +41,7 @@ Responses use a stable event envelope: `id` identifies the request, `event` iden
 {"id":11,"method":"agent.cancel","params":{"requestId":10}}
 ```
 
-The `requestId` parameter is optional; omitting it cancels the active turn on the current connection. The cancellation request receives its own `result`, and the chat request terminates with `cancelled`:
+The `requestId` parameter is optional; omitting it cancels all active turns on the current connection. The cancellation request receives its own `result`, and the selected chat request terminates with `cancelled`:
 
 ```json
 {"id":11,"event":"result","data":"cancellation requested for 10"}
@@ -60,14 +60,14 @@ Streaming events are `thinking`, `delta`, `status`, `tool_start`, and `tool_done
 | `session.archive` | `{ "id": "...", "archived": true }` | Archives or restores a session |
 | `session.delete` | `{ "id": "..." }` | Permanently deletes a session |
 | `session.resume` | `{ "id": "...", "global": false }` | Resumes a session |
-| `session.new` | `{ "global": false }` | Creates and binds a new session |
+| `session.new` | `{ "workspace": "..." }` or `{ "global": true }` | Creates and binds a new session |
 | `model.list` | none | Lists available `provider/model` references |
 | `model.catalog` | none | Returns model details, capabilities, and active state |
 | `model.switch` | `{ "model": "provider/model" }` | Switches and persists the model |
 | `model.test` | `{ "model": "provider/model" }` | Sends a minimal real request through the model |
 | `doctor` | none | Returns a Runtime health-check summary |
 | `doctor.run` | none | Returns structured Runtime and Provider checks |
-| `shutdown` | none | Cancels an active turn, returns `bye`, and gracefully stops the Daemon |
+| `shutdown` | none | Cancels all active turns, returns `bye`, and gracefully stops the Daemon |
 
 Session methods accept `workspace` for a concrete project or `global: true` for the directory-free global session store. `includeArchived` controls whether archived tasks are returned. Desktop waits until the first message to call `session.new`, so creating an empty task does not create an empty Runtime Session.
 
@@ -85,7 +85,7 @@ The Desktop settings workbench uses structured methods to manage the same config
 
 The Daemon starts listening before MCP initialization continues in the background. `mcp.reload`, MCP configuration changes, and workspace switches unregister old tools and prompts before serially connecting the new configuration.
 
-The current Daemon shares one `SeekClawRuntime`, one active workspace, and one event bus, so it allows one Agent turn globally. Other connections receive an explicit `error` while the Runtime is busy; clients should not attempt to bypass this protocol guarantee with parallel requests.
+Each `chat` request is assigned an isolated Runtime, workspace Prompt/Skills state, MCP registrations, and event subscription. A connection or multiple connections can therefore run any number of turns concurrently; practical concurrency is determined by CPU, memory, Provider throughput, and local I/O. Administrative configuration writes are serialized only to prevent file races and do not block running turns.
 
 ## Desktop Daemon lifecycle
 

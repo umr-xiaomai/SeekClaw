@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 
@@ -14,12 +15,15 @@ public interface IUsageTracker
 /// <summary>Append-only JSONL usage log with in-memory aggregation.</summary>
 public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : IUsageTracker
 {
-    private readonly Lock _gate = new();
     private readonly string _file = filePath ?? SeekClawPaths.UsageFile;
+    // Isolated concurrent turn runtimes share the append-only usage file. A process-wide
+    // lock prevents two instances from opening/writing the same file at the same time.
+    private static readonly ConcurrentDictionary<string, Lock> FileGates = new(StringComparer.OrdinalIgnoreCase);
+    private Lock Gate => FileGates.GetOrAdd(_file, static _ => new Lock());
 
     public void Record(UsageEntry entry)
     {
-        lock (_gate)
+        lock (Gate)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
             var line = JsonSerializer.Serialize(entry, SeekClawJsonContext.Compact.UsageEntry);
@@ -33,7 +37,7 @@ public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : 
 
     public IReadOnlyList<UsageEntry> ReadAll(DateTimeOffset? since = null)
     {
-        lock (_gate)
+        lock (Gate)
         {
             if (!File.Exists(_file)) return [];
             var entries = new List<UsageEntry>();
@@ -62,6 +66,11 @@ public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : 
                 Calls = g.Count(),
                 Failures = g.Count(e => !e.Success),
                 InputTokens = g.Sum(e => e.InputTokens),
+                // Older JSONL entries predate TotalInputTokens; fall back without rewriting
+                // the user's append-only history.
+                TotalInputTokens = g.Sum(e => e.TotalInputTokens > 0 ? e.TotalInputTokens : e.InputTokens),
+                CachedInputTokens = g.Sum(e => e.CachedInputTokens),
+                CacheCreationInputTokens = g.Sum(e => e.CacheCreationInputTokens),
                 OutputTokens = g.Sum(e => e.OutputTokens),
                 Cost = g.Sum(e => e.Cost),
                 AvgLatencyMs = g.Average(e => e.ElapsedMs),

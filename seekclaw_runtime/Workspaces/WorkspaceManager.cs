@@ -75,7 +75,7 @@ public sealed class WorkspaceManager : IWorkspaceManager
                     File.Exists(Path.Combine(dir.FullName, marker))))
                 return dir.FullName;
 
-            if (dir.EnumerateFiles("*.sln").Any() || dir.EnumerateFiles("*.slnx").Any())
+            if (HasFiles(dir, "*.sln") || HasFiles(dir, "*.slnx"))
                 return dir.FullName;
         }
         return null;
@@ -87,10 +87,10 @@ public sealed class WorkspaceManager : IWorkspaceManager
         void AddIf(bool condition, string kind) { if (condition) kinds.Add(kind); }
 
         AddIf(Directory.Exists(Path.Combine(root, ".git")), "git");
-        AddIf(Directory.EnumerateFiles(root, "*.sln").Any()
-              || Directory.EnumerateFiles(root, "*.slnx").Any()
-              || Directory.EnumerateFiles(root, "*.csproj").Any()
-              || Directory.EnumerateDirectories(root).Any(d => Directory.EnumerateFiles(d, "*.csproj").Any()), "dotnet");
+        AddIf(HasFiles(root, "*.sln")
+              || HasFiles(root, "*.slnx")
+              || HasFiles(root, "*.csproj")
+              || HasChildFiles(root, "*.csproj"), "dotnet");
         AddIf(File.Exists(Path.Combine(root, "package.json")), "node");
         AddIf(File.Exists(Path.Combine(root, "pyproject.toml"))
               || File.Exists(Path.Combine(root, "requirements.txt"))
@@ -113,6 +113,29 @@ public sealed class WorkspaceManager : IWorkspaceManager
         }
 
         return kinds;
+    }
+
+    private static bool HasFiles(DirectoryInfo directory, string pattern)
+    {
+        try { return directory.EnumerateFiles(pattern).Any(); }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+        catch (IOException) { return false; }
+    }
+
+    private static bool HasFiles(string directory, string pattern) =>
+        HasFiles(new DirectoryInfo(directory), pattern);
+
+    private static bool HasChildFiles(string root, string pattern)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(root)
+                .Any(directory => HasFiles(new DirectoryInfo(directory), pattern));
+        }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+        catch (IOException) { return false; }
     }
 
     private static WorkspaceConfig? LoadWorkspaceConfig(string root)

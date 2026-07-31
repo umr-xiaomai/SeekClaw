@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Providers;
@@ -26,7 +27,9 @@ public interface ISessionStore
 
 public sealed class SessionStore : ISessionStore
 {
-    private readonly Lock _gate = new();
+    // Isolated daemon turns create separate SessionStore instances. Keep file locks
+    // process-wide so concurrent turns cannot interleave writes to one session JSONL.
+    private static readonly ConcurrentDictionary<string, Lock> FileGates = new(StringComparer.OrdinalIgnoreCase);
 
     public AgentSession Create(WorkspaceInfo workspace)
     {
@@ -82,11 +85,13 @@ public sealed class SessionStore : ISessionStore
 
     public void Append(AgentSession session, ChatMessage message)
     {
-        session.Messages.Add(message);
         var record = ToRecord(message);
-        lock (_gate)
+        lock (GateFor(session.FilePath))
+        {
+            session.Messages.Add(message);
             File.AppendAllText(session.FilePath,
                 JsonSerializer.Serialize(record, SeekClawJsonContext.Compact.SessionMessage) + Environment.NewLine);
+        }
     }
 
     public SessionHeader UpdateMetadata(
@@ -96,7 +101,7 @@ public sealed class SessionStore : ISessionStore
         bool? archived = null)
     {
         var file = SessionFile(workspace, sessionId);
-        lock (_gate)
+        lock (GateFor(file))
         {
             if (!File.Exists(file))
                 throw new FileNotFoundException($"Session not found: {sessionId}", file);
@@ -119,7 +124,7 @@ public sealed class SessionStore : ISessionStore
     public void Delete(WorkspaceInfo workspace, string sessionId)
     {
         var file = SessionFile(workspace, sessionId);
-        lock (_gate)
+        lock (GateFor(file))
         {
             if (!File.Exists(file))
                 throw new FileNotFoundException($"Session not found: {sessionId}", file);
@@ -166,6 +171,8 @@ public sealed class SessionStore : ISessionStore
         ToolCallId = message.ToolCallId,
         ToolName = message.ToolName,
         ToolSuccess = message.Role == ChatRole.Tool ? message.ToolSuccess : null,
+        ToolDiff = message.ToolDiff,
+        ToolFilePath = message.ToolFilePath,
     };
 
     private static ChatMessage ToMessage(SessionMessage record)
@@ -185,6 +192,8 @@ public sealed class SessionStore : ISessionStore
             ToolCallId = record.ToolCallId,
             ToolName = record.ToolName,
             ToolSuccess = record.ToolSuccess ?? true,
+            ToolDiff = record.ToolDiff,
+            ToolFilePath = record.ToolFilePath,
         };
     }
 
@@ -195,4 +204,7 @@ public sealed class SessionStore : ISessionStore
             throw new ArgumentException("Invalid session id.", nameof(sessionId));
         return Path.Combine(workspace.SessionsDir, sessionId + ".jsonl");
     }
+
+    private static Lock GateFor(string file) =>
+        FileGates.GetOrAdd(Path.GetFullPath(file), static _ => new Lock());
 }

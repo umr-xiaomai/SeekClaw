@@ -32,7 +32,7 @@ Open “Settings → Models & Providers” to manage Providers, Profiles, and th
 1. Select “+ Provider” or edit an existing entry.
 2. Choose the `openai` or `anthropic` protocol and enter the ID, name, Base URL, and model IDs.
 3. Enter the API key directly or provide the name of an environment variable containing it.
-4. Configure proxy, timeout, priority, and enabled state as needed.
+4. Configure proxy, timeout, priority, prompt caching, and enabled state as needed.
 5. Save and select “Test,” then activate the Provider or model.
 
 An `apiKey` stored explicitly in the configuration is read, displayed, and edited directly by Desktop. A value referenced through `apiKeyEnv` is resolved only by the Runtime and is never returned to the UI. An empty key field therefore does not mean that the environment variable is unavailable.
@@ -56,6 +56,7 @@ Providers are stored as an array, with models nested under their Provider:
       "kind": "openai",
       "baseUrl": "https://api.deepseek.com/v1",
       "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "promptCaching": true,
       "enabled": true,
       "priority": 0,
       "timeoutSeconds": 120,
@@ -73,6 +74,8 @@ Providers are stored as an array, with models nested under their Provider:
 ```
 
 Use `"apiKey": "sk-..."` to store a key directly, but never commit a personal global configuration containing credentials.
+
+`promptCaching` is enabled by default. OpenAI-compatible services keep using their automatic prefix caches; the Anthropic protocol additionally places `cache_control` checkpoints after the stable system prompt and tool definitions. Disable it in Desktop or set `"promptCaching": false` when an older Anthropic-compatible gateway rejects that field. The default prompts contain no dynamic timestamp, and tool definitions are sorted by name so the cached prefix remains byte-stable across steps.
 
 ## Profiles and routing
 

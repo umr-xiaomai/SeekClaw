@@ -7,6 +7,9 @@ public sealed class UsageEntry
     public string Provider { get; set; } = "";
     public string Model { get; set; } = "";
     public long InputTokens { get; set; }
+    public long TotalInputTokens { get; set; }
+    public long CachedInputTokens { get; set; }
+    public long CacheCreationInputTokens { get; set; }
     public long OutputTokens { get; set; }
     public decimal Cost { get; set; }
     public double ElapsedMs { get; set; }
@@ -21,10 +24,13 @@ public sealed class UsageAggregate
     public long Calls { get; set; }
     public long Failures { get; set; }
     public long InputTokens { get; set; }
+    public long TotalInputTokens { get; set; }
+    public long CachedInputTokens { get; set; }
+    public long CacheCreationInputTokens { get; set; }
     public long OutputTokens { get; set; }
     public decimal Cost { get; set; }
     public double AvgLatencyMs { get; set; }
 
-    public long TotalTokens => InputTokens + OutputTokens;
+    public long TotalTokens => TotalInputTokens + OutputTokens;
     public double SuccessRate => Calls == 0 ? 1.0 : (double)(Calls - Failures) / Calls;
 }

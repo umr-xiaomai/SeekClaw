@@ -16,6 +16,7 @@ interface ProviderFormValue {
   priority: number
   timeoutSeconds: number
   proxy: string
+  promptCaching: boolean
 }
 
 const props = defineProps<{
@@ -33,7 +34,7 @@ const emit = defineEmits<{
 
 const form = reactive<ProviderFormValue>({
   id: '', name: '', kind: 'openai', baseUrl: '', apiKey: '', apiKeyEnv: '', models: '',
-  enabled: true, priority: 0, timeoutSeconds: 120, proxy: ''
+  enabled: true, priority: 0, timeoutSeconds: 120, proxy: '', promptCaching: true
 })
 const firstInput = ref<HTMLInputElement | null>(null)
 const revealKey = ref(false)
@@ -168,6 +169,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                   <small>允许该 Provider 参与模型选择和自动路由</small>
                 </span>
                 <input v-model="form.enabled" class="sr-only" type="checkbox" />
+                <span class="toggle-switch" aria-hidden="true"><span /></span>
+              </label>
+              <label class="provider-enabled-row">
+                <span>
+                  <strong>Prompt Cache / 提示词缓存</strong>
+                  <small>保持稳定前缀；Anthropic 会发送原生 cache_control 检查点</small>
+                </span>
+                <input v-model="form.promptCaching" class="sr-only" type="checkbox" />
                 <span class="toggle-switch" aria-hidden="true"><span /></span>
               </label>
             </section>

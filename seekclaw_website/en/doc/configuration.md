@@ -97,6 +97,7 @@ This example uses the current field names:
 - `apiKey` stores the credential directly, and Desktop displays it directly.
 - `apiKeyEnv` stores an environment-variable name and is used only when `apiKey` is empty. Its resolved value is not returned to Desktop.
 - `organization`, `proxy`, `headers`, and `timeoutSeconds` can be set when required by the service.
+- `promptCaching` defaults to enabled; Anthropic requests emit native cache checkpoints and incompatible third-party gateways can opt out.
 
 ### Routing
 

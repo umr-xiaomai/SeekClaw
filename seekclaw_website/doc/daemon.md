@@ -10,10 +10,10 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 请求和响应都必须以换行符结尾。一次连接可以在 Agent 输出过程中继续发送控制请求。
 
 ```json
-{"id":1,"method":"chat","params":{"message":"分析当前项目"}}
-{"id":1,"event":"thinking","data":"正在检查项目结构"}
-{"id":1,"event":"delta","data":"这是一个 .NET 项目。"}
-{"id":1,"event":"done","data":"这是一个 .NET 项目。"}
+{"id":1,"method":"chat","params":{"sessionId":"20260731-120000-a1b2c3","message":"分析当前项目"}}
+{"id":1,"event":"thinking","sessionId":"20260731-120000-a1b2c3","data":"正在检查项目结构"}
+{"id":1,"event":"delta","sessionId":"20260731-120000-a1b2c3","data":"这是一个 .NET 项目。"}
+{"id":1,"event":"done","sessionId":"20260731-120000-a1b2c3","data":"这是一个 .NET 项目。"}
 ```
 
 响应保持统一事件信封：`id` 对应请求，`event` 表示事件类型，`data` 始终为字符串。`result` 中的结构化结果会编码成 JSON 字符串，由客户端再次解析。
@@ -30,7 +30,7 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `agent.mode.get` | 无 | 返回 `plan`、`readonly`、`edit` 或 `auto` |
 | `agent.mode.switch` | `{ "mode": "edit" }` | 切换并持久化 Agent 模式 |
 
-`workspace.open` 会清除当前连接已恢复的 Session。活动 turn 运行时，工作区、模式和模型切换会返回 `error`，避免执行上下文在中途改变。
+`workspace.open` 会清除当前连接的旧式恢复 Session。新的 `chat` 请求应携带 `sessionId`，项目任务同时携带 `workspace`；turn 启动时会捕获自己的工作区，之后的工作区、模式或模型切换不会改变已经运行的 turn。
 
 ## 执行与取消
 
@@ -60,14 +60,14 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `session.archive` | `{ "id": "...", "archived": true }` | 归档或恢复 Session |
 | `session.delete` | `{ "id": "..." }` | 永久删除 Session |
 | `session.resume` | `{ "id": "...", "global": false }` | 恢复 Session |
-| `session.new` | `{ "global": false }` | 创建并绑定一个新 Session |
+| `session.new` | `{ "workspace": "..." }` 或 `{ "global": true }` | 创建并绑定一个新 Session |
 | `model.list` | 无 | 列出可用的 `provider/model` 引用 |
 | `model.catalog` | 无 | 返回模型详情、能力和活动状态 |
 | `model.switch` | `{ "model": "provider/model" }` | 切换并持久化模型 |
 | `model.test` | `{ "model": "provider/model" }` | 发送最小真实请求测试模型 |
 | `doctor` | 无 | 返回 Runtime 健康检查摘要 |
 | `doctor.run` | 无 | 返回结构化 Runtime 与 Provider 检查 |
-| `shutdown` | 无 | 取消活动 turn，返回 `bye` 并优雅停止 Daemon |
+| `shutdown` | 无 | 取消全部活动 turn，返回 `bye` 并优雅停止 Daemon |
 
 Session 方法可传 `workspace` 指向具体项目，也可传 `global: true` 使用不绑定目录的全局 Session 空间。`includeArchived` 控制列表是否包含已归档任务。Desktop 在第一次发送消息时才调用 `session.new`，因此新建一个空白任务不会产生无内容的 Session。
 
@@ -85,7 +85,7 @@ Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直�
 
 Daemon 会先建立 IPC 监听，再在后台初始化 MCP。`mcp.reload`、MCP 配置修改和工作区切换都会先注销旧工具与 Prompt，再串行连接新配置。
 
-当前 Daemon 共享一个 `SeekClawRuntime`、一个活动工作区和一个事件总线，因此全局只允许一个 Agent turn。其他连接在 Runtime 忙碌时会收到明确的 `error`；这是协议保证，不应通过并行请求绕过。
+Daemon 对每个 `chat` 请求按 `sessionId` 创建独立的 Agent turn。每个 turn 使用隔离的 Runtime、Prompt/Skills、MCP 注册和事件订阅，因此同一连接或多个连接可以并发运行任意数量的任务；并发度由 CPU、内存、Provider 和本机 I/O 性能共同决定。管理类配置写入仍然串行化，避免配置文件互相覆盖，但不会阻塞已经启动的 Agent turn。
 
 ## Desktop 的 Daemon 生命周期
 

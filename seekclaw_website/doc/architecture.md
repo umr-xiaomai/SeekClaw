@@ -1,6 +1,6 @@
 # 架构设计与 Runtime First 原则
 
-SeekClaw 的核心设计遵循 **Runtime First** 原则与**清洁架构（Clean Architecture）**。Desktop 与 CLI 是两个正式前端：它们复用同一套 Runtime 能力，但针对图形界面和终端分别承担不同的展示职责。
+SeekClaw 的核心设计遵循 **Runtime First** 原则与**清洁架构（Clean Architecture）**。Desktop 与 CLI 是两个正式前端：它们复用同一套 Runtime 能力，但针对图形界面和终端分别承担不同的展示职责。Daemon 为每个任务建立隔离的 Agent turn，避免并发任务共享可变的工作区 Prompt、Skills 和事件订阅状态。
 
 ---
 

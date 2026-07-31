@@ -108,6 +108,56 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
+    public void AnthropicBody_AddsCacheCheckpoints_ToStableSystemAndTools()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "anthropic", Kind = "anthropic", BaseUrl = "https://example.test" },
+            Model = new ModelConfig
+            {
+                Id = "model",
+                Capabilities = new ModelCapabilities { ToolCalling = true },
+            },
+            System = "stable system prompt",
+            Messages = [ChatMessage.User("hello")],
+            Tools =
+            [
+                new ToolDefinition("read_file", "Read a file", new System.Text.Json.Nodes.JsonObject
+                {
+                    ["type"] = "object",
+                }),
+            ],
+        };
+
+        var body = AnthropicClient.BuildBody(request);
+        var system = body["system"]!.AsArray();
+        Assert.Equal("ephemeral", system[0]!["cache_control"]!["type"]!.GetValue<string>());
+        var tools = body["tools"]!.AsArray();
+        Assert.Equal("ephemeral", tools[0]!["cache_control"]!["type"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AnthropicBody_CacheCheckpoints_CanBeDisabledForCompatibleEndpoints()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig
+            {
+                Id = "compatible",
+                Kind = "anthropic",
+                BaseUrl = "https://example.test",
+                PromptCaching = false,
+            },
+            Model = new ModelConfig { Id = "model" },
+            System = "system prompt",
+            Messages = [ChatMessage.User("hello")],
+        };
+
+        var body = AnthropicClient.BuildBody(request);
+        Assert.Equal("system prompt", body["system"]!.GetValue<string>());
+    }
+
+    [Fact]
     public void Candidates_WorkspaceOverride_BeatsProfile_ThenStrategy_ThenFallback()
     {
         var profile = _store.Config.GetActiveProfile();
@@ -165,13 +215,15 @@ public sealed class ProviderTests : IDisposable
     public void UsageTracker_Records_AndAggregates()
     {
         var tracker = new UsageTracker(new EventBus(), Path.Combine(_dir, "usage.jsonl"));
-        tracker.Record(new UsageEntry { Provider = "p", Model = "m", InputTokens = 100, OutputTokens = 50, Cost = 0.01m, ElapsedMs = 120, Success = true });
-        tracker.Record(new UsageEntry { Provider = "p", Model = "m", InputTokens = 200, OutputTokens = 100, Cost = 0.02m, ElapsedMs = 80, Success = false });
+        tracker.Record(new UsageEntry { Provider = "p", Model = "m", InputTokens = 100, TotalInputTokens = 140, CachedInputTokens = 40, OutputTokens = 50, Cost = 0.01m, ElapsedMs = 120, Success = true });
+        tracker.Record(new UsageEntry { Provider = "p", Model = "m", InputTokens = 200, TotalInputTokens = 260, CachedInputTokens = 60, OutputTokens = 100, Cost = 0.02m, ElapsedMs = 80, Success = false });
 
         var aggregate = Assert.Single(tracker.Aggregate());
         Assert.Equal(2, aggregate.Calls);
         Assert.Equal(1, aggregate.Failures);
         Assert.Equal(300, aggregate.InputTokens);
+        Assert.Equal(400, aggregate.TotalInputTokens);
+        Assert.Equal(100, aggregate.CachedInputTokens);
         Assert.Equal(150, aggregate.OutputTokens);
         Assert.Equal(0.03m, aggregate.Cost);
         Assert.Equal(0.5, aggregate.SuccessRate);

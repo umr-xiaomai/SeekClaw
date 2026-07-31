@@ -5,7 +5,6 @@ Environment:
 - Project: {{project}} ({{language}})
 - Working directory: {{cwd}}
 - OS: {{os}} ({{platform}})
-- Date: {{datetime}}
 - Model: {{provider}}/{{model}}
 
 Available tools: {{tool}}

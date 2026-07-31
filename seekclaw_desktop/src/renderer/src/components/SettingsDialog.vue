@@ -52,6 +52,7 @@ interface ProviderInfo {
   priority: number
   timeoutSeconds: number
   proxy?: string
+  promptCaching: boolean
   active: boolean
 }
 
@@ -67,6 +68,7 @@ interface ProviderFormValue {
   priority: number
   timeoutSeconds: number
   proxy: string
+  promptCaching: boolean
 }
 
 interface ModelInfo {
@@ -118,6 +120,9 @@ interface UsageInfo {
   calls: number
   failures: number
   inputTokens: number
+  totalInputTokens?: number
+  cachedInputTokens?: number
+  cacheCreationInputTokens?: number
   outputTokens: number
   cost: number
   avgLatencyMs: number
@@ -164,7 +169,7 @@ const editingMcpName = ref<string | null>(null)
 const providerForm = reactive({
   id: '', name: '', kind: 'openai' as 'openai' | 'anthropic', baseUrl: '',
   apiKey: '', apiKeyEnv: '', models: '', enabled: true, priority: 0,
-  timeoutSeconds: 120, proxy: ''
+  timeoutSeconds: 120, proxy: '', promptCaching: true
 })
 const profileForm = reactive({
   name: '', provider: '', model: '', strategy: 'balanced', temperature: ''
@@ -216,9 +221,19 @@ const filteredModels = computed(() => {
 })
 const totalUsage = computed(() => usage.value.reduce((total, item) => ({
   calls: total.calls + item.calls,
-  tokens: total.tokens + item.inputTokens + item.outputTokens,
+  tokens: total.tokens + promptInputTokens(item) + item.outputTokens,
   cost: total.cost + item.cost
 }), { calls: 0, tokens: 0, cost: 0 }))
+
+function promptInputTokens(item: UsageInfo): number {
+  return item.totalInputTokens && item.totalInputTokens > 0 ? item.totalInputTokens : item.inputTokens
+}
+
+function cacheHitRate(item: UsageInfo): number {
+  const cached = item.cachedInputTokens ?? 0
+  const total = promptInputTokens(item)
+  return total > 0 ? Math.min(100, Math.round(cached / total * 100)) : 0
+}
 
 const sections: Array<{ id: SettingsSection; label: string; icon: typeof Settings2 }> = [
   { id: 'general', label: '常规', icon: Settings2 },
@@ -369,7 +384,7 @@ function newProvider(): void {
   editingProviderId.value = null
   Object.assign(providerForm, {
     id: '', name: '', kind: 'openai', baseUrl: '', apiKey: '', apiKeyEnv: '',
-    models: '', enabled: true, priority: 0, timeoutSeconds: 120, proxy: ''
+    models: '', enabled: true, priority: 0, timeoutSeconds: 120, proxy: '', promptCaching: true
   })
   providerEditorOpen.value = true
 }
@@ -388,7 +403,8 @@ function editProvider(provider: ProviderInfo): void {
     enabled: provider.enabled,
     priority: provider.priority,
     timeoutSeconds: provider.timeoutSeconds,
-    proxy: provider.proxy ?? ''
+    proxy: provider.proxy ?? '',
+    promptCaching: provider.promptCaching ?? true
   })
   providerEditorOpen.value = true
 }
@@ -861,8 +877,8 @@ watch(section, () => { void loadCurrentSection() })
 
             <section v-if="usage.length > 0" class="usage-table-wrap">
               <table class="usage-table">
-                <thead><tr><th>模型</th><th>调用</th><th>成功率</th><th>Tokens</th><th>平均延迟</th><th>成本</th></tr></thead>
-                <tbody><tr v-for="item in usage" :key="`${item.provider}/${item.model}`"><td><strong>{{ item.provider }}/{{ item.model }}</strong></td><td>{{ item.calls }}</td><td>{{ Math.round(item.successRate * 100) }}%</td><td>{{ (item.inputTokens + item.outputTokens).toLocaleString() }}</td><td>{{ Math.round(item.avgLatencyMs) }} ms</td><td>${{ item.cost.toFixed(4) }}</td></tr></tbody>
+                <thead><tr><th>模型</th><th>调用</th><th>成功率</th><th>缓存命中</th><th>Tokens</th><th>平均延迟</th><th>成本</th></tr></thead>
+                <tbody><tr v-for="item in usage" :key="`${item.provider}/${item.model}`"><td><strong>{{ item.provider }}/{{ item.model }}</strong></td><td>{{ item.calls }}</td><td>{{ Math.round(item.successRate * 100) }}%</td><td><span class="cache-rate">{{ cacheHitRate(item) }}%</span><small v-if="item.cachedInputTokens">命中 {{ item.cachedInputTokens.toLocaleString() }}<template v-if="item.cacheCreationInputTokens"> · 写入 {{ item.cacheCreationInputTokens.toLocaleString() }}</template></small></td><td>{{ (promptInputTokens(item) + item.outputTokens).toLocaleString() }}</td><td>{{ Math.round(item.avgLatencyMs) }} ms</td><td>${{ item.cost.toFixed(4) }}</td></tr></tbody>
               </table>
             </section>
           </template>

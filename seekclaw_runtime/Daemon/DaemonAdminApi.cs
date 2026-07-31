@@ -115,6 +115,7 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
         provider.Enabled = parameters["enabled"]?.GetValue<bool?>() ?? provider.Enabled;
         provider.Priority = parameters["priority"]?.GetValue<int?>() ?? provider.Priority;
         provider.TimeoutSeconds = parameters["timeoutSeconds"]?.GetValue<int?>() ?? provider.TimeoutSeconds;
+        provider.PromptCaching = parameters["promptCaching"]?.GetValue<bool?>() ?? provider.PromptCaching;
 
         if (parameters["clearApiKey"]?.GetValue<bool>() == true)
             provider.ApiKey = null;
@@ -369,6 +370,9 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
                 ["calls"] = aggregate.Calls,
                 ["failures"] = aggregate.Failures,
                 ["inputTokens"] = aggregate.InputTokens,
+                ["totalInputTokens"] = aggregate.TotalInputTokens,
+                ["cachedInputTokens"] = aggregate.CachedInputTokens,
+                ["cacheCreationInputTokens"] = aggregate.CacheCreationInputTokens,
                 ["outputTokens"] = aggregate.OutputTokens,
                 ["cost"] = aggregate.Cost,
                 ["avgLatencyMs"] = aggregate.AvgLatencyMs,
@@ -411,8 +415,11 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
                 ["text"] = message.Text,
                 ["thinking"] = message.Thinking,
                 ["toolCalls"] = toolCalls,
+                ["toolCallId"] = message.ToolCallId,
                 ["toolName"] = message.ToolName,
                 ["toolSuccess"] = message.ToolSuccess,
+                ["toolDiff"] = message.ToolDiff,
+                ["toolFilePath"] = message.ToolFilePath,
             });
         }
         return new JsonObject
@@ -519,6 +526,7 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
         ["enabled"] = provider.Enabled,
         ["priority"] = provider.Priority,
         ["timeoutSeconds"] = provider.TimeoutSeconds,
+        ["promptCaching"] = provider.PromptCaching,
         ["proxy"] = provider.Proxy,
         ["active"] = active,
     };

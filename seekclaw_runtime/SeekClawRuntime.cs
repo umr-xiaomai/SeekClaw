@@ -48,6 +48,24 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public static SeekClawRuntime Create(string? startDirectory = null)
         => CreateCore(startDirectory, null);
 
+    /// <summary>
+    /// Creates an isolated runtime for one concurrent agent turn. The daemon uses one
+    /// instance per task so workspace prompts, skills, MCP registrations and event
+    /// subscriptions cannot leak between tasks.
+    /// </summary>
+    internal static SeekClawRuntime CreateIsolated(WorkspaceInfo workspace)
+    {
+        SeekClawPaths.EnsureCreated();
+
+        var services = new ServiceCollection().AddSeekClawRuntime().BuildServiceProvider();
+        var runtime = new SeekClawRuntime(services, workspace);
+        runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
+        runtime.Skills.Attach(workspace);
+        runtime.RegisterBasePromptContributions();
+        runtime.RegisterBuiltinTools();
+        return runtime;
+    }
+
     internal static SeekClawRuntime Create(string startDirectory, IConfigStore configStore)
         => CreateCore(startDirectory, services => services.AddSingleton(configStore));
 
