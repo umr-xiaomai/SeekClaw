@@ -31,11 +31,11 @@ Open “Settings → Models & Providers” to manage Providers, Profiles, and th
 
 1. Select “+ Provider” or edit an existing entry.
 2. Choose the `openai` or `anthropic` protocol and enter the ID, name, Base URL, and model IDs.
-3. Enter the API key directly or provide the name of an environment variable containing it.
+3. Enter the API key directly; it is stored in the configuration file.
 4. Configure proxy, timeout, priority, prompt caching, and enabled state as needed.
 5. Save and select “Test,” then activate the Provider or model.
 
-An `apiKey` stored explicitly in the configuration is read, displayed, and edited directly by Desktop. A value referenced through `apiKeyEnv` is resolved only by the Runtime and is never returned to the UI. An empty key field therefore does not mean that the environment variable is unavailable.
+The `apiKey` value is stored explicitly in the configuration and is read, displayed, and edited directly by Desktop. Runtime does not read API keys from environment variables.
 
 On request failure, the Runtime preserves the Provider name, HTTP status, and response body. Protocol mismatches, missing tool results, invalid model IDs, and other 400 responses are shown in full so the server's concrete guidance remains available.
 
@@ -55,7 +55,7 @@ Providers are stored as an array, with models nested under their Provider:
       "name": "DeepSeek",
       "kind": "openai",
       "baseUrl": "https://api.deepseek.com/v1",
-      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "apiKey": "your-api-key",
       "promptCaching": true,
       "enabled": true,
       "priority": 0,

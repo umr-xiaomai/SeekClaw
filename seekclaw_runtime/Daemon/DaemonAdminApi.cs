@@ -111,11 +111,12 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
         provider.Kind = kind;
         provider.Name = OptionalString(parameters, "name") ?? provider.Name;
         provider.BaseUrl = OptionalString(parameters, "baseUrl") ?? provider.BaseUrl;
-        provider.ApiKeyEnv = OptionalString(parameters, "apiKeyEnv") ?? provider.ApiKeyEnv;
         provider.Proxy = OptionalString(parameters, "proxy") ?? provider.Proxy;
         provider.Enabled = parameters["enabled"]?.GetValue<bool?>() ?? provider.Enabled;
         provider.Priority = parameters["priority"]?.GetValue<int?>() ?? provider.Priority;
         provider.TimeoutSeconds = parameters["timeoutSeconds"]?.GetValue<int?>() ?? provider.TimeoutSeconds;
+        if (parameters.ContainsKey("modelListUrl"))
+            provider.ModelListUrl = OptionalString(parameters, "modelListUrl");
         provider.PromptCaching = parameters["promptCaching"]?.GetValue<bool?>() ?? provider.PromptCaching;
 
         if (parameters["clearApiKey"]?.GetValue<bool>() == true)
@@ -252,6 +253,63 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
             ["success"] = result.Success,
             ["detail"] = result.Detail,
             ["latencyMs"] = result.LatencyMs,
+        }.ToJsonString();
+    }
+
+    public async Task<string> FetchProviderModelsAsync(JsonObject parameters, CancellationToken ct)
+    {
+        var id = RequiredString(parameters, "id");
+        var provider = runtime.ConfigStore.Config.FindProvider(id)
+                       ?? throw new DaemonRequestException($"Provider not found: {id}");
+        var url = OptionalString(parameters, "url") ?? provider.ModelListUrl;
+        var ids = await runtime.Providers.FetchModelsAsync(provider, url, ct).ConfigureAwait(false);
+        var existing = provider.Models.ToDictionary(model => model.Id, StringComparer.OrdinalIgnoreCase);
+        foreach (var modelId in ids)
+        {
+            if (existing.ContainsKey(modelId)) continue;
+            var model = new ModelConfig { Id = modelId };
+            provider.Models.Add(model);
+            existing[modelId] = model;
+        }
+        runtime.ConfigStore.Save();
+        return Strings(ids).ToJsonString();
+    }
+
+    public string UpdateModel(JsonObject parameters)
+    {
+        var providerId = RequiredString(parameters, "provider");
+        var modelId = RequiredString(parameters, "id");
+        var provider = runtime.ConfigStore.Config.FindProvider(providerId)
+                       ?? throw new DaemonRequestException($"Provider not found: {providerId}");
+        var model = provider.Models.FirstOrDefault(item =>
+            item.Id.Equals(modelId, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new DaemonRequestException($"Model not found: {providerId}/{modelId}");
+
+        if (parameters.ContainsKey("alias"))
+            model.Alias = parameters["alias"]?.GetValue<string>()?.Trim() is { Length: > 0 } alias ? alias : null;
+        if (parameters["contextWindow"]?.GetValue<int?>() is { } contextWindow)
+        {
+            if (contextWindow < 1_024 || contextWindow > 10_000_000)
+                throw new DaemonRequestException("params.contextWindow must be between 1024 and 10000000");
+            model.ContextWindow = contextWindow;
+        }
+        if (parameters["maxOutput"]?.GetValue<int?>() is { } maxOutput)
+        {
+            if (maxOutput < 128 || maxOutput > 1_000_000)
+                throw new DaemonRequestException("params.maxOutput must be between 128 and 1000000");
+            model.MaxOutput = maxOutput;
+        }
+        if (parameters["vision"]?.GetValue<bool?>() is { } vision)
+            model.Capabilities.Vision = vision;
+        runtime.ConfigStore.Save();
+        return new JsonObject
+        {
+            ["provider"] = provider.Id,
+            ["id"] = model.Id,
+            ["alias"] = model.Alias,
+            ["contextWindow"] = model.ContextWindow,
+            ["maxOutput"] = model.MaxOutput,
+            ["vision"] = model.Capabilities.Vision,
         }.ToJsonString();
     }
 
@@ -592,11 +650,11 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
         ["baseUrl"] = provider.BaseUrl,
         ["apiKey"] = provider.ApiKey,
         ["apiKeyConfigured"] = !string.IsNullOrWhiteSpace(provider.ResolveApiKey()),
-        ["apiKeyEnv"] = provider.ApiKeyEnv,
         ["models"] = Strings(provider.Models.Select(model => model.Id)),
         ["enabled"] = provider.Enabled,
         ["priority"] = provider.Priority,
         ["timeoutSeconds"] = provider.TimeoutSeconds,
+        ["modelListUrl"] = provider.ModelListUrl,
         ["promptCaching"] = provider.PromptCaching,
         ["proxy"] = provider.Proxy,
         ["active"] = active,

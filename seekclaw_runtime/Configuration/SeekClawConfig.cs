@@ -50,11 +50,11 @@ public sealed class ProviderConfig
     public string Kind { get; set; } = "openai";
     public string BaseUrl { get; set; } = "";
     public string? ApiKey { get; set; }
-    /// <summary>Environment variable to read the key from when <see cref="ApiKey"/> is empty.</summary>
-    public string? ApiKeyEnv { get; set; }
     public string? Organization { get; set; }
     public string? Proxy { get; set; }
     public int TimeoutSeconds { get; set; } = 120;
+    /// <summary>Optional URL used by the Desktop "fetch models" action; defaults to the provider /models endpoint.</summary>
+    public string? ModelListUrl { get; set; }
     public Dictionary<string, string>? Headers { get; set; }
     /// <summary>Optional neutral-level to provider wire-value overrides.</summary>
     public Dictionary<string, string>? ReasoningEffortMap { get; set; }
@@ -70,13 +70,8 @@ public sealed class ProviderConfig
 
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Id : Name;
 
-    public string? ResolveApiKey()
-    {
-        if (!string.IsNullOrWhiteSpace(ApiKey)) return ApiKey;
-        if (!string.IsNullOrWhiteSpace(ApiKeyEnv))
-            return Environment.GetEnvironmentVariable(ApiKeyEnv);
-        return null;
-    }
+    /// <summary>Returns the API key explicitly stored in the configuration file.</summary>
+    public string? ResolveApiKey() => ApiKey;
 }
 
 public sealed class ModelConfig

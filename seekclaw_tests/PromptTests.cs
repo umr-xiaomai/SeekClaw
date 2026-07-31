@@ -95,4 +95,19 @@ public sealed class PromptTests : IDisposable
         registration.Dispose();
         Assert.Empty(registry.All);
     }
+
+    [Fact]
+    public void CapabilityInstruction_TellsVisionModelsToUseAttachedImages()
+    {
+        Assert.Equal("", PromptVariables.BuildCapabilityInstruction(vision: false));
+
+        var visionPrompt = PromptVariables.BuildCapabilityInstruction(vision: true);
+        Assert.Contains("MULTIMODAL", visionPrompt);
+        Assert.Contains("Image attachments in user messages are available", visionPrompt);
+        Assert.Contains("Do not say that you lack a vision encoder", visionPrompt);
+        Assert.Contains("provider explicitly exposes another output modality", visionPrompt);
+
+        var imageOutputPrompt = PromptVariables.BuildCapabilityInstruction(vision: true, imageOutput: true);
+        Assert.Contains("may also expose image output", imageOutputPrompt);
+    }
 }

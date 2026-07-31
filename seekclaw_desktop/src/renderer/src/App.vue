@@ -3,16 +3,19 @@ import {
   Braces,
   Bug,
   Circle,
+  CornerDownLeft,
   Folder,
   FolderOpen,
   Globe2,
   Hammer,
   History,
+  LoaderCircle,
   MoreHorizontal,
   PanelRight,
   RefreshCw,
   Telescope,
-  TerminalSquare
+  TerminalSquare,
+  Trash2
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
@@ -29,7 +32,7 @@ import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import { confirmAction } from './confirmation'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
-import type { ChatMessage, ImageAttachment, ProjectItem, ThreadItem, ToolActivity } from './types'
+import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ToolActivity } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
 const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v2'
@@ -102,6 +105,7 @@ const settingsOpen = ref(false)
 const archivedTasksOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
+const gitPanelWidth = ref(560)
 const toolDiff = ref<{ path: string; diff: string } | null>(null)
 const settingsSection = ref<'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'>('general')
 const taskSettingsThreadId = ref('')
@@ -126,6 +130,9 @@ const scrollArea = ref<HTMLElement | null>(null)
 const composer = ref<InstanceType<typeof Composer> | null>(null)
 const autoFollowConversation = ref(true)
 const taskNotice = ref<{ threadId: string; title: string; kind: 'done' | 'error' } | null>(null)
+const conversationLoading = ref(false)
+const conversationLoadError = ref('')
+let conversationSelectionToken = 0
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
 const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? ReasoningLevel.High)
@@ -242,6 +249,17 @@ function openToolDiff(path: string, diff: string): void {
   toolDiff.value = { path, diff }
   gitPanelTab.value = 'diff'
   gitPanelOpen.value = true
+}
+
+function closeGitPanel(): void {
+  gitPanelOpen.value = false
+  toolDiff.value = null
+}
+
+function resizeGitPanel(width: number): void {
+  if (!Number.isFinite(width)) return
+  const maxWidth = Math.min(720, Math.max(280, Math.floor(window.innerWidth * 0.66)))
+  gitPanelWidth.value = Math.min(maxWidth, Math.max(280, Math.round(width)))
 }
 
 async function openProjectTerminal(): Promise<void> {
@@ -444,6 +462,7 @@ async function loadRuntimeState(): Promise<void> {
       if (recent) {
         activeThreadId.value = recent.id
         selectedProjectId.value = recent.projectId ?? ''
+        await selectThread(recent.id)
       }
     }
   } catch {
@@ -524,6 +543,9 @@ async function openWorkspace(): Promise<void> {
   const project = await saveProject(ensureProject(path))
   selectedProjectId.value = project.id
   activeThreadId.value = ''
+  conversationSelectionToken++
+  conversationLoading.value = false
+  conversationLoadError.value = ''
   await refreshProjectSessions(project).catch(() => undefined)
 }
 
@@ -556,6 +578,10 @@ function newTask(projectId?: string): void {
   threads.value.unshift(thread)
   selectedProjectId.value = project?.id ?? ''
   activeThreadId.value = thread.id
+  // Invalidate an in-flight session read for the previously selected task.
+  conversationSelectionToken++
+  conversationLoading.value = false
+  conversationLoadError.value = ''
   void nextTick(() => composer.value?.focus())
 }
 
@@ -640,8 +666,12 @@ async function selectThread(id: string): Promise<void> {
   if (!thread) return
   const project = projects.value.find((item) => item.id === thread.projectId)
   if (thread.projectId && !project) return
+  const selectionToken = ++conversationSelectionToken
+  const needsLoad = Boolean(thread.sessionId && (!thread.sessionLoaded || !thread.running))
   activeThreadId.value = id
   selectedProjectId.value = project?.id ?? ''
+  conversationLoadError.value = ''
+  conversationLoading.value = needsLoad
   try {
     if (project) await ensureRuntimeProject(project)
     const scope = sessionScope(thread, project)
@@ -659,7 +689,11 @@ async function selectThread(id: string): Promise<void> {
     }
   } catch {
     thread.sessionLoaded = false
+    if (selectionToken === conversationSelectionToken)
+      conversationLoadError.value = '无法读取此会话，请检查 Runtime 连接后重试。'
   }
+  if (selectionToken !== conversationSelectionToken) return
+  conversationLoading.value = false
   autoFollowConversation.value = true
   await scrollToBottom(false, true)
 }
@@ -672,10 +706,108 @@ function updateThreadTitle(thread: ThreadItem, prompt: string): boolean {
 
 async function sendMessage(content: string, images: ImageAttachment[]): Promise<void> {
   const thread = activeThread.value
-  const project = activeProject.value
-  if (!thread || (thread.projectId && !project) || thread.archived || thread.running) return
+  const project = thread ? projects.value.find((item) => item.id === thread.projectId) : undefined
+  if (!thread || (thread.projectId && !project) || thread.archived) return
   if (!content.trim() && images.length === 0) return
+  if (thread.running || thread.queueDraining) {
+    thread.queuedMessages ??= []
+    thread.queuedMessages.push({ id: makeId(), content, images, createdAt: Date.now() })
+    return
+  }
+  await runMessageTurn(thread, content, images)
+}
+
+function rememberFinishedRequest(thread: ThreadItem, requestId: number): void {
+  if (!Number.isFinite(requestId)) return
+  thread.finishedRequestIds ??= []
+  if (thread.finishedRequestIds.includes(requestId)) return
+  thread.finishedRequestIds.push(requestId)
+  // Keep this bounded; it only protects against delayed events from recent turns.
+  if (thread.finishedRequestIds.length > 12) thread.finishedRequestIds.splice(0, thread.finishedRequestIds.length - 12)
+}
+
+function isFinishedRequest(thread: ThreadItem, requestId: number): boolean {
+  return thread.finishedRequestIds?.includes(requestId) === true
+}
+
+function scheduleQueuedDrain(thread: ThreadItem): void {
+  if (!thread.running && !thread.queueDraining && !thread.archived && thread.queuedMessages?.length)
+    void drainQueuedMessages(thread)
+}
+
+async function drainQueuedMessages(thread: ThreadItem): Promise<void> {
+  if (thread.running || thread.queueDraining || thread.archived) return
+  const next = thread.queuedMessages?.shift()
+  if (!next) return
+  thread.queueDraining = true
+  try {
+    await runMessageTurn(thread, next.content, next.images)
+  } finally {
+    thread.queueDraining = false
+    scheduleQueuedDrain(thread)
+    reloadBackgroundThreadIfIdle(thread)
+  }
+}
+
+function removeQueuedMessage(thread: ThreadItem, id: string): void {
+  if (!thread.queuedMessages) return
+  thread.queuedMessages = thread.queuedMessages.filter((item) => item.id !== id)
+}
+
+function queuedMessagePreview(message: QueuedMessage): string {
+  const text = message.content.trim().replace(/\s+/g, ' ')
+  if (text) return text.length > 120 ? `${text.slice(0, 120)}…` : text
+  return message.images.length > 1 ? `发送 ${message.images.length} 张图片` : '发送图片'
+}
+
+function queuedImageUrl(image?: ImageAttachment): string {
+  return image ? `data:${image.mediaType};base64,${image.data}` : ''
+}
+
+async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Promise<void> {
+  if (!thread.running || !thread.sessionId || !daemonState.value.connected) return
+  const index = thread.queuedMessages?.findIndex((item) => item.id === queued.id) ?? -1
+  if (index < 0) return
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  if (thread.projectId && !project) return
+  const guidanceMessage: ChatMessage = {
+    id: makeId(),
+    role: 'user',
+    content: queued.content,
+    images: queued.images,
+    createdAt: Date.now()
+  }
+  // Reflect the steer immediately. The daemon request is still awaited below so
+  // a rejection can put the item back into the normal queue without losing it.
+  thread.queuedMessages?.splice(index, 1)
+  thread.messages.push(guidanceMessage)
+  thread.updatedAt = Date.now()
+  thread.pendingGuidance = (thread.pendingGuidance ?? 0) + 1
+  if (thread.id === activeThreadId.value) void scrollToBottom(true, true)
+  try {
+    await window.seekclaw.daemon.request('agent.steer', {
+      message: queued.content,
+      images: queued.images,
+      sessionId: thread.sessionId,
+      requestId: thread.requestId,
+      ...sessionScope(thread, project)
+    })
+  } catch {
+    // Keep the message queued when the active turn has just finished or the Runtime rejects it.
+    const messageIndex = thread.messages.findIndex((item) => item.id === guidanceMessage.id)
+    if (messageIndex >= 0) thread.messages.splice(messageIndex, 1)
+    thread.queuedMessages ??= []
+    if (!thread.queuedMessages.some((item) => item.id === queued.id))
+      thread.queuedMessages.splice(Math.min(index, thread.queuedMessages.length), 0, queued)
+    thread.pendingGuidance = Math.max(0, (thread.pendingGuidance ?? 1) - 1)
+  }
+}
+
+async function runMessageTurn(thread: ThreadItem, content: string, images: ImageAttachment[]): Promise<void> {
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  if ((thread.projectId && !project) || thread.archived || thread.running) return
   const reasoningLevel = thread.reasoningLevel ?? ReasoningLevel.High
+  const turnToken = makeId()
 
   const userMessage: ChatMessage = {
     id: makeId(),
@@ -692,6 +824,7 @@ async function sendMessage(content: string, images: ImageAttachment[]): Promise<
   const titlePrompt = content.trim() || `查看图片：${images.map((image) => image.name).join('、')}`
   const titleChanged = updateThreadTitle(thread, titlePrompt)
   thread.running = true
+  thread.activeTurnToken = turnToken
   thread.assistantId = assistant.id
   thread.requestId = undefined
   autoFollowConversation.value = true
@@ -717,13 +850,14 @@ async function sendMessage(content: string, images: ImageAttachment[]): Promise<
         title: thread.title
       })
     }
-    await window.seekclaw.daemon.request('chat', {
+    const response = await window.seekclaw.daemon.request('chat', {
       message: content,
       images,
       sessionId: thread.sessionId,
       reasoningLevel,
       ...scope
     })
+    rememberFinishedRequest(thread, response.id)
     if (assistant.state !== 'error') assistant.state = 'done'
   } catch (error) {
     assistant.state = 'error'
@@ -732,11 +866,26 @@ async function sendMessage(content: string, images: ImageAttachment[]): Promise<
       assistant.content = `无法连接 SeekClaw Daemon。\n\n\`\`\`text\n${detail}\n\`\`\``
     }
   } finally {
+    // A terminal event may already have started the next queued turn. Do not let
+    // this older request clear that newer turn's state.
+    if (thread.activeTurnToken !== turnToken) return
+    thread.activeTurnToken = undefined
     thread.running = false
     thread.requestId = undefined
     thread.assistantId = undefined
     if (thread.id === activeThreadId.value) await scrollToBottom(true)
+    scheduleQueuedDrain(thread)
   }
+}
+
+function reloadBackgroundThreadIfIdle(thread: ThreadItem): void {
+  if (thread.id === activeThreadId.value
+    || thread.running
+    || thread.queueDraining
+    || thread.queuedMessages?.length
+    || thread.pendingGuidance)
+    return
+  void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
 }
 
 function openTaskSettings(thread: ThreadItem = activeThread.value!): void {
@@ -759,12 +908,16 @@ async function saveTaskTitle(title: string): Promise<void> {
 }
 
 function chooseAfterRemoval(projectId?: string): void {
+  // The selected task is about to change; stale session reads must not update
+  // the loading state for the replacement task.
+  conversationSelectionToken++
+  conversationLoading.value = false
+  conversationLoadError.value = ''
   const fallback = threads.value
     .filter((thread) => thread.projectId === projectId && !thread.archived)
     .sort((left, right) => right.updatedAt - left.updatedAt)[0]
   if (fallback) {
-    activeThreadId.value = fallback.id
-    selectedProjectId.value = projectId ?? ''
+    void selectThread(fallback.id)
     return
   }
   activeThreadId.value = ''
@@ -991,6 +1144,10 @@ function handleDaemonEvent(event: DaemonMessage): void {
   const isChatRequest = event.requestMethod === 'chat'
     || event.requestMethod === 'agent.runTurn'
     || event.requestMethod === 'agent/runTurn'
+  // The steer request only acknowledges enqueueing (or reports that the turn
+  // just finished). Its error/result must never be interpreted as the active
+  // chat turn's terminal state.
+  if (event.requestMethod === 'agent.steer') return
   if (!isChatRequest && !event.sessionId) return
   const thread = (event.sessionId
     ? threads.value.find((item) => item.sessionId === event.sessionId)
@@ -998,7 +1155,36 @@ function handleDaemonEvent(event: DaemonMessage): void {
     ?? threads.value.find((item) => item.requestId === event.id)
     ?? (!event.sessionId && activeThread.value?.running ? activeThread.value : undefined)
   if (!thread) return
-  thread.requestId ??= event.id
+  // A terminal response can reach the request continuation before its renderer
+  // event callback. If the next queued turn has already started, ignore all
+  // delayed events belonging to the completed request.
+  if (isChatRequest && isFinishedRequest(thread, event.id)) return
+  if (isChatRequest && thread.requestId !== undefined && thread.requestId !== event.id) return
+  if (event.event === 'steer') {
+    thread.pendingGuidance = Math.max(0, (thread.pendingGuidance ?? 1) - 1)
+    const currentAssistant = thread.messages.find((item) => item.id === thread.assistantId)
+    // The guidance user message is rendered immediately after the current
+    // assistant placeholder. Always start a fresh assistant bubble so the next
+    // streamed answer cannot appear above the guidance message when the previous
+    // answer was still blank/thinking.
+    if (currentAssistant) {
+      currentAssistant.state = 'done'
+      const nextAssistant: ChatMessage = {
+        id: makeId(),
+        role: 'assistant',
+        content: '',
+        thinking: '',
+        tools: [],
+        state: 'thinking',
+        createdAt: Date.now()
+      }
+      thread.messages.push(nextAssistant)
+      thread.assistantId = nextAssistant.id
+    }
+  }
+  // Steering acknowledgements have their own request id and must never replace
+  // the id of the active chat turn (used by cancellation and stale-event checks).
+  if (isChatRequest) thread.requestId ??= event.id
   const message = thread.messages.find((item) => item.id === thread.assistantId)
   const terminalEvent = event.event === 'done' || event.event === 'cancelled' || event.event === 'error'
   if (!message && !terminalEvent) return
@@ -1013,6 +1199,8 @@ function handleDaemonEvent(event: DaemonMessage): void {
       if (!message) break
       message.thinking = (message.thinking ?? '') + event.data
       message.state = 'thinking'
+      break
+    case 'steer':
       break
     case 'delta':
       if (!message) break
@@ -1069,30 +1257,34 @@ function handleDaemonEvent(event: DaemonMessage): void {
         message.state = 'done'
         if (!message.content && event.data) message.content = event.data
       }
+      if (isChatRequest) rememberFinishedRequest(thread, event.id)
+      thread.activeTurnToken = undefined
+      thread.pendingGuidance = 0
       thread.running = false
       thread.requestId = undefined
       thread.assistantId = undefined
+      scheduleQueuedDrain(thread)
       if (isBackgroundThread) {
         showTaskNotice(thread, 'done')
       }
-      if (!message || isBackgroundThread) {
-        void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
-      }
+      if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
       break
     case 'error':
       if (message) {
         message.state = 'error'
         appendModelError(message, event.data)
       }
+      if (isChatRequest) rememberFinishedRequest(thread, event.id)
+      thread.activeTurnToken = undefined
+      thread.pendingGuidance = 0
       thread.running = false
       thread.requestId = undefined
       thread.assistantId = undefined
+      scheduleQueuedDrain(thread)
       if (isBackgroundThread) {
         showTaskNotice(thread, 'error')
       }
-      if (!message || isBackgroundThread) {
-        void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
-      }
+      if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
       break
   }
   if (thread.id === activeThreadId.value) void scrollToBottom()
@@ -1222,6 +1414,7 @@ watch(theme, applyTheme)
         <button v-if="sidebarOpen" class="sidebar-scrim" title="关闭侧栏" @click="sidebarOpen = false" />
       </Transition>
 
+      <div class="workspace-content">
       <main class="workspace-main">
         <header class="conversation-header">
           <div class="conversation-title">
@@ -1263,7 +1456,16 @@ watch(theme, applyTheme)
         </header>
 
         <section ref="scrollArea" class="conversation-scroll" @scroll="handleConversationScroll">
-          <div v-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
+          <div v-if="conversationLoading" class="conversation-loading" role="status" aria-live="polite">
+            <LoaderCircle :size="20" class="spin" />
+            <span>正在加载会话…</span>
+          </div>
+          <div v-else-if="conversationLoadError" class="empty-state conversation-load-error">
+            <h1>会话加载失败</h1>
+            <p>{{ conversationLoadError }}</p>
+            <button class="secondary-button empty-state-action" @click="selectThread(activeThreadId)">重新加载</button>
+          </div>
+          <div v-else-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
             <ConversationMessage
               v-for="message in activeThread.messages"
               :key="message.id"
@@ -1312,10 +1514,43 @@ watch(theme, applyTheme)
         </Transition>
 
         <footer class="composer-region">
+          <div v-if="activeThread?.queuedMessages?.length" class="pending-message-stack" aria-label="等待发送的消息">
+            <div v-for="queued in activeThread.queuedMessages" :key="queued.id" class="pending-message-card">
+              <div class="pending-message-main">
+                <CornerDownLeft :size="15" aria-hidden="true" />
+                <img
+                  v-if="queued.images.length"
+                  class="pending-message-image"
+                  :src="queuedImageUrl(queued.images[0])"
+                  :alt="queued.images[0]?.name || '图片'"
+                >
+                <span>{{ queuedMessagePreview(queued) }}</span>
+              </div>
+              <div class="pending-message-actions">
+                <button
+                  type="button"
+                  class="pending-message-action"
+                  :disabled="!activeThread.running || !activeThread.sessionId || !daemonState.connected"
+                  title="作为附加指导发送，不打断当前 AI 回合"
+                  @click="steerQueuedMessage(activeThread, queued)"
+                >
+                  <CornerDownLeft :size="14" /> 引导
+                </button>
+                <button
+                  type="button"
+                  class="pending-message-action icon-only"
+                  title="删除等待中的消息"
+                  @click="removeQueuedMessage(activeThread, queued.id)"
+                >
+                  <Trash2 :size="14" />
+                </button>
+              </div>
+            </div>
+          </div>
           <Composer
             ref="composer"
             :busy="busy"
-            :disabled="!activeThread || activeThread.archived"
+            :disabled="!activeThread || activeThread.archived || conversationLoading"
             :model="activeModel"
             :models="models"
             :mode="mode"
@@ -1329,7 +1564,9 @@ watch(theme, applyTheme)
             @change-reasoning-level="changeReasoningLevel"
           />
           <p class="composer-caption">
-            {{ !activeThread
+            {{ conversationLoading
+              ? '正在读取会话历史…'
+              : !activeThread
               ? '选择一个任务，或新建任务开始。'
               : activeThread.archived
               ? '此任务已归档，恢复后可继续。'
@@ -1339,6 +1576,18 @@ watch(theme, applyTheme)
           </p>
         </footer>
       </main>
+
+      <GitWorkspacePanel
+        :open="gitPanelOpen"
+        :project="activeProject"
+        :initial-tab="gitPanelTab"
+        :diff-override="toolDiff"
+        :width="gitPanelWidth"
+        @close="closeGitPanel"
+        @resize="resizeGitPanel"
+        @open-terminal="openProjectTerminal"
+      />
+      </div>
     </div>
 
     <SettingsDialog
@@ -1384,15 +1633,6 @@ watch(theme, applyTheme)
       :error="reconnectPrompt?.error"
       @retry="continueRuntimeReconnect"
       @cancel="cancelRuntimeReconnect"
-    />
-
-    <GitWorkspacePanel
-      :open="gitPanelOpen"
-      :project="activeProject"
-      :initial-tab="gitPanelTab"
-      :diff-override="toolDiff"
-      @close="gitPanelOpen = false; toolDiff = null"
-      @open-terminal="openProjectTerminal"
     />
 
     <ConfirmDialog />

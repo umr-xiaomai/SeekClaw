@@ -20,7 +20,7 @@ Desktop connects and reconnects automatically; users do not start the Runtime ma
 ### Why is the API key field empty?
 
 - When the configuration stores `apiKey` directly, Desktop reads and displays its actual value.
-- When it uses `apiKeyEnv`, the Runtime resolves the variable only in its process environment. The value is not returned to Desktop, so an empty field is expected.
+- API keys are read only from the `apiKey` field in `~/.seekclaw/config.json`; environment-variable injection is not supported.
 
 If a directly stored key disappears after one turn, verify that Desktop and the Daemon run under the same user account and read the same `~/.seekclaw/config.json`. Check the active Profile and Provider in diagnostics, and avoid running an older Runtime that rewrites the same configuration simultaneously.
 

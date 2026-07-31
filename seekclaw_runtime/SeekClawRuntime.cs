@@ -125,6 +125,20 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
             return ValueTask.FromResult(prompts.TryGet(key));
         }));
 
+        // Model capabilities are part of the runtime contract, not an assumption the model
+        // must infer from its name. Keep this after the user-configurable system prompt so a
+        // workspace override cannot accidentally make a declared vision model deny image input.
+        registry.Register(new PromptContribution("model-capabilities", PromptSlot.System, (ctx, _) =>
+        {
+            var vision = ctx.Variables.TryGetValue("vision", out var visionValue)
+                && bool.TryParse(visionValue, out var supportsVision)
+                && supportsVision;
+            var imageOutput = ctx.Variables.TryGetValue("image", out var imageValue)
+                && bool.TryParse(imageValue, out var supportsImageOutput)
+                && supportsImageOutput;
+            return ValueTask.FromResult<string?>(PromptVariables.BuildCapabilityInstruction(vision, imageOutput));
+        }));
+
         // Developer prompts per detected project kind (dotnet, node, python, rust, unity, vue…).
         registry.Register(new PromptContribution("developer", PromptSlot.Developer, (ctx, _) =>
         {

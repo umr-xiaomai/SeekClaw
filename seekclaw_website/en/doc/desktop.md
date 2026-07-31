@@ -65,6 +65,8 @@ Titles are derived from the first prompt. Tasks can be archived, restored, or de
 
 Vision-capable models expose an image button in the composer for selecting multiple PNG, JPEG, WebP, or GIF files. After taking a Windows screenshot, press `Ctrl+V` in the composer to attach the clipboard image directly. Images can be previewed or removed before sending and are persisted with the Session. As each image enters the model request, the assistant message shows a “Viewed” row with its file name and thumbnail; click it to preview the image again. The button is disabled when the selected model does not declare the `vision` capability.
 
+You can keep typing while the Agent is streaming. Pressing “Send” adds the message to a queue; queued messages are sent in order after the current turn finishes, and can be stacked or removed. Pressing “Steer” sends a queued message as additional guidance to the active turn without cancelling its in-flight request.
+
 Project tasks show the complete workspace path and shortcuts for opening the directory, terminal, Git changes, Git history, and task settings. Global tasks omit the path and project-only tools.
 
 ## Models, Providers, and API keys
@@ -73,14 +75,14 @@ Open “Settings → Models & Providers” to:
 
 - create, edit, test, enable, or remove Providers;
 - view and edit API keys stored explicitly in the configuration;
-- reference a key through an environment-variable name;
+- store and manage the API key directly in the configuration;
 - manage models, Base URL, proxy, timeout, and priority;
 - create Profiles and switch the active model or routing strategy.
 
 ![SeekClaw Desktop model and Provider management](/screenshots/desktop/providers-and-models.png)
 
 ::: tip API key visibility
-Keys stored directly in `~/.seekclaw/config.json` are returned to and displayed by the editor. Values referenced through `apiKeyEnv` are resolved only inside the Runtime process and are not copied back into Desktop, so an empty key field is expected in that case.
+The `apiKey` value is stored directly in `~/.seekclaw/config.json` and is read, displayed, and edited by Desktop. Runtime does not read API keys from environment variables.
 :::
 
 Use “Test” immediately after saving. Failed model requests include the Provider, HTTP status, and complete server response instead of only a generic `LLM request failed` message.

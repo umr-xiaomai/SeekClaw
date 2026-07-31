@@ -9,8 +9,8 @@ interface ProviderFormValue {
   name: string
   kind: 'openai' | 'anthropic'
   baseUrl: string
+  modelListUrl: string
   apiKey: string
-  apiKeyEnv: string
   models: string
   enabled: boolean
   priority: number
@@ -33,7 +33,7 @@ const emit = defineEmits<{
 }>()
 
 const form = reactive<ProviderFormValue>({
-  id: '', name: '', kind: 'openai', baseUrl: '', apiKey: '', apiKeyEnv: '', models: '',
+  id: '', name: '', kind: 'openai', baseUrl: '', modelListUrl: '', apiKey: '', models: '',
   enabled: true, priority: 0, timeoutSeconds: 120, proxy: '', promptCaching: true
 })
 const firstInput = ref<HTMLInputElement | null>(null)
@@ -111,6 +111,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                   <FieldLabel en="Base URL" zh="API 地址" help="模型服务的 API 根地址。OpenAI 兼容服务通常以 /v1 结尾。" required />
                   <input v-model="form.baseUrl" placeholder="https://api.openai.com/v1" spellcheck="false" />
                 </label>
+                <label class="span-2">
+                  <FieldLabel en="Model List URL" zh="模型列表 URL" help="获取模型目录的地址；留空时自动使用 Base URL 下的 /models 接口。" />
+                  <input v-model="form.modelListUrl" placeholder="留空自动推断 /models" spellcheck="false" />
+                </label>
               </div>
             </section>
 
@@ -132,10 +136,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                       <EyeOff v-if="revealKey" :size="16" /><Eye v-else :size="16" />
                     </button>
                   </span>
-                </label>
-                <label>
-                  <FieldLabel en="Key Environment Variable" zh="Key 环境变量" help="从 Runtime 进程的环境变量读取密钥，例如 OPENAI_API_KEY。配置后可避免在设置中保存明文密钥。" />
-                  <input v-model="form.apiKeyEnv" placeholder="OPENAI_API_KEY" spellcheck="false" autocomplete="off" />
                 </label>
                 <label class="span-2">
                   <FieldLabel en="Models" zh="模型" help="此 Provider 可用的模型 ID。每行填写一个，也支持使用英文逗号分隔。" required />

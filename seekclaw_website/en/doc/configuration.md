@@ -35,7 +35,6 @@ This example uses the current field names:
       "name": "OpenAI",
       "kind": "openai",
       "baseUrl": "https://api.openai.com/v1",
-      "apiKeyEnv": "OPENAI_API_KEY",
       "proxy": null,
       "timeoutSeconds": 120,
       "headers": null,
@@ -96,8 +95,7 @@ This example uses the current field names:
 ### Provider keys
 
 - `kind` must be `openai` or `anthropic`.
-- `apiKey` stores the credential directly, and Desktop displays it directly.
-- `apiKeyEnv` stores an environment-variable name and is used only when `apiKey` is empty. Its resolved value is not returned to Desktop.
+- `apiKey` stores the credential directly, and Desktop displays and edits it. Runtime reads API keys only from this configuration field and never from environment variables.
 - `organization`, `proxy`, `headers`, and `timeoutSeconds` can be set when required by the service.
 - `promptCaching` defaults to enabled; Anthropic requests emit native cache checkpoints and incompatible third-party gateways can opt out.
 - `reasoningEffortMap` can override neutral levels with Provider wire values, for example `{ "ultra": "xhigh" }`.

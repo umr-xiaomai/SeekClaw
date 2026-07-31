@@ -50,7 +50,7 @@ seekclaw provider add
 # 非交互式添加
 seekclaw provider add --id deepseek --kind openai \
   --base-url "https://api.deepseek.com/v1" \
-  --api-key-env "DEEPSEEK_API_KEY" \
+  --api-key "your-api-key" \
   --model "deepseek-chat"
 
 seekclaw provider edit deepseek --timeout 120 --priority 1

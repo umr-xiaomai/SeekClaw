@@ -35,7 +35,6 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
       "name": "OpenAI",
       "kind": "openai",
       "baseUrl": "https://api.openai.com/v1",
-      "apiKeyEnv": "OPENAI_API_KEY",
       "proxy": null,
       "timeoutSeconds": 120,
       "headers": null,
@@ -100,8 +99,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 ### Provider Key
 
 - `kind` 只能是 `openai` 或 `anthropic`。
-- `apiKey` 直接保存凭据；Desktop 会直接显示该值。
-- `apiKeyEnv` 保存环境变量名，且仅在 `apiKey` 为空时使用。环境变量值不会返回给 Desktop。
+- `apiKey` 直接保存凭据；Desktop 会直接显示和编辑该值。Runtime 只读取配置文件中的 `apiKey`，不会从环境变量读取 API Key。
 - `organization`、`proxy`、`headers`、`timeoutSeconds` 可按服务需要设置。
 - `promptCaching` 默认启用；Anthropic 协议会发送原生缓存检查点，不兼容的第三方网关可关闭。
 - `reasoningEffortMap` 可覆盖统一档位到 Provider 参数的映射，例如 `{ "ultra": "xhigh" }`。

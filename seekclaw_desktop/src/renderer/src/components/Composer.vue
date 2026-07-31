@@ -146,7 +146,7 @@ function removeImage(id: string): void {
 
 function submit(): void {
   const message = value.value.trim()
-  if ((!message && images.value.length === 0) || props.busy || props.disabled) return
+  if ((!message && images.value.length === 0) || props.disabled) return
   if (images.value.length > 0 && !props.supportsImages) {
     imageNotice.value = '当前模型不支持图片理解，请切换支持视觉的模型。'
     return
@@ -248,13 +248,13 @@ watch(() => props.supportsImages, (supported) => {
         :disabled="busy || disabled"
         @update:model-value="emit('changeReasoningLevel', $event)"
       />
-      <button v-if="busy" class="send-button" title="停止" @click="emit('stop')">
+      <button v-if="busy && !value.trim() && images.length === 0" class="send-button" title="停止" @click="emit('stop')">
         <Square :size="14" fill="currentColor" />
       </button>
       <button
         v-else
         class="send-button"
-        title="发送"
+        :title="busy ? '排队发送（本轮结束后自动发送）' : '发送'"
         :disabled="disabled || (!value.trim() && images.length === 0) || (images.length > 0 && !supportsImages)"
         @click="submit"
       >

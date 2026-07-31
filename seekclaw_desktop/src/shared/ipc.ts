@@ -2,6 +2,7 @@ export type DaemonEventName =
   | 'pong'
   | 'delta'
   | 'thinking'
+  | 'steer'
   | 'image_view'
   | 'status'
   | 'tool_start'

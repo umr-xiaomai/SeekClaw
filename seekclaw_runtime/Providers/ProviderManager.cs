@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 
@@ -26,12 +28,16 @@ public interface IProviderManager
 
     /// <summary>Sends a minimal real completion to verify a model end-to-end.</summary>
     Task<(bool Success, string Detail, double LatencyMs)> TestModelAsync(ModelInfo model, CancellationToken ct = default);
+
+    /// <summary>Fetches model identifiers from a provider's model-list endpoint.</summary>
+    Task<IReadOnlyList<string>> FetchModelsAsync(ProviderConfig provider, string? url = null, CancellationToken ct = default);
 }
 
 public sealed class ProviderManager(
     IConfigStore configStore,
     IModelRegistry registry,
     ILlmClientFactory clientFactory,
+    ILlmHttpFactory httpFactory,
     IUsageTracker usageTracker,
     IEventBus eventBus) : IProviderManager
 {
@@ -201,6 +207,78 @@ public sealed class ProviderManager(
         }
     }
 
+    public async Task<IReadOnlyList<string>> FetchModelsAsync(
+        ProviderConfig provider,
+        string? url = null,
+        CancellationToken ct = default)
+    {
+        var endpoint = string.IsNullOrWhiteSpace(url)
+            ? provider.Kind.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
+                ? LlmUrl.JoinV1(provider.BaseUrl, "models")
+                : LlmUrl.Join(provider.BaseUrl, "models")
+            : url.Trim();
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https"))
+            throw new LlmException($"Invalid model list URL: {endpoint}", retryable: false);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        ApplyModelListHeaders(request, provider);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(provider.TimeoutSeconds, 5, 120)));
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpFactory.GetClient(provider)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new LlmException($"Fetching models from {provider.Id} timed out.", retryable: false);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new LlmException($"Cannot fetch models from {provider.Id}: {ex.Message}", retryable: false, inner: ex);
+        }
+
+        using (response)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var detail = body.Length > 240 ? body[..240] : body;
+                throw new LlmException(
+                    $"Model list request failed for {provider.Id} (HTTP {(int)response.StatusCode}): {detail}",
+                    retryable: false);
+            }
+
+            JsonNode? root;
+            try { root = JsonNode.Parse(body); }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+            {
+                throw new LlmException($"Model list response from {provider.Id} is not valid JSON.", retryable: false, inner: ex);
+            }
+
+            var array = root as JsonArray;
+            if (array is null && root is JsonObject rootObject)
+                array = rootObject["data"] as JsonArray ?? rootObject["models"] as JsonArray;
+            if (array is null)
+                throw new LlmException($"Model list response from {provider.Id} does not contain a model array.", retryable: false);
+
+            var ids = array
+                .Select(ModelId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (ids.Count == 0)
+                throw new LlmException($"Model list response from {provider.Id} contains no model IDs.", retryable: false);
+            return ids;
+        }
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private IAsyncEnumerator<LlmStreamEvent> TryOpenStream(
@@ -208,6 +286,37 @@ public sealed class ProviderManager(
     {
         var client = clientFactory.GetClient(model.Provider.Kind);
         return client.StreamAsync(requestFactory(model), ct).GetAsyncEnumerator(ct);
+    }
+
+    private static void ApplyModelListHeaders(HttpRequestMessage request, ProviderConfig provider)
+    {
+        var key = provider.ResolveApiKey();
+        if (provider.Kind.Equals("anthropic", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrWhiteSpace(key)) request.Headers.TryAddWithoutValidation("x-api-key", key);
+            request.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+        }
+        else if (!string.IsNullOrWhiteSpace(key))
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
+        }
+        if (!string.IsNullOrWhiteSpace(provider.Organization))
+            request.Headers.TryAddWithoutValidation("OpenAI-Organization", provider.Organization);
+        if (provider.Headers is not null)
+            foreach (var (name, value) in provider.Headers)
+                request.Headers.TryAddWithoutValidation(name, value);
+    }
+
+    private static string? ModelId(JsonNode? node)
+    {
+        if (node is JsonValue value && value.TryGetValue<string>(out var text)) return text;
+        if (node is not JsonObject model) return null;
+        foreach (var key in new[] { "id", "name", "model" })
+        {
+            if (model[key] is JsonValue candidate && candidate.TryGetValue<string>(out var id))
+                return id;
+        }
+        return null;
     }
 
     private void RecordUsage(ModelInfo model, LlmCompletion? completion, Stopwatch stopwatch, bool success)

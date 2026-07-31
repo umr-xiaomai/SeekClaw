@@ -10,6 +10,19 @@ namespace SeekClaw.Tests;
 public sealed class ToolAndAgentTests
 {
     [Fact]
+    public void AgentSteeringQueue_DrainsMessagesInOrder()
+    {
+        var queue = new AgentSteeringQueue();
+        Assert.True(queue.TryEnqueue(ChatMessage.User("first")));
+        Assert.True(queue.TryEnqueue(ChatMessage.User("second")));
+
+        Assert.Equal(["first", "second"], queue.Drain().Select(message => message.Text));
+        Assert.Empty(queue.Drain());
+        Assert.True(queue.TryCompleteIfEmpty());
+        Assert.False(queue.TryEnqueue(ChatMessage.User("late")));
+    }
+
+    [Fact]
     public void EditTool_CountsAndReplacesFirstOccurrence()
     {
         Assert.Equal(2, EditFileTool.CountOccurrences("aXbXc", "X"));

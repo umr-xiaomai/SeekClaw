@@ -34,7 +34,7 @@ public sealed class ConfigTests : IDisposable
             Id = "test",
             Kind = "openai",
             BaseUrl = "https://example.test/v1",
-            ApiKeyEnv = "TEST_KEY",
+            ApiKey = "config-secret",
             Models = [new ModelConfig { Id = "m1", Alias = "one", ContextWindow = 9000, InputPricePerMTok = 1.5m }],
         });
         store.Config.Profiles["work"] = new ProfileConfig { Provider = "test", Model = "m1", Temperature = 0.3 };
@@ -43,6 +43,7 @@ public sealed class ConfigTests : IDisposable
         var reloaded = NewStore();
         var provider = Assert.Single(reloaded.Config.Providers);
         Assert.Equal("test", provider.Id);
+        Assert.Equal("config-secret", provider.ApiKey);
         Assert.Equal(9000, provider.Models[0].ContextWindow);
         Assert.Equal("one", provider.Models[0].Alias);
         Assert.Equal(1.5m, provider.Models[0].InputPricePerMTok);
@@ -58,16 +59,13 @@ public sealed class ConfigTests : IDisposable
     }
 
     [Fact]
-    public void ResolveApiKey_PrefersExplicit_ThenEnvironment()
+    public void ResolveApiKey_UsesOnlyExplicitConfigurationValue()
     {
-        var provider = new ProviderConfig { ApiKey = "direct", ApiKeyEnv = "SEEKCLAW_TEST_KEY" };
-        Assert.Equal("direct", provider.ResolveApiKey());
-
-        provider.ApiKey = null;
         Environment.SetEnvironmentVariable("SEEKCLAW_TEST_KEY", "from-env");
         try
         {
-            Assert.Equal("from-env", provider.ResolveApiKey());
+            Assert.Null(new ProviderConfig().ResolveApiKey());
+            Assert.Equal("direct", new ProviderConfig { ApiKey = "direct" }.ResolveApiKey());
         }
         finally
         {

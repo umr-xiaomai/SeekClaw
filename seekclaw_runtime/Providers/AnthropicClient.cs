@@ -48,7 +48,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             {
                 var status = (int)response.StatusCode;
                 var body = "";
-                try { body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false); } catch { }
+                try { body = await response.Content.ReadAsStringAsync(responseCts.Token).ConfigureAwait(false); } catch { }
                 throw new LlmException(
                     $"{request.Provider.Id} returned HTTP {status}: {OpenAiCompatibleClient.ExtractErrorMessage(body)}",
                     status,
@@ -56,21 +56,41 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             }
 
             var acc = new Accumulator();
-            await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-
-            await foreach (var sse in SseReader.ReadAsync(stream, ct).ConfigureAwait(false))
+            // Apply the same timeout to SSE consumption as to response headers. Vision
+            // requests can otherwise wait indefinitely while the provider processes data.
+            Stream stream;
+            try { stream = await response.Content.ReadAsStreamAsync(responseCts.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                JsonNode? node;
-                try { node = JsonNode.Parse(sse.Data); }
-                catch (JsonException) { continue; }
+                throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+            }
 
-                var type = node?["type"]?.GetValue<string>() ?? sse.Event ?? "";
-                if (type == "error")
-                    throw new LlmException(
-                        $"{request.Provider.Id} stream error: {node?["error"]?["message"]?.GetValue<string>() ?? "unknown"}");
+            await using (stream)
+            await using (var events = SseReader.ReadAsync(stream, responseCts.Token).GetAsyncEnumerator())
+            {
+                while (true)
+                {
+                    bool hasNext;
+                    try { hasNext = await events.MoveNextAsync().ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                    }
+                    if (!hasNext) break;
 
-                foreach (var evt in acc.Consume(type, node)) yield return evt;
-                if (type == "message_stop") break;
+                    var sse = events.Current;
+                    JsonNode? node;
+                    try { node = JsonNode.Parse(sse.Data); }
+                    catch (JsonException) { continue; }
+
+                    var type = node?["type"]?.GetValue<string>() ?? sse.Event ?? "";
+                    if (type == "error")
+                        throw new LlmException(
+                            $"{request.Provider.Id} stream error: {node?["error"]?["message"]?.GetValue<string>() ?? "unknown"}");
+
+                    foreach (var evt in acc.Consume(type, node)) yield return evt;
+                    if (type == "message_stop") break;
+                }
             }
 
             yield return new LlmCompleted(acc.Build());

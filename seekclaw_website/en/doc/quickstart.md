@@ -21,7 +21,7 @@ The release contains a self-contained .NET Runtime. Desktop connects to an exist
 3. Edit a Provider and enter its API key, Base URL, and model list.
 4. Save, run “Test,” and then use the Provider or select an active model.
 
-An explicitly stored API key is shown and editable in Desktop. Values sourced through environment variables are not copied back into the UI.
+API keys must be stored directly in the configuration file's `apiKey` field; Desktop displays and edits that value.
 
 ### 3. Create a task
 

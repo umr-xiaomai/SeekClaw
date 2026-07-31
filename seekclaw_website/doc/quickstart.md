@@ -21,7 +21,7 @@ SeekClaw-win-x64\SeekClaw.exe
 3. 编辑一个 Provider，填写 API Key、Base URL 与模型列表。
 4. 保存后点击“测试”，再选择“使用”或切换活动模型。
 
-显式保存的 API Key 会在 Desktop 中直接显示和编辑。通过环境变量配置的 Key 不会反向显示其值。
+API Key 需要直接保存到配置文件中的 `apiKey` 字段，Desktop 会显示并编辑该值。
 
 ### 3. 创建任务
 

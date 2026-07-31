@@ -20,7 +20,7 @@ Desktop 会自动尝试连接和重连，不需要手动运行 Runtime。从源�
 ### 为什么 API Key 输入框为空？
 
 - 如果配置中直接保存了 `apiKey`，Desktop 会读取并显示真实内容。
-- 如果配置使用 `apiKeyEnv`，Runtime 只在进程环境中解析变量，变量值不会返回给 Desktop，所以输入框为空是正常的。
+- API Key 只从 `~/.seekclaw/config.json` 的 `apiKey` 字段读取，不支持通过环境变量注入。
 
 如果显式保存的 Key 在一次对话后消失，请先确认启动的 Desktop 与 Daemon 使用同一用户账户和 `~/.seekclaw/config.json`，再打开诊断页查看活动 Profile 与 Provider。不要同时运行会改写同一配置的旧版本 Runtime。
 

@@ -13,7 +13,6 @@
       "name": "Anthropic",
       "kind": "anthropic",
       "baseUrl": "https://api.anthropic.com",
-      "apiKeyEnv": "ANTHROPIC_API_KEY",
       "promptCaching": true,
       "priority": 0,
       "models": [
@@ -44,7 +43,6 @@
       "name": "OpenAI",
       "kind": "openai",
       "baseUrl": "https://api.openai.com/v1",
-      "apiKeyEnv": "OPENAI_API_KEY",
       "priority": 1,
       "models": [
         {
@@ -72,7 +70,6 @@
       "name": "Google (OpenAI-compatible endpoint)",
       "kind": "openai",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "apiKeyEnv": "GEMINI_API_KEY",
       "priority": 2,
       "models": [
         {
@@ -102,7 +99,6 @@
       "name": "OpenRouter",
       "kind": "openai",
       "baseUrl": "https://openrouter.ai/api/v1",
-      "apiKeyEnv": "OPENROUTER_API_KEY",
       "enabled": false,
       "priority": 3,
       "models": [

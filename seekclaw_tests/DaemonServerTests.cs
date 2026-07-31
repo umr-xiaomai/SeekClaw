@@ -57,6 +57,45 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ActiveChat_AcceptsSteeringWithoutCancellingTheTurn()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<AgentTurnResult> SlowTurn(
+            AgentSession session, WorkspaceInfo workspace, string message, CancellationToken ct)
+        {
+            started.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return new AgentTurnResult("unreachable", false, null);
+        }
+
+        var connection = await StartServerAsync(SlowTurn);
+        await connection.SendAsync(10, "session.new");
+        var sessionId = (await connection.ReadAsync())["data"]!.GetValue<string>();
+        await connection.SendAsync(1, "chat", new JsonObject
+        {
+            ["message"] = "keep working",
+            ["sessionId"] = sessionId,
+        });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await connection.SendAsync(2, "agent.steer", new JsonObject
+        {
+            ["sessionId"] = sessionId,
+            ["message"] = "also consider the edge cases",
+        });
+        var steering = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 2
+                        && response["event"]!.GetValue<string>() == "result");
+        Assert.Equal("guidance queued", steering["data"]!.GetValue<string>());
+
+        await connection.SendAsync(3, "agent.cancel", new JsonObject { ["requestId"] = 1 });
+        var cancelled = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 1
+                        && response["event"]!.GetValue<string>() == "cancelled");
+        Assert.Equal(sessionId, cancelled["sessionId"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task MultipleExplicitSessions_RunConcurrently_AndCancelIndependently()
     {
         var startedCount = 0;
@@ -222,6 +261,7 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var protocol = ParseData(await connection.ReadAsync());
         Assert.Equal(DaemonServer.ProtocolVersion, protocol["version"]!.GetValue<string>());
         Assert.Contains("agent.cancel", protocol["methods"]!.AsArray().Select(node => node!.GetValue<string>()));
+        Assert.Contains("agent.steer", protocol["methods"]!.AsArray().Select(node => node!.GetValue<string>()));
 
         await connection.SendAsync(2, "workspace.open", new JsonObject { ["path"] = workspaceB });
         var opened = ParseData(await connection.ReadAsync());
@@ -326,6 +366,23 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Equal("result", (await connection.ReadAsync())["event"]!.GetValue<string>());
         await connection.SendAsync(13, "profile.use", new JsonObject { ["name"] = "desktop" });
         Assert.Equal("desktop", (await connection.ReadAsync())["data"]!.GetValue<string>());
+
+        await connection.SendAsync(131, "model.update", new JsonObject
+        {
+            ["provider"] = "local",
+            ["id"] = "test-model",
+            ["contextWindow"] = 64_000,
+            ["maxOutput"] = 4_096,
+            ["vision"] = true,
+        });
+        var updatedModel = ParseData(await connection.ReadAsync());
+        Assert.Equal(64_000, updatedModel["contextWindow"]!.GetValue<int>());
+        Assert.True(updatedModel["vision"]!.GetValue<bool>());
+        await connection.SendAsync(132, "model.catalog");
+        var catalog = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
+        Assert.Contains(catalog, item => item!["ref"]!.GetValue<string>() == "local/test-model"
+            && item["contextWindow"]!.GetValue<int>() == 64_000
+            && item["capabilities"]!["vision"]!.GetValue<bool>());
 
         await connection.SendAsync(14, "mcp.upsert", new JsonObject
         {

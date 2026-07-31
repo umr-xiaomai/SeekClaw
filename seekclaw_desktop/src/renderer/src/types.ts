@@ -53,6 +53,13 @@ export interface ChatMessage {
   createdAt: number
 }
 
+export interface QueuedMessage {
+  id: string
+  content: string
+  images: ImageAttachment[]
+  createdAt: number
+}
+
 export interface ThreadItem {
   id: string
   title: string
@@ -66,8 +73,19 @@ export interface ThreadItem {
   running?: boolean
   /** Local request id used to cancel this task without affecting other tasks. */
   requestId?: number
+  /** Request ids whose terminal events have already been applied. Used to ignore
+   * delayed events from a previous turn when the next queued turn has started. */
+  finishedRequestIds?: number[]
+  /** Local generation marker so an older request cannot clean up a newer turn. */
+  activeTurnToken?: string
   /** Assistant placeholder receiving streamed output for the active turn. */
   assistantId?: string
   /** Per-task reasoning depth, independent from other concurrent tasks. */
   reasoningLevel?: ReasoningLevel
+  /** Messages waiting for the current agent turn to finish. */
+  queuedMessages?: QueuedMessage[]
+  /** Prevents multiple queued messages from starting at the same time. */
+  queueDraining?: boolean
+  /** Locally displayed guidance messages waiting to be persisted by the Agent. */
+  pendingGuidance?: number
 }

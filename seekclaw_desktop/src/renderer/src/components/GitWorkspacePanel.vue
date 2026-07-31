@@ -1,21 +1,25 @@
 <script setup lang="ts">
 import { Braces, GitBranch, History, RefreshCw, TerminalSquare, X } from '@lucide/vue'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { GitHistory, GitOverview } from '../../../shared/ipc'
 import type { ProjectItem } from '../types'
 
 type PanelTab = 'diff' | 'history'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
   project?: ProjectItem
   initialTab: PanelTab
   diffOverride?: { path: string; diff: string } | null
-}>()
+  width?: number
+}>(), {
+  width: 560
+})
 
 const emit = defineEmits<{
   close: []
   openTerminal: []
+  resize: [width: number]
 }>()
 
 const tab = ref<PanelTab>('diff')
@@ -23,8 +27,15 @@ const overview = ref<GitOverview | null>(null)
 const history = ref<GitHistory | null>(null)
 const loading = ref(false)
 const requestId = ref(0)
+const resizing = ref(false)
+let resizeStartX = 0
+let resizeStartWidth = 0
+
+const MIN_PANEL_WIDTH = 280
+const MAX_PANEL_WIDTH = 720
 
 const displayedDiff = computed(() => props.diffOverride?.diff ?? overview.value?.diff ?? '')
+const panelStyle = computed(() => ({ '--git-panel-width': `${props.width}px` }))
 const diffLines = computed(() => displayedDiff.value.split(/\r?\n/).filter((line, index, lines) =>
   line.length > 0 || (index > 0 && index < lines.length - 1)))
 
@@ -77,6 +88,40 @@ function selectTab(value: PanelTab): void {
   tab.value = value
 }
 
+function stopResize(): void {
+  if (!resizing.value) return
+  resizing.value = false
+  window.removeEventListener('pointermove', handleResize)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+  document.body.classList.remove('is-resizing-git-panel')
+}
+
+function handleResize(event: PointerEvent): void {
+  if (!resizing.value) return
+  const viewportWidth = window.innerWidth
+  const maxWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, Math.floor(viewportWidth * 0.66)))
+  const nextWidth = resizeStartWidth + resizeStartX - event.clientX
+  if (nextWidth <= MIN_PANEL_WIDTH) {
+    stopResize()
+    emit('close')
+    return
+  }
+  emit('resize', Math.min(maxWidth, Math.max(MIN_PANEL_WIDTH, nextWidth)))
+}
+
+function startResize(event: PointerEvent): void {
+  if (event.button !== 0) return
+  event.preventDefault()
+  resizing.value = true
+  resizeStartX = event.clientX
+  resizeStartWidth = props.width
+  document.body.classList.add('is-resizing-git-panel')
+  window.addEventListener('pointermove', handleResize)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
+}
+
 watch(() => [props.open, props.project?.id, props.initialTab, props.diffOverride?.path] as const, ([open]) => {
   if (!open) {
     requestId.value++
@@ -89,13 +134,30 @@ watch(() => [props.open, props.project?.id, props.initialTab, props.diffOverride
 watch(tab, () => {
   if (props.open) void refresh()
 })
+
+watch(() => props.open, (open) => {
+  if (!open) stopResize()
+})
+
+onBeforeUnmount(stopResize)
 </script>
 
 <template>
-  <Transition name="drawer">
-    <div v-if="open" class="git-panel-layer">
-      <button class="git-panel-scrim" aria-label="关闭 Git 面板" @click="emit('close')" />
-      <aside class="git-panel" aria-label="项目 Git 工具">
+  <Transition name="side-panel">
+    <aside
+      v-if="open"
+      class="git-panel"
+      :class="{ 'is-resizing': resizing }"
+      :style="panelStyle"
+      aria-label="项目 Git 工具"
+    >
+      <div
+        class="git-panel-resize-handle"
+        role="separator"
+        aria-label="调整 Git 面板宽度"
+        aria-orientation="vertical"
+        @pointerdown="startResize"
+      />
         <header class="git-panel-header">
           <div class="git-panel-title">
             <Braces :size="19" />
@@ -182,7 +244,6 @@ watch(tab, () => {
             <div v-else-if="history" class="git-panel-state">没有可显示的提交记录。</div>
           </template>
         </div>
-      </aside>
-    </div>
+    </aside>
   </Transition>
 </template>

@@ -47,20 +47,41 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         using (response)
         {
             if (!response.IsSuccessStatusCode)
-                throw await ApiError(response, request.Provider.Id, ct).ConfigureAwait(false);
+                throw await ApiError(response, request.Provider.Id, responseCts.Token).ConfigureAwait(false);
 
             var acc = new Accumulator();
-            await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-
-            await foreach (var sse in SseReader.ReadAsync(stream, ct).ConfigureAwait(false))
+            // Keep the provider timeout active while reading the stream too. Without
+            // this, an accepted vision request that never emits its first SSE event can
+            // leave an Agent turn in "thinking" forever.
+            Stream stream;
+            try { stream = await response.Content.ReadAsStreamAsync(responseCts.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                if (sse.Data == "[DONE]") break;
+                throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+            }
 
-                JsonNode? node;
-                try { node = JsonNode.Parse(sse.Data); }
-                catch (JsonException) { continue; }
+            await using (stream)
+            await using (var events = SseReader.ReadAsync(stream, responseCts.Token).GetAsyncEnumerator())
+            {
+                while (true)
+                {
+                    bool hasNext;
+                    try { hasNext = await events.MoveNextAsync().ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                    }
+                    if (!hasNext) break;
 
-                foreach (var evt in acc.Consume(node)) yield return evt;
+                    var sse = events.Current;
+                    if (sse.Data == "[DONE]") break;
+
+                    JsonNode? node;
+                    try { node = JsonNode.Parse(sse.Data); }
+                    catch (JsonException) { continue; }
+
+                    foreach (var evt in acc.Consume(node)) yield return evt;
+                }
             }
 
             yield return new LlmCompleted(acc.Build());

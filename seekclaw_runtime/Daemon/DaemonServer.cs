@@ -250,7 +250,49 @@ public sealed class DaemonServer
                         activeTurns[id] = turn;
                         turn.Task = RunTurnAsync(
                             turnSession, workspace, message, images, reasoningLevel, id, writer, writerGate,
-                            turnCancellation.Token, ct);
+                            turnCancellation.Token, ct, turn.Steering);
+                        break;
+                    }
+
+                    case "agent.steer":
+                    {
+                        var parameters = Params(request);
+                        var message = parameters["message"]?.GetValue<string>()
+                                      ?? parameters["prompt"]?.GetValue<string>()
+                                      ?? "";
+                        IReadOnlyList<ChatImageAttachment> images;
+                        try { images = ParseImages(parameters["images"]); }
+                        catch (DaemonRequestException ex)
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            break;
+                        }
+                        if (string.IsNullOrWhiteSpace(message) && images.Count == 0)
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", "params.message or params.images is required", ct).ConfigureAwait(false);
+                            break;
+                        }
+
+                        var requestedId = parameters["requestId"]?.GetValue<long?>();
+                        var requestedSessionId = parameters["sessionId"]?.GetValue<string>();
+                        ActiveTurn? target = requestedId is { } specific
+                            ? activeTurns.GetValueOrDefault(specific)
+                            : activeTurns.Values
+                                .Where(turn => string.Equals(turn.Session.Header.Id, requestedSessionId, StringComparison.OrdinalIgnoreCase))
+                                .OrderByDescending(turn => turn.Session.Header.UpdatedAt)
+                                .FirstOrDefault();
+                        if (target is null)
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", "No active turn found for this session", ct, requestedSessionId).ConfigureAwait(false);
+                            break;
+                        }
+
+                        if (!target.Steering.TryEnqueue(ChatMessage.User(message, images)))
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", "The active turn is already finishing", ct, target.Session.Header.Id).ConfigureAwait(false);
+                            break;
+                        }
+                        await WriteAsync(writer, writerGate, id, "result", "guidance queued", ct, target.Session.Header.Id).ConfigureAwait(false);
                         break;
                     }
 
@@ -386,6 +428,11 @@ public sealed class DaemonServer
                             token => _admin.TestProvidersAsync(Params(request), token), ct).ConfigureAwait(false);
                         break;
 
+                    case "provider.models.fetch":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            token => _admin.FetchProviderModelsAsync(Params(request), token), ct).ConfigureAwait(false);
+                        break;
+
                     case "model.catalog":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _ => Task.FromResult(_admin.ModelCatalog()), ct).ConfigureAwait(false);
@@ -394,6 +441,11 @@ public sealed class DaemonServer
                     case "model.test":
                         await RunAdminAsync(writer, writerGate, id, false,
                             token => _admin.TestModelAsync(Params(request), token), ct).ConfigureAwait(false);
+                        break;
+
+                    case "model.update":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.UpdateModel(Params(request))), ct).ConfigureAwait(false);
                         break;
 
                     case "mcp.list":
@@ -622,7 +674,8 @@ public sealed class DaemonServer
         StreamWriter writer,
         SemaphoreSlim writerGate,
         CancellationToken turnCt,
-        CancellationToken connectionCt)
+        CancellationToken connectionCt,
+        AgentSteeringQueue steering)
     {
         await using var turnRuntime = _useIsolatedTurnRuntime
             ? SeekClawRuntime.CreateIsolated(workspace)
@@ -643,7 +696,7 @@ public sealed class DaemonServer
 
             result = _runTurn is null
                 ? await runtime.Agent.RunTurnAsync(
-                    session, workspace, message, turnCt, reasoningLevel, images).ConfigureAwait(false)
+                    session, workspace, message, turnCt, reasoningLevel, images, steering).ConfigureAwait(false)
                 : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -696,6 +749,7 @@ public sealed class DaemonServer
             {
                 AssistantTextDeltaEvent delta => (Name: (string?)"delta", Data: delta.Delta, Details: (JsonObject?)null),
                 ThinkingDeltaEvent thinking => (Name: (string?)"thinking", Data: thinking.Delta, Details: (JsonObject?)null),
+                UserSteerEvent steer => (Name: (string?)"steer", Data: steer.Instruction, Details: (JsonObject?)null),
                 ImageViewedEvent image => (
                     Name: (string?)"image_view",
                     Data: image.Name,
@@ -835,6 +889,7 @@ public sealed class DaemonServer
         public AgentSession Session { get; } = session;
         public WorkspaceInfo Workspace { get; } = workspace;
         public CancellationTokenSource Cancellation { get; } = cancellation;
+        public AgentSteeringQueue Steering { get; } = new();
         public Task? Task { get; set; }
     }
 
@@ -891,14 +946,14 @@ public sealed class DaemonServer
         ["version"] = ProtocolVersion,
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
-            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
+            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
             "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor"),
         ["methods"] = new JsonArray(
-            "ping", "protocol.info", "chat", "agent.runTurn", "agent.cancel",
+            "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
             "profile.list", "profile.upsert", "profile.use", "profile.remove",
-            "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test",
-            "model.list", "model.catalog", "model.switch", "model.test",
+            "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
+            "model.list", "model.catalog", "model.switch", "model.test", "model.update",
             "mcp.list", "mcp.upsert", "mcp.remove", "mcp.reload",
             "skill.list", "skill.toggle", "usage.get", "doctor", "doctor.run",
             "project.list", "project.upsert", "project.remove",

@@ -32,8 +32,8 @@ public sealed class LlmHttpFactory : ILlmHttpFactory, IDisposable
                 handler.UseProxy = true;
             }
 
-            // Streaming responses can outlive any fixed budget; callers time out the
-            // initial response themselves via the provider TimeoutSeconds.
+            // Provider clients apply TimeoutSeconds to both response headers and stream
+            // consumption, so a stalled streaming/vision request cannot wait forever.
             return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         });
     }

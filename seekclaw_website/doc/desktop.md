@@ -65,6 +65,8 @@ Desktop 支持两类任务：
 
 支持视觉的模型会在输入区显示图片按钮，可一次选择多张 PNG、JPEG、WebP 或 GIF；Windows 截图后也可以在输入框直接按 `Ctrl+V` 添加剪贴板图片。发送前可以预览或逐张移除；发送后图片随 Session 保存。模型开始处理图片时，助手消息会显示“已查看”、对应文件名和缩略图，点击可再次预览。当前模型没有声明 `vision` 能力时，图片按钮会自动禁用。
 
+AI 正在输出时仍可继续输入。点击“发送”会把消息加入发送队列，本轮结束后按顺序自动发送；队列支持叠加和删除。点击队列消息的“引导”会立即把它作为附加指导交给当前 turn，不取消正在进行的 AI 请求。
+
 项目任务顶部会显示完整工作区目录，并提供打开位置、终端、Git 变更、Git 历史和任务设置入口。全局任务不会显示项目目录或项目工具。
 
 ## 模型、Provider 与 API Key
@@ -73,14 +75,14 @@ Desktop 支持两类任务：
 
 - 新建、编辑、测试、启用或删除 Provider；
 - 直接查看和修改显式保存在配置中的 API Key；
-- 使用环境变量名代替明文 Key；
+- 直接在配置文件中保存和管理 API Key；
 - 管理模型列表、Base URL、代理、超时和优先级；
 - 创建 Profile，并切换活动模型或路由策略。
 
 ![SeekClaw Desktop 的模型与 Provider 管理](/screenshots/desktop/providers-and-models.png)
 
 ::: tip API Key 的显示规则
-直接保存在 `~/.seekclaw/config.json` 中的 Key 会返回并显示在编辑器里。通过 `apiKeyEnv` 引用的环境变量值只在 Runtime 进程中解析，不会反向填入 Desktop；因此这种配置的 Key 输入框为空是正常的。
+API Key 直接保存在 `~/.seekclaw/config.json` 中，由 Runtime 和 Desktop 读取、显示和编辑。Runtime 不会从环境变量读取 API Key。
 :::
 
 保存后可立即点击“测试”。模型请求失败时，Desktop 会展示 Provider 名称、HTTP 状态码和服务端返回的完整错误信息，而不只显示笼统的 `LLM request failed`。

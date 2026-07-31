@@ -1,3 +1,4 @@
+using System.Net;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
@@ -44,11 +45,22 @@ public sealed class ProviderTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
     }
 
-    private ProviderManager NewManager() => new(
+    private ProviderManager NewManager(ILlmHttpFactory? httpFactory = null) => new(
         _store, _registry,
         new LlmClientFactory([]),
+        httpFactory ?? new LlmHttpFactory(),
         new UsageTracker(new EventBus(), Path.Combine(_dir, "usage.jsonl")),
         new EventBus());
+
+    [Fact]
+    public async Task FetchModels_ReadsOpenAiDataAndDeduplicatesIds()
+    {
+        var ids = await NewManager(new StubHttpFactory(
+            """{"data":[{"id":"new-model"},{"id":"new-model"},{"id":"other"}]}""")).FetchModelsAsync(
+                _store.Config.Providers[0], "https://models.test/catalog");
+
+        Assert.Equal(["new-model", "other"], ids);
+    }
 
     [Fact]
     public void Registry_ResolvesQualifiedRef_Alias_AndUniqueBareId()
@@ -368,5 +380,20 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal(150, aggregate.OutputTokens);
         Assert.Equal(0.03m, aggregate.Cost);
         Assert.Equal(0.5, aggregate.SuccessRate);
+    }
+
+    private sealed class StubHttpFactory(string body) : ILlmHttpFactory
+    {
+        public HttpClient GetClient(ProviderConfig provider) => new(new StubHandler(body));
+    }
+
+    private sealed class StubHandler(string body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body),
+            });
     }
 }

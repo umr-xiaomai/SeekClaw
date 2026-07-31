@@ -29,6 +29,7 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `workspace.init` | 无 | 初始化当前工作区的 SeekClaw 目录 |
 | `agent.mode.get` | 无 | 返回 `plan`、`readonly`、`edit` 或 `auto` |
 | `agent.mode.switch` | `{ "mode": "edit" }` | 切换并持久化 Agent 模式 |
+| `agent.steer` | `{ "sessionId": "...", "message": "..." }` | 向正在运行的 turn 添加指导，不取消当前请求 |
 
 `workspace.open` 会清除当前连接的旧式恢复 Session。新的 `chat` 请求应携带 `sessionId`，项目任务同时携带 `workspace`；turn 启动时会捕获自己的工作区，之后的工作区、模式或模型切换不会改变已经运行的 turn。
 
@@ -47,6 +48,13 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 {"id":11,"method":"agent.cancel","params":{"requestId":10}}
 ```
 
+正在运行的 turn 可以接收附加指导。`agent.steer` 会把消息放入当前 turn 的指导队列，当前模型请求结束后再加入上下文并继续下一步，不会取消或打断正在进行的请求：
+
+```json
+{"id":12,"method":"agent.steer","params":{"sessionId":"20260731-120000-a1b2c3","message":"也请检查边界情况"}}
+{"id":12,"event":"result","sessionId":"20260731-120000-a1b2c3","data":"guidance queued"}
+```
+
 `agent.cancel` 的 `requestId` 可省略，此时取消当前连接的活动 turn。取消请求本身返回 `result`，被取消的 chat 最终返回：
 
 ```json
@@ -54,7 +62,7 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 {"id":10,"event":"cancelled","data":"取消前已生成的部分文本"}
 ```
 
-流式事件包括 `thinking`、`delta`、`status`、`image_view`、`tool_start` 和 `tool_done`。`image_view` 的 `details.imageId` 指明模型正在查看哪张上传图片。终止事件包括 `done`、`cancelled` 和 `error`。
+流式事件包括 `thinking`、`delta`、`steer`、`status`、`image_view`、`tool_start` 和 `tool_done`。`steer` 表示附加指导已经进入当前 turn 的上下文；`image_view` 的 `details.imageId` 指明模型正在查看哪张上传图片。终止事件包括 `done`、`cancelled` 和 `error`。
 
 ## 其他方法
 
@@ -81,7 +89,7 @@ Session 方法可传 `workspace` 指向具体项目，也可传 `global: true` �
 
 ## Desktop 管理方法
 
-Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直接读取配置文件。显式存储的 Provider `apiKey` 会通过 `provider.list` 返回，以便 Desktop 直接显示和编辑；`apiKeyEnv` 指向的环境变量值不会被解析并返回。MCP 环境变量仅返回键名，不返回值。
+Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直接读取配置文件。显式存储的 Provider `apiKey` 会通过 `provider.list` 返回，以便 Desktop 直接显示和编辑。Runtime 不会从环境变量读取 API Key；MCP 环境变量仍仅返回键名，不返回值。
 
 | 方法 | 说明 |
 | --- | --- |

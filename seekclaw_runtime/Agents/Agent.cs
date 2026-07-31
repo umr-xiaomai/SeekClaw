@@ -38,7 +38,8 @@ public sealed class Agent(
         string userInput,
         CancellationToken ct,
         ReasoningLevel? reasoningLevel = null,
-        IReadOnlyList<ChatImageAttachment>? images = null)
+        IReadOnlyList<ChatImageAttachment>? images = null,
+        AgentSteeringQueue? steering = null)
     {
         var agentConfig = configStore.Config.Agent;
         events.Publish(new TurnStartedEvent(session.Header.Id, userInput));
@@ -56,6 +57,7 @@ public sealed class Agent(
             for (var step = 1; step <= agentConfig.MaxSteps; step++)
             {
                 ct.ThrowIfCancellationRequested();
+                PublishSteering(AppendSteering(session, steering));
 
                 var requiresVision = session.Messages.Any(message => message.Images is { Count: > 0 });
                 var model = requiresVision
@@ -95,6 +97,11 @@ public sealed class Agent(
                     finalText = completion.Text;
                     events.Publish(new AssistantMessageCompletedEvent(completion.Text));
                 }
+
+                // Guidance can arrive while the model is streaming. Append it after the
+                // current completion and continue with a fresh model step; the in-flight
+                // request is never cancelled or rewritten.
+                var guidance = AppendSteering(session, steering);
 
                 // StreamOnceAsync preserves partial text on cancellation. Stop the turn after
                 // persisting that text instead of reporting the cancelled request as completed.
@@ -139,6 +146,13 @@ public sealed class Agent(
                             sessionStore.Append(session, result.Message);
                         }
                     }
+                    PublishSteering(guidance);
+                    continue;
+                }
+
+                if (guidance.Count > 0)
+                {
+                    PublishSteering(guidance);
                     continue;
                 }
 
@@ -154,6 +168,13 @@ public sealed class Agent(
                         continue;
                     }
                 }
+                var lateGuidance = AppendSteering(session, steering);
+                if (lateGuidance.Count > 0)
+                {
+                    PublishSteering(lateGuidance);
+                    continue;
+                }
+                if (steering is not null && !steering.TryCompleteIfEmpty()) continue;
                 break;
             }
         }
@@ -167,8 +188,23 @@ public sealed class Agent(
             events.Publish(new ErrorEvent("LLM request failed", ex.Message));
         }
 
+        PublishSteering(AppendSteering(session, steering));
+        steering?.Complete();
         events.Publish(new TurnCompletedEvent(session.Header.Id, cancelled, error));
         return new AgentTurnResult(finalText, cancelled, error);
+    }
+
+    private IReadOnlyList<ChatMessage> AppendSteering(AgentSession session, AgentSteeringQueue? steering)
+    {
+        if (steering is null) return [];
+        var messages = steering.Drain();
+        foreach (var message in messages) sessionStore.Append(session, message);
+        return messages;
+    }
+
+    private void PublishSteering(IReadOnlyList<ChatMessage> messages)
+    {
+        foreach (var message in messages) events.Publish(new UserSteerEvent(message.Text));
     }
 
     // ---------------------------------------------------------------- llm streaming
@@ -194,7 +230,9 @@ public sealed class Agent(
         {
             Provider = model.Provider,
             Model = model.Model,
-            Messages = history,
+            // Re-fit for the concrete candidate because automatic failover models can have
+            // a smaller user-declared context window than the initially selected model.
+            Messages = ContextPlanner.FitToWindow(history, model.Model, systemPrompt),
             System = systemPrompt,
             Tools = definitions,
             Temperature = temperature,

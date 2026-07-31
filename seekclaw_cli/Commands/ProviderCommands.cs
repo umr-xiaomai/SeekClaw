@@ -62,12 +62,11 @@ public static class ProviderCommands
         var kindOption = new Option<string?>("--kind") { Description = "Wire protocol: openai | anthropic" };
         var baseUrlOption = new Option<string?>("--base-url") { Description = "API base URL" };
         var apiKeyOption = new Option<string?>("--api-key") { Description = "API key (stored in config)" };
-        var apiKeyEnvOption = new Option<string?>("--api-key-env") { Description = "Environment variable holding the key" };
         var modelOption = new Option<string[]>("--model") { Description = "Model id to register (repeatable)", AllowMultipleArgumentsPerToken = true };
 
         var command = new Command("add", "Add a provider (interactive when no options are given)");
         command.Add(idOption); command.Add(kindOption); command.Add(baseUrlOption);
-        command.Add(apiKeyOption); command.Add(apiKeyEnvOption); command.Add(modelOption);
+        command.Add(apiKeyOption); command.Add(modelOption);
 
         command.SetAction(parse =>
         {
@@ -75,7 +74,7 @@ public static class ProviderCommands
             var config = rt.ConfigStore.Config;
 
             var id = parse.GetValue(idOption);
-            string kind; string baseUrl; string? apiKey; string? apiKeyEnv;
+            string kind; string baseUrl; string? apiKey;
             var models = parse.GetValue(modelOption) ?? [];
 
             if (string.IsNullOrWhiteSpace(id))
@@ -86,11 +85,8 @@ public static class ProviderCommands
                     .AddChoices("openai", "anthropic"));
                 baseUrl = AnsiConsole.Prompt(new TextPrompt<string>("Base URL:")
                     .DefaultValue(kind == "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1"));
-                apiKey = AnsiConsole.Prompt(new TextPrompt<string>("API key (empty to use an env var):")
+                apiKey = AnsiConsole.Prompt(new TextPrompt<string>("API key:")
                     .AllowEmpty().Secret());
-                apiKeyEnv = string.IsNullOrWhiteSpace(apiKey)
-                    ? AnsiConsole.Prompt(new TextPrompt<string>("API key environment variable:").AllowEmpty())
-                    : null;
 
                 var modelList = new List<string>();
                 while (true)
@@ -106,7 +102,6 @@ public static class ProviderCommands
                 kind = parse.GetValue(kindOption) ?? "openai";
                 baseUrl = parse.GetValue(baseUrlOption) ?? "";
                 apiKey = parse.GetValue(apiKeyOption);
-                apiKeyEnv = parse.GetValue(apiKeyEnvOption);
                 if (string.IsNullOrWhiteSpace(baseUrl))
                 {
                     AnsiConsole.MarkupLine("[red]--base-url is required.[/]");
@@ -126,7 +121,6 @@ public static class ProviderCommands
                 Kind = kind.Trim().ToLowerInvariant(),
                 BaseUrl = baseUrl.Trim(),
                 ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey,
-                ApiKeyEnv = string.IsNullOrWhiteSpace(apiKeyEnv) ? null : apiKeyEnv,
                 Models = models.Select(m => new ModelConfig { Id = m }).ToList(),
             };
             config.Providers.Add(provider);
@@ -168,7 +162,6 @@ public static class ProviderCommands
         var idArg = new Argument<string>("id");
         var baseUrlOption = new Option<string?>("--base-url");
         var apiKeyOption = new Option<string?>("--api-key");
-        var apiKeyEnvOption = new Option<string?>("--api-key-env");
         var enabledOption = new Option<bool?>("--enabled");
         var priorityOption = new Option<int?>("--priority");
         var timeoutOption = new Option<int?>("--timeout") { Description = "Request timeout in seconds" };
@@ -176,7 +169,7 @@ public static class ProviderCommands
 
         var command = new Command("edit", "Edit provider fields");
         command.Add(idArg);
-        foreach (var opt in new Option[] { baseUrlOption, apiKeyOption, apiKeyEnvOption, enabledOption, priorityOption, timeoutOption, proxyOption })
+        foreach (var opt in new Option[] { baseUrlOption, apiKeyOption, enabledOption, priorityOption, timeoutOption, proxyOption })
             command.Add(opt);
 
         command.SetAction(parse =>
@@ -191,7 +184,6 @@ public static class ProviderCommands
 
             if (parse.GetValue(baseUrlOption) is { } baseUrl) provider.BaseUrl = baseUrl;
             if (parse.GetValue(apiKeyOption) is { } apiKey) provider.ApiKey = apiKey;
-            if (parse.GetValue(apiKeyEnvOption) is { } apiKeyEnv) provider.ApiKeyEnv = apiKeyEnv;
             if (parse.GetValue(enabledOption) is { } enabled) provider.Enabled = enabled;
             if (parse.GetValue(priorityOption) is { } priority) provider.Priority = priority;
             if (parse.GetValue(timeoutOption) is { } timeout) provider.TimeoutSeconds = timeout;

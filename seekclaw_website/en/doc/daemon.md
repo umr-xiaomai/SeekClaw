@@ -29,6 +29,7 @@ Responses use a stable event envelope: `id` identifies the request, `event` iden
 | `workspace.init` | none | Initializes SeekClaw directories in the active workspace |
 | `agent.mode.get` | none | Returns `plan`, `readonly`, `edit`, or `auto` |
 | `agent.mode.switch` | `{ "mode": "edit" }` | Switches and persists the Agent mode |
+| `agent.steer` | `{ "sessionId": "...", "message": "..." }` | Adds guidance to a running turn without cancelling the current request |
 
 `workspace.open` clears the legacy resumed session for that connection. New `chat` requests should include both `sessionId` and (for project tasks) `workspace`; the turn then captures its own workspace and cannot be affected by later workspace changes.
 
@@ -47,6 +48,13 @@ Vision-capable models accept an `images` array. Each image carries a client-gene
 {"id":11,"method":"agent.cancel","params":{"requestId":10}}
 ```
 
+A running turn can accept additional guidance. `agent.steer` places the message in the turn's guidance queue; after the in-flight model request finishes, the Agent adds it to the context and continues with another step without cancelling or interrupting that request:
+
+```json
+{"id":12,"method":"agent.steer","params":{"sessionId":"20260731-120000-a1b2c3","message":"Also check the edge cases"}}
+{"id":12,"event":"result","sessionId":"20260731-120000-a1b2c3","data":"guidance queued"}
+```
+
 The `requestId` parameter is optional; omitting it cancels all active turns on the current connection. The cancellation request receives its own `result`, and the selected chat request terminates with `cancelled`:
 
 ```json
@@ -54,7 +62,7 @@ The `requestId` parameter is optional; omitting it cancels all active turns on t
 {"id":10,"event":"cancelled","data":"partial text produced before cancellation"}
 ```
 
-Streaming events are `thinking`, `delta`, `status`, `image_view`, `tool_start`, and `tool_done`. `details.imageId` on `image_view` identifies the uploaded image entering the model request. Terminal events are `done`, `cancelled`, and `error`.
+Streaming events are `thinking`, `delta`, `steer`, `status`, `image_view`, `tool_start`, and `tool_done`. `steer` indicates that additional guidance has entered the active turn's context; `details.imageId` on `image_view` identifies the uploaded image entering the model request. Terminal events are `done`, `cancelled`, and `error`.
 
 ## Other Methods
 
@@ -81,7 +89,7 @@ Session methods accept `workspace` for a concrete project or `global: true` for 
 
 ## Desktop Administration Methods
 
-The Desktop settings workbench uses structured methods to manage the same configuration as the CLI without reading configuration files directly. An explicitly stored Provider `apiKey` is returned by `provider.list` so Desktop can display and edit it. The value referenced by `apiKeyEnv` is not resolved and returned. MCP environment variables expose names only, never values.
+The Desktop settings workbench uses structured methods to manage the same configuration as the CLI without reading configuration files directly. An explicitly stored Provider `apiKey` is returned by `provider.list` so Desktop can display and edit it. Runtime does not read API keys from environment variables. MCP environment variables expose names only, never values.
 
 | Method | Description |
 | --- | --- |

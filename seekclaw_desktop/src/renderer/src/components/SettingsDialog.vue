@@ -44,9 +44,9 @@ interface ProviderInfo {
   name: string
   kind: 'openai' | 'anthropic'
   baseUrl: string
+  modelListUrl?: string
   apiKey?: string
   apiKeyConfigured: boolean
-  apiKeyEnv?: string
   models: string[]
   enabled: boolean
   priority: number
@@ -61,8 +61,8 @@ interface ProviderFormValue {
   name: string
   kind: 'openai' | 'anthropic'
   baseUrl: string
+  modelListUrl: string
   apiKey: string
-  apiKeyEnv: string
   models: string
   enabled: boolean
   priority: number
@@ -81,7 +81,7 @@ interface ModelInfo {
   contextWindow: number
   maxOutput: number
   tags: string[]
-  capabilities: Record<string, boolean>
+  capabilities: Record<string, boolean | string>
 }
 
 interface McpServerInfo {
@@ -160,6 +160,7 @@ const checks = ref<HealthCheck[]>([])
 const usage = ref<UsageInfo[]>([])
 const selectedModel = ref('')
 const modelQuery = ref('')
+const modelEditorOpen = ref(false)
 const providerEditorOpen = ref(false)
 const profileEditorOpen = ref(false)
 const mcpEditorOpen = ref(false)
@@ -168,8 +169,11 @@ const editingMcpName = ref<string | null>(null)
 
 const providerForm = reactive({
   id: '', name: '', kind: 'openai' as 'openai' | 'anthropic', baseUrl: '',
-  apiKey: '', apiKeyEnv: '', models: '', enabled: true, priority: 0,
-  timeoutSeconds: 120, proxy: '', promptCaching: true
+  apiKey: '', models: '', enabled: true, priority: 0,
+  modelListUrl: '', timeoutSeconds: 120, proxy: '', promptCaching: true
+})
+const modelForm = reactive({
+  provider: '', id: '', alias: '', contextWindow: 128000, maxOutput: 8192, vision: false
 })
 const profileForm = reactive({
   name: '', provider: '', model: '', strategy: 'balanced', temperature: ''
@@ -383,8 +387,8 @@ function newProvider(): void {
   error.value = ''
   editingProviderId.value = null
   Object.assign(providerForm, {
-    id: '', name: '', kind: 'openai', baseUrl: '', apiKey: '', apiKeyEnv: '',
-    models: '', enabled: true, priority: 0, timeoutSeconds: 120, proxy: '', promptCaching: true
+    id: '', name: '', kind: 'openai', baseUrl: '', apiKey: '',
+    models: '', enabled: true, priority: 0, modelListUrl: '', timeoutSeconds: 120, proxy: '', promptCaching: true
   })
   providerEditorOpen.value = true
 }
@@ -397,8 +401,8 @@ function editProvider(provider: ProviderInfo): void {
     name: provider.name === provider.id ? '' : provider.name,
     kind: provider.kind,
     baseUrl: provider.baseUrl,
+    modelListUrl: provider.modelListUrl ?? '',
     apiKey: provider.apiKey ?? '',
-    apiKeyEnv: provider.apiKeyEnv ?? '',
     models: provider.models.join('\n'),
     enabled: provider.enabled,
     priority: provider.priority,
@@ -421,6 +425,52 @@ async function saveProvider(value: ProviderFormValue): Promise<void> {
     else if (editingProviderId.value) parameters.clearApiKey = true
     await window.seekclaw.daemon.request('provider.upsert', parameters)
     providerEditorOpen.value = false
+    await loadModels()
+    emit('runtimeChanged')
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
+}
+
+async function fetchProviderModels(provider: ProviderInfo): Promise<void> {
+  beginAction(`provider.models.fetch:${provider.id}`)
+  try {
+    const ids = await requestJson<string[]>('provider.models.fetch', { id: provider.id })
+    notice.value = `${provider.id} 已获取 ${ids.length} 个模型`
+    await loadModels()
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
+}
+
+function editModel(model: ModelInfo): void {
+  Object.assign(modelForm, {
+    provider: model.provider,
+    id: model.id,
+    alias: model.alias ?? '',
+    contextWindow: model.contextWindow,
+    maxOutput: model.maxOutput,
+    vision: model.capabilities.vision === true
+  })
+  modelEditorOpen.value = true
+}
+
+async function saveModel(): Promise<void> {
+  beginAction('model.update')
+  try {
+    await window.seekclaw.daemon.request('model.update', {
+      provider: modelForm.provider,
+      id: modelForm.id,
+      alias: modelForm.alias.trim() || null,
+      contextWindow: Number(modelForm.contextWindow),
+      maxOutput: Number(modelForm.maxOutput),
+      vision: modelForm.vision
+    })
+    modelEditorOpen.value = false
     await loadModels()
     emit('runtimeChanged')
   } catch (reason) {
@@ -455,7 +505,11 @@ async function testProvider(provider: ProviderInfo): Promise<void> {
   beginAction(`provider.test:${provider.id}`)
   try {
     const [result] = await requestJson<Array<{ online: boolean; latencyMs: number; detail: string }>>('provider.test', { id: provider.id })
-    notice.value = result ? `${provider.id}: ${result.online ? '在线' : '离线'} · ${Math.round(result.latencyMs)} ms · ${result.detail}` : ''
+    const message = result
+      ? `${provider.id}: ${result.online ? '在线' : '离线'} · ${Math.round(result.latencyMs)} ms · ${result.detail}`
+      : 'Provider 测试没有返回结果'
+    if (result?.online) notice.value = message
+    else error.value = message
   } catch (reason) {
     fail(reason)
   } finally {
@@ -498,7 +552,9 @@ async function testModel(): Promise<void> {
   beginAction('model.test')
   try {
     const result = await requestJson<{ success: boolean; detail: string; latencyMs: number }>('model.test', { model: selectedModel.value })
-    notice.value = `${result.success ? '模型可用' : '模型不可用'} · ${Math.round(result.latencyMs)} ms · ${result.detail}`
+    const message = `${result.success ? '模型可用' : '模型不可用'} · ${Math.round(result.latencyMs)} ms · ${result.detail}`
+    if (result.success) notice.value = message
+    else error.value = message
   } catch (reason) {
     fail(reason)
   } finally {
@@ -774,6 +830,9 @@ watch(section, () => { void loadCurrentSection() })
                 </div>
                 <KeyRound :size="15" :class="provider.apiKeyConfigured ? 'key-set' : 'key-missing'" />
                 <button class="secondary-button compact-button" :disabled="action === `provider.test:${provider.id}`" @click="testProvider(provider)">测试</button>
+                <button class="secondary-button compact-button" :disabled="action === `provider.models.fetch:${provider.id}`" @click="fetchProviderModels(provider)">
+                  <RefreshCw :size="13" :class="{ spin: action === `provider.models.fetch:${provider.id}` }" /> 获取模型
+                </button>
                 <button v-if="!provider.active" class="secondary-button compact-button" @click="useProvider(provider)">使用</button>
                 <button class="icon-button compact" title="编辑" @click="editProvider(provider)"><Settings2 :size="15" /></button>
                 <button class="icon-button compact danger-icon" title="删除" @click="removeProvider(provider)"><Trash2 :size="15" /></button>
@@ -784,6 +843,25 @@ watch(section, () => { void loadCurrentSection() })
               <div><strong>模型目录</strong><small>{{ filteredModels.length }} / {{ models.length }}</small></div>
               <label class="settings-search"><Search :size="15" /><input v-model="modelQuery" placeholder="搜索模型、别名或标签" /></label>
             </div>
+            <section v-if="modelEditorOpen" class="settings-editor model-editor">
+              <div class="editor-heading">
+                <div><strong>模型能力与上下文</strong><small>{{ modelForm.provider }}/{{ modelForm.id }}</small></div>
+                <button class="icon-button compact" title="关闭" @click="modelEditorOpen = false"><X :size="15" /></button>
+              </div>
+              <div class="form-grid">
+                <label><span>显示别名</span><input v-model="modelForm.alias" placeholder="可选" /></label>
+                <label><span>上下文长度（tokens）</span><input v-model.number="modelForm.contextWindow" type="number" min="1024" max="10000000" step="1024" /></label>
+                <label><span>最大输出（tokens）</span><input v-model.number="modelForm.maxOutput" type="number" min="128" max="1000000" step="128" /></label>
+                <fieldset class="model-capability-fieldset">
+                  <legend>视觉 / 多模态输入</legend>
+                  <label class="radio-option"><input v-model="modelForm.vision" type="radio" :value="true" name="model-vision" /><span>支持</span></label>
+                  <label class="radio-option"><input v-model="modelForm.vision" type="radio" :value="false" name="model-vision" /><span>不支持</span></label>
+                  <small>声明后，上传图片时会优先使用支持视觉的模型。</small>
+                </fieldset>
+              </div>
+              <small class="model-context-hint">当会话估算 token 接近该上下文长度时，Runtime 会自动压缩较早的历史消息。</small>
+              <div class="editor-actions"><span class="toolbar-spacer" /><button class="secondary-button" @click="modelEditorOpen = false">取消</button><button class="secondary-button primary-action" @click="saveModel"><Save :size="15" /> 保存模型</button></div>
+            </section>
             <section class="settings-list model-catalog" aria-label="模型目录">
               <div v-if="filteredModels.length === 0" class="empty-settings">没有匹配的模型</div>
               <div v-for="model in filteredModels" :key="model.ref" class="settings-list-row">
@@ -793,6 +871,7 @@ watch(section, () => { void loadCurrentSection() })
                   <small>{{ model.contextWindow.toLocaleString() }} context · {{ model.maxOutput.toLocaleString() }} output · {{ Object.entries(model.capabilities).filter(([, enabled]) => enabled).map(([name]) => name).join(', ') }}</small>
                 </div>
                 <button class="secondary-button compact-button" @click="testModelReference(model.ref)">测试</button>
+                <button class="icon-button compact" title="编辑模型能力与上下文" @click="editModel(model)"><Settings2 :size="15" /></button>
                 <button v-if="!model.active && model.providerEnabled" class="secondary-button compact-button" @click="useModelReference(model.ref)">使用</button>
               </div>
             </section>
@@ -883,13 +962,27 @@ watch(section, () => { void loadCurrentSection() })
             </section>
           </template>
 
-          <div v-if="error" class="settings-feedback error"><X :size="15" />{{ error }}</div>
-          <div v-else-if="notice" class="settings-feedback success"><Check :size="15" />{{ notice }}</div>
         </main>
       </div>
       </section>
     </div>
   </Transition>
+  <Teleport to="body">
+    <Transition name="global-toast">
+      <div
+        v-if="open && (error || notice)"
+        class="global-toast-layer"
+        role="status"
+        :aria-live="error ? 'assertive' : 'polite'"
+      >
+        <div class="global-toast" :class="{ error: error, success: !error && notice }">
+          <X v-if="error" :size="15" />
+          <Check v-else :size="15" />
+          <span>{{ error || notice }}</span>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
   <ProviderEditorDialog
     :open="providerEditorOpen"
     :editing-id="editingProviderId"
