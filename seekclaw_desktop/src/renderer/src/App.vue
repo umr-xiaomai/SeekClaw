@@ -29,7 +29,7 @@ import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import { confirmAction } from './confirmation'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
-import type { ChatMessage, ProjectItem, ThreadItem, ToolActivity } from './types'
+import type { ChatMessage, ImageAttachment, ProjectItem, ThreadItem, ToolActivity } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
 const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v1'
@@ -58,7 +58,9 @@ interface RuntimeSession extends RuntimeSessionHeader {
   messages: Array<{
     role: 'user' | 'assistant' | 'tool'
     text: string
+    images?: ImageAttachment[]
     thinking?: string
+    viewedImages?: Array<{ id: string; name: string }>
     toolCalls?: Array<{ id: string; name: string }>
     toolCallId?: string
     toolName?: string
@@ -72,6 +74,12 @@ interface RuntimeWorkspace {
   path: string
   name: string
   mode: string
+}
+
+interface RuntimeModelCatalogItem {
+  ref: string
+  active: boolean
+  capabilities?: { vision?: boolean }
 }
 
 const appInfo = ref<AppInfo>({
@@ -102,6 +110,7 @@ const activeThreadId = ref('')
 const selectedProjectId = ref('')
 const runtimeWorkspacePath = ref('')
 const models = ref<string[]>([])
+const modelCatalog = ref<RuntimeModelCatalogItem[]>([])
 const activeModel = ref('balanced')
 const mode = ref('edit')
 const busy = computed(() => Boolean(activeThread.value?.running))
@@ -112,6 +121,15 @@ const taskNotice = ref<{ threadId: string; title: string; kind: 'done' | 'error'
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
 const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? ReasoningLevel.High)
+const activeModelSupportsImages = computed(() =>
+  modelCatalog.value.find((model) => model.ref === activeModel.value)?.capabilities?.vision === true)
+const activeImageSources = computed<Record<string, string>>(() => {
+  const sources: Record<string, string> = {}
+  for (const message of activeThread.value?.messages ?? [])
+    for (const image of message.images ?? [])
+      sources[image.id] = `data:${image.mediaType};base64,${image.data}`
+  return sources
+})
 const activeProject = computed(() => {
   const projectId = activeThread.value ? activeThread.value.projectId : selectedProjectId.value
   return projects.value.find((project) => project.id === projectId)
@@ -348,13 +366,14 @@ async function loadRuntimeState(): Promise<void> {
       window.seekclaw.daemon.request('model.catalog')
     ])
     const available = JSON.parse(modelResponse.data) as string[]
-    const catalog = JSON.parse(catalogResponse.data) as Array<{ ref: string; active: boolean }>
+    const catalog = JSON.parse(catalogResponse.data) as RuntimeModelCatalogItem[]
     const workspace = JSON.parse(workspaceResponse.data) as RuntimeWorkspace
     const currentProject = projects.value.find((project) => samePath(project.path, workspace.path))
     if (currentProject && workspace.name) currentProject.name = workspace.name
     runtimeWorkspacePath.value = workspace.path
     selectedProjectId.value ||= currentProject?.id ?? ''
     models.value = available
+    modelCatalog.value = catalog
     activeModel.value = catalog.find((model) => model.active)?.ref
       ?? (available.includes(activeModel.value) ? activeModel.value : available[0] ?? 'balanced')
     mode.value = modeResponse.data
@@ -372,6 +391,7 @@ async function loadRuntimeState(): Promise<void> {
     }
   } catch {
     models.value = []
+    modelCatalog.value = []
   }
 }
 
@@ -519,7 +539,9 @@ function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
       id: `${saved.id}:${index}`,
       role: item.role,
       content: item.text,
+      images: item.images,
       thinking: item.thinking,
+      viewedImages: item.viewedImages,
       tools: item.toolCalls?.map((call) => ({
         id: call.id,
         callId: call.id,
@@ -590,19 +612,27 @@ function updateThreadTitle(thread: ThreadItem, prompt: string): boolean {
   return true
 }
 
-async function sendMessage(content: string): Promise<void> {
+async function sendMessage(content: string, images: ImageAttachment[]): Promise<void> {
   const thread = activeThread.value
   const project = activeProject.value
   if (!thread || (thread.projectId && !project) || thread.archived || thread.running) return
+  if (!content.trim() && images.length === 0) return
   const reasoningLevel = thread.reasoningLevel ?? ReasoningLevel.High
 
-  const userMessage: ChatMessage = { id: makeId(), role: 'user', content, createdAt: Date.now() }
+  const userMessage: ChatMessage = {
+    id: makeId(),
+    role: 'user',
+    content,
+    images,
+    createdAt: Date.now()
+  }
   const assistant: ChatMessage = {
     id: makeId(), role: 'assistant', content: '', thinking: '', tools: [], state: 'thinking', createdAt: Date.now()
   }
   thread.messages.push(userMessage, assistant)
   thread.updatedAt = Date.now()
-  const titleChanged = updateThreadTitle(thread, content)
+  const titlePrompt = content.trim() || `查看图片：${images.map((image) => image.name).join('、')}`
+  const titleChanged = updateThreadTitle(thread, titlePrompt)
   thread.running = true
   thread.assistantId = assistant.id
   thread.requestId = undefined
@@ -631,6 +661,7 @@ async function sendMessage(content: string): Promise<void> {
     }
     await window.seekclaw.daemon.request('chat', {
       message: content,
+      images,
       sessionId: thread.sessionId,
       reasoningLevel,
       ...scope
@@ -860,14 +891,44 @@ async function deleteArchivedTasks(): Promise<void> {
 
 async function deleteProject(project: ProjectItem): Promise<void> {
   if (threads.value.some((thread) => thread.projectId === project.id && thread.running)) return
+  if (!daemonState.value.connected) {
+    await reconnectDaemon()
+    if (!daemonState.value.connected) return
+  }
+  try {
+    // Always refresh so sessions created or archived by another client are included.
+    await refreshProjectSessions(project)
+  } catch {
+    return
+  }
+  const targets = threads.value.filter((thread) => thread.projectId === project.id)
+  if (targets.some((thread) => thread.running)) return
   if (!await confirmAction({
-    title: '移除项目',
-    message: `从 SeekClaw 中移除项目“${project.name}”？项目文件和任务记录不会从磁盘删除。`,
-    confirmLabel: '移除项目',
+    title: '删除项目',
+    message: `删除项目“${project.name}”并永久删除其下全部 ${targets.length} 个会话？本地项目文件不会删除，此操作无法撤销。`,
+    confirmLabel: '删除项目和会话',
     danger: true
   })) return
+
+  try {
+    await Promise.all(targets
+      .filter((thread) => thread.sessionId)
+      .map((thread) => window.seekclaw.daemon.request('session.delete', {
+        id: thread.sessionId,
+        workspace: project.path
+      })))
+  } catch {
+    // Some concurrent deletions may already have completed. Reconcile the project and keep it
+    // visible so the user can retry instead of hiding sessions that remain on disk.
+    await refreshProjectSessions(project).catch(() => undefined)
+    return
+  }
+
+  const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
   projects.value = projects.value.filter((item) => item.id !== project.id)
   threads.value = threads.value.filter((thread) => thread.projectId !== project.id)
+  if (targets.some((thread) => thread.id === taskSettingsThreadId.value)) taskSettingsThreadId.value = ''
+  if (activeAffected) activeThreadId.value = ''
   if (selectedProjectId.value === project.id) selectedProjectId.value = projects.value[0]?.id ?? ''
   if (!activeThread.value) {
     activeThreadId.value = ''
@@ -910,6 +971,15 @@ function handleDaemonEvent(event: DaemonMessage): void {
     case 'status':
       if (message && event.data.toLocaleLowerCase().includes('thinking')) message.state = 'thinking'
       break
+    case 'image_view': {
+      if (!message) break
+      const imageId = typeof event.details?.imageId === 'string' ? event.details.imageId : ''
+      if (!imageId) break
+      message.viewedImages ??= []
+      if (!message.viewedImages.some((image) => image.id === imageId))
+        message.viewedImages.push({ id: imageId, name: event.data || '图片' })
+      break
+    }
     case 'tool_start':
       if (!message) break
       message.tools ??= []
@@ -1148,6 +1218,7 @@ watch(projects, persistProjects, { deep: true })
               v-for="message in activeThread.messages"
               :key="message.id"
               :message="message"
+              :image-sources="activeImageSources"
               @open-diff="openToolDiff"
             />
           </div>
@@ -1198,10 +1269,11 @@ watch(projects, persistProjects, { deep: true })
             :model="activeModel"
             :models="models"
             :mode="mode"
+            :task-id="activeThread?.id"
+            :supports-images="activeModelSupportsImages"
             :reasoning-level="activeReasoningLevel"
             @send="sendMessage"
             @stop="stopTurn"
-            @attach="openWorkspace"
             @change-model="changeModel"
             @change-mode="changeMode"
             @change-reasoning-level="changeReasoningLevel"

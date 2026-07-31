@@ -402,6 +402,23 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
         var messages = new JsonArray();
         foreach (var message in session.Messages)
         {
+            var images = new JsonArray();
+            foreach (var image in message.Images ?? [])
+                images.Add((JsonNode)new JsonObject
+                {
+                    ["id"] = image.Id,
+                    ["name"] = image.Name,
+                    ["mediaType"] = image.MediaType,
+                    ["data"] = image.Data,
+                    ["sizeBytes"] = image.SizeBytes,
+                });
+            var viewedImages = new JsonArray();
+            foreach (var image in message.ViewedImages ?? [])
+                viewedImages.Add((JsonNode)new JsonObject
+                {
+                    ["id"] = image.Id,
+                    ["name"] = image.Name,
+                });
             var toolCalls = new JsonArray();
             foreach (var call in message.ToolCalls ?? [])
             {
@@ -415,7 +432,9 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
             {
                 ["role"] = message.Role.ToString().ToLowerInvariant(),
                 ["text"] = message.Text,
+                ["images"] = images,
                 ["thinking"] = message.Thinking,
+                ["viewedImages"] = viewedImages,
                 ["toolCalls"] = toolCalls,
                 ["toolCallId"] = message.ToolCallId,
                 ["toolName"] = message.ToolName,

@@ -21,7 +21,8 @@ public interface IProviderManager
     IAsyncEnumerable<LlmStreamEvent> StreamAsync(
         Func<ModelInfo, LlmRequest> requestFactory,
         WorkspaceConfig? workspace,
-        CancellationToken ct);
+        CancellationToken ct,
+        Func<ModelInfo, bool>? candidateFilter = null);
 
     /// <summary>Sends a minimal real completion to verify a model end-to-end.</summary>
     Task<(bool Success, string Detail, double LatencyMs)> TestModelAsync(ModelInfo model, CancellationToken ct = default);
@@ -89,11 +90,16 @@ public sealed class ProviderManager(
     public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
         Func<ModelInfo, LlmRequest> requestFactory,
         WorkspaceConfig? workspace,
-        [EnumeratorCancellation] CancellationToken ct)
+        [EnumeratorCancellation] CancellationToken ct,
+        Func<ModelInfo, bool>? candidateFilter = null)
     {
-        var candidates = BuildCandidates(workspace);
+        var candidates = candidateFilter is null
+            ? BuildCandidates(workspace)
+            : BuildCandidates(workspace).Where(candidateFilter).ToList();
         if (candidates.Count == 0)
-            throw new LlmException("No models configured.", retryable: false);
+            throw new LlmException(
+                candidateFilter is null ? "No models configured." : "No compatible models configured.",
+                retryable: false);
 
         LlmException? lastError = null;
 

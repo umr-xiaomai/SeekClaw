@@ -108,6 +108,61 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
+    public void OpenAiBody_MapsMultipleImagesToImageUrlContentParts()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "openai", Kind = "openai", BaseUrl = "https://example.test/v1" },
+            Model = new ModelConfig { Id = "vision-model" },
+            Messages =
+            [
+                ChatMessage.User("比较这两张图片",
+                [
+                    new ChatImageAttachment("first", "first.png", "image/png", "AQID", 3),
+                    new ChatImageAttachment("second", "second.webp", "image/webp", "BAUG", 3),
+                ]),
+            ],
+        };
+
+        var content = OpenAiCompatibleClient.BuildBody(request)["messages"]![0]!["content"]!.AsArray();
+        Assert.Equal(3, content.Count);
+        Assert.Equal("text", content[0]!["type"]!.GetValue<string>());
+        Assert.Equal("比较这两张图片", content[0]!["text"]!.GetValue<string>());
+        Assert.Equal("image_url", content[1]!["type"]!.GetValue<string>());
+        Assert.Equal("data:image/png;base64,AQID",
+            content[1]!["image_url"]!["url"]!.GetValue<string>());
+        Assert.Equal("data:image/webp;base64,BAUG",
+            content[2]!["image_url"]!["url"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AnthropicBody_MapsMultipleImagesToBase64ContentParts()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "anthropic", Kind = "anthropic", BaseUrl = "https://example.test" },
+            Model = new ModelConfig { Id = "vision-model" },
+            Messages =
+            [
+                ChatMessage.User("分别描述",
+                [
+                    new ChatImageAttachment("first", "first.jpg", "image/jpeg", "AQID", 3),
+                    new ChatImageAttachment("second", "second.gif", "image/gif", "BAUG", 3),
+                ]),
+            ],
+        };
+
+        var content = AnthropicClient.BuildBody(request)["messages"]![0]!["content"]!.AsArray();
+        Assert.Equal(3, content.Count);
+        Assert.Equal("image", content[0]!["type"]!.GetValue<string>());
+        Assert.Equal("image/jpeg", content[0]!["source"]!["media_type"]!.GetValue<string>());
+        Assert.Equal("AQID", content[0]!["source"]!["data"]!.GetValue<string>());
+        Assert.Equal("image/gif", content[1]!["source"]!["media_type"]!.GetValue<string>());
+        Assert.Equal("text", content[2]!["type"]!.GetValue<string>());
+        Assert.Equal("分别描述", content[2]!["text"]!.GetValue<string>());
+    }
+
+    [Fact]
     public void AnthropicBody_AddsCacheCheckpoints_ToStableSystemAndTools()
     {
         var request = new LlmRequest

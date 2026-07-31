@@ -94,4 +94,4 @@ Checks cover the workspace, metadata directory, Provider configuration, Memory, 
 - Bundled a self-contained Runtime managed automatically by Desktop.
 - Model requests now expose complete Provider and HTTP errors.
 
-The Runtime IPC protocol version is `2.0`. See the [Daemon documentation](/en/doc/daemon) for the full method contract.
+The Runtime IPC protocol version is `2.1`. See the [Daemon documentation](/en/doc/daemon) for the full method contract.

@@ -98,7 +98,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             switch (msg.Role)
             {
                 case ChatRole.User:
-                    messages.Add((JsonNode)new JsonObject { ["role"] = "user", ["content"] = msg.Text });
+                    messages.Add((JsonNode)new JsonObject { ["role"] = "user", ["content"] = UserContent(msg) });
                     break;
 
                 case ChatRole.Assistant:
@@ -196,6 +196,27 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         }
 
         return body;
+    }
+
+    private static JsonNode UserContent(ChatMessage message)
+    {
+        if (message.Images is not { Count: > 0 }) return JsonValue.Create(message.Text)!;
+
+        var content = new JsonArray();
+        foreach (var image in message.Images)
+            content.Add((JsonNode)new JsonObject
+            {
+                ["type"] = "image",
+                ["source"] = new JsonObject
+                {
+                    ["type"] = "base64",
+                    ["media_type"] = image.MediaType,
+                    ["data"] = image.Data,
+                },
+            });
+        if (!string.IsNullOrWhiteSpace(message.Text))
+            content.Add((JsonNode)new JsonObject { ["type"] = "text", ["text"] = message.Text });
+        return content;
     }
 
     private static JsonNode ParseOrEmpty(string json)

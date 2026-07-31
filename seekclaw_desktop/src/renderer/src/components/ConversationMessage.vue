@@ -1,17 +1,31 @@
 <script setup lang="ts">
-import { Braces, Check, ChevronDown, CircleAlert, LoaderCircle, Wrench } from '@lucide/vue'
+import { Braces, Check, ChevronDown, CircleAlert, Eye, Image as ImageIcon, LoaderCircle, Wrench } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import type { ChatMessage } from '../types'
+import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 
-const props = defineProps<{ message: ChatMessage }>()
+const props = withDefaults(defineProps<{
+  message: ChatMessage
+  imageSources?: Record<string, string>
+}>(), { imageSources: () => ({}) })
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
 }>()
 const thinkingOpen = ref(false)
+const preview = ref<{ src: string; name: string } | null>(null)
 
 const regularTools = computed(() => (props.message.tools ?? []).filter((tool) => !tool.diff))
 const editedTools = computed(() => (props.message.tools ?? []).filter((tool) => tool.diff && tool.filePath))
+
+function imageUrl(id: string): string | undefined {
+  return props.imageSources[id]
+}
+
+function previewImage(id: string, name: string): void {
+  const src = imageUrl(id)
+  if (src) preview.value = { src, name }
+}
 
 function diffStats(diff?: string): { added: number; removed: number } {
   if (!diff) return { added: 0, removed: 0 }
@@ -33,7 +47,22 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
 
 <template>
   <article class="message" :class="`message-${message.role}`">
-    <div v-if="message.role === 'user'" class="user-bubble">{{ message.content }}</div>
+    <div v-if="message.role === 'user'" class="user-message-stack">
+      <div v-if="message.images?.length" class="user-image-grid" :class="{ single: message.images.length === 1 }">
+        <button
+          v-for="image in message.images"
+          :key="image.id"
+          type="button"
+          class="user-image-button"
+          :title="`预览 ${image.name}`"
+          @click="previewImage(image.id, image.name)"
+        >
+          <img :src="imageUrl(image.id)" :alt="image.name">
+          <span>{{ image.name }}</span>
+        </button>
+      </div>
+      <div v-if="message.content" class="user-bubble">{{ message.content }}</div>
+    </div>
 
     <div v-else class="assistant-message">
       <button
@@ -48,6 +77,27 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
         <ChevronDown :size="15" :class="{ rotated: thinkingOpen }" />
       </button>
       <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
+
+      <div v-if="message.viewedImages?.length" class="image-view-list" aria-label="AI 已查看的图片">
+        <button
+          v-for="image in message.viewedImages"
+          :key="image.id"
+          type="button"
+          class="image-view-row"
+          :class="{ previewable: Boolean(imageUrl(image.id)) }"
+          :disabled="!imageUrl(image.id)"
+          :title="imageUrl(image.id) ? `预览 ${image.name}` : image.name"
+          @click="previewImage(image.id, image.name)"
+        >
+          <span class="image-view-thumbnail">
+            <img v-if="imageUrl(image.id)" :src="imageUrl(image.id)" :alt="image.name">
+            <ImageIcon v-else :size="16" />
+          </span>
+          <Eye :size="15" />
+          <span>已查看</span>
+          <small>{{ image.name }}</small>
+        </button>
+      </div>
 
       <div v-if="regularTools.length" class="tool-list">
         <div v-for="tool in regularTools" :key="tool.id" class="tool-row">
@@ -98,4 +148,6 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
       </div>
     </div>
   </article>
+
+  <ImagePreviewDialog :src="preview?.src" :name="preview?.name" @close="preview = null" />
 </template>

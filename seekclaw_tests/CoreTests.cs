@@ -64,11 +64,16 @@ public sealed class CoreTests : IDisposable
         var store = new SessionStore();
         var session = store.Create(workspace, SeekClaw.Runtime.Providers.ReasoningLevel.XHigh);
 
-        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("hello"));
+        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("hello",
+        [
+            new SeekClaw.Runtime.Providers.ChatImageAttachment(
+                "image-1", "screen.png", "image/png", "AQID", 3),
+        ]));
         var assistant = new SeekClaw.Runtime.Providers.ChatMessage
         {
             Role = SeekClaw.Runtime.Providers.ChatRole.Assistant,
             Text = "hi!",
+            ViewedImages = [new SeekClaw.Runtime.Providers.ChatImageReference("image-1", "screen.png")],
             ToolCalls = [new SeekClaw.Runtime.Providers.ToolCallRequest("c1", "edit_file", """{"path":"a.txt"}""")],
         };
         store.Append(session, assistant);
@@ -79,6 +84,9 @@ public sealed class CoreTests : IDisposable
         Assert.NotNull(loaded);
         Assert.Equal(3, loaded!.Messages.Count);
         Assert.Equal("hello", loaded.Messages[0].Text);
+        Assert.Equal("screen.png", Assert.Single(loaded.Messages[0].Images!).Name);
+        Assert.Equal("AQID", loaded.Messages[0].Images![0].Data);
+        Assert.Equal("screen.png", Assert.Single(loaded.Messages[1].ViewedImages!).Name);
         Assert.Equal("edit_file", loaded.Messages[1].ToolCalls![0].Name);
         Assert.Equal("c1", loaded.Messages[2].ToolCallId);
         Assert.Equal("a.txt", loaded.Messages[2].ToolFilePath);

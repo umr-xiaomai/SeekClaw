@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build a self-contained SeekClaw Runtime and portable Windows Desktop folder."""
+"""Build a self-contained SeekClaw Runtime and Windows Desktop release."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
+import re 
 import shutil
 import subprocess
 import sys
@@ -20,9 +20,13 @@ DESKTOP_DIR = REPO_ROOT / "seekclaw_desktop"
 RUNTIME_STAGE = DESKTOP_DIR / "runtime" / "win-x64"
 BUILDER_OUTPUT = DESKTOP_DIR / "release"
 UNPACKED_OUTPUT = BUILDER_OUTPUT / "win-unpacked"
-FINAL_OUTPUT = REPO_ROOT / "publish" / "SeekClaw-win-x64"
+PUBLISH_DIR = REPO_ROOT / "publish"
+PORTABLE_OUTPUT = PUBLISH_DIR / "SeekClaw-win-x64"
+INSTALLER_OUTPUT = PUBLISH_DIR / "SeekClaw-Setup-win-x64.exe"
 DESKTOP_PACKAGE_FILE = DESKTOP_DIR / "package.json"
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+PORTABLE_TARGET = "portable"
+INSTALLER_TARGET = "installer"
 
 
 class BuildError(RuntimeError):
@@ -95,6 +99,14 @@ def remove_directory(path: Path) -> None:
         shutil.rmtree(target)
 
 
+def remove_file(path: Path) -> None:
+    target = workspace_path(path)
+    if target.exists():
+        if not target.is_file():
+            raise BuildError(f"Expected a file but found a different path: {target}")
+        target.unlink()
+
+
 def reset_directory(path: Path) -> None:
     target = workspace_path(path)
     remove_directory(target)
@@ -114,8 +126,17 @@ def run(command: str, arguments: Sequence[str], cwd: Path, env: dict[str, str]) 
     subprocess.run([command, *arguments], cwd=cwd, env=env, check=True)
 
 
-def package_desktop(pnpm: str, env: dict[str, str], attempts: int = 3) -> None:
-    arguments = ["exec", "electron-builder", "--win", "dir", "--x64"]
+def package_desktop(
+    pnpm: str, env: dict[str, str], build_target: str, attempts: int = 3
+) -> None:
+    if build_target == PORTABLE_TARGET:
+        electron_target = "dir"
+    elif build_target == INSTALLER_TARGET:
+        electron_target = "nsis"
+    else:
+        raise BuildError(f"Unknown Desktop build target: {build_target}")
+
+    arguments = ["exec", "electron-builder", "--win", electron_target, "--x64"]
     for attempt in range(1, attempts + 1):
         try:
             run(pnpm, arguments, DESKTOP_DIR, env)
@@ -133,17 +154,57 @@ def package_desktop(pnpm: str, env: dict[str, str], attempts: int = 3) -> None:
             time.sleep(3 * attempt)
 
 
+def find_installer_artifact(version: str) -> Path:
+    expected = BUILDER_OUTPUT / f"SeekClaw Setup {version}.exe"
+    if expected.is_file():
+        return expected
+
+    candidates = sorted(
+        path for path in BUILDER_OUTPUT.glob("*.exe") if path.is_file()
+    )
+    versioned_candidates = [path for path in candidates if version in path.stem]
+    if len(versioned_candidates) == 1:
+        return versioned_candidates[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise BuildError(f"Installer executable was not found in: {BUILDER_OUTPUT}")
+    names = ", ".join(path.name for path in candidates)
+    raise BuildError(f"Could not identify a unique installer executable: {names}")
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the latest self-contained Runtime and Desktop into one portable folder."
+        description="Build the latest self-contained Runtime and Desktop release."
     )
     parser.add_argument("--skip-tests", action="store_true", help="Skip .NET and Desktop tests.")
     parser.add_argument("--skip-install", action="store_true", help="Skip pnpm install.")
     return parser.parse_args()
 
 
+def prompt_build_target() -> str:
+    prompt = (
+        "\n请选择构建类型：\n"
+        "1. 免安装版（可直接运行的文件夹）\n"
+        "2. 安装版（NSIS 安装包）\n"
+        "请输入 1 或 2: "
+    )
+    while True:
+        try:
+            choice = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt) as error:
+            raise BuildError("未选择构建类型，构建已取消。") from error
+
+        if choice == "1":
+            return PORTABLE_TARGET
+        if choice == "2":
+            return INSTALLER_TARGET
+        print("输入无效，请输入 1 或 2。", file=sys.stderr, flush=True)
+
+
 def main() -> int:
     args = parse_arguments()
+    build_target = prompt_build_target()
     dotnet = require_command("dotnet")
     pnpm = require_command("pnpm")
     build_env = os.environ.copy()
@@ -162,7 +223,11 @@ def main() -> int:
 
     try:
         reset_directory(RUNTIME_STAGE)
-        reset_directory(FINAL_OUTPUT)
+        if build_target == PORTABLE_TARGET:
+            reset_directory(PORTABLE_OUTPUT)
+        else:
+            PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
+            remove_file(INSTALLER_OUTPUT)
         remove_directory(BUILDER_OUTPUT)
 
         if not args.skip_install:
@@ -195,22 +260,40 @@ def main() -> int:
         )
 
         run(pnpm, ["build"], DESKTOP_DIR, build_env)
-        package_desktop(pnpm, build_env)
+        package_desktop(pnpm, build_env, build_target)
 
         if not UNPACKED_OUTPUT.is_dir():
             raise BuildError(f"Electron builder output was not found: {UNPACKED_OUTPUT}")
-        shutil.copytree(UNPACKED_OUTPUT, FINAL_OUTPUT, dirs_exist_ok=True)
 
-        desktop_executable = FINAL_OUTPUT / "SeekClaw.exe"
-        runtime_executable = FINAL_OUTPUT / "resources" / "runtime" / "seekclaw.exe"
+        desktop_executable = UNPACKED_OUTPUT / "SeekClaw.exe"
+        runtime_executable = UNPACKED_OUTPUT / "resources" / "runtime" / "seekclaw.exe"
         if not desktop_executable.is_file():
             raise BuildError(f"Desktop executable is missing: {desktop_executable}")
         if not runtime_executable.is_file():
             raise BuildError(f"Bundled Runtime executable is missing: {runtime_executable}")
 
+        if build_target == PORTABLE_TARGET:
+            shutil.copytree(UNPACKED_OUTPUT, PORTABLE_OUTPUT, dirs_exist_ok=True)
+            desktop_executable = PORTABLE_OUTPUT / "SeekClaw.exe"
+            runtime_executable = PORTABLE_OUTPUT / "resources" / "runtime" / "seekclaw.exe"
+            if not desktop_executable.is_file():
+                raise BuildError(f"Desktop executable is missing: {desktop_executable}")
+            if not runtime_executable.is_file():
+                raise BuildError(f"Bundled Runtime executable is missing: {runtime_executable}")
+            release_output = PORTABLE_OUTPUT
+        else:
+            installer_artifact = find_installer_artifact(release_version)
+            shutil.copy2(installer_artifact, INSTALLER_OUTPUT)
+            if not INSTALLER_OUTPUT.is_file():
+                raise BuildError(f"Installer executable is missing: {INSTALLER_OUTPUT}")
+            release_output = INSTALLER_OUTPUT
+
         version_committed = True
-        print(f"\nSeekClaw {release_version} release is ready:\n{FINAL_OUTPUT}")
-        print(f"Run: {desktop_executable}")
+        if build_target == PORTABLE_TARGET:
+            print(f"\nSeekClaw {release_version} portable release is ready:\n{release_output}")
+            print(f"Run: {desktop_executable}")
+        else:
+            print(f"\nSeekClaw {release_version} installer is ready:\n{release_output}")
         return 0
     finally:
         if not version_committed:

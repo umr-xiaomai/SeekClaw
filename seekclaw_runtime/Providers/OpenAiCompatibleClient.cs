@@ -90,7 +90,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             switch (msg.Role)
             {
                 case ChatRole.User:
-                    messages.Add((JsonNode)new JsonObject { ["role"] = "user", ["content"] = msg.Text });
+                    messages.Add((JsonNode)new JsonObject { ["role"] = "user", ["content"] = UserContent(msg) });
                     break;
 
                 case ChatRole.Assistant:
@@ -152,6 +152,26 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         }
 
         return body;
+    }
+
+    private static JsonNode UserContent(ChatMessage message)
+    {
+        if (message.Images is not { Count: > 0 }) return JsonValue.Create(message.Text)!;
+
+        var content = new JsonArray();
+        if (!string.IsNullOrWhiteSpace(message.Text))
+            content.Add((JsonNode)new JsonObject { ["type"] = "text", ["text"] = message.Text });
+        foreach (var image in message.Images)
+            content.Add((JsonNode)new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject
+                {
+                    ["url"] = $"data:{image.MediaType};base64,{image.Data}",
+                    ["detail"] = "auto",
+                },
+            });
+        return content;
     }
 
     private static async Task<LlmException> ApiError(HttpResponseMessage response, string providerId, CancellationToken ct)

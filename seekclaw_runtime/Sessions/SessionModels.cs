@@ -20,7 +20,9 @@ public sealed class SessionMessage
     /// <summary>user | assistant | tool</summary>
     public string Role { get; set; } = "user";
     public string? Text { get; set; }
+    public List<SessionImage>? Images { get; set; }
     public string? Thinking { get; set; }
+    public List<SessionImageReference>? ViewedImages { get; set; }
     public List<SessionToolCall>? ToolCalls { get; set; }
     /// <summary>Set when Role == "tool".</summary>
     public string? ToolCallId { get; set; }
@@ -29,6 +31,21 @@ public sealed class SessionMessage
     public string? ToolDiff { get; set; }
     public string? ToolFilePath { get; set; }
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class SessionImage
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string MediaType { get; set; } = "";
+    public string Data { get; set; } = "";
+    public long SizeBytes { get; set; }
+}
+
+public sealed class SessionImageReference
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
 }
 
 public sealed class SessionToolCall

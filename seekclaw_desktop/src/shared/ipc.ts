@@ -2,6 +2,7 @@ export type DaemonEventName =
   | 'pong'
   | 'delta'
   | 'thinking'
+  | 'image_view'
   | 'status'
   | 'tool_start'
   | 'tool_done'
@@ -62,9 +63,22 @@ export interface GitHistory {
   error?: string
 }
 
+export interface DesktopImageFile {
+  name: string
+  mediaType: string
+  data: string
+  sizeBytes: number
+}
+
+export interface DesktopImageSelection {
+  images: DesktopImageFile[]
+  warning?: string
+}
+
 export interface DesktopApi {
   getAppInfo(): Promise<AppInfo>
   selectWorkspace(): Promise<string | null>
+  selectImages(): Promise<DesktopImageSelection>
   showItemInFolder(path: string): Promise<void>
   closeApp(): Promise<void>
   setTheme(theme: AppearanceTheme): Promise<void>

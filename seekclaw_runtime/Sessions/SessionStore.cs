@@ -175,7 +175,20 @@ public sealed class SessionStore : ISessionStore
     {
         Role = message.Role.ToString().ToLowerInvariant(),
         Text = message.Text.Length > 0 ? message.Text : null,
+        Images = message.Images?.Select(image => new SessionImage
+        {
+            Id = image.Id,
+            Name = image.Name,
+            MediaType = image.MediaType,
+            Data = image.Data,
+            SizeBytes = image.SizeBytes,
+        }).ToList(),
         Thinking = message.Thinking,
+        ViewedImages = message.ViewedImages?.Select(image => new SessionImageReference
+        {
+            Id = image.Id,
+            Name = image.Name,
+        }).ToList(),
         ToolCalls = message.ToolCalls?.Select(c => new SessionToolCall
         {
             Id = c.Id, Name = c.Name, ArgumentsJson = c.ArgumentsJson,
@@ -199,7 +212,11 @@ public sealed class SessionStore : ISessionStore
         {
             Role = role,
             Text = record.Text ?? "",
+            Images = record.Images?.Select(image => new ChatImageAttachment(
+                image.Id, image.Name, image.MediaType, image.Data, image.SizeBytes)).ToList(),
             Thinking = record.Thinking,
+            ViewedImages = record.ViewedImages?.Select(image => new ChatImageReference(
+                image.Id, image.Name)).ToList(),
             ToolCalls = record.ToolCalls?.Select(c => new ToolCallRequest(c.Id, c.Name, c.ArgumentsJson)).ToList(),
             ToolCallId = record.ToolCallId,
             ToolName = record.ToolName,

@@ -8,7 +8,7 @@ SeekClaw 的核心设计遵循 **Runtime First** 原则与**清洁架构（Clean
 
 ```mermaid
 flowchart TB
-    Desktop["seekclaw_desktop<br/>Electron + Vue"] -->|"JSONL IPC 2.0"| Daemon["DaemonServer<br/>Named Pipe / Unix Socket"]
+    Desktop["seekclaw_desktop<br/>Electron + Vue"] -->|"JSONL IPC 2.1"| Daemon["DaemonServer<br/>Named Pipe / Unix Socket"]
     CLI["seekclaw_cli<br/>System.CommandLine + TerminalRenderer"] -->|"Direct Facade"| Runtime
     Daemon --> Runtime["SeekClawRuntime<br/>.NET 10 Composition Root"]
 
@@ -28,7 +28,7 @@ flowchart TB
 
 1. **关注点分离**：业务逻辑、LLM 路由、上下文剪裁、工具执行、会话存储与代码构建校验全部内聚于 `seekclaw_runtime` 模块。
 2. **零 Console 侵入**：`seekclaw_runtime` 中的任何底层类（如 ProviderManager、ToolRegistry）**一律严禁直接调用 `Console.WriteLine`**。所有的状态变更均通过 `IEventBus` 发布强类型事件。
-3. **多端适配**：`seekclaw_cli` 通过 Facade 直接使用 Runtime；`seekclaw_desktop` 通过 Daemon IPC 2.0 使用 Runtime。后续 Web 或 IDE 客户端可以复用相同协议。
+3. **多端适配**：`seekclaw_cli` 通过 Facade 直接使用 Runtime；`seekclaw_desktop` 通过 Daemon IPC 2.1 使用 Runtime。后续 Web 或 IDE 客户端可以复用相同协议。
 
 ## 前端职责
 

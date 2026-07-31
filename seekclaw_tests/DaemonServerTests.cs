@@ -119,6 +119,97 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ImageOnlyChat_AcceptsMultipleValidatedAttachments()
+    {
+        var invoked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connection = await StartServerAsync((_, _, message, _) =>
+        {
+            Assert.Equal("", message);
+            invoked.SetResult();
+            return Task.FromResult(new AgentTurnResult("ok", false, null));
+        });
+
+        await connection.SendAsync(40, "chat", new JsonObject
+        {
+            ["images"] = new JsonArray(
+                new JsonObject
+                {
+                    ["id"] = "one",
+                    ["name"] = "one.png",
+                    ["mediaType"] = "image/png",
+                    ["data"] = "AQID",
+                },
+                new JsonObject
+                {
+                    ["id"] = "two",
+                    ["name"] = "two.webp",
+                    ["mediaType"] = "image/webp",
+                    ["data"] = "BAUG",
+                })
+        });
+
+        var response = await connection.ReadAsync();
+        Assert.Equal("done", response["event"]!.GetValue<string>());
+        await invoked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ImageChat_RejectsUnsupportedMediaTypeBeforeStartingTurn()
+    {
+        var connection = await StartServerAsync((_, _, _, _) =>
+            Task.FromResult(new AgentTurnResult("should not run", false, null)));
+
+        await connection.SendAsync(41, "chat", new JsonObject
+        {
+            ["images"] = new JsonArray(new JsonObject
+            {
+                ["name"] = "vector.svg",
+                ["mediaType"] = "image/svg+xml",
+                ["data"] = "AQID",
+            })
+        });
+
+        var response = await connection.ReadAsync();
+        Assert.Equal("error", response["event"]!.GetValue<string>());
+        Assert.Contains("Unsupported image type", response["data"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task SessionGet_ReturnsPersistedImagesAndViewedReferences()
+    {
+        var workspace = CreateWorkspace("image-session");
+        var connection = await StartServerAsync((_, _, _, _) =>
+            Task.FromResult(new AgentTurnResult("ok", false, null)), workspace);
+        var session = _runtime!.Sessions.Create(_runtime.Workspace);
+        _runtime.Sessions.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("inspect",
+        [
+            new SeekClaw.Runtime.Providers.ChatImageAttachment(
+                "screen-1", "screen.png", "image/png", "AQID", 3),
+        ]));
+        _runtime.Sessions.Append(session, new SeekClaw.Runtime.Providers.ChatMessage
+        {
+            Role = SeekClaw.Runtime.Providers.ChatRole.Assistant,
+            Text = "done",
+            ViewedImages =
+            [
+                new SeekClaw.Runtime.Providers.ChatImageReference("screen-1", "screen.png"),
+            ],
+        });
+
+        await connection.SendAsync(42, "session.get", new JsonObject
+        {
+            ["id"] = session.Header.Id,
+            ["workspace"] = workspace,
+        });
+
+        var restored = ParseData(await connection.ReadAsync());
+        var messages = restored["messages"]!.AsArray();
+        Assert.Equal("screen.png", messages[0]!["images"]![0]!["name"]!.GetValue<string>());
+        Assert.Equal("AQID", messages[0]!["images"]![0]!["data"]!.GetValue<string>());
+        Assert.Equal("screen-1", messages[1]!["viewedImages"]![0]!["id"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task WorkspaceModeAndProtocolMethods_ReturnRuntimeStateAndPersistChanges()
     {
         var workspaceA = CreateWorkspace("workspace-a");

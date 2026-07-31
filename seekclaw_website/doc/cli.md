@@ -114,4 +114,4 @@ seekclaw daemon
 
 Windows 端点固定为 `\\.\pipe\seekclaw`；Linux / macOS 使用 `~/.seekclaw/daemon.sock`。Daemon 不接受自定义 `--pipe` 参数。Desktop 会自动启动和关闭自己管理的 Daemon，手动执行通常仅用于协议开发或调试。
 
-协议方法见 [Daemon 与 IPC 2.0](/doc/daemon)。
+协议方法见 [Daemon 与 IPC 2.1](/doc/daemon)。

@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
                 @click="runAction(() => emit('archiveProjectTasks', project))"
               ><Archive :size="15" />归档全部任务</button>
               <button class="danger" @click="runAction(() => emit('deleteProjectTasks', project))"><Trash2 :size="15" />删除全部任务</button>
-              <button @click="runAction(() => emit('deleteProject', project))"><Trash2 :size="15" />移除项目</button>
+              <button class="danger" @click="runAction(() => emit('deleteProject', project))"><Trash2 :size="15" />删除项目</button>
             </div>
           </Transition>
         </div>

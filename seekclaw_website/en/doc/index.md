@@ -39,7 +39,7 @@ Best for terminal workflows, scripted administration, and Runtime debugging. Run
 - [Built-in tools](/en/doc/tools), [Skills](/en/doc/skills), and [MCP](/en/doc/mcp)
 - [Workspace and Memory](/en/doc/workspace)
 - [Build verification and automatic repair](/en/doc/verification)
-- [Daemon and IPC 2.0 protocol](/en/doc/daemon)
+- [Daemon and IPC 2.1 protocol](/en/doc/daemon)
 - [FAQ and troubleshooting](/en/doc/faq)
 
 ## License

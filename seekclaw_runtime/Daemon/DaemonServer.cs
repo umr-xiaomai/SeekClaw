@@ -20,8 +20,13 @@ namespace SeekClaw.Runtime.Daemon;
 public sealed class DaemonServer
 {
     public const string PipeName = "seekclaw";
-    public const string ProtocolVersion = "2.0";
+    public const string ProtocolVersion = "2.1";
     public static string SocketPath => Path.Combine(SeekClawPaths.Home, "daemon.sock");
+    private const int MaxImageCount = 10;
+    private const int MaxImageBytes = 10 * 1024 * 1024;
+    private const int MaxTotalImageBytes = 40 * 1024 * 1024;
+    private static readonly HashSet<string> SupportedImageTypes =
+        ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
     private readonly SeekClawRuntime _runtime;
     private readonly DaemonAdminApi _admin;
@@ -198,9 +203,16 @@ public sealed class DaemonServer
                         var message = parameters["message"]?.GetValue<string>()
                                       ?? parameters["prompt"]?.GetValue<string>()
                                       ?? "";
-                        if (string.IsNullOrWhiteSpace(message))
+                        IReadOnlyList<ChatImageAttachment> images;
+                        try { images = ParseImages(parameters["images"]); }
+                        catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "params.message is required", ct).ConfigureAwait(false);
+                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            break;
+                        }
+                        if (string.IsNullOrWhiteSpace(message) && images.Count == 0)
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", "params.message or params.images is required", ct).ConfigureAwait(false);
                             break;
                         }
                         WorkspaceInfo workspace;
@@ -237,7 +249,7 @@ public sealed class DaemonServer
                         var turn = new ActiveTurn(turnSession, workspace, turnCancellation);
                         activeTurns[id] = turn;
                         turn.Task = RunTurnAsync(
-                            turnSession, workspace, message, reasoningLevel, id, writer, writerGate,
+                            turnSession, workspace, message, images, reasoningLevel, id, writer, writerGate,
                             turnCancellation.Token, ct);
                         break;
                     }
@@ -589,6 +601,7 @@ public sealed class DaemonServer
         AgentSession session,
         WorkspaceInfo workspace,
         string message,
+        IReadOnlyList<ChatImageAttachment> images,
         ReasoningLevel reasoningLevel,
         long id,
         StreamWriter writer,
@@ -615,7 +628,7 @@ public sealed class DaemonServer
 
             result = _runTurn is null
                 ? await runtime.Agent.RunTurnAsync(
-                    session, workspace, message, turnCt, reasoningLevel).ConfigureAwait(false)
+                    session, workspace, message, turnCt, reasoningLevel, images).ConfigureAwait(false)
                 : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -668,6 +681,14 @@ public sealed class DaemonServer
             {
                 AssistantTextDeltaEvent delta => (Name: (string?)"delta", Data: delta.Delta, Details: (JsonObject?)null),
                 ThinkingDeltaEvent thinking => (Name: (string?)"thinking", Data: thinking.Delta, Details: (JsonObject?)null),
+                ImageViewedEvent image => (
+                    Name: (string?)"image_view",
+                    Data: image.Name,
+                    Details: new JsonObject
+                    {
+                        ["imageId"] = image.ImageId,
+                        ["mediaType"] = image.MediaType,
+                    }),
                 StatusEvent status => (Name: (string?)"status", Data: status.Status, Details: (JsonObject?)null),
                 ToolCallStartedEvent tool => (
                     Name: (string?)"tool_start",
@@ -719,6 +740,57 @@ public sealed class DaemonServer
         if (!Directory.Exists(fullPath))
             throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
         return _runtime.Workspaces.Detect(fullPath);
+    }
+
+    private static IReadOnlyList<ChatImageAttachment> ParseImages(JsonNode? node)
+    {
+        if (node is null) return [];
+        if (node is not JsonArray array)
+            throw new DaemonRequestException("params.images must be an array");
+        if (array.Count > MaxImageCount)
+            throw new DaemonRequestException($"A turn supports at most {MaxImageCount} images");
+
+        var images = new List<ChatImageAttachment>(array.Count);
+        long totalBytes = 0;
+        foreach (var item in array)
+        {
+            if (item is not JsonObject image)
+                throw new DaemonRequestException("Each params.images item must be an object");
+            var id = image["id"]?.GetValue<string>()?.Trim();
+            var name = image["name"]?.GetValue<string>()?.Trim();
+            var mediaType = image["mediaType"]?.GetValue<string>()?.Trim().ToLowerInvariant();
+            var data = image["data"]?.GetValue<string>()?.Trim();
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(data))
+                throw new DaemonRequestException("Each image requires name and base64 data");
+            if (mediaType is null || !SupportedImageTypes.Contains(mediaType))
+                throw new DaemonRequestException($"Unsupported image type for {name}: {mediaType ?? "unknown"}");
+            if (data.Length > ((MaxImageBytes + 2L) / 3L * 4L) + 4L)
+                throw new DaemonRequestException($"Image {name} exceeds the {MaxImageBytes / 1024 / 1024} MB limit");
+
+            byte[] decoded;
+            try { decoded = Convert.FromBase64String(data); }
+            catch (FormatException)
+            {
+                throw new DaemonRequestException($"Image {name} contains invalid base64 data");
+            }
+            if (decoded.Length > MaxImageBytes)
+                throw new DaemonRequestException($"Image {name} exceeds the {MaxImageBytes / 1024 / 1024} MB limit");
+            totalBytes += decoded.Length;
+            if (totalBytes > MaxTotalImageBytes)
+                throw new DaemonRequestException(
+                    $"Images exceed the {MaxTotalImageBytes / 1024 / 1024} MB total limit");
+
+            var safeName = new string(name.Replace('\\', '/').Split('/').Last()
+                .Where(character => !char.IsControl(character)).Take(180).ToArray());
+            if (string.IsNullOrWhiteSpace(safeName)) safeName = "image";
+            images.Add(new ChatImageAttachment(
+                string.IsNullOrWhiteSpace(id) ? Guid.NewGuid().ToString("N") : id[..Math.Min(id.Length, 128)],
+                safeName,
+                mediaType,
+                data,
+                decoded.Length));
+        }
+        return images;
     }
 
     private AgentSession LoadTurnSession(
@@ -804,7 +876,7 @@ public sealed class DaemonServer
         ["version"] = ProtocolVersion,
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
-            "chat", "concurrent-turns", "reasoning-level", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
+            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
             "model", "mcp", "skill", "usage", "session", "global-session", "doctor"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.cancel",

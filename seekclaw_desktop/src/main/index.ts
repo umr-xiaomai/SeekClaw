@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { basename, extname, join, resolve } from 'node:path'
 import { release } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
@@ -13,6 +14,16 @@ let mainWindow: BrowserWindow | null = null
 let managedDaemon: ChildProcess | null = null
 let runtimeShutdownStarted = false
 const supportsMica = process.platform === 'win32' && Number(release().split('.')[2] ?? 0) >= 22000
+const maxImageCount = 10
+const maxImageBytes = 10 * 1024 * 1024
+const maxTotalImageBytes = 40 * 1024 * 1024
+const imageMediaTypes: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif'
+}
 
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -169,6 +180,49 @@ function registerIpc(): void {
       ? await dialog.showOpenDialog(mainWindow, options)
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : result.filePaths[0] ?? null
+  })
+
+  ipcMain.handle('app:select-images', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: '选择图片',
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+      properties: ['openFile', 'multiSelections']
+    }
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled) return { images: [] }
+
+    const images: Array<{ name: string; mediaType: string; data: string; sizeBytes: number }> = []
+    const warnings: string[] = []
+    let totalBytes = 0
+    if (result.filePaths.length > maxImageCount)
+      warnings.push(`一次最多添加 ${maxImageCount} 张图片，已保留前 ${maxImageCount} 张。`)
+    for (const path of result.filePaths.slice(0, maxImageCount)) {
+      const name = basename(path)
+      const mediaType = imageMediaTypes[extname(path).toLocaleLowerCase()]
+      if (!mediaType) {
+        warnings.push(`${name} 的格式暂不支持。`)
+        continue
+      }
+      let data: Buffer
+      try { data = await readFile(path) }
+      catch {
+        warnings.push(`${name} 无法读取，未添加。`)
+        continue
+      }
+      if (data.byteLength > maxImageBytes) {
+        warnings.push(`${name} 超过 10 MB，未添加。`)
+        continue
+      }
+      if (totalBytes + data.byteLength > maxTotalImageBytes) {
+        warnings.push(`图片合计不能超过 40 MB，${name} 未添加。`)
+        continue
+      }
+      totalBytes += data.byteLength
+      images.push({ name, mediaType, data: data.toString('base64'), sizeBytes: data.byteLength })
+    }
+    return { images, warning: warnings.join(' ') || undefined }
   })
 
   ipcMain.handle('app:show-item', async (_event, path: string) => {

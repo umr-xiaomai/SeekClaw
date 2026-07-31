@@ -5,12 +5,25 @@ namespace SeekClaw.Runtime.Providers;
 
 public enum ChatRole { System, User, Assistant, Tool }
 
+/// <summary>Provider-neutral inline image attached to a user message.</summary>
+public sealed record ChatImageAttachment(
+    string Id,
+    string Name,
+    string MediaType,
+    string Data,
+    long SizeBytes);
+
+/// <summary>Reference recorded on the assistant message that consumed an uploaded image.</summary>
+public sealed record ChatImageReference(string Id, string Name);
+
 /// <summary>Provider-neutral conversation message used by the agent loop.</summary>
 public sealed class ChatMessage
 {
     public ChatRole Role { get; init; }
     public string Text { get; set; } = "";
+    public IReadOnlyList<ChatImageAttachment>? Images { get; init; }
     public string? Thinking { get; set; }
+    public IReadOnlyList<ChatImageReference>? ViewedImages { get; init; }
     public IReadOnlyList<ToolCallRequest>? ToolCalls { get; set; }
     /// <summary>Set when Role == Tool.</summary>
     public string? ToolCallId { get; init; }
@@ -21,7 +34,12 @@ public sealed class ChatMessage
     /// <summary>Workspace-relative file path associated with ToolDiff.</summary>
     public string? ToolFilePath { get; init; }
 
-    public static ChatMessage User(string text) => new() { Role = ChatRole.User, Text = text };
+    public static ChatMessage User(string text, IReadOnlyList<ChatImageAttachment>? images = null) => new()
+    {
+        Role = ChatRole.User,
+        Text = text,
+        Images = images is { Count: > 0 } ? images : null,
+    };
     public static ChatMessage Assistant(string text) => new() { Role = ChatRole.Assistant, Text = text };
     public static ChatMessage ToolResult(
         string callId,

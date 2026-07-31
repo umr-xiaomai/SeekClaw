@@ -39,7 +39,7 @@ SeekClaw 是基于 **.NET 10**、本地优先且可扩展的通用 AI Agent Runt
 - [内置工具](/doc/tools)、[Skills](/doc/skills) 与 [MCP](/doc/mcp)
 - [工作区与 Memory](/doc/workspace)
 - [构建验证与自动修复](/doc/verification)
-- [Daemon 与 IPC 2.0 协议](/doc/daemon)
+- [Daemon 与 IPC 2.1 协议](/doc/daemon)
 - [常见问题与排错](/doc/faq)
 
 ## 开源许可

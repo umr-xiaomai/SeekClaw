@@ -18,6 +18,7 @@ public static class ContextPlanner
     public static int EstimateTokens(ChatMessage message) =>
         EstimateTokens(message.Text)
         + (message.ToolCalls?.Sum(c => EstimateTokens(c.ArgumentsJson) + EstimateTokens(c.Name)) ?? 0)
+        + (message.Images?.Count * 1_200 ?? 0)
         + PerMessageOverheadTokens;
 
     /// <summary>Character budget for a single tool result, scaled to the context window.</summary>

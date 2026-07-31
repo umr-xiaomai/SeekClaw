@@ -37,11 +37,13 @@ public sealed class Agent(
         WorkspaceInfo workspace,
         string userInput,
         CancellationToken ct,
-        ReasoningLevel? reasoningLevel = null)
+        ReasoningLevel? reasoningLevel = null,
+        IReadOnlyList<ChatImageAttachment>? images = null)
     {
         var agentConfig = configStore.Config.Agent;
         events.Publish(new TurnStartedEvent(session.Header.Id, userInput));
-        sessionStore.Append(session, ChatMessage.User(userInput));
+        var userMessage = ChatMessage.User(userInput, images);
+        sessionStore.Append(session, userMessage);
 
         var mutated = false;
         var repairAttempts = 0;
@@ -55,17 +57,27 @@ public sealed class Agent(
             {
                 ct.ThrowIfCancellationRequested();
 
-                var model = providerManager.ResolveActive(workspace.Config);
+                var requiresVision = session.Messages.Any(message => message.Images is { Count: > 0 });
+                var model = requiresVision
+                    ? providerManager.BuildCandidates(workspace.Config)
+                        .FirstOrDefault(candidate => candidate.Model.Capabilities.Vision)
+                      ?? throw new LlmException(
+                          "The current routing profile has no model that supports image understanding.",
+                          retryable: false)
+                    : providerManager.ResolveActive(workspace.Config);
                 var tools = ActiveTools(workspace);
                 var systemPrompt = await ComposeSystemPromptAsync(workspace, model, tools, ct).ConfigureAwait(false);
                 var history = ContextPlanner.FitToWindow(session.Messages, model.Model, systemPrompt);
 
                 events.Publish(new StatusEvent("Thinking"));
+                if (step == 1 && userMessage.Images is { Count: > 0 })
+                    foreach (var image in userMessage.Images)
+                        events.Publish(new ImageViewedEvent(image.Id, image.Name, image.MediaType));
                 events.Publish(new ModelInvocationStartedEvent(model.Provider.Id, model.Model.Id, step));
 
                 var completion = await StreamOnceAsync(
                     model, workspace, systemPrompt, history, tools,
-                    reasoningLevel ?? agentConfig.ReasoningLevel, ct).ConfigureAwait(false);
+                    reasoningLevel ?? agentConfig.ReasoningLevel, requiresVision, ct).ConfigureAwait(false);
 
                 var assistant = new ChatMessage
                 {
@@ -73,6 +85,9 @@ public sealed class Agent(
                     Text = completion.Text,
                     Thinking = completion.Thinking.Length > 0 ? completion.Thinking : null,
                     ToolCalls = completion.ToolCalls.Count > 0 ? completion.ToolCalls : null,
+                    ViewedImages = step == 1
+                        ? userMessage.Images?.Select(image => new ChatImageReference(image.Id, image.Name)).ToList()
+                        : null,
                 };
                 sessionStore.Append(session, assistant);
                 if (completion.Text.Length > 0)
@@ -165,6 +180,7 @@ public sealed class Agent(
         IReadOnlyList<ChatMessage> history,
         IReadOnlyList<ITool> tools,
         ReasoningLevel reasoningLevel,
+        bool requiresVision,
         CancellationToken ct)
     {
         var config = configStore.Config;
@@ -195,7 +211,11 @@ public sealed class Agent(
 
         try
         {
-            await foreach (var evt in providerManager.StreamAsync(RequestFor, workspace.Config, ct).ConfigureAwait(false))
+            Func<ModelInfo, bool>? candidateFilter = requiresVision
+                ? static candidate => candidate.Model.Capabilities.Vision
+                : null;
+            await foreach (var evt in providerManager.StreamAsync(
+                               RequestFor, workspace.Config, ct, candidateFilter).ConfigureAwait(false))
             {
                 switch (evt)
                 {

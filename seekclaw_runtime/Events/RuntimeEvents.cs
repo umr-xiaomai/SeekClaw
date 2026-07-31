@@ -30,6 +30,9 @@ public sealed record ThinkingDeltaEvent(string Delta) : RuntimeEvent;
 
 public sealed record ThinkingCompletedEvent : RuntimeEvent;
 
+/// <summary>Emitted immediately before an uploaded image enters the model request.</summary>
+public sealed record ImageViewedEvent(string ImageId, string Name, string MediaType) : RuntimeEvent;
+
 // ---------------------------------------------------------------- tools
 
 public sealed record ToolCallStartedEvent(string CallId, string ToolName, string ArgumentSummary) : RuntimeEvent;

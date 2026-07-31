@@ -1,6 +1,6 @@
 # Daemon and IPC Protocol
 
-The SeekClaw Daemon exposes the Runtime to desktop clients, IDE plugins, and other local integrations. Protocol version `2.0` uses one JSON object per line (JSONL); it is not a full JSON-RPC 2.0 implementation.
+The SeekClaw Daemon exposes the Runtime to desktop clients, IDE plugins, and other local integrations. Protocol version `2.1` uses one JSON object per line (JSONL); it is not a full JSON-RPC 2.0 implementation.
 
 ## Endpoints
 
@@ -36,6 +36,12 @@ Responses use a stable event envelope: `id` identifies the request, `event` iden
 
 `chat` remains the main method for compatibility with existing clients. `agent.runTurn` and `agent/runTurn` are aliases.
 
+Vision-capable models accept an `images` array. Each image carries a client-generated `id`, file name, MIME type, and Base64 data without a Data URL prefix. A turn accepts up to 10 images, 10 MB per image, and 40 MB total. Supported types are `image/png`, `image/jpeg`, `image/webp`, and `image/gif`; an image-only turn may omit `message`.
+
+```json
+{"id":9,"method":"chat","params":{"message":"Compare these images","images":[{"id":"a","name":"before.png","mediaType":"image/png","data":"..."},{"id":"b","name":"after.webp","mediaType":"image/webp","data":"..."}]}}
+```
+
 ```json
 {"id":10,"method":"chat","params":{"message":"Fix the tests","reasoningLevel":"high"}}
 {"id":11,"method":"agent.cancel","params":{"requestId":10}}
@@ -48,7 +54,7 @@ The `requestId` parameter is optional; omitting it cancels all active turns on t
 {"id":10,"event":"cancelled","data":"partial text produced before cancellation"}
 ```
 
-Streaming events are `thinking`, `delta`, `status`, `tool_start`, and `tool_done`. Terminal events are `done`, `cancelled`, and `error`.
+Streaming events are `thinking`, `delta`, `status`, `image_view`, `tool_start`, and `tool_done`. `details.imageId` on `image_view` identifies the uploaded image entering the model request. Terminal events are `done`, `cancelled`, and `error`.
 
 ## Other Methods
 

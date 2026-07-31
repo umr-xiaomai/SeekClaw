@@ -4,6 +4,7 @@ import type { DaemonMessage, DaemonState, DesktopApi } from '../shared/ipc.js'
 const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke('app:info'),
   selectWorkspace: () => ipcRenderer.invoke('app:select-workspace'),
+  selectImages: () => ipcRenderer.invoke('app:select-images'),
   showItemInFolder: (path) => ipcRenderer.invoke('app:show-item', path),
   closeApp: () => ipcRenderer.invoke('app:close'),
   setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),

@@ -54,7 +54,7 @@ Desktop supports two task scopes:
 
 Creating a task does not immediately create a Runtime Session. Desktop creates and persists the session when the first message is sent. The “Global tasks” entry expands the global task list instead of forcing a switch to a particular task.
 
-Titles are derived from the first prompt. Tasks can be archived, restored, or deleted, including bulk operations within a project or the global scope. Archived tasks are read-only.
+Titles are derived from the first prompt. Tasks can be archived, restored, or deleted, including bulk operations within a project or the global scope. Archived tasks are read-only. Deleting a project permanently deletes every Session under that project, including archived Sessions, but does not delete local project files.
 
 ## Start a conversation
 
@@ -62,6 +62,8 @@ Titles are derived from the first prompt. Tasks can be archived, restored, or de
 2. Select an Agent mode and `provider/model` in the composer.
 3. Enter a request and send it, or click a starter-prompt card. A card fills the composer but **does not send automatically**.
 4. Follow streaming text, reasoning status, tool activity, and complete error details.
+
+Vision-capable models expose an image button in the composer for selecting multiple PNG, JPEG, WebP, or GIF files. After taking a Windows screenshot, press `Ctrl+V` in the composer to attach the clipboard image directly. Images can be previewed or removed before sending and are persisted with the Session. As each image enters the model request, the assistant message shows a “Viewed” row with its file name and thumbnail; click it to preview the image again. The button is disabled when the selected model does not declare the `vision` capability.
 
 Project tasks show the complete workspace path and shortcuts for opening the directory, terminal, Git changes, Git history, and task settings. Global tasks omit the path and project-only tools.
 

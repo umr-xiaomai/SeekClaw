@@ -114,4 +114,4 @@ seekclaw daemon
 
 The Windows endpoint is fixed at `\\.\pipe\seekclaw`; Linux and macOS use `~/.seekclaw/daemon.sock`. The Daemon has no custom `--pipe` option. Desktop starts and stops its managed Daemon automatically, so manual execution is mainly useful for protocol development and debugging.
 
-See [Daemon and IPC 2.0](/en/doc/daemon) for the method contract.
+See [Daemon and IPC 2.1](/en/doc/daemon) for the method contract.

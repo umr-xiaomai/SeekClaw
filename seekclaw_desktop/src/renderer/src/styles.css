@@ -856,6 +856,14 @@ select:focus-visible {
   justify-content: flex-end;
 }
 
+.user-message-stack {
+  display: flex;
+  width: min(78%, 670px);
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .user-bubble {
   max-width: min(78%, 670px);
   padding: 11px 15px;
@@ -864,6 +872,60 @@ select:focus-visible {
   overflow-wrap: anywhere;
   background: var(--surface-hover);
   border-radius: 17px;
+}
+
+.user-message-stack .user-bubble {
+  max-width: 100%;
+}
+
+.user-image-grid {
+  display: grid;
+  width: min(100%, 390px);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.user-image-grid.single {
+  width: min(100%, 280px);
+  grid-template-columns: 1fr;
+}
+
+.user-image-button {
+  position: relative;
+  min-width: 0;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+}
+
+.user-image-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 180ms ease;
+}
+
+.user-image-button:hover img,
+.user-image-button:focus-visible img {
+  transform: scale(1.025);
+}
+
+.user-image-button span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 15px 8px 6px;
+  overflow: hidden;
+  color: #fff;
+  font-size: 10px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: linear-gradient(transparent, rgb(0 0 0 / 62%));
 }
 
 .assistant-message {
@@ -907,6 +969,71 @@ select:focus-visible {
   display: grid;
   gap: 6px;
   margin: 6px 0 18px;
+}
+
+.image-view-list {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 14px;
+}
+
+.image-view-row {
+  display: flex;
+  width: fit-content;
+  max-width: min(100%, 520px);
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.image-view-row.previewable:hover,
+.image-view-row.previewable:focus-visible {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.image-view-row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.image-view-thumbnail {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  place-items: center;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  border-radius: 6px;
+}
+
+.image-view-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.image-view-row > span:not(.image-view-thumbnail) {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.image-view-row small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-row {
@@ -1362,6 +1489,127 @@ select:focus-visible {
   border: 1px solid var(--border-strong);
   border-radius: 18px;
   box-shadow: var(--composer-shadow);
+}
+
+.composer-image-strip {
+  display: flex;
+  gap: 8px;
+  padding: 1px 4px 11px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.composer-image-card {
+  position: relative;
+  width: 112px;
+  flex: 0 0 112px;
+}
+
+.composer-image-preview {
+  display: block;
+  width: 112px;
+  height: 112px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+}
+
+.composer-image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.composer-image-remove {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  color: #fff;
+  background: rgb(31 34 31 / 88%);
+  border: 1px solid rgb(255 255 255 / 38%);
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 24%);
+}
+
+.composer-image-notice {
+  margin: -2px 6px 8px;
+  color: var(--warning, #b36a20);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.image-preview-backdrop {
+  position: fixed;
+  z-index: 320;
+  inset: 0;
+  display: grid;
+  padding: 38px;
+  place-items: center;
+  background: rgb(7 9 8 / 78%);
+  backdrop-filter: blur(8px);
+}
+
+.image-preview-dialog {
+  position: relative;
+  display: grid;
+  max-width: min(92vw, 1200px);
+  max-height: 90vh;
+  gap: 9px;
+  justify-items: center;
+  margin: 0;
+}
+
+.image-preview-dialog img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(90vh - 34px);
+  object-fit: contain;
+  background: #111;
+  border-radius: 10px;
+  box-shadow: 0 22px 60px rgb(0 0 0 / 42%);
+}
+
+.image-preview-dialog figcaption {
+  max-width: 80vw;
+  overflow: hidden;
+  color: rgb(255 255 255 / 82%);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-preview-close {
+  position: absolute;
+  z-index: 1;
+  top: -12px;
+  right: -12px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  color: #fff;
+  background: rgb(24 27 25 / 88%);
+  border: 1px solid rgb(255 255 255 / 34%);
+  border-radius: 50%;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 32%);
+}
+
+.image-preview-fade-enter-active,
+.image-preview-fade-leave-active {
+  transition: opacity 150ms ease;
+}
+
+.image-preview-fade-enter-from,
+.image-preview-fade-leave-to {
+  opacity: 0;
 }
 
 .composer-shell textarea {
@@ -3252,6 +3500,18 @@ select:focus-visible {
 
   .user-bubble {
     max-width: 90%;
+  }
+
+  .user-message-stack {
+    width: 90%;
+  }
+
+  .user-message-stack .user-bubble {
+    max-width: 100%;
+  }
+
+  .image-preview-backdrop {
+    padding: 14px;
   }
 
   .composer-region {

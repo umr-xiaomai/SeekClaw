@@ -1,6 +1,6 @@
 # Daemon 守护进程与 IPC 协议
 
-SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开放 Runtime。当前协议版本为 `2.0`，使用一行一个 JSON 对象的 JSONL 消息，不是完整的 JSON-RPC 2.0 实现。
+SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开放 Runtime。当前协议版本为 `2.1`，使用一行一个 JSON 对象的 JSONL 消息，不是完整的 JSON-RPC 2.0 实现。
 
 ## 连接地址
 
@@ -36,6 +36,12 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 
 `chat` 是兼容旧客户端的主要执行方法，`agent.runTurn` 和 `agent/runTurn` 是别名。
 
+支持视觉的模型可以接收 `images` 数组。每张图片包含客户端生成的 `id`、文件名、MIME 类型和不带 Data URL 前缀的 Base64 数据；单次最多 10 张、单张最多 10 MB、合计最多 40 MB。支持 `image/png`、`image/jpeg`、`image/webp` 和 `image/gif`，纯图片消息可以省略 `message`。
+
+```json
+{"id":9,"method":"chat","params":{"message":"比较两张图片","images":[{"id":"a","name":"before.png","mediaType":"image/png","data":"..."},{"id":"b","name":"after.webp","mediaType":"image/webp","data":"..."}]}}
+```
+
 ```json
 {"id":10,"method":"chat","params":{"message":"修复测试","reasoningLevel":"high"}}
 {"id":11,"method":"agent.cancel","params":{"requestId":10}}
@@ -48,7 +54,7 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 {"id":10,"event":"cancelled","data":"取消前已生成的部分文本"}
 ```
 
-流式事件包括 `thinking`、`delta`、`status`、`tool_start` 和 `tool_done`。终止事件包括 `done`、`cancelled` 和 `error`。
+流式事件包括 `thinking`、`delta`、`status`、`image_view`、`tool_start` 和 `tool_done`。`image_view` 的 `details.imageId` 指明模型正在查看哪张上传图片。终止事件包括 `done`、`cancelled` 和 `error`。
 
 ## 其他方法
 

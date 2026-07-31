@@ -28,11 +28,26 @@ export interface ToolActivity {
   state: 'running' | 'done' | 'error'
 }
 
+export interface ImageAttachment {
+  id: string
+  name: string
+  mediaType: string
+  data: string
+  sizeBytes: number
+}
+
+export interface ImageReference {
+  id: string
+  name: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  images?: ImageAttachment[]
   thinking?: string
+  viewedImages?: ImageReference[]
   state?: 'thinking' | 'streaming' | 'done' | 'error'
   tools?: ToolActivity[]
   createdAt: number
