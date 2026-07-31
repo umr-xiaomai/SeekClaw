@@ -55,6 +55,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
             "toolCalling": true,
             "jsonMode": true,
             "reasoning": true,
+            "maxReasoningLevel": "XHigh",
             "embedding": false,
             "mcp": true
           },
@@ -86,6 +87,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
     "mode": "edit",
     "systemPrompt": "system/default",
     "thinkingBudgetTokens": 4096,
+    "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
     "bashTimeoutSeconds": 180
   },
@@ -102,6 +104,9 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 - `apiKeyEnv` 保存环境变量名，且仅在 `apiKey` 为空时使用。环境变量值不会返回给 Desktop。
 - `organization`、`proxy`、`headers`、`timeoutSeconds` 可按服务需要设置。
 - `promptCaching` 默认启用；Anthropic 协议会发送原生缓存检查点，不兼容的第三方网关可关闭。
+- `reasoningEffortMap` 可覆盖统一档位到 Provider 参数的映射，例如 `{ "ultra": "xhigh" }`。
+- `agent.reasoningLevel` 是 CLI/旧客户端的默认档位；Desktop 会把档位作为 Session 元数据独立保存。
+- `capabilities.maxReasoningLevel` 声明模型支持的最高档位。默认是 `Max`，超过后自动降级；DeepSeek 的 `XHigh` 与 `Ultra` 固定降级为 `Max`。
 
 ### 路由
 

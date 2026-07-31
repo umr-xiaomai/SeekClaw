@@ -55,6 +55,7 @@ This example uses the current field names:
             "toolCalling": true,
             "jsonMode": true,
             "reasoning": true,
+            "maxReasoningLevel": "XHigh",
             "embedding": false,
             "mcp": true
           },
@@ -84,6 +85,7 @@ This example uses the current field names:
     "mode": "edit",
     "systemPrompt": "system/default",
     "thinkingBudgetTokens": 4096,
+    "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
     "bashTimeoutSeconds": 180
   },
@@ -98,6 +100,9 @@ This example uses the current field names:
 - `apiKeyEnv` stores an environment-variable name and is used only when `apiKey` is empty. Its resolved value is not returned to Desktop.
 - `organization`, `proxy`, `headers`, and `timeoutSeconds` can be set when required by the service.
 - `promptCaching` defaults to enabled; Anthropic requests emit native cache checkpoints and incompatible third-party gateways can opt out.
+- `reasoningEffortMap` can override neutral levels with Provider wire values, for example `{ "ultra": "xhigh" }`.
+- `agent.reasoningLevel` is the default for CLI and legacy clients; Desktop persists the selected level independently in each Session.
+- `capabilities.maxReasoningLevel` declares the highest supported model level. It defaults to `Max`; higher requests are clamped, and DeepSeek always maps `XHigh`/`Ultra` to `Max`.
 
 ### Routing
 

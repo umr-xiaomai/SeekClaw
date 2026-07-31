@@ -34,6 +34,8 @@ export interface AppInfo {
   platform: 'aix' | 'darwin' | 'freebsd' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'android'
   supportsMica: boolean
   defaultWorkspace: string
+  /** Used only to migrate the legacy project that Desktop implicitly created here. */
+  documentsPath: string
 }
 
 export type AppearanceTheme = 'system' | 'light' | 'dark'

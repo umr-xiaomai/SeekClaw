@@ -1,3 +1,5 @@
+using SeekClaw.Runtime.Providers;
+
 namespace SeekClaw.Runtime.Configuration;
 
 /// <summary>Root of ~/.seekclaw/config.json. All model/provider data is user data — never hard-coded.</summary>
@@ -54,6 +56,8 @@ public sealed class ProviderConfig
     public string? Proxy { get; set; }
     public int TimeoutSeconds { get; set; } = 120;
     public Dictionary<string, string>? Headers { get; set; }
+    /// <summary>Optional neutral-level to provider wire-value overrides.</summary>
+    public Dictionary<string, string>? ReasoningEffortMap { get; set; }
     /// <summary>
     /// Enables provider-native prompt caching hints. OpenAI-compatible providers keep using
     /// their automatic prefix cache; Anthropic requests add explicit cache checkpoints.
@@ -102,6 +106,8 @@ public sealed class ModelCapabilities
     public bool ToolCalling { get; set; } = true;
     public bool JsonMode { get; set; }
     public bool Reasoning { get; set; }
+    /// <summary>Highest neutral reasoning level accepted by this model.</summary>
+    public ReasoningLevel MaxReasoningLevel { get; set; } = ReasoningLevel.Max;
     public bool Embedding { get; set; }
     public bool Mcp { get; set; } = true;
 }
@@ -140,6 +146,7 @@ public sealed class AgentConfig
     /// <summary>Prompt key of the main system prompt (relative to prompts/, no extension).</summary>
     public string SystemPrompt { get; set; } = "system/default";
     public int ThinkingBudgetTokens { get; set; } = 4_096;
+    public ReasoningLevel ReasoningLevel { get; set; } = ReasoningLevel.High;
     /// <summary>Hard cap safeguard; effective tool output budget adapts to the model context window.</summary>
     public int MaxToolOutputChars { get; set; } = 60_000;
     public int BashTimeoutSeconds { get; set; } = 180;

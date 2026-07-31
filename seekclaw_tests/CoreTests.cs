@@ -62,7 +62,7 @@ public sealed class CoreTests : IDisposable
     {
         var workspace = NewWorkspace();
         var store = new SessionStore();
-        var session = store.Create(workspace);
+        var session = store.Create(workspace, SeekClaw.Runtime.Providers.ReasoningLevel.XHigh);
 
         store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("hello"));
         var assistant = new SeekClaw.Runtime.Providers.ChatMessage
@@ -83,6 +83,7 @@ public sealed class CoreTests : IDisposable
         Assert.Equal("c1", loaded.Messages[2].ToolCallId);
         Assert.Equal("a.txt", loaded.Messages[2].ToolFilePath);
         Assert.Contains("+new", loaded.Messages[2].ToolDiff);
+        Assert.Equal(SeekClaw.Runtime.Providers.ReasoningLevel.XHigh, loaded.Header.ReasoningLevel);
 
         var latest = store.LoadLatest(workspace);
         Assert.Equal(session.Header.Id, latest!.Header.Id);

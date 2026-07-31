@@ -165,12 +165,14 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 : request.System;
         }
 
-        var thinking = request.EnableThinking && request.Model.Capabilities.Thinking;
-        if (thinking)
+        var thinkingBudget = request.EnableThinking && request.Model.Capabilities.Thinking
+            ? ReasoningLevelAdapter.AnthropicBudget(request)
+            : 0;
+        if (thinkingBudget > 0)
             body["thinking"] = new JsonObject
             {
                 ["type"] = "enabled",
-                ["budget_tokens"] = Math.Min(request.ThinkingBudgetTokens, (request.MaxTokens ?? request.Model.MaxOutput) / 2),
+                ["budget_tokens"] = thinkingBudget,
             };
         else if (request.Temperature is { } temperature)
             body["temperature"] = temperature; // temperature must stay default when thinking is on

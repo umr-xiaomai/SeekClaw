@@ -5,6 +5,17 @@ export interface ProjectItem {
   loaded?: boolean
 }
 
+/** Provider-neutral reasoning depth. Runtime wire clients perform API-specific mapping. */
+export enum ReasoningLevel {
+  None = 'none',
+  Low = 'low',
+  Medium = 'medium',
+  High = 'high',
+  Max = 'max',
+  XHigh = 'xhigh',
+  Ultra = 'ultra'
+}
+
 export interface ToolActivity {
   id: string
   callId?: string
@@ -42,4 +53,6 @@ export interface ThreadItem {
   requestId?: number
   /** Assistant placeholder receiving streamed output for the active turn. */
   assistantId?: string
+  /** Per-task reasoning depth, independent from other concurrent tasks. */
+  reasoningLevel?: ReasoningLevel
 }

@@ -157,6 +157,92 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal("system prompt", body["system"]!.GetValue<string>());
     }
 
+    [Theory]
+    [InlineData(ReasoningLevel.XHigh)]
+    [InlineData(ReasoningLevel.Ultra)]
+    public void DeepSeek_ExtendedReasoning_MapsToMax(ReasoningLevel requested)
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig
+            {
+                Id = "deepseek",
+                Kind = "openai",
+                BaseUrl = "https://api.deepseek.test/v1",
+            },
+            Model = new ModelConfig
+            {
+                Id = "deepseek-reasoner",
+                Capabilities = new ModelCapabilities
+                {
+                    MaxReasoningLevel = ReasoningLevel.Ultra,
+                },
+            },
+            Messages = [ChatMessage.User("think")],
+            ReasoningLevel = requested,
+        };
+
+        Assert.Equal(ReasoningLevel.Max,
+            ReasoningLevelAdapter.Normalize(request.Provider, request.Model, requested));
+        Assert.Equal("max",
+            OpenAiCompatibleClient.BuildBody(request)["reasoning_effort"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void OpenAiReasoning_UsesProviderMapping_AfterModelCapabilityNormalization()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig
+            {
+                Id = "custom",
+                Kind = "openai",
+                BaseUrl = "https://example.test/v1",
+                ReasoningEffortMap = new Dictionary<string, string> { ["ultra"] = "xhigh" },
+            },
+            Model = new ModelConfig
+            {
+                Id = "reasoner",
+                Capabilities = new ModelCapabilities
+                {
+                    Reasoning = true,
+                    MaxReasoningLevel = ReasoningLevel.Ultra,
+                },
+            },
+            Messages = [ChatMessage.User("think")],
+            ReasoningLevel = ReasoningLevel.Ultra,
+        };
+
+        Assert.Equal("xhigh",
+            OpenAiCompatibleClient.BuildBody(request)["reasoning_effort"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AnthropicReasoning_MapsNeutralLevelToBudget()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "anthropic", Kind = "anthropic", BaseUrl = "https://example.test" },
+            Model = new ModelConfig
+            {
+                Id = "claude",
+                MaxOutput = 64_000,
+                Capabilities = new ModelCapabilities
+                {
+                    Thinking = true,
+                    MaxReasoningLevel = ReasoningLevel.Ultra,
+                },
+            },
+            Messages = [ChatMessage.User("think")],
+            EnableThinking = true,
+            ThinkingBudgetTokens = 4_096,
+            ReasoningLevel = ReasoningLevel.High,
+        };
+
+        var body = AnthropicClient.BuildBody(request);
+        Assert.Equal(8_192, body["thinking"]!["budget_tokens"]!.GetValue<int>());
+    }
+
     [Fact]
     public void Candidates_WorkspaceOverride_BeatsProfile_ThenStrategy_ThenFallback()
     {

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Mcp;
+using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Daemon;
@@ -231,6 +232,7 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
                     ["thinking"] = model.Capabilities.Thinking,
                     ["vision"] = model.Capabilities.Vision,
                     ["reasoning"] = model.Capabilities.Reasoning,
+                    ["maxReasoningLevel"] = model.Capabilities.MaxReasoningLevel.ToWireValue(),
                     ["mcp"] = model.Capabilities.Mcp,
                 },
             });
@@ -428,6 +430,7 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
             ["title"] = session.Header.Title,
             ["workspace"] = workspace.IsGlobal ? null : session.Header.Workspace ?? workspace.Root,
             ["archived"] = session.Header.Archived,
+            ["reasoningLevel"] = session.Header.ReasoningLevel.ToWireValue(),
             ["createdAt"] = session.Header.CreatedAt,
             ["updatedAt"] = session.Header.UpdatedAt,
             ["messages"] = messages,
@@ -441,9 +444,13 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
         var title = parameters.ContainsKey("title")
             ? parameters["title"]?.GetValue<string>() ?? ""
             : null;
+        var reasoningLevel = parameters.ContainsKey("reasoningLevel")
+            ? ParseReasoningLevel(parameters["reasoningLevel"], "params.reasoningLevel")
+            : (ReasoningLevel?)null;
         try
         {
-            var header = runtime.Sessions.UpdateMetadata(workspace, id, title: title);
+            var header = runtime.Sessions.UpdateMetadata(
+                workspace, id, title: title, reasoningLevel: reasoningLevel);
             return JsonSerializer.Serialize(header, SeekClawJsonContext.Default.SessionHeader);
         }
         catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)
@@ -603,6 +610,16 @@ internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo glob
     private static string RequiredString(JsonObject parameters, string name) =>
         OptionalString(parameters, name)
         ?? throw new DaemonRequestException($"params.{name} is required");
+
+    private static ReasoningLevel ParseReasoningLevel(JsonNode? node, string parameterName)
+    {
+        var value = node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text)
+            ? text
+            : null;
+        if (ReasoningLevelExtensions.TryParse(value, out var level)) return level;
+        throw new DaemonRequestException(
+            $"{parameterName} must be one of: none, low, medium, high, max, xhigh, ultra");
+    }
 
     private static string? OptionalString(JsonObject parameters, string name)
     {

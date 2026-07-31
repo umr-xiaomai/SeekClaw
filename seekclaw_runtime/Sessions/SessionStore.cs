@@ -16,12 +16,17 @@ public sealed class AgentSession
 
 public interface ISessionStore
 {
-    AgentSession Create(WorkspaceInfo workspace);
+    AgentSession Create(WorkspaceInfo workspace, ReasoningLevel reasoningLevel = ReasoningLevel.High);
     AgentSession? Load(WorkspaceInfo workspace, string sessionId);
     AgentSession? LoadLatest(WorkspaceInfo workspace);
     IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace, bool includeArchived = false);
     void Append(AgentSession session, ChatMessage message);
-    SessionHeader UpdateMetadata(WorkspaceInfo workspace, string sessionId, string? title = null, bool? archived = null);
+    SessionHeader UpdateMetadata(
+        WorkspaceInfo workspace,
+        string sessionId,
+        string? title = null,
+        bool? archived = null,
+        ReasoningLevel? reasoningLevel = null);
     void Delete(WorkspaceInfo workspace, string sessionId);
 }
 
@@ -31,11 +36,16 @@ public sealed class SessionStore : ISessionStore
     // process-wide so concurrent turns cannot interleave writes to one session JSONL.
     private static readonly ConcurrentDictionary<string, Lock> FileGates = new(StringComparer.OrdinalIgnoreCase);
 
-    public AgentSession Create(WorkspaceInfo workspace)
+    public AgentSession Create(WorkspaceInfo workspace, ReasoningLevel reasoningLevel = ReasoningLevel.High)
     {
         Directory.CreateDirectory(workspace.SessionsDir);
         var id = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
-        var header = new SessionHeader { Id = id, Workspace = workspace.IsGlobal ? null : workspace.Root };
+        var header = new SessionHeader
+        {
+            Id = id,
+            Workspace = workspace.IsGlobal ? null : workspace.Root,
+            ReasoningLevel = reasoningLevel,
+        };
         var file = Path.Combine(workspace.SessionsDir, id + ".jsonl");
         File.WriteAllText(file, JsonSerializer.Serialize(header, SeekClawJsonContext.Compact.SessionHeader) + Environment.NewLine);
         return new AgentSession { Header = header, FilePath = file };
@@ -98,7 +108,8 @@ public sealed class SessionStore : ISessionStore
         WorkspaceInfo workspace,
         string sessionId,
         string? title = null,
-        bool? archived = null)
+        bool? archived = null,
+        ReasoningLevel? reasoningLevel = null)
     {
         var file = SessionFile(workspace, sessionId);
         lock (GateFor(file))
@@ -114,6 +125,7 @@ public sealed class SessionStore : ISessionStore
                          ?? throw new InvalidDataException($"Session header is invalid: {sessionId}");
             if (title is not null) header.Title = string.IsNullOrWhiteSpace(title) ? null : title.Trim();
             if (archived is not null) header.Archived = archived.Value;
+            if (reasoningLevel is not null) header.ReasoningLevel = reasoningLevel.Value;
             header.UpdatedAt = DateTimeOffset.UtcNow;
             lines[0] = JsonSerializer.Serialize(header, SeekClawJsonContext.Compact.SessionHeader);
             File.WriteAllLines(file, lines);

@@ -37,7 +37,7 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 `chat` 是兼容旧客户端的主要执行方法，`agent.runTurn` 和 `agent/runTurn` 是别名。
 
 ```json
-{"id":10,"method":"chat","params":{"message":"修复测试"}}
+{"id":10,"method":"chat","params":{"message":"修复测试","reasoningLevel":"high"}}
 {"id":11,"method":"agent.cancel","params":{"requestId":10}}
 ```
 
@@ -56,11 +56,11 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | --- | --- | --- |
 | `session.list` | `{ "workspace": "...", "global": false, "includeArchived": true }` | 按工作区或全局范围列出 Session |
 | `session.get` | `{ "id": "...", "workspace": "..." }` | 读取 Session 及其消息 |
-| `session.update` | `{ "id": "...", "title": "..." }` | 更新标题等 Session 元数据 |
+| `session.update` | `{ "id": "...", "title": "...", "reasoningLevel": "high" }` | 更新标题、思考深度等 Session 元数据 |
 | `session.archive` | `{ "id": "...", "archived": true }` | 归档或恢复 Session |
 | `session.delete` | `{ "id": "..." }` | 永久删除 Session |
 | `session.resume` | `{ "id": "...", "global": false }` | 恢复 Session |
-| `session.new` | `{ "workspace": "..." }` 或 `{ "global": true }` | 创建并绑定一个新 Session |
+| `session.new` | `{ "workspace": "...", "reasoningLevel": "high" }` 或 `{ "global": true }` | 创建并绑定一个新 Session |
 | `model.list` | 无 | 列出可用的 `provider/model` 引用 |
 | `model.catalog` | 无 | 返回模型详情、能力和活动状态 |
 | `model.switch` | `{ "model": "provider/model" }` | 切换并持久化模型 |
@@ -70,6 +70,8 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `shutdown` | 无 | 取消全部活动 turn，返回 `bye` 并优雅停止 Daemon |
 
 Session 方法可传 `workspace` 指向具体项目，也可传 `global: true` 使用不绑定目录的全局 Session 空间。`includeArchived` 控制列表是否包含已归档任务。Desktop 在第一次发送消息时才调用 `session.new`，因此新建一个空白任务不会产生无内容的 Session。
+
+`reasoningLevel` 使用统一枚举：`none`、`low`、`medium`、`high`、`max`、`xhigh`、`ultra`。它不是 Provider API 参数；Runtime 会根据模型能力和 Provider 适配后再生成请求。`xhigh`/`ultra` 属于扩展档位，默认最高能力为 `max`，DeepSeek 会明确将二者转换为 `max`。
 
 ## Desktop 管理方法
 

@@ -2,6 +2,8 @@
 import { ArrowUp, FolderPlus, Square } from '@lucide/vue'
 import { nextTick, ref, watch } from 'vue'
 import SelectMenu from './SelectMenu.vue'
+import ReasoningDepthMenu from './ReasoningDepthMenu.vue'
+import type { ReasoningLevel } from '../types'
 
 const props = defineProps<{
   busy: boolean
@@ -9,6 +11,7 @@ const props = defineProps<{
   model: string
   models: string[]
   mode: string
+  reasoningLevel: ReasoningLevel
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +20,7 @@ const emit = defineEmits<{
   attach: []
   changeModel: [model: string]
   changeMode: [mode: string]
+  changeReasoningLevel: [level: ReasoningLevel]
 }>()
 
 const value = ref('')
@@ -98,6 +102,11 @@ watch(value, resize)
         @update:model-value="emit('changeModel', $event)"
       />
       <span class="toolbar-spacer" />
+      <ReasoningDepthMenu
+        :model-value="reasoningLevel"
+        :disabled="busy || disabled"
+        @update:model-value="emit('changeReasoningLevel', $event)"
+      />
       <button v-if="busy" class="send-button" title="停止" @click="emit('stop')">
         <Square :size="14" fill="currentColor" />
       </button>

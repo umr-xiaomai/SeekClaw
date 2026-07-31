@@ -79,7 +79,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 message.Headers.TryAddWithoutValidation(name, value);
     }
 
-    private static JsonObject BuildBody(LlmRequest request)
+    internal static JsonObject BuildBody(LlmRequest request)
     {
         var messages = new JsonArray();
         if (!string.IsNullOrEmpty(request.System))
@@ -131,6 +131,8 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
 
         if (request.MaxTokens is { } maxTokens) body["max_tokens"] = maxTokens;
         if (request.Temperature is { } temperature) body["temperature"] = temperature;
+        if (ReasoningLevelAdapter.OpenAiEffort(request) is { } effort)
+            body["reasoning_effort"] = effort;
 
         if (request.Model.Capabilities.ToolCalling && request.Tools.Count > 0)
         {

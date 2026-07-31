@@ -1,3 +1,5 @@
+using SeekClaw.Runtime.Providers;
+
 namespace SeekClaw.Runtime.Sessions;
 
 /// <summary>First line of a session .jsonl file.</summary>
@@ -7,6 +9,7 @@ public sealed class SessionHeader
     public string? Title { get; set; }
     public string? Workspace { get; set; }
     public bool Archived { get; set; }
+    public ReasoningLevel ReasoningLevel { get; set; } = ReasoningLevel.High;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

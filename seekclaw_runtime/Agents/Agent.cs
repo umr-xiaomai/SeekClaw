@@ -33,7 +33,11 @@ public sealed class Agent(
     IEventBus events)
 {
     public async Task<AgentTurnResult> RunTurnAsync(
-        AgentSession session, WorkspaceInfo workspace, string userInput, CancellationToken ct)
+        AgentSession session,
+        WorkspaceInfo workspace,
+        string userInput,
+        CancellationToken ct,
+        ReasoningLevel? reasoningLevel = null)
     {
         var agentConfig = configStore.Config.Agent;
         events.Publish(new TurnStartedEvent(session.Header.Id, userInput));
@@ -60,7 +64,8 @@ public sealed class Agent(
                 events.Publish(new ModelInvocationStartedEvent(model.Provider.Id, model.Model.Id, step));
 
                 var completion = await StreamOnceAsync(
-                    model, workspace, systemPrompt, history, tools, ct).ConfigureAwait(false);
+                    model, workspace, systemPrompt, history, tools,
+                    reasoningLevel ?? agentConfig.ReasoningLevel, ct).ConfigureAwait(false);
 
                 var assistant = new ChatMessage
                 {
@@ -159,6 +164,7 @@ public sealed class Agent(
         string systemPrompt,
         IReadOnlyList<ChatMessage> history,
         IReadOnlyList<ITool> tools,
+        ReasoningLevel reasoningLevel,
         CancellationToken ct)
     {
         var config = configStore.Config;
@@ -177,8 +183,9 @@ public sealed class Agent(
             Tools = definitions,
             Temperature = temperature,
             MaxTokens = model.Model.MaxOutput,
-            EnableThinking = model.Model.Capabilities.Thinking,
+            EnableThinking = reasoningLevel != ReasoningLevel.None && model.Model.Capabilities.Thinking,
             ThinkingBudgetTokens = config.Agent.ThinkingBudgetTokens,
+            ReasoningLevel = reasoningLevel,
         };
 
         LlmCompletion? completion = null;

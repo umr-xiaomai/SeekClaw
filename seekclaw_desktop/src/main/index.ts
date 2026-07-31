@@ -43,7 +43,7 @@ async function ensureDaemonRunning(): Promise<void> {
     throw new Error('Bundled SeekClaw Runtime was not found. Rebuild the Desktop release package.')
 
   const child = spawn(executable, ['daemon'], {
-    cwd: app.getPath('documents'),
+    cwd: is.dev ? resolve(app.getAppPath(), '..') : app.getPath('userData'),
     env: { ...process.env, SEEKCLAW_MANAGED_BY_DESKTOP: '1' },
     stdio: 'ignore',
     windowsHide: true
@@ -156,7 +156,8 @@ function registerIpc(): void {
     version: app.getVersion(),
     platform: process.platform,
     supportsMica,
-    defaultWorkspace: is.dev ? resolve(app.getAppPath(), '..') : app.getPath('documents')
+    defaultWorkspace: is.dev ? resolve(app.getAppPath(), '..') : app.getPath('userData'),
+    documentsPath: app.getPath('documents')
   }))
 
   ipcMain.handle('app:select-workspace', async () => {

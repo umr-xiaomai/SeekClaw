@@ -22,7 +22,7 @@
           "alias": "opus",
           "contextWindow": 200000,
           "maxOutput": 64000,
-          "capabilities": { "streaming": true, "toolCalling": true, "thinking": true, "vision": true, "jsonMode": true, "reasoning": true, "mcp": true },
+          "capabilities": { "streaming": true, "toolCalling": true, "thinking": true, "vision": true, "jsonMode": true, "reasoning": true, "maxReasoningLevel": "Ultra", "mcp": true },
           "inputPricePerMTok": 15,
           "outputPricePerMTok": 75,
           "tags": [ "quality" ]
@@ -32,7 +32,7 @@
           "alias": "sonnet",
           "contextWindow": 200000,
           "maxOutput": 64000,
-          "capabilities": { "streaming": true, "toolCalling": true, "thinking": true, "vision": true, "jsonMode": true, "reasoning": true, "mcp": true },
+          "capabilities": { "streaming": true, "toolCalling": true, "thinking": true, "vision": true, "jsonMode": true, "reasoning": true, "maxReasoningLevel": "Ultra", "mcp": true },
           "inputPricePerMTok": 3,
           "outputPricePerMTok": 15,
           "tags": [ "balanced" ]
@@ -51,7 +51,7 @@
           "id": "gpt-5.5",
           "contextWindow": 400000,
           "maxOutput": 128000,
-          "capabilities": { "streaming": true, "toolCalling": true, "vision": true, "jsonMode": true, "reasoning": true, "mcp": true },
+          "capabilities": { "streaming": true, "toolCalling": true, "vision": true, "jsonMode": true, "reasoning": true, "maxReasoningLevel": "XHigh", "mcp": true },
           "inputPricePerMTok": 1.25,
           "outputPricePerMTok": 10,
           "tags": [ "balanced", "quality" ]
@@ -193,6 +193,7 @@
     "maxRepairAttempts": 3,
     "systemPrompt": "system/default",
     "thinkingBudgetTokens": 4096,
+    "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
     "bashTimeoutSeconds": 180
   },

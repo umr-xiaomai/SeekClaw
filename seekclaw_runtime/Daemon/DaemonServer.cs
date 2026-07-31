@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Workspaces;
 
@@ -215,11 +216,28 @@ public sealed class DaemonServer
                             await WriteAsync(writer, writerGate, id, "error", ex.Message, ct, requestedSessionId).ConfigureAwait(false);
                             break;
                         }
+                        ReasoningLevel reasoningLevel;
+                        try
+                        {
+                            reasoningLevel = ParseReasoningLevel(
+                                parameters["reasoningLevel"], turnSession.Header.ReasoningLevel);
+                            if (turnSession.Header.ReasoningLevel != reasoningLevel)
+                            {
+                                turnSession.Header.ReasoningLevel = reasoningLevel;
+                                _runtime.Sessions.UpdateMetadata(
+                                    workspace, turnSession.Header.Id, reasoningLevel: reasoningLevel);
+                            }
+                        }
+                        catch (DaemonRequestException ex)
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct, requestedSessionId).ConfigureAwait(false);
+                            break;
+                        }
                         var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
                         var turn = new ActiveTurn(turnSession, workspace, turnCancellation);
                         activeTurns[id] = turn;
                         turn.Task = RunTurnAsync(
-                            turnSession, workspace, message, id, writer, writerGate,
+                            turnSession, workspace, message, reasoningLevel, id, writer, writerGate,
                             turnCancellation.Token, ct);
                         break;
                     }
@@ -480,7 +498,18 @@ public sealed class DaemonServer
                             await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
                             break;
                         }
-                        session = _runtime.Sessions.Create(workspace);
+                        ReasoningLevel reasoningLevel;
+                        try
+                        {
+                            reasoningLevel = ParseReasoningLevel(
+                                Params(request)["reasoningLevel"], _runtime.ConfigStore.Config.Agent.ReasoningLevel);
+                        }
+                        catch (DaemonRequestException ex)
+                        {
+                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            break;
+                        }
+                        session = _runtime.Sessions.Create(workspace, reasoningLevel);
                         await WriteAsync(writer, writerGate, id, "result", session.Header.Id, ct).ConfigureAwait(false);
                         break;
                     }
@@ -560,6 +589,7 @@ public sealed class DaemonServer
         AgentSession session,
         WorkspaceInfo workspace,
         string message,
+        ReasoningLevel reasoningLevel,
         long id,
         StreamWriter writer,
         SemaphoreSlim writerGate,
@@ -584,7 +614,8 @@ public sealed class DaemonServer
                 await runtime.Mcp.ConnectAllAsync(workspace, turnCt).ConfigureAwait(false);
 
             result = _runTurn is null
-                ? await runtime.Agent.RunTurnAsync(session, workspace, message, turnCt).ConfigureAwait(false)
+                ? await runtime.Agent.RunTurnAsync(
+                    session, workspace, message, turnCt, reasoningLevel).ConfigureAwait(false)
                 : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -745,6 +776,17 @@ public sealed class DaemonServer
         return mode is "plan" or "readonly" or "edit" or "auto";
     }
 
+    private static ReasoningLevel ParseReasoningLevel(JsonNode? node, ReasoningLevel fallback)
+    {
+        if (node is null) return fallback;
+        var value = node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text)
+            ? text
+            : null;
+        if (ReasoningLevelExtensions.TryParse(value, out var level)) return level;
+        throw new DaemonRequestException(
+            "params.reasoningLevel must be one of: none, low, medium, high, max, xhigh, ultra");
+    }
+
     private string WorkspaceJson(WorkspaceInfo workspace)
     {
         var kinds = new JsonArray(workspace.ProjectKinds.Select(kind => JsonValue.Create(kind)).ToArray());
@@ -762,7 +804,7 @@ public sealed class DaemonServer
         ["version"] = ProtocolVersion,
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
-            "chat", "concurrent-turns", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
+            "chat", "concurrent-turns", "reasoning-level", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
             "model", "mcp", "skill", "usage", "session", "global-session", "doctor"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.cancel",

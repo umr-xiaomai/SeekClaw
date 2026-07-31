@@ -37,7 +37,7 @@ Responses use a stable event envelope: `id` identifies the request, `event` iden
 `chat` remains the main method for compatibility with existing clients. `agent.runTurn` and `agent/runTurn` are aliases.
 
 ```json
-{"id":10,"method":"chat","params":{"message":"Fix the tests"}}
+{"id":10,"method":"chat","params":{"message":"Fix the tests","reasoningLevel":"high"}}
 {"id":11,"method":"agent.cancel","params":{"requestId":10}}
 ```
 
@@ -56,11 +56,11 @@ Streaming events are `thinking`, `delta`, `status`, `tool_start`, and `tool_done
 | --- | --- | --- |
 | `session.list` | `{ "workspace": "...", "global": false, "includeArchived": true }` | Lists sessions in a project or global scope |
 | `session.get` | `{ "id": "...", "workspace": "..." }` | Reads a session and its messages |
-| `session.update` | `{ "id": "...", "title": "..." }` | Updates title and other session metadata |
+| `session.update` | `{ "id": "...", "title": "...", "reasoningLevel": "high" }` | Updates title, reasoning depth, and other Session metadata |
 | `session.archive` | `{ "id": "...", "archived": true }` | Archives or restores a session |
 | `session.delete` | `{ "id": "..." }` | Permanently deletes a session |
 | `session.resume` | `{ "id": "...", "global": false }` | Resumes a session |
-| `session.new` | `{ "workspace": "..." }` or `{ "global": true }` | Creates and binds a new session |
+| `session.new` | `{ "workspace": "...", "reasoningLevel": "high" }` or `{ "global": true }` | Creates and binds a new Session |
 | `model.list` | none | Lists available `provider/model` references |
 | `model.catalog` | none | Returns model details, capabilities, and active state |
 | `model.switch` | `{ "model": "provider/model" }` | Switches and persists the model |
@@ -70,6 +70,8 @@ Streaming events are `thinking`, `delta`, `status`, `tool_start`, and `tool_done
 | `shutdown` | none | Cancels all active turns, returns `bye`, and gracefully stops the Daemon |
 
 Session methods accept `workspace` for a concrete project or `global: true` for the directory-free global session store. `includeArchived` controls whether archived tasks are returned. Desktop waits until the first message to call `session.new`, so creating an empty task does not create an empty Runtime Session.
+
+`reasoningLevel` uses the neutral values `none`, `low`, `medium`, `high`, `max`, `xhigh`, and `ultra`. It is not passed through as a UI-owned API parameter: Runtime first clamps it to model capabilities and then lets the Provider adapter generate wire parameters. `xhigh`/`ultra` are extended levels; model support defaults to `max`, and DeepSeek explicitly maps both to `max`.
 
 ## Desktop Administration Methods
 

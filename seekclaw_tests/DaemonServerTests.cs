@@ -272,20 +272,23 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var checks = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
         Assert.NotEmpty(checks);
 
-        await connection.SendAsync(19, "session.new");
+        await connection.SendAsync(19, "session.new", new JsonObject { ["reasoningLevel"] = "xhigh" });
         var sessionId = (await connection.ReadAsync())["data"]!.GetValue<string>();
         await connection.SendAsync(20, "session.get", new JsonObject { ["id"] = sessionId });
         var session = ParseData(await connection.ReadAsync());
         Assert.Equal(sessionId, session["id"]!.GetValue<string>());
+        Assert.Equal("xhigh", session["reasoningLevel"]!.GetValue<string>());
 
         await connection.SendAsync(21, "session.update", new JsonObject
         {
             ["id"] = sessionId,
             ["title"] = "Desktop task",
             ["workspace"] = workspace,
+            ["reasoningLevel"] = "ultra",
         });
         session = ParseData(await connection.ReadAsync());
         Assert.Equal("Desktop task", session["title"]!.GetValue<string>());
+        Assert.Equal("ultra", session["reasoningLevel"]!.GetValue<string>());
 
         await connection.SendAsync(22, "session.archive", new JsonObject
         {

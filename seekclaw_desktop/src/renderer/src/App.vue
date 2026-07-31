@@ -28,9 +28,11 @@ import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import { confirmAction } from './confirmation'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
+import { ReasoningLevel } from './types'
 import type { ChatMessage, ProjectItem, ThreadItem, ToolActivity } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
+const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v1'
 const starterPrompts = [
   { label: '探索并理解代码', icon: Telescope, tone: 'blue' },
   { label: '构建新功能、应用或工具', icon: Hammer, tone: 'purple' },
@@ -49,6 +51,7 @@ interface RuntimeSessionHeader {
   archived?: boolean
   createdAt: string
   updatedAt: string
+  reasoningLevel?: string
 }
 
 interface RuntimeSession extends RuntimeSessionHeader {
@@ -71,7 +74,13 @@ interface RuntimeWorkspace {
   mode: string
 }
 
-const appInfo = ref<AppInfo>({ version: '0.1.0', platform: 'win32', supportsMica: false, defaultWorkspace: '' })
+const appInfo = ref<AppInfo>({
+  version: '0.1.0',
+  platform: 'win32',
+  supportsMica: false,
+  defaultWorkspace: '',
+  documentsPath: ''
+})
 const sidebarOpen = ref(true)
 const settingsOpen = ref(false)
 const archivedTasksOpen = ref(false)
@@ -102,6 +111,7 @@ const autoFollowConversation = ref(true)
 const taskNotice = ref<{ threadId: string; title: string; kind: 'done' | 'error' } | null>(null)
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
+const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? ReasoningLevel.High)
 const activeProject = computed(() => {
   const projectId = activeThread.value ? activeThread.value.projectId : selectedProjectId.value
   return projects.value.find((project) => project.id === projectId)
@@ -208,6 +218,13 @@ function showTaskNotice(thread: ThreadItem, kind: 'done' | 'error'): void {
   }, 4200)
 }
 
+function normalizeReasoningLevel(value?: string): ReasoningLevel {
+  const normalized = value?.toLocaleLowerCase()
+  return Object.values(ReasoningLevel).includes(normalized as ReasoningLevel)
+    ? normalized as ReasoningLevel
+    : ReasoningLevel.High
+}
+
 function openTaskNotice(): void {
   const notice = taskNotice.value
   taskNotice.value = null
@@ -235,6 +252,7 @@ async function refreshProjectSessions(project: ProjectItem): Promise<void> {
         existing.title = saved.title || existing.title || fallbackTitle
         existing.updatedAt = new Date(saved.updatedAt).getTime()
         existing.archived = Boolean(saved.archived)
+        existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
       } else {
         threads.value.push({
           id: `${project.id}:session:${saved.id}`,
@@ -244,6 +262,7 @@ async function refreshProjectSessions(project: ProjectItem): Promise<void> {
           messages: [],
           sessionId: saved.id,
           sessionLoaded: false,
+          reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
           archived: Boolean(saved.archived)
         })
       }
@@ -271,6 +290,7 @@ async function refreshGlobalSessions(): Promise<void> {
       existing.title = saved.title || existing.title || fallbackTitle
       existing.updatedAt = new Date(saved.updatedAt).getTime()
       existing.archived = Boolean(saved.archived)
+      existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
     } else {
       threads.value.push({
         id: `global:session:${saved.id}`,
@@ -279,6 +299,7 @@ async function refreshGlobalSessions(): Promise<void> {
         messages: [],
         sessionId: saved.id,
         sessionLoaded: false,
+        reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
         archived: Boolean(saved.archived)
       })
     }
@@ -292,6 +313,32 @@ async function refreshAllProjectSessions(): Promise<void> {
   ])
 }
 
+async function migrateImplicitDocumentsProject(): Promise<void> {
+  if (localStorage.getItem(IMPLICIT_DOCUMENTS_MIGRATION_KEY) === '1') return
+  if (!appInfo.value.documentsPath) return
+
+  const project = projects.value.find((item) => samePath(item.path, appInfo.value.documentsPath))
+  if (!project) {
+    localStorage.setItem(IMPLICIT_DOCUMENTS_MIGRATION_KEY, '1')
+    return
+  }
+
+  // Only remove the legacy entry after the Runtime has confirmed that it owns no sessions.
+  // A failed request leaves the migration pending so a later reconnect can retry safely.
+  try {
+    await refreshProjectSessions(project)
+  } catch {
+    return
+  }
+
+  if (!threads.value.some((thread) => thread.projectId === project.id)) {
+    projects.value = projects.value.filter((item) => item.id !== project.id)
+    if (selectedProjectId.value === project.id) selectedProjectId.value = ''
+    if (activeThread.value?.projectId === project.id) activeThreadId.value = ''
+  }
+  localStorage.setItem(IMPLICIT_DOCUMENTS_MIGRATION_KEY, '1')
+}
+
 async function loadRuntimeState(): Promise<void> {
   try {
     const [modelResponse, workspaceResponse, modeResponse, catalogResponse] = await Promise.all([
@@ -303,14 +350,16 @@ async function loadRuntimeState(): Promise<void> {
     const available = JSON.parse(modelResponse.data) as string[]
     const catalog = JSON.parse(catalogResponse.data) as Array<{ ref: string; active: boolean }>
     const workspace = JSON.parse(workspaceResponse.data) as RuntimeWorkspace
-    const currentProject = ensureProject(workspace.path, workspace.name)
+    const currentProject = projects.value.find((project) => samePath(project.path, workspace.path))
+    if (currentProject && workspace.name) currentProject.name = workspace.name
     runtimeWorkspacePath.value = workspace.path
-    selectedProjectId.value ||= currentProject.id
+    selectedProjectId.value ||= currentProject?.id ?? ''
     models.value = available
     activeModel.value = catalog.find((model) => model.active)?.ref
       ?? (available.includes(activeModel.value) ? activeModel.value : available[0] ?? 'balanced')
     mode.value = modeResponse.data
     await refreshAllProjectSessions()
+    await migrateImplicitDocumentsProject()
 
     if (!activeThread.value) {
       const recent = threads.value
@@ -424,6 +473,7 @@ function newTask(projectId?: string): void {
     projectId: project?.id,
     updatedAt: Date.now(),
     messages: [],
+    reasoningLevel: ReasoningLevel.High,
     archived: false
   }
   threads.value.unshift(thread)
@@ -499,6 +549,7 @@ async function reloadThreadSession(thread: ThreadItem, project?: ProjectItem): P
     thread.sessionLoaded = true
     thread.title = saved.title || thread.title
     thread.archived = Boolean(saved.archived)
+    thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
   } catch {
     thread.sessionLoaded = false
   }
@@ -524,6 +575,7 @@ async function selectThread(id: string): Promise<void> {
       thread.sessionLoaded = true
       thread.title = saved.title || thread.title
       thread.archived = Boolean(saved.archived)
+      thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
     }
   } catch {
     thread.sessionLoaded = false
@@ -542,6 +594,7 @@ async function sendMessage(content: string): Promise<void> {
   const thread = activeThread.value
   const project = activeProject.value
   if (!thread || (thread.projectId && !project) || thread.archived || thread.running) return
+  const reasoningLevel = thread.reasoningLevel ?? ReasoningLevel.High
 
   const userMessage: ChatMessage = { id: makeId(), role: 'user', content, createdAt: Date.now() }
   const assistant: ChatMessage = {
@@ -561,7 +614,10 @@ async function sendMessage(content: string): Promise<void> {
     const scope = sessionScope(thread, project)
     let sessionCreated = false
     if (!thread.sessionId) {
-      const sessionResponse = await window.seekclaw.daemon.request('session.new', scope)
+      const sessionResponse = await window.seekclaw.daemon.request('session.new', {
+        ...scope,
+        reasoningLevel
+      })
       thread.sessionId = sessionResponse.data
       thread.sessionLoaded = true
       sessionCreated = true
@@ -576,6 +632,7 @@ async function sendMessage(content: string): Promise<void> {
     await window.seekclaw.daemon.request('chat', {
       message: content,
       sessionId: thread.sessionId,
+      reasoningLevel,
       ...scope
     })
     if (assistant.state !== 'error') assistant.state = 'done'
@@ -955,6 +1012,21 @@ async function changeMode(nextMode: string): Promise<void> {
   } catch { /* Keep showing the active Runtime mode. */ }
 }
 
+async function changeReasoningLevel(level: ReasoningLevel): Promise<void> {
+  const thread = activeThread.value
+  if (!thread || thread.running || thread.archived) return
+  thread.reasoningLevel = level
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  if (!thread.sessionId || !daemonState.value.connected || (thread.projectId && !project)) return
+  try {
+    await window.seekclaw.daemon.request('session.update', {
+      id: thread.sessionId,
+      ...sessionScope(thread, project),
+      reasoningLevel: level
+    })
+  } catch { /* The selected level is still sent with the next turn. */ }
+}
+
 function useStarterPrompt(prompt: string): void {
   composer.value?.setValue(prompt)
 }
@@ -965,8 +1037,6 @@ onMounted(async () => {
   document.documentElement.dataset.platform = appInfo.value.platform
   document.documentElement.dataset.material = appInfo.value.supportsMica ? 'mica' : 'solid'
   projects.value = loadStoredProjects()
-  const defaultProject = ensureProject(appInfo.value.defaultWorkspace)
-  selectedProjectId.value = defaultProject.id
   unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonEvent)
   unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
   appReadyForRecovery = true
@@ -1128,11 +1198,13 @@ watch(projects, persistProjects, { deep: true })
             :model="activeModel"
             :models="models"
             :mode="mode"
+            :reasoning-level="activeReasoningLevel"
             @send="sendMessage"
             @stop="stopTurn"
             @attach="openWorkspace"
             @change-model="changeModel"
             @change-mode="changeMode"
+            @change-reasoning-level="changeReasoningLevel"
           />
           <p class="composer-caption">
             {{ !activeThread
@@ -1152,7 +1224,7 @@ watch(projects, persistProjects, { deep: true })
       :theme="theme"
       :daemon-connected="daemonState.connected"
       :daemon-endpoint="daemonState.endpoint"
-      :workspace-path="activeProject?.path || appInfo.defaultWorkspace"
+      :workspace-path="activeProject?.path || runtimeWorkspacePath || appInfo.defaultWorkspace"
       :initial-section="settingsSection"
       @close="settingsOpen = false"
       @change-theme="applyTheme"
