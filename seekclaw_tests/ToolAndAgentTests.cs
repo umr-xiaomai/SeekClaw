@@ -1,10 +1,15 @@
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.DependencyInjection;
+using SeekClaw.Runtime;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Tools.Builtin;
+using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Tests;
 
@@ -260,10 +265,90 @@ public sealed class ToolAndAgentTests
         var search = new WebSearchTool(prompts);
         var fetch = new WebFetchTool(prompts);
 
-        Assert.True(search.RequiresNetwork);
-        Assert.True(fetch.RequiresNetwork);
-        Assert.False(search.RequiresWorkspace);
-        Assert.False(fetch.RequiresWorkspace);
+        // Assert through the ITool interface — that is how Agent.ActiveTools
+        // inspects tools. A bare class property would NOT override the interface
+        // default member and would keep reporting RequiresWorkspace=true, which
+        // would wrongly filter web tools out of global tasks.
+        ITool searchTool = search;
+        ITool fetchTool = fetch;
+        Assert.False(searchTool.RequiresWorkspace);
+        Assert.False(fetchTool.RequiresWorkspace);
+        Assert.True(searchTool.RequiresNetwork);
+        Assert.True(fetchTool.RequiresNetwork);
+    }
+
+    [Fact]
+    public async Task GlobalTurn_NetworkToggle_ControlsWebToolsSentToProvider()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "seekclaw-agent-test", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "openai",
+                Kind = "openai",
+                BaseUrl = "https://test.local/v1",
+                Models = [new ModelConfig { Id = "gpt-test", ContextWindow = 128_000 }],
+            });
+            var capture = new CapturingClientFactory();
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            // Global task with the 联网 toggle ON: both web tools reach the provider.
+            var online = runtime.Sessions.Create(globalWorkspace, networkEnabled: true);
+            await runtime.Agent.RunTurnAsync(online, globalWorkspace, "请搜索花濑HoiLai", CancellationToken.None);
+            var onlineNames = capture.LastRequest!.Tools.Select(tool => tool.Name).ToList();
+            Assert.Contains("web_search", onlineNames);
+            Assert.Contains("web_fetch", onlineNames);
+            Assert.Contains("web_fetch", onlineNames);
+
+            // Global task with the toggle OFF: neither web tool is sent.
+            capture.Reset();
+            var offline = runtime.Sessions.Create(globalWorkspace, networkEnabled: false);
+            await runtime.Agent.RunTurnAsync(offline, globalWorkspace, "请搜索花濑HoiLai", CancellationToken.None);
+            var offlineNames = capture.LastRequest!.Tools.Select(tool => tool.Name).ToList();
+            Assert.DoesNotContain("web_search", offlineNames);
+            Assert.DoesNotContain("web_fetch", offlineNames);
+        }
+        finally
+        {
+            // The SQLite connection pool keeps state.db open even after the runtime
+            // is disposed; release pooled handles before cleaning up the temp dir.
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    private sealed class CapturingClientFactory : ILlmClientFactory
+    {
+        public LlmRequest? LastRequest { get; private set; }
+
+        public ILlmClient GetClient(string kind) => new CapturingClient(this);
+
+        public void Reset() => LastRequest = null;
+
+        private sealed class CapturingClient(CapturingClientFactory owner) : ILlmClient
+        {
+            public string Kind => "openai";
+
+            public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
+                LlmRequest request, [EnumeratorCancellation] CancellationToken ct)
+            {
+                owner.LastRequest = request;
+                await Task.Yield();
+                yield return new LlmCompleted(new LlmCompletion { Text = "done" });
+            }
+        }
     }
 
     [Fact]

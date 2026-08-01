@@ -10,6 +10,10 @@ public abstract class BuiltinTool(IPromptProvider prompts) : ITool
     public abstract string Name { get; }
     public abstract JsonObject ParameterSchema { get; }
     public virtual bool Mutating => false;
+    // Virtual (not interface defaults): the interface map is fixed at this base
+    // class, so derived tools must override these to be visible to ITool callers.
+    public virtual bool RequiresWorkspace => true;
+    public virtual bool RequiresNetwork => false;
     public virtual string StatusLabel => "Working";
 
     /// <summary>Tool descriptions live in prompts/tool/&lt;name&gt;.txt (hot-reloadable).</summary>

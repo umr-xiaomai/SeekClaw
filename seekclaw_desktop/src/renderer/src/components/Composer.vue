@@ -234,6 +234,18 @@ watch(() => props.supportsImages, (supported) => {
       >
         <ImagePlus :size="18" />
       </button>
+      <button
+        class="network-toggle"
+        :class="{ active: networkEnabled }"
+        type="button"
+        :disabled="disabled"
+        :title="networkEnabled ? '联网已开启：网页搜索与访问网络可用' : '联网已关闭：网页搜索与访问网络不可用'"
+        :aria-pressed="networkEnabled"
+        @click="emit('changeNetwork', !networkEnabled)"
+      >
+        <Globe :size="15" />
+        <span>联网</span>
+      </button>
       <SelectMenu
         class="composer-select mode-control"
         :model-value="mode"
@@ -253,18 +265,6 @@ watch(() => props.supportsImages, (supported) => {
         searchable
         @update:model-value="emit('changeModel', $event)"
       />
-      <button
-        class="network-toggle"
-        :class="{ active: networkEnabled }"
-        type="button"
-        :disabled="disabled"
-        :title="networkEnabled ? '联网已开启：网页搜索与访问网络可用' : '联网已关闭：网页搜索与访问网络不可用'"
-        :aria-pressed="networkEnabled"
-        @click="emit('changeNetwork', !networkEnabled)"
-      >
-        <Globe :size="15" />
-        <span>联网</span>
-      </button>
       <span class="toolbar-spacer" />
       <ReasoningDepthMenu
         :model-value="reasoningLevel"

@@ -11,8 +11,8 @@ internal sealed record WebSearchResult(string Title, string Url, string Snippet)
 /// <summary>Searches the public web through Google, Bing, or Baidu and returns concise result links.</summary>
 public sealed class WebSearchTool(IPromptProvider prompts) : BuiltinTool(prompts)
 {
-    public bool RequiresWorkspace => false;
-    public bool RequiresNetwork => true;
+    public override bool RequiresWorkspace => false;
+    public override bool RequiresNetwork => true;
     private static readonly HttpClient HttpClient = new(new HttpClientHandler
     {
         AllowAutoRedirect = true,
@@ -274,8 +274,8 @@ public sealed class WebSearchTool(IPromptProvider prompts) : BuiltinTool(prompts
 /// <summary>Fetches web page content, strips HTML markup, and returns readable markdown-like text.</summary>
 public sealed class WebFetchTool(IPromptProvider prompts) : BuiltinTool(prompts)
 {
-    public bool RequiresWorkspace => false;
-    public bool RequiresNetwork => true;
+    public override bool RequiresWorkspace => false;
+    public override bool RequiresNetwork => true;
     private static readonly HttpClient HttpClient = new(new HttpClientHandler
     {
         AllowAutoRedirect = true,
