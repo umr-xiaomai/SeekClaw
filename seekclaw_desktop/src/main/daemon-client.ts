@@ -2,12 +2,14 @@ import { EventEmitter } from 'node:events'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createConnection, type Socket } from 'node:net'
-import type { DaemonMessage, DaemonState } from '../shared/ipc.js'
+import type { DaemonMessage, DaemonRequestOptions, DaemonState } from '../shared/ipc.js'
 
 interface PendingRequest {
   method: string
   resolve: (message: DaemonMessage) => void
   reject: (error: Error) => void
+  /** Safety net that rejects the request if the daemon never answers at all. */
+  idleTimer?: NodeJS.Timeout
 }
 
 const TERMINAL_EVENTS = new Set(['pong', 'result', 'done', 'cancelled', 'error', 'bye'])
@@ -72,16 +74,33 @@ export class DaemonClient extends EventEmitter {
     this.emit('state', { connected: false, endpoint: this.endpoint } satisfies DaemonState)
   }
 
-  async request(method: string, params: Record<string, unknown> = {}): Promise<DaemonMessage> {
+  async request(
+    method: string,
+    params: Record<string, unknown> = {},
+    options: DaemonRequestOptions = {}
+  ): Promise<DaemonMessage> {
     const state = await this.connect()
     if (!state.connected || !this.socket)
       throw new Error(state.error ?? `Unable to connect to ${this.endpoint}`)
 
     const id = this.nextId++
     return new Promise<DaemonMessage>((resolve, reject) => {
-      this.pending.set(id, { method, resolve, reject })
+      const pending: PendingRequest = { method, resolve, reject }
+      this.pending.set(id, pending)
+      // A request that never produces any event (for example a chat turn the
+      // daemon never started) must not leave the UI waiting forever. Any first
+      // event or terminal response clears the timer; the turn is then confirmed
+      // to be running and may legitimately take minutes.
+      if (options.timeoutMs) {
+        pending.idleTimer = setTimeout(() => {
+          if (this.pending.delete(id) === false) return
+          reject(new Error(
+            `请求超时：Runtime 在 ${Math.round(options.timeoutMs! / 1000)} 秒内未响应`))
+        }, options.timeoutMs)
+      }
       this.socket!.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
         if (!error) return
+        if (pending.idleTimer) clearTimeout(pending.idleTimer)
         this.pending.delete(id)
         reject(error)
       })
@@ -131,6 +150,10 @@ export class DaemonClient extends EventEmitter {
     }
 
     const request = this.pending.get(message.id)
+    if (request?.idleTimer) {
+      clearTimeout(request.idleTimer)
+      request.idleTimer = undefined
+    }
     const event = request ? { ...message, requestMethod: request.method } : message
     this.emit('event', event)
     if (!TERMINAL_EVENTS.has(message.event)) return
@@ -142,7 +165,10 @@ export class DaemonClient extends EventEmitter {
   }
 
   private rejectPending(error: Error): void {
-    for (const request of this.pending.values()) request.reject(error)
+    for (const request of this.pending.values()) {
+      if (request.idleTimer) clearTimeout(request.idleTimer)
+      request.reject(error)
+    }
     this.pending.clear()
   }
 }

@@ -36,6 +36,24 @@ import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadIt
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
 const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v2'
+// The daemon starts a chat turn within milliseconds of receiving the request,
+// so a request that produces no event at all within this window is stuck (for
+// example the payload never reached the daemon). Reject it instead of leaving
+// the task loading forever; once the first event arrives the turn is confirmed
+// running and may legitimately take minutes.
+const CHAT_FIRST_EVENT_TIMEOUT_MS = 30_000
+// Vue reactive proxies cannot be structured-cloned by Electron IPC; copy the
+// attachments into plain objects at the IPC boundary so requests reach the
+// daemon instead of failing with a DataCloneError.
+function plainImages(images?: ImageAttachment[]): ImageAttachment[] {
+  return (images ?? []).map((image) => ({
+    id: image.id,
+    name: image.name,
+    mediaType: image.mediaType,
+    data: image.data,
+    sizeBytes: image.sizeBytes
+  }))
+}
 const starterPrompts = [
   { label: '探索并理解代码', icon: Telescope, tone: 'blue' },
   { label: '构建新功能、应用或工具', icon: Hammer, tone: 'purple' },
@@ -787,11 +805,11 @@ async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Pr
   try {
     await window.seekclaw.daemon.request('agent.steer', {
       message: queued.content,
-      images: queued.images,
+      images: plainImages(queued.images),
       sessionId: thread.sessionId,
       requestId: thread.requestId,
       ...sessionScope(thread, project)
-    })
+    }, { timeoutMs: CHAT_FIRST_EVENT_TIMEOUT_MS })
   } catch {
     // Keep the message queued when the active turn has just finished or the Runtime rejects it.
     const messageIndex = thread.messages.findIndex((item) => item.id === guidanceMessage.id)
@@ -852,13 +870,19 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
     }
     const response = await window.seekclaw.daemon.request('chat', {
       message: content,
-      images,
+      images: plainImages(images),
       sessionId: thread.sessionId,
       reasoningLevel,
       ...scope
-    })
+    }, { timeoutMs: CHAT_FIRST_EVENT_TIMEOUT_MS })
     rememberFinishedRequest(thread, response.id)
-    if (assistant.state !== 'error') assistant.state = 'done'
+    if (assistant.state !== 'error') {
+      assistant.state = 'done'
+      // Streamed delta events can lose the IPC race to the request's terminal
+      // response, leaving the bubble empty even though the daemon finished.
+      // Fall back to the final text carried by the terminal response.
+      if (!assistant.content && response.data) assistant.content = response.data
+    }
   } catch (error) {
     assistant.state = 'error'
     if (!assistant.content) {

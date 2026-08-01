@@ -31,6 +31,12 @@ export interface DaemonState {
   error?: string
 }
 
+/** Optional per-request controls passed from the renderer to the daemon client. */
+export interface DaemonRequestOptions {
+  /** Rejects the request when no event or terminal response arrives within this window. */
+  timeoutMs?: number
+}
+
 export interface AppInfo {
   version: string
   platform: 'aix' | 'darwin' | 'freebsd' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'android'
@@ -91,7 +97,11 @@ export interface DesktopApi {
   daemon: {
     connect(): Promise<DaemonState>
     disconnect(): Promise<void>
-    request(method: string, params?: Record<string, unknown>): Promise<DaemonMessage>
+    request(
+      method: string,
+      params?: Record<string, unknown>,
+      options?: DaemonRequestOptions
+    ): Promise<DaemonMessage>
     onEvent(listener: (message: DaemonMessage) => void): () => void
     onState(listener: (state: DaemonState) => void): () => void
   }

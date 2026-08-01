@@ -48,6 +48,59 @@ describe('DaemonClient', () => {
     expect(events.map((event) => event.event)).toEqual(['thinking', 'delta', 'done'])
   })
 
+  it('rejects a request that never receives any event after timeoutMs', async () => {
+    const suffix = `${process.pid}-${Date.now()}-idle`
+    const endpoint = process.platform === 'win32'
+      ? String.raw`\\.\pipe\seekclaw-test-${suffix}`
+      : join(tmpdir(), `seekclaw-test-${suffix}.sock`)
+
+    // A server that accepts the connection but never answers. Resume the
+    // socket so the client disconnect is observed and the teardown can close.
+    const sockets: import('node:net').Socket[] = []
+    const server = createServer((socket) => {
+      sockets.push(socket)
+      socket.on('error', () => undefined)
+      socket.on('data', () => undefined)
+    })
+    servers.push(server)
+    server.listen(endpoint)
+    await once(server, 'listening')
+
+    const client = new DaemonClient(endpoint)
+    clients.push(client)
+    await expect(client.request('chat', { message: 'hello' }, { timeoutMs: 150 }))
+      .rejects.toThrow('请求超时')
+  })
+
+  it('keeps waiting for a request that produced an event before timeoutMs', async () => {
+    const suffix = `${process.pid}-${Date.now()}-activity`
+    const endpoint = process.platform === 'win32'
+      ? String.raw`\\.\pipe\seekclaw-test-${suffix}`
+      : join(tmpdir(), `seekclaw-test-${suffix}.sock`)
+
+    const server = createServer((socket) => {
+      socket.setEncoding('utf8')
+      socket.once('data', (chunk) => {
+        const request = JSON.parse(chunk.toString().trim()) as { id: number }
+        // Answer long after the timeout window, but first emit activity that
+        // confirms the turn is running and should keep waiting.
+        socket.write(`${JSON.stringify({ id: request.id, event: 'status', data: 'Thinking' })}\n`)
+        setTimeout(() => {
+          socket.write(`${JSON.stringify({ id: request.id, event: 'done', data: 'ok' })}\n`)
+        }, 250)
+      })
+    })
+    servers.push(server)
+    server.listen(endpoint)
+    await once(server, 'listening')
+
+    const client = new DaemonClient(endpoint)
+    clients.push(client)
+    const response = await client.request('chat', { message: 'hello' }, { timeoutMs: 100 })
+    expect(response.event).toBe('done')
+    expect(response.data).toBe('ok')
+  })
+
   it('treats a cancelled turn as a terminal response', async () => {
     const suffix = `${process.pid}-${Date.now()}-cancel`
     const endpoint = process.platform === 'win32'

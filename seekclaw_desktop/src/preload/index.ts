@@ -16,7 +16,7 @@ const api: DesktopApi = {
   daemon: {
     connect: () => ipcRenderer.invoke('daemon:connect'),
     disconnect: () => ipcRenderer.invoke('daemon:disconnect'),
-    request: (method, params) => ipcRenderer.invoke('daemon:request', method, params),
+    request: (method, params, options) => ipcRenderer.invoke('daemon:request', method, params, options),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, message: DaemonMessage): void => listener(message)
       ipcRenderer.on('daemon:event', handler)

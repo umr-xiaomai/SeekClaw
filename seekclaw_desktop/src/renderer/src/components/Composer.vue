@@ -151,7 +151,15 @@ function submit(): void {
     imageNotice.value = '当前模型不支持图片理解，请切换支持视觉的模型。'
     return
   }
-  const outgoingImages = images.value.slice()
+  // Vue reactive proxies cannot be structured-cloned by Electron IPC, so hand
+  // the renderer plain copies of the attachments before crossing the bridge.
+  const outgoingImages = images.value.map((image) => ({
+    id: image.id,
+    name: image.name,
+    mediaType: image.mediaType,
+    data: image.data,
+    sizeBytes: image.sizeBytes
+  }))
   emit('send', message, outgoingImages)
   value.value = ''
   images.value = []

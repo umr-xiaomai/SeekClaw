@@ -6,6 +6,7 @@ import { release } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
+import type { DaemonRequestOptions } from '../shared/ipc.js'
 import { DaemonClient } from './daemon-client.js'
 import { getGitHistory, getGitOverview, openProjectTerminal } from './project-tools.js'
 
@@ -244,8 +245,10 @@ function registerIpc(): void {
 
   ipcMain.handle('daemon:connect', () => daemon.connect())
   ipcMain.handle('daemon:disconnect', () => daemon.disconnect())
-  ipcMain.handle('daemon:request', (_event, method: string, params?: Record<string, unknown>) =>
-    daemon.request(method, params))
+  ipcMain.handle(
+    'daemon:request',
+    (_event, method: string, params?: Record<string, unknown>, options?: DaemonRequestOptions) =>
+      daemon.request(method, params, options))
 
   daemon.on('event', (message) => mainWindow?.webContents.send('daemon:event', message))
   daemon.on('state', (state) => mainWindow?.webContents.send('daemon:state', state))
