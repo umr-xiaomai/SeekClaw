@@ -200,18 +200,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="custom-select" :class="{ open, disabled }">
-    <button
-      ref="trigger"
-      class="custom-select-trigger"
-      type="button"
-      :disabled="disabled"
-      :aria-label="label"
-      aria-haspopup="listbox"
-      :aria-expanded="open"
-      :aria-controls="listboxId"
-      @click="toggle"
-      @keydown="handleKeydown"
-    >
+    <button ref="trigger" class="custom-select-trigger" type="button" :disabled="disabled" :aria-label="label"
+      aria-haspopup="listbox" :aria-expanded="open" :aria-controls="listboxId" @click="toggle" @keydown="handleKeydown">
       <span class="custom-select-value" :class="{ placeholder: !selectedOption }">
         {{ selectedOption?.label || modelValue || placeholder }}
       </span>
@@ -220,29 +210,12 @@ onBeforeUnmount(() => {
 
     <Teleport to="body">
       <Transition name="select-popover">
-        <div
-          v-if="open"
-          :id="listboxId"
-          ref="menu"
-          class="custom-select-menu"
-          role="listbox"
-          :aria-label="label"
-          :style="menuStyle"
-          @keydown="handleKeydown"
-        >
-          <button
-            v-for="(option, index) in options"
-            :key="option.value"
-            type="button"
-            class="custom-select-option"
+        <div v-if="open" :id="listboxId" ref="menu" class="custom-select-menu" role="listbox" :aria-label="label"
+          :style="menuStyle" @keydown="handleKeydown">
+          <button v-for="(option, index) in options" :key="option.value" type="button" class="custom-select-option"
             :class="{ selected: option.value === modelValue, highlighted: index === highlighted }"
-            :disabled="option.disabled"
-            role="option"
-            :aria-selected="option.value === modelValue"
-            :data-index="index"
-            @mouseenter="!option.disabled && (highlighted = index)"
-            @click="select(option)"
-          >
+            :disabled="option.disabled" role="option" :aria-selected="option.value === modelValue" :data-index="index"
+            @mouseenter="!option.disabled && (highlighted = index)" @click="select(option)">
             <span class="custom-select-option-copy">
               <strong>{{ option.label }}</strong>
               <small v-if="option.description">{{ option.description }}</small>

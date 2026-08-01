@@ -1,6 +1,6 @@
 {
   "name": "seekclaw-desktop",
-  "version": "0.1.5",
+  "version": "1.1.6",
   "private": true,
   "description": "SeekClaw desktop client",
   "main": "./out/main/index.js",
@@ -48,7 +48,9 @@
       {
         "from": "runtime/win-x64",
         "to": "runtime",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -60,7 +62,10 @@
       "category": "public.app-category.developer-tools"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Development"
     }
   },
