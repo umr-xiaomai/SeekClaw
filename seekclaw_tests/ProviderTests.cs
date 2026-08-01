@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
@@ -136,7 +137,8 @@ public sealed class ProviderTests : IDisposable
             ],
         };
 
-        var content = OpenAiCompatibleClient.BuildBody(request)["messages"]![0]!["content"]!.AsArray();
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        var content = body["messages"]![0]!["content"]!.AsArray();
         Assert.Equal(3, content.Count);
         Assert.Equal("text", content[0]!["type"]!.GetValue<string>());
         Assert.Equal("比较这两张图片", content[0]!["text"]!.GetValue<string>());
@@ -145,6 +147,8 @@ public sealed class ProviderTests : IDisposable
             content[1]!["image_url"]!["url"]!.GetValue<string>());
         Assert.Equal("data:image/webp;base64,BAUG",
             content[2]!["image_url"]!["url"]!.GetValue<string>());
+        Assert.False(body["stream"]!.GetValue<bool>());
+        Assert.Null(body["stream_options"]);
     }
 
     [Fact]
@@ -164,7 +168,8 @@ public sealed class ProviderTests : IDisposable
             ],
         };
 
-        var content = AnthropicClient.BuildBody(request)["messages"]![0]!["content"]!.AsArray();
+        var body = AnthropicClient.BuildBody(request);
+        var content = body["messages"]![0]!["content"]!.AsArray();
         Assert.Equal(3, content.Count);
         Assert.Equal("image", content[0]!["type"]!.GetValue<string>());
         Assert.Equal("image/jpeg", content[0]!["source"]!["media_type"]!.GetValue<string>());
@@ -172,6 +177,112 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal("image/gif", content[1]!["source"]!["media_type"]!.GetValue<string>());
         Assert.Equal("text", content[2]!["type"]!.GetValue<string>());
         Assert.Equal("分别描述", content[2]!["text"]!.GetValue<string>());
+        Assert.False(body["stream"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public void OpenAiNonStreamingResponse_ParsesVisionTextThinkingToolsAndUsage()
+    {
+        var response = System.Text.Json.Nodes.JsonNode.Parse("""
+            {
+              "choices": [{
+                "finish_reason": "stop",
+                "message": {
+                  "content": "图中是一只猫。",
+                  "reasoning_content": "检查图像主体",
+                  "tool_calls": [{"id":"call_1","function":{"name":"lookup","arguments":"{\"q\":\"cat\"}"}}]
+                }
+              }],
+              "usage": {"prompt_tokens": 120, "completion_tokens": 18, "prompt_tokens_details": {"cached_tokens": 20}}
+            }
+            """);
+
+        var completion = OpenAiCompatibleClient.ParseCompletion(response, "vision");
+
+        Assert.Equal("图中是一只猫。", completion.Text);
+        Assert.Equal("检查图像主体", completion.Thinking);
+        Assert.Equal("stop", completion.FinishReason);
+        Assert.Equal("lookup", Assert.Single(completion.ToolCalls).Name);
+        Assert.Equal(120, completion.Usage.TotalInputTokens);
+        Assert.Equal(20, completion.Usage.CachedInputTokens);
+        Assert.Equal(18, completion.Usage.OutputTokens);
+    }
+
+    [Fact]
+    public void AnthropicNonStreamingResponse_ParsesVisionTextThinkingToolsAndUsage()
+    {
+        var response = System.Text.Json.Nodes.JsonNode.Parse("""
+            {
+              "type": "message",
+              "content": [
+                {"type":"thinking","thinking":"检查图像主体"},
+                {"type":"text","text":"图中是一只猫。"},
+                {"type":"tool_use","id":"tool_1","name":"lookup","input":{"q":"cat"}}
+              ],
+              "stop_reason": "end_turn",
+              "usage": {"input_tokens": 120, "output_tokens": 18, "cache_read_input_tokens": 20}
+            }
+            """);
+
+        var completion = AnthropicClient.ParseCompletion(response, "vision");
+
+        Assert.Equal("图中是一只猫。", completion.Text);
+        Assert.Equal("检查图像主体", completion.Thinking);
+        Assert.Equal("end_turn", completion.FinishReason);
+        Assert.Equal("lookup", Assert.Single(completion.ToolCalls).Name);
+        Assert.Equal(120, completion.Usage.TotalInputTokens);
+        Assert.Equal(20, completion.Usage.CachedInputTokens);
+        Assert.Equal(18, completion.Usage.OutputTokens);
+    }
+
+    [Fact]
+    public async Task OpenAiVisionResponse_FallsBackToSse_WhenGatewayIgnoresStreamFalse()
+    {
+        const string body = """
+            data: {"choices":[{"delta":{"content":"图像已读取。"},"finish_reason":"stop"}]}
+
+            data: [DONE]
+
+            """;
+        var client = new OpenAiCompatibleClient(new StubHttpFactory(body, "text/event-stream"));
+        var request = VisionRequest("openai");
+        LlmCompletion? completion = null;
+
+        await foreach (var evt in client.StreamAsync(request, CancellationToken.None))
+            if (evt is LlmCompleted done) completion = done.Completion;
+
+        Assert.NotNull(completion);
+        Assert.Equal("图像已读取。", completion.Text);
+        Assert.Equal("stop", completion.FinishReason);
+    }
+
+    [Fact]
+    public async Task AnthropicVisionResponse_FallsBackToSse_WhenGatewayIgnoresStreamFalse()
+    {
+        const string body = """
+            event: message_start
+            data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"图像已读取。"}}
+
+            event: message_delta
+            data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+            """;
+        var client = new AnthropicClient(new StubHttpFactory(body, "text/event-stream"));
+        var request = VisionRequest("anthropic");
+        LlmCompletion? completion = null;
+
+        await foreach (var evt in client.StreamAsync(request, CancellationToken.None))
+            if (evt is LlmCompleted done) completion = done.Completion;
+
+        Assert.NotNull(completion);
+        Assert.Equal("图像已读取。", completion.Text);
+        Assert.Equal("end_turn", completion.FinishReason);
     }
 
     [Fact]
@@ -382,18 +493,37 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal(0.5, aggregate.SuccessRate);
     }
 
-    private sealed class StubHttpFactory(string body) : ILlmHttpFactory
+    private static LlmRequest VisionRequest(string kind) => new()
     {
-        public HttpClient GetClient(ProviderConfig provider) => new(new StubHandler(body));
+        Provider = new ProviderConfig
+        {
+            Id = $"{kind}-vision",
+            Kind = kind,
+            BaseUrl = "https://example.test",
+            TimeoutSeconds = 10,
+        },
+        Model = new ModelConfig { Id = "vision-model" },
+        Messages =
+        [
+            ChatMessage.User("描述图片",
+            [
+                new ChatImageAttachment("image", "image.png", "image/png", "AQID", 3),
+            ]),
+        ],
+    };
+
+    private sealed class StubHttpFactory(string body, string? mediaType = null) : ILlmHttpFactory
+    {
+        public HttpClient GetClient(ProviderConfig provider) => new(new StubHandler(body, mediaType));
     }
 
-    private sealed class StubHandler(string body) : HttpMessageHandler
+    private sealed class StubHandler(string body, string? mediaType) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(body),
+                Content = new StringContent(body, Encoding.UTF8, mediaType ?? "application/json"),
             });
     }
 }

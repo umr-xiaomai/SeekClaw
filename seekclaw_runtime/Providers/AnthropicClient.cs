@@ -17,6 +17,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
     {
         var http = httpFactory.GetClient(request.Provider);
         var url = LlmUrl.JoinV1(request.Provider.BaseUrl, "messages");
+        var hasImages = request.Messages.Any(message => message.Images is { Count: > 0 });
 
         using var message = new HttpRequestMessage(HttpMethod.Post, url)
         {
@@ -53,6 +54,36 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     $"{request.Provider.Id} returned HTTP {status}: {OpenAiCompatibleClient.ExtractErrorMessage(body)}",
                     status,
                     retryable: status is 408 or 409 or 429 or 529 or >= 500);
+            }
+
+            // Compatible gateways do not always honour stream=false. If one answers with
+            // SSE anyway, keep using the streaming parser instead of buffering forever.
+            var isEventStream = string.Equals(
+                response.Content.Headers.ContentType?.MediaType,
+                "text/event-stream",
+                StringComparison.OrdinalIgnoreCase);
+            if (hasImages && !isEventStream)
+            {
+                string body;
+                try { body = await response.Content.ReadAsStringAsync(responseCts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                }
+                JsonNode? node;
+                try { node = JsonNode.Parse(body); }
+                catch (JsonException ex)
+                {
+                    throw new LlmException($"{request.Provider.Id} returned an invalid non-streaming response.", inner: ex);
+                }
+
+                var completion = ParseCompletion(node, request.Provider.Id);
+                if (completion.Thinking.Length > 0) yield return new LlmThinkingDelta(completion.Thinking);
+                foreach (var call in completion.ToolCalls)
+                    yield return new LlmToolCallStarted(call.Id, call.Name);
+                if (completion.Text.Length > 0) yield return new LlmTextDelta(completion.Text);
+                yield return new LlmCompleted(completion);
+                yield break;
             }
 
             var acc = new Accumulator();
@@ -95,6 +126,56 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
 
             yield return new LlmCompleted(acc.Build());
         }
+    }
+
+    internal static LlmCompletion ParseCompletion(JsonNode? root, string providerId)
+    {
+        if (root?["error"] is JsonNode error)
+            throw new LlmException($"{providerId} returned an error: {OpenAiCompatibleClient.ExtractErrorMessage(error.ToJsonString())}", retryable: false);
+
+        if (root?["content"] is not JsonArray content)
+            throw new LlmException($"{providerId} returned no completion content.", retryable: false);
+
+        var text = new StringBuilder();
+        var thinking = new StringBuilder();
+        var calls = new List<ToolCallRequest>();
+        foreach (var item in content.OfType<JsonObject>())
+        {
+            switch (item["type"]?.GetValue<string>())
+            {
+                case "text":
+                    text.Append(item["text"]?.GetValue<string>() ?? "");
+                    break;
+                case "thinking":
+                    thinking.Append(item["thinking"]?.GetValue<string>() ?? "");
+                    break;
+                case "tool_use":
+                    var name = item["name"]?.GetValue<string>() ?? "";
+                    if (name.Length > 0)
+                        calls.Add(new ToolCallRequest(
+                            item["id"]?.GetValue<string>() ?? $"toolu_{calls.Count}",
+                            name,
+                            item["input"]?.ToJsonString() ?? "{}"));
+                    break;
+            }
+        }
+
+        var usage = root["usage"] as JsonObject;
+        var inputTokens = usage?["input_tokens"]?.GetValue<long>() ?? 0;
+        var outputTokens = usage?["output_tokens"]?.GetValue<long>() ?? 0;
+        return new LlmCompletion
+        {
+            Text = text.ToString(),
+            Thinking = thinking.ToString(),
+            ToolCalls = calls,
+            FinishReason = root["stop_reason"]?.GetValue<string>() ?? "",
+            Usage = new TokenUsage(inputTokens, outputTokens)
+            {
+                TotalInputTokens = inputTokens,
+                CachedInputTokens = usage?["cache_read_input_tokens"]?.GetValue<long>() ?? 0,
+                CacheCreationInputTokens = usage?["cache_creation_input_tokens"]?.GetValue<long>() ?? 0,
+            },
+        };
     }
 
     private static void ApplyHeaders(HttpRequestMessage message, Configuration.ProviderConfig provider)
@@ -170,7 +251,9 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             ["model"] = request.Model.Id,
             ["messages"] = messages,
             ["max_tokens"] = request.MaxTokens ?? request.Model.MaxOutput,
-            ["stream"] = true,
+            // Some Anthropic-compatible vision gateways keep an image SSE request open
+            // without emitting message_stop. Use the complete response path for image turns.
+            ["stream"] = !request.Messages.Any(message => message.Images is { Count: > 0 }),
         };
 
         if (!string.IsNullOrEmpty(request.System))

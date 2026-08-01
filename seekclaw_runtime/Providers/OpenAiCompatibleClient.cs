@@ -19,6 +19,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
     {
         var http = httpFactory.GetClient(request.Provider);
         var url = LlmUrl.Join(request.Provider.BaseUrl, "chat/completions");
+        var hasImages = request.Messages.Any(message => message.Images is { Count: > 0 });
 
         using var message = new HttpRequestMessage(HttpMethod.Post, url)
         {
@@ -48,6 +49,37 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         {
             if (!response.IsSuccessStatusCode)
                 throw await ApiError(response, request.Provider.Id, responseCts.Token).ConfigureAwait(false);
+
+            // A few compatible gateways ignore stream=false and still return SSE. In that
+            // case use the normal streaming parser instead of waiting for the event stream
+            // to close and then trying to parse the whole payload as JSON.
+            var isEventStream = string.Equals(
+                response.Content.Headers.ContentType?.MediaType,
+                "text/event-stream",
+                StringComparison.OrdinalIgnoreCase);
+            if (hasImages && !isEventStream)
+            {
+                string body;
+                try { body = await response.Content.ReadAsStringAsync(responseCts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                }
+                JsonNode? node;
+                try { node = JsonNode.Parse(body); }
+                catch (JsonException ex)
+                {
+                    throw new LlmException($"{request.Provider.Id} returned an invalid non-streaming response.", inner: ex);
+                }
+
+                var completion = ParseCompletion(node, request.Provider.Id);
+                if (completion.Thinking.Length > 0) yield return new LlmThinkingDelta(completion.Thinking);
+                foreach (var call in completion.ToolCalls)
+                    yield return new LlmToolCallStarted(call.Id, call.Name);
+                if (completion.Text.Length > 0) yield return new LlmTextDelta(completion.Text);
+                yield return new LlmCompleted(completion);
+                yield break;
+            }
 
             var acc = new Accumulator();
             // Keep the provider timeout active while reading the stream too. Without
@@ -86,6 +118,67 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
 
             yield return new LlmCompleted(acc.Build());
         }
+    }
+
+    internal static LlmCompletion ParseCompletion(JsonNode? root, string providerId)
+    {
+        if (root?["error"] is JsonNode error)
+            throw new LlmException($"{providerId} returned an error: {ExtractErrorMessage(error.ToJsonString())}", retryable: false);
+
+        var choice = root?["choices"]?.AsArray().FirstOrDefault();
+        var message = choice?["message"];
+        if (message is null)
+            throw new LlmException($"{providerId} returned no completion choices.", retryable: false);
+
+        var text = ExtractContentText(message["content"]);
+        var thinking = message["reasoning_content"]?.GetValue<string>()
+                       ?? message["reasoning"]?.GetValue<string>()
+                       ?? "";
+        var calls = new List<ToolCallRequest>();
+        if (message["tool_calls"] is JsonArray toolCalls)
+        {
+            foreach (var item in toolCalls)
+            {
+                if (item is not JsonObject call) continue;
+                var function = call["function"] as JsonObject;
+                var name = function?["name"]?.GetValue<string>() ?? "";
+                if (name.Length == 0) continue;
+                calls.Add(new ToolCallRequest(
+                    call["id"]?.GetValue<string>() ?? $"call_{calls.Count}",
+                    name,
+                    function?["arguments"]?.GetValue<string>() ?? "{}"));
+            }
+        }
+
+        var usage = root?["usage"] as JsonObject;
+        var inputTokens = usage?["prompt_tokens"]?.GetValue<long>() ?? 0;
+        var outputTokens = usage?["completion_tokens"]?.GetValue<long>() ?? 0;
+        var cachedTokens = usage?["prompt_cache_hit_tokens"]?.GetValue<long>()
+                           ?? usage?["cached_tokens"]?.GetValue<long>()
+                           ?? (usage?["prompt_tokens_details"] as JsonObject)?["cached_tokens"]?.GetValue<long>()
+                           ?? 0;
+        return new LlmCompletion
+        {
+            Text = text,
+            Thinking = thinking,
+            ToolCalls = calls,
+            FinishReason = choice?["finish_reason"]?.GetValue<string>() ?? "",
+            Usage = new TokenUsage(inputTokens, outputTokens)
+            {
+                TotalInputTokens = inputTokens,
+                CachedInputTokens = cachedTokens,
+            },
+        };
+    }
+
+    private static string ExtractContentText(JsonNode? content)
+    {
+        if (content is JsonValue value && value.TryGetValue<string>(out var text)) return text;
+        if (content is not JsonArray parts) return "";
+        return string.Concat(parts
+            .OfType<JsonObject>()
+            .Where(part => part["type"]?.GetValue<string>() is "text" or "output_text")
+            .Select(part => part["text"]?.GetValue<string>() ?? ""));
     }
 
     private static void ApplyHeaders(HttpRequestMessage message, Configuration.ProviderConfig provider)
@@ -146,9 +239,13 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         {
             ["model"] = request.Model.Id,
             ["messages"] = messages,
-            ["stream"] = true,
-            ["stream_options"] = new JsonObject { ["include_usage"] = true },
+            // Vision gateways are not consistent about emitting a complete SSE response.
+            // Use a normal JSON response for image turns; text-only turns retain streaming.
+            ["stream"] = !request.Messages.Any(message => message.Images is { Count: > 0 }),
         };
+
+        if (body["stream"]?.GetValue<bool>() == true)
+            body["stream_options"] = new JsonObject { ["include_usage"] = true };
 
         if (request.MaxTokens is { } maxTokens) body["max_tokens"] = maxTokens;
         if (request.Temperature is { } temperature) body["temperature"] = temperature;
