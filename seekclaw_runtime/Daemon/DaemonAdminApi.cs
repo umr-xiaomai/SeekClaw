@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Workspaces;
@@ -10,8 +11,28 @@ namespace SeekClaw.Runtime.Daemon;
 internal sealed class DaemonRequestException(string message) : Exception(message);
 
 /// <summary>Structured administrative operations shared by desktop and editor clients.</summary>
-internal sealed class DaemonAdminApi(SeekClawRuntime runtime, WorkspaceInfo globalWorkspace)
+internal sealed class DaemonAdminApi(
+    SeekClawRuntime runtime,
+    WorkspaceInfo globalWorkspace,
+    IFileLockCoordinator fileLocks)
 {
+    /// <summary>Snapshot of the current file-task ownership table.</summary>
+    public string ListLocks()
+    {
+        var locks = new JsonArray();
+        foreach (var entry in fileLocks.Snapshot())
+        {
+            locks.Add((JsonNode)new JsonObject
+            {
+                ["workspace"] = entry.WorkspaceRoot,
+                ["file"] = entry.FilePath,
+                ["owner"] = entry.Owner,
+                ["acquiredAt"] = entry.AcquiredAt.ToString("O"),
+            });
+        }
+        return locks.ToJsonString();
+    }
+
     public string InitializeWorkspace()
     {
         var created = runtime.Workspaces.Bootstrap(runtime.Workspace);

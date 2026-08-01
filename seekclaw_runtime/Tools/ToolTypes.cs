@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Workspaces;
 
@@ -13,6 +14,10 @@ public sealed class ToolContext
     /// <summary>Adaptive per-call output budget (characters), derived from the model context window.</summary>
     public int MaxOutputChars { get; init; } = 30_000;
     public string CallId { get; init; } = "";
+    /// <summary>Centralized write-lock coordinator shared by all concurrent turns.</summary>
+    public IFileLockCoordinator? Coordinator { get; init; }
+    /// <summary>Task identity used when acquiring file write locks.</summary>
+    public string Owner { get; init; } = "";
 
     public string ResolvePath(string path) =>
         Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(Workspace.Root, path));

@@ -81,6 +81,7 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `model.test` | `{ "model": "provider/model" }` | 发送最小真实请求测试模型 |
 | `doctor` | 无 | 返回 Runtime 健康检查摘要 |
 | `doctor.run` | 无 | 返回结构化 Runtime 与 Provider 检查 |
+| `lock.list` | 无 | 返回当前文件写锁的“文件-任务”占用表快照 |
 | `shutdown` | 无 | 取消全部活动 turn，返回 `bye` 并优雅停止 Daemon |
 
 Session 方法可传 `workspace` 指向具体项目，也可传 `global: true` 使用不绑定目录的全局 Session 空间。`includeArchived` 控制列表是否包含已归档任务。Desktop 在第一次发送消息时才调用 `session.new`，因此新建一个空白任务不会产生无内容的 Session。
@@ -102,6 +103,8 @@ Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直�
 Daemon 会先建立 IPC 监听，再在后台初始化 MCP。`mcp.reload`、MCP 配置修改和工作区切换都会先注销旧工具与 Prompt，再串行连接新配置。
 
 Daemon 对每个 `chat` 请求按 `sessionId` 创建独立的 Agent turn。每个 turn 使用隔离的 Runtime、Prompt/Skills、MCP 注册和事件订阅，因此同一连接或多个连接可以并发运行任意数量的任务；并发度由 CPU、内存、Provider 和本机 I/O 性能共同决定。管理类配置写入仍然串行化，避免配置文件互相覆盖，但不会阻塞已经启动的 Agent turn。
+
+Daemon 进程内维护一个集中式文件写锁协调器（Task Coordinator），作为所有并发 turn 的文件锁唯一信任源。`write_file` 和 `edit_file` 在修改文件前会先按工作区+文件路径申请写锁：锁空闲则授予并完成修改后释放；锁被其他任务占用时工具最多等待 30 秒，超时后返回明确的失败提示（附当前持有者），要求模型等待并重新读取最新内容后重试。`edit_file` 在拿到锁后才读取文件，因此修改总是作用于磁盘上的最新内容，避免并行任务互相覆盖或产生无效编辑。turn 结束时（含取消）协调器会释放该任务持有的全部锁。可通过 `lock.list` 查看当前占用表。
 
 ## Desktop 的 Daemon 生命周期
 

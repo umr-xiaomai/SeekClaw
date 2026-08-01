@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
@@ -30,7 +31,9 @@ public sealed class Agent(
     IWorkspaceManager workspaceManager,
     ISessionStore sessionStore,
     IVerifier verifier,
-    IEventBus events)
+    IEventBus events,
+    IFileLockCoordinator fileLocks,
+    FileLockScope lockScope)
 {
     public async Task<AgentTurnResult> RunTurnAsync(
         AgentSession session,
@@ -386,6 +389,8 @@ public sealed class Agent(
             Agent = configStore.Config.Agent,
             MaxOutputChars = ContextPlanner.ToolOutputBudget(model.Model, configStore.Config.Agent),
             CallId = call.Id,
+            Coordinator = fileLocks,
+            Owner = lockScope.Owner,
         };
 
         var stopwatch = Stopwatch.StartNew();

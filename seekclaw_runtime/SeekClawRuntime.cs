@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Mcp;
@@ -56,11 +57,16 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     /// instance per task so workspace prompts, skills, MCP registrations and event
     /// subscriptions cannot leak between tasks.
     /// </summary>
-    internal static SeekClawRuntime CreateIsolated(WorkspaceInfo workspace)
+    internal static SeekClawRuntime CreateIsolated(
+        WorkspaceInfo workspace,
+        IFileLockCoordinator? coordinator = null,
+        string? turnOwner = null)
     {
         SeekClawPaths.EnsureCreated();
 
-        var services = new ServiceCollection().AddSeekClawRuntime().BuildServiceProvider();
+        var services = new ServiceCollection()
+            .AddSeekClawRuntime(coordinator, turnOwner)
+            .BuildServiceProvider();
         var runtime = new SeekClawRuntime(services, workspace);
         runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
         runtime.Skills.Attach(workspace);
@@ -188,7 +194,10 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
 
 public static class RuntimeServiceCollectionExtensions
 {
-    public static IServiceCollection AddSeekClawRuntime(this IServiceCollection services)
+    public static IServiceCollection AddSeekClawRuntime(
+        this IServiceCollection services,
+        IFileLockCoordinator? coordinator = null,
+        string? turnOwner = null)
     {
         services.AddSingleton<IEventBus, EventBus>();
         services.AddSingleton<IConfigStore>(_ => new ConfigStore());
@@ -214,6 +223,10 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<SkillManager>();
         services.AddSingleton<ISkillManager>(sp => sp.GetRequiredService<SkillManager>());
         services.AddSingleton<IMcpManager, McpManager>();
+        // Central file write-lock coordinator shared by all concurrent turns in the
+        // daemon; single-turn (CLI) runtimes fall back to the no-op implementation.
+        services.AddSingleton<IFileLockCoordinator>(coordinator ?? new NoopFileLockCoordinator());
+        services.AddSingleton(new FileLockScope(turnOwner ?? ""));
         services.AddSingleton<Agent>();
         return services;
     }

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
@@ -35,6 +36,10 @@ public sealed class DaemonServer
     private readonly bool _useIsolatedTurnRuntime;
     private readonly CancellationTokenSource _shutdown = new();
 
+    // Central Task Coordinator: one instance per daemon process is the single
+    // source of truth for file write locks across all concurrent agent turns.
+    private readonly IFileLockCoordinator _fileLocks = new FileLockCoordinator();
+
     // Configuration and workspace administration remains serialized, while agent turns
     // execute concurrently in isolated runtime instances.
     private readonly SemaphoreSlim _adminGate = new(1, 1);
@@ -58,7 +63,7 @@ public sealed class DaemonServer
     {
         _runtime = runtime;
         _globalWorkspace = globalWorkspace;
-        _admin = new DaemonAdminApi(runtime, globalWorkspace);
+        _admin = new DaemonAdminApi(runtime, globalWorkspace, _fileLocks);
         _runTurn = runTurn;
         _useIsolatedTurnRuntime = runTurn is null;
     }
@@ -488,6 +493,11 @@ public sealed class DaemonServer
                             _admin.DoctorAsync, ct).ConfigureAwait(false);
                         break;
 
+                    case "lock.list":
+                        await RunAdminAsync(writer, writerGate, id, false,
+                            _ => Task.FromResult(_admin.ListLocks()), ct).ConfigureAwait(false);
+                        break;
+
                     case "project.list":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _ => Task.FromResult(_admin.ListProjects()), ct).ConfigureAwait(false);
@@ -677,8 +687,11 @@ public sealed class DaemonServer
         CancellationToken connectionCt,
         AgentSteeringQueue steering)
     {
+        // Unique per-turn identity for file write-lock ownership; released when the
+        // turn ends even if a tool was interrupted before its own finally ran.
+        var owner = $"{session.Header.Id}/{Guid.NewGuid().ToString("N")[..8]}";
         await using var turnRuntime = _useIsolatedTurnRuntime
-            ? SeekClawRuntime.CreateIsolated(workspace)
+            ? SeekClawRuntime.CreateIsolated(workspace, _fileLocks, owner)
             : null;
         var runtime = turnRuntime ?? _runtime;
         using var subscription = runtime.Events.Subscribe();
@@ -712,6 +725,7 @@ public sealed class DaemonServer
             subscription.Dispose();
             try { await forwarder.ConfigureAwait(false); }
             catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
+            _fileLocks.ReleaseAll(owner);
         }
 
         try
@@ -947,7 +961,7 @@ public sealed class DaemonServer
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
-            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor"),
+            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
@@ -958,7 +972,8 @@ public sealed class DaemonServer
             "skill.list", "skill.toggle", "usage.get", "doctor", "doctor.run",
             "project.list", "project.upsert", "project.remove",
             "session.list", "session.get", "session.update", "session.archive", "session.delete",
-            "session.resume", "session.new", "shutdown"),
+            "session.resume", "session.new",
+            "lock.list", "shutdown"),
     }.ToJsonString();
 
     private async Task RunAdminAsync(

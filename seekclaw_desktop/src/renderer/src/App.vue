@@ -20,6 +20,7 @@ import {
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
 import AppTitleBar from './components/AppTitleBar.vue'
+import AboutDialog from './components/AboutDialog.vue'
 import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
 import Composer from './components/Composer.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -120,6 +121,7 @@ const appInfo = ref<AppInfo>({
 })
 const sidebarOpen = ref(true)
 const settingsOpen = ref(false)
+const aboutOpen = ref(false)
 const archivedTasksOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
@@ -1406,6 +1408,7 @@ watch(theme, applyTheme)
       @open-git-changes="openGitPanel('diff')"
       @open-git-history="openGitPanel('history')"
       @open-diagnostics="openSettings('diagnostics')"
+      @open-about="aboutOpen = true"
     />
 
     <div class="app-body" :class="{ 'sidebar-collapsed': !sidebarOpen }">
@@ -1613,6 +1616,12 @@ watch(theme, applyTheme)
       />
       </div>
     </div>
+
+    <AboutDialog
+      :open="aboutOpen"
+      :app-info="appInfo"
+      @close="aboutOpen = false"
+    />
 
     <SettingsDialog
       :open="settingsOpen"

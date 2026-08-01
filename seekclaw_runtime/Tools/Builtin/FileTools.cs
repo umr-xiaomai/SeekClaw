@@ -15,6 +15,46 @@ public abstract class BuiltinTool(IPromptProvider prompts) : ITool
     /// <summary>Tool descriptions live in prompts/tool/&lt;name&gt;.txt (hot-reloadable).</summary>
     public string Description => prompts.TryGet($"tool/{Name}") ?? $"The {Name} tool.";
 
+    /// <summary>How long a mutating tool waits for the central file write lock before failing.</summary>
+    protected static readonly TimeSpan FileWriteLockTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Runs a mutating tool body under the central file write lock when a coordinator is
+    /// present (daemon / concurrent turns). The mutation itself re-reads the file inside
+    /// the lock, so edits always apply to the latest on-disk content. Without a
+    /// coordinator (single-turn CLI) the body runs directly.
+    /// </summary>
+    protected static async Task<ToolResult> WithFileWriteLockAsync(
+        ToolContext context,
+        string path,
+        Func<CancellationToken, Task<ToolResult>> mutation,
+        CancellationToken ct)
+    {
+        var coordinator = context.Coordinator;
+        if (coordinator is null)
+            return await mutation(ct).ConfigureAwait(false);
+
+        var relative = Path.GetRelativePath(context.Workspace.Root, path);
+        var acquired = await coordinator.TryAcquireAsync(
+            context.Workspace.Root, path, context.Owner, FileWriteLockTimeout, ct).ConfigureAwait(false);
+        if (!acquired)
+        {
+            var holder = coordinator.GetOwner(context.Workspace.Root, path);
+            return ToolResult.Fail(
+                $"Write lock timeout: {relative} is being edited by another task" +
+                (holder is null ? "" : $" ({holder})") +
+                ". Wait for it to finish, re-read the latest file content, then retry.");
+        }
+        try
+        {
+            return await mutation(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            coordinator.Release(context.Workspace.Root, path, context.Owner);
+        }
+    }
+
     public abstract Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct);
 
     protected static string? GetString(JsonObject args, string name) =>
@@ -92,11 +132,16 @@ public sealed class WriteFileTool(IPromptProvider prompts) : BuiltinTool(prompts
         ("path", ToolSchema.String("File path to create or overwrite"), true),
         ("content", ToolSchema.String("Full new file content"), true));
 
-    public override async Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
+    public override Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
         var path = context.ResolvePath(GetString(arguments, "path") ?? "");
         var content = GetString(arguments, "content") ?? "";
+        return WithFileWriteLockAsync(context, path, _ => WriteCoreAsync(path, content, context, ct), ct);
+    }
 
+    private static async Task<ToolResult> WriteCoreAsync(
+        string path, string content, ToolContext context, CancellationToken ct)
+    {
         var existed = File.Exists(path);
         var oldText = existed ? await File.ReadAllTextAsync(path, ct).ConfigureAwait(false) : "";
 
@@ -128,25 +173,31 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
         ("new_string", ToolSchema.String("Replacement text"), true),
         ("replace_all", ToolSchema.Boolean("Replace every occurrence instead of requiring a unique match"), false));
 
-    public override async Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
+    public override Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
         var path = context.ResolvePath(GetString(arguments, "path") ?? "");
         if (!File.Exists(path))
-            return ToolResult.Fail($"File not found: {path}");
+            return Task.FromResult(ToolResult.Fail($"File not found: {path}"));
 
         var oldString = GetString(arguments, "old_string") ?? "";
         var newString = GetString(arguments, "new_string") ?? "";
         if (oldString.Length == 0)
-            return ToolResult.Fail("old_string must not be empty.");
+            return Task.FromResult(ToolResult.Fail("old_string must not be empty."));
         if (oldString == newString)
-            return ToolResult.Fail("old_string and new_string are identical.");
+            return Task.FromResult(ToolResult.Fail("old_string and new_string are identical."));
 
+        var replaceAll = GetBool(arguments, "replace_all");
+        return WithFileWriteLockAsync(context, path, _ => EditCoreAsync(path, oldString, newString, replaceAll, context, ct), ct);
+    }
+
+    private static async Task<ToolResult> EditCoreAsync(
+        string path, string oldString, string newString, bool replaceAll, ToolContext context, CancellationToken ct)
+    {
         var text = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
         var occurrences = CountOccurrences(text, oldString);
         if (occurrences == 0)
             return ToolResult.Fail($"old_string not found in {path}. Read the file again — the content may have changed.");
 
-        var replaceAll = GetBool(arguments, "replace_all");
         if (occurrences > 1 && !replaceAll)
             return ToolResult.Fail(
                 $"old_string matches {occurrences} locations in {path}. Provide more surrounding context to make it unique, or set replace_all.");

@@ -14,6 +14,7 @@ type MenuAction =
   | 'openGitChanges'
   | 'openGitHistory'
   | 'openDiagnostics'
+  | 'openAbout'
 
 interface MenuItem {
   label?: string
@@ -39,6 +40,7 @@ const emit = defineEmits<{
   openGitChanges: []
   openGitHistory: []
   openDiagnostics: []
+  openAbout: []
 }>()
 
 const menuRoot = ref<HTMLElement | null>(null)
@@ -81,7 +83,7 @@ const menus: Array<{ id: MenuName; label: string; items: MenuItem[] }> = [
       { label: '文档', href: 'https://seekclaw.hoilai.com/doc/' },
       { label: '故障排查', action: 'openDiagnostics' },
       { separator: true },
-      { label: '关于 SeekClaw', action: 'openSettings' }
+      { label: '关于 SeekClaw', action: 'openAbout' }
     ]
   }
 ]
@@ -107,6 +109,7 @@ function runAction(action?: MenuAction): void {
     case 'openGitChanges': emit('openGitChanges'); break
     case 'openGitHistory': emit('openGitHistory'); break
     case 'openDiagnostics': emit('openDiagnostics'); break
+    case 'openAbout': emit('openAbout'); break
   }
 }
 
