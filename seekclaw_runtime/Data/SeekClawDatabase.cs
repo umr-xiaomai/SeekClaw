@@ -80,6 +80,7 @@ public sealed class SeekClawDatabase
                     title TEXT NULL,
                     archived INTEGER NOT NULL DEFAULT 0,
                     reasoning_level INTEGER NOT NULL,
+                    network_enabled INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (scope, id)
@@ -108,6 +109,20 @@ public sealed class SeekClawDatabase
                 );
                 """;
             command.ExecuteNonQuery();
+
+            // Migration: databases created before the per-session network toggle
+            // existed get the column (existing sessions default to enabled).
+            using (var check = connection.CreateCommand())
+            {
+                check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'network_enabled';";
+                if (Convert.ToInt64(check.ExecuteScalar()) == 0)
+                {
+                    using var alter = connection.CreateCommand();
+                    alter.CommandText = "ALTER TABLE sessions ADD COLUMN network_enabled INTEGER NOT NULL DEFAULT 1;";
+                    alter.ExecuteNonQuery();
+                }
+            }
+
             InitializedFiles.Add(FilePath);
         }
     }

@@ -56,6 +56,8 @@ public interface ITool
     bool Mutating { get; }
     /// <summary>True when the tool needs a concrete local project directory.</summary>
     bool RequiresWorkspace => true;
+    /// <summary>True when the tool needs outbound network access (web search / web fetch).</summary>
+    bool RequiresNetwork => false;
     /// <summary>Status label for the renderer while the tool runs (Reading files, Searching…).</summary>
     string StatusLabel { get; }
 

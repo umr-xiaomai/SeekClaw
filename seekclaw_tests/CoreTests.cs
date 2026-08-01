@@ -125,6 +125,47 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void SessionStore_PersistsNetworkEnabledToggleAndMigratesLegacyDatabases()
+    {
+        var workspace = NewWorkspace("network-toggle");
+        var store = NewSessionStore();
+
+        // New sessions default to network enabled.
+        var session = store.Create(workspace);
+        Assert.True(session.Header.NetworkEnabled);
+
+        // Toggle off and verify the reloaded session keeps it.
+        store.UpdateMetadata(workspace, session.Header.Id, networkEnabled: false);
+        Assert.False(store.Load(workspace, session.Header.Id)!.Header.NetworkEnabled);
+        Assert.False(Assert.Single(store.List(workspace)).NetworkEnabled);
+
+        // A session created with the toggle already off round-trips too.
+        var offline = store.Create(workspace, networkEnabled: false);
+        Assert.False(store.Load(workspace, offline.Header.Id)!.Header.NetworkEnabled);
+
+        // Legacy databases without the column are migrated with the default enabled.
+        var legacyFile = Path.Combine(_dir, "legacy.db");
+        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={legacyFile}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE sessions (
+                    scope TEXT NOT NULL, id TEXT NOT NULL, workspace TEXT NULL, title TEXT NULL,
+                    archived INTEGER NOT NULL DEFAULT 0, reasoning_level INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY (scope, id));
+                """;
+            command.ExecuteNonQuery();
+        }
+        var migratedStore = new SessionStore(legacyFile);
+        var migrated = migratedStore.Create(workspace);
+        Assert.True(migrated.Header.NetworkEnabled);
+        migratedStore.UpdateMetadata(workspace, migrated.Header.Id, networkEnabled: false);
+        Assert.False(migratedStore.Load(workspace, migrated.Header.Id)!.Header.NetworkEnabled);
+    }
+
+    [Fact]
     public void SessionStore_PersistsGlobalSessionsWithoutWorkspaceMetadata()
     {
         var global = new WorkspaceManager().CreateGlobal(Path.Combine(_dir, "global-state"));

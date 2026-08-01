@@ -19,7 +19,10 @@ public sealed class AgentSession
 
 public interface ISessionStore
 {
-    AgentSession Create(WorkspaceInfo workspace, ReasoningLevel reasoningLevel = ReasoningLevel.High);
+    AgentSession Create(
+        WorkspaceInfo workspace,
+        ReasoningLevel reasoningLevel = ReasoningLevel.High,
+        bool networkEnabled = true);
     AgentSession? Load(WorkspaceInfo workspace, string sessionId);
     AgentSession? LoadLatest(WorkspaceInfo workspace);
     IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace, bool includeArchived = false);
@@ -29,7 +32,8 @@ public interface ISessionStore
         string sessionId,
         string? title = null,
         bool? archived = null,
-        ReasoningLevel? reasoningLevel = null);
+        ReasoningLevel? reasoningLevel = null,
+        bool? networkEnabled = null);
     void Delete(WorkspaceInfo workspace, string sessionId);
     void DeleteAll(WorkspaceInfo workspace);
 }
@@ -46,7 +50,10 @@ public sealed class SessionStore : ISessionStore
 
     public SessionStore(SeekClawDatabase database) => _database = database;
 
-    public AgentSession Create(WorkspaceInfo workspace, ReasoningLevel reasoningLevel = ReasoningLevel.High)
+    public AgentSession Create(
+        WorkspaceInfo workspace,
+        ReasoningLevel reasoningLevel = ReasoningLevel.High,
+        bool networkEnabled = true)
     {
         EnsureLegacyImported(workspace);
         var id = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
@@ -56,6 +63,7 @@ public sealed class SessionStore : ISessionStore
             Id = id,
             Workspace = workspace.IsGlobal ? null : Path.GetFullPath(workspace.Root),
             ReasoningLevel = reasoningLevel,
+            NetworkEnabled = networkEnabled,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -111,7 +119,7 @@ public sealed class SessionStore : ISessionStore
         using var connection = _database.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = $"""
-            SELECT id, title, workspace, archived, reasoning_level, created_at, updated_at
+            SELECT id, title, workspace, archived, reasoning_level, network_enabled, created_at, updated_at
             FROM sessions
             WHERE scope = $scope {(includeArchived ? "" : "AND archived = 0")}
             ORDER BY updated_at DESC;
@@ -179,7 +187,8 @@ public sealed class SessionStore : ISessionStore
         string sessionId,
         string? title = null,
         bool? archived = null,
-        ReasoningLevel? reasoningLevel = null)
+        ReasoningLevel? reasoningLevel = null,
+        bool? networkEnabled = null)
     {
         ValidateSessionId(sessionId);
         EnsureLegacyImported(workspace);
@@ -205,6 +214,11 @@ public sealed class SessionStore : ISessionStore
             {
                 assignments.Add("reasoning_level = $reasoningLevel");
                 command.Parameters.AddWithValue("$reasoningLevel", (int)reasoningLevel.Value);
+            }
+            if (networkEnabled is not null)
+            {
+                assignments.Add("network_enabled = $networkEnabled");
+                command.Parameters.AddWithValue("$networkEnabled", networkEnabled.Value ? 1 : 0);
             }
             command.CommandText = $"""
                 UPDATE sessions SET {string.Join(", ", assignments)}
@@ -366,8 +380,8 @@ public sealed class SessionStore : ISessionStore
         command.Transaction = transaction;
         command.CommandText = $"""
             INSERT {(ignoreConflict ? "OR IGNORE" : "")} INTO sessions(
-                scope, id, workspace, title, archived, reasoning_level, created_at, updated_at)
-            VALUES($scope, $id, $workspace, $title, $archived, $reasoningLevel, $createdAt, $updatedAt);
+                scope, id, workspace, title, archived, reasoning_level, network_enabled, created_at, updated_at)
+            VALUES($scope, $id, $workspace, $title, $archived, $reasoningLevel, $networkEnabled, $createdAt, $updatedAt);
             """;
         command.Parameters.AddWithValue("$scope", scope);
         command.Parameters.AddWithValue("$id", header.Id);
@@ -375,6 +389,7 @@ public sealed class SessionStore : ISessionStore
         command.Parameters.AddWithValue("$title", (object?)header.Title ?? DBNull.Value);
         command.Parameters.AddWithValue("$archived", header.Archived ? 1 : 0);
         command.Parameters.AddWithValue("$reasoningLevel", (int)header.ReasoningLevel);
+        command.Parameters.AddWithValue("$networkEnabled", header.NetworkEnabled ? 1 : 0);
         command.Parameters.AddWithValue("$createdAt", header.CreatedAt.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", header.UpdatedAt.ToString("O"));
         return command.ExecuteNonQuery() > 0;
@@ -384,7 +399,7 @@ public sealed class SessionStore : ISessionStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, title, workspace, archived, reasoning_level, created_at, updated_at
+            SELECT id, title, workspace, archived, reasoning_level, network_enabled, created_at, updated_at
             FROM sessions WHERE scope = $scope AND id = $sessionId;
             """;
         command.Parameters.AddWithValue("$scope", scope);
@@ -400,8 +415,9 @@ public sealed class SessionStore : ISessionStore
         Workspace = reader.IsDBNull(2) ? null : reader.GetString(2),
         Archived = reader.GetInt64(3) != 0,
         ReasoningLevel = (ReasoningLevel)reader.GetInt32(4),
-        CreatedAt = DateTimeOffset.Parse(reader.GetString(5)),
-        UpdatedAt = DateTimeOffset.Parse(reader.GetString(6)),
+        NetworkEnabled = reader.GetInt64(5) != 0,
+        CreatedAt = DateTimeOffset.Parse(reader.GetString(6)),
+        UpdatedAt = DateTimeOffset.Parse(reader.GetString(7)),
     };
 
     private static string TitleFrom(string text) =>

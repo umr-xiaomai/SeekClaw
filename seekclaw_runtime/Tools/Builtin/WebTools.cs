@@ -12,6 +12,7 @@ internal sealed record WebSearchResult(string Title, string Url, string Snippet)
 public sealed class WebSearchTool(IPromptProvider prompts) : BuiltinTool(prompts)
 {
     public bool RequiresWorkspace => false;
+    public bool RequiresNetwork => true;
     private static readonly HttpClient HttpClient = new(new HttpClientHandler
     {
         AllowAutoRedirect = true,
@@ -274,6 +275,7 @@ public sealed class WebSearchTool(IPromptProvider prompts) : BuiltinTool(prompts
 public sealed class WebFetchTool(IPromptProvider prompts) : BuiltinTool(prompts)
 {
     public bool RequiresWorkspace => false;
+    public bool RequiresNetwork => true;
     private static readonly HttpClient HttpClient = new(new HttpClientHandler
     {
         AllowAutoRedirect = true,

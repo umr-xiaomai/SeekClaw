@@ -10,6 +10,8 @@ public sealed class SessionHeader
     public string? Workspace { get; set; }
     public bool Archived { get; set; }
     public ReasoningLevel ReasoningLevel { get; set; } = ReasoningLevel.High;
+    /// <summary>Per-session "联网" toggle; controls web_search + web_fetch together.</summary>
+    public bool NetworkEnabled { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

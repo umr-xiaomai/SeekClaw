@@ -78,7 +78,7 @@ public sealed class Agent(
                           "The current routing profile has no model that supports image understanding.",
                           retryable: false)
                     : providerManager.ResolveActive(workspace.Config);
-                var tools = ActiveTools(workspace);
+                var tools = ActiveTools(workspace, session.Header.NetworkEnabled);
                 var systemPrompt = await ComposeSystemPromptAsync(workspace, model, tools, ct).ConfigureAwait(false);
                 var history = ContextPlanner.FitToWindow(
                     requiresVision ? session.Messages : WithoutImages(session.Messages),
@@ -484,7 +484,7 @@ public sealed class Agent(
         return basePrompt + modeInstruction;
     }
 
-    private IReadOnlyList<ITool> ActiveTools(WorkspaceInfo workspace)
+    private IReadOnlyList<ITool> ActiveTools(WorkspaceInfo workspace, bool networkEnabled)
     {
         var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
         var mode = AgentModeExtensions.Parse(rawMode);
@@ -496,6 +496,11 @@ public sealed class Agent(
 
         if (workspace.IsGlobal)
             available = available.Where(tool => !tool.RequiresWorkspace).ToList();
+
+        // The per-session "联网" toggle controls every network tool together
+        // (web_search + web_fetch); when off the model never sees them.
+        if (!networkEnabled)
+            available = available.Where(tool => !tool.RequiresNetwork).ToList();
 
         if (mode.IsReadOnly())
         {

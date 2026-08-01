@@ -574,6 +574,7 @@ internal sealed class DaemonAdminApi(
             ["workspace"] = workspace.IsGlobal ? null : session.Header.Workspace ?? workspace.Root,
             ["archived"] = session.Header.Archived,
             ["reasoningLevel"] = session.Header.ReasoningLevel.ToWireValue(),
+            ["networkEnabled"] = session.Header.NetworkEnabled,
             ["createdAt"] = session.Header.CreatedAt,
             ["updatedAt"] = session.Header.UpdatedAt,
             ["messages"] = messages,
@@ -590,10 +591,13 @@ internal sealed class DaemonAdminApi(
         var reasoningLevel = parameters.ContainsKey("reasoningLevel")
             ? ParseReasoningLevel(parameters["reasoningLevel"], "params.reasoningLevel")
             : (ReasoningLevel?)null;
+        var networkEnabled = parameters.ContainsKey("networkEnabled")
+            ? parameters["networkEnabled"]?.GetValue<bool?>() ?? true
+            : (bool?)null;
         try
         {
             var header = runtime.Sessions.UpdateMetadata(
-                workspace, id, title: title, reasoningLevel: reasoningLevel);
+                workspace, id, title: title, reasoningLevel: reasoningLevel, networkEnabled: networkEnabled);
             return JsonSerializer.Serialize(header, SeekClawJsonContext.Default.SessionHeader);
         }
         catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)

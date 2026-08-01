@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronDown } from '@lucide/vue'
+import { Check, ChevronDown, Search, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 
 interface SelectOption {
@@ -16,10 +16,12 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   placeholder?: string
   menuMinWidth?: number
+  searchable?: boolean
 }>(), {
   disabled: false,
   placeholder: '请选择',
-  menuMinWidth: 180
+  menuMinWidth: 180,
+  searchable: false
 })
 
 const emit = defineEmits<{
@@ -37,26 +39,42 @@ const listboxId = `select-menu-${useId()}`
 let typeahead = ''
 let typeaheadTimer: ReturnType<typeof setTimeout> | undefined
 
+const query = ref('')
+const searchInput = ref<HTMLInputElement | null>(null)
+
 const selectedIndex = computed(() => props.options.findIndex((option) => option.value === props.modelValue))
 const selectedOption = computed(() => props.options[selectedIndex.value])
 
+// Options after applying the search query (only used when `searchable`).
+const visibleOptions = computed(() => {
+  const needle = query.value.trim().toLocaleLowerCase()
+  if (!props.searchable || !needle) return props.options
+  return props.options.filter((option) =>
+    option.label.toLocaleLowerCase().includes(needle)
+    || option.value.toLocaleLowerCase().includes(needle)
+    || (option.description?.toLocaleLowerCase().includes(needle) ?? false))
+})
+const selectedVisibleIndex = computed(() =>
+  visibleOptions.value.findIndex((option) => option.value === props.modelValue))
+
 function firstEnabledIndex(): number {
-  return props.options.findIndex((option) => !option.disabled)
+  return visibleOptions.value.findIndex((option) => !option.disabled)
 }
 
 function lastEnabledIndex(): number {
-  for (let index = props.options.length - 1; index >= 0; index -= 1) {
-    if (!props.options[index]?.disabled) return index
+  for (let index = visibleOptions.value.length - 1; index >= 0; index -= 1) {
+    if (!visibleOptions.value[index]?.disabled) return index
   }
   return -1
 }
 
 function moveHighlight(direction: 1 | -1): void {
-  if (props.options.length === 0) return
+  const count = visibleOptions.value.length
+  if (count === 0) return
   let index = highlighted.value
-  for (let count = 0; count < props.options.length; count += 1) {
-    index = (index + direction + props.options.length) % props.options.length
-    if (!props.options[index]?.disabled) {
+  for (let step = 0; step < count; step += 1) {
+    index = (index + direction + count) % count
+    if (!visibleOptions.value[index]?.disabled) {
       highlighted.value = index
       scrollHighlightedIntoView()
       return
@@ -70,7 +88,7 @@ function positionMenu(): void {
   const gap = 6
   const edge = 8
   const width = Math.min(window.innerWidth - edge * 2, Math.max(rect.width, props.menuMinWidth))
-  const desiredHeight = Math.min(320, props.options.length * 42 + 8)
+  const desiredHeight = Math.min(320, props.options.length * 42 + 8 + (props.searchable ? 48 : 0))
   const below = window.innerHeight - rect.bottom - gap - edge
   const above = rect.top - gap - edge
   const placeAbove = below < Math.min(desiredHeight, 190) && above > below
@@ -91,17 +109,21 @@ function scrollHighlightedIntoView(): void {
 function show(): void {
   if (props.disabled || props.options.length === 0) return
   open.value = true
-  highlighted.value = selectedIndex.value >= 0 && !props.options[selectedIndex.value]?.disabled
-    ? selectedIndex.value
+  query.value = ''
+  highlighted.value = selectedVisibleIndex.value >= 0 && !visibleOptions.value[selectedVisibleIndex.value]?.disabled
+    ? selectedVisibleIndex.value
     : firstEnabledIndex()
   void nextTick(() => {
     positionMenu()
     scrollHighlightedIntoView()
+    if (props.searchable) searchInput.value?.focus()
   })
 }
 
 function hide(restoreFocus = false): void {
   open.value = false
+  query.value = ''
+  highlighted.value = -1
   if (restoreFocus) void nextTick(() => trigger.value?.focus())
 }
 
@@ -119,6 +141,47 @@ function select(option: SelectOption): void {
 
 function handleKeydown(event: KeyboardEvent): void {
   if (props.disabled) return
+  // Key events typed inside the search box bubble up to the menu; handle only
+  // navigation keys there and let the input itself process text editing.
+  const fromSearch = props.searchable && event.target === searchInput.value
+  if (fromSearch) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      moveHighlight(event.key === 'ArrowDown' ? 1 : -1)
+      return
+    }
+    if (event.key === 'Home') {
+      event.preventDefault()
+      highlighted.value = firstEnabledIndex()
+      scrollHighlightedIntoView()
+      return
+    }
+    if (event.key === 'End') {
+      event.preventDefault()
+      highlighted.value = lastEnabledIndex()
+      scrollHighlightedIntoView()
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (highlighted.value >= 0) {
+        const option = visibleOptions.value[highlighted.value]
+        if (option) select(option)
+      }
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      hide(true)
+      return
+    }
+    if (event.key === 'Tab') {
+      hide()
+      return
+    }
+    return
+  }
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault()
     if (!open.value) show()
@@ -141,7 +204,7 @@ function handleKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     if (!open.value) show()
     else if (highlighted.value >= 0) {
-      const option = props.options[highlighted.value]
+      const option = visibleOptions.value[highlighted.value]
       if (option) select(option)
     }
     return
@@ -160,7 +223,7 @@ function handleKeydown(event: KeyboardEvent): void {
     typeahead += event.key.toLocaleLowerCase()
     if (typeaheadTimer) clearTimeout(typeaheadTimer)
     typeaheadTimer = setTimeout(() => { typeahead = '' }, 650)
-    const match = props.options.findIndex((option) => !option.disabled && option.label.toLocaleLowerCase().startsWith(typeahead))
+    const match = visibleOptions.value.findIndex((option) => !option.disabled && option.label.toLocaleLowerCase().startsWith(typeahead))
     if (match >= 0) {
       if (!open.value) show()
       highlighted.value = match
@@ -212,7 +275,21 @@ onBeforeUnmount(() => {
       <Transition name="select-popover">
         <div v-if="open" :id="listboxId" ref="menu" class="custom-select-menu" role="listbox" :aria-label="label"
           :style="menuStyle" @keydown="handleKeydown">
-          <button v-for="(option, index) in options" :key="option.value" type="button" class="custom-select-option"
+          <div v-if="searchable" class="custom-select-search">
+            <Search :size="14" />
+            <input
+              ref="searchInput"
+              v-model="query"
+              type="text"
+              :placeholder="`搜索${label}`"
+              aria-label="搜索选项"
+              spellcheck="false"
+            >
+            <button v-if="query" type="button" class="custom-select-search-clear" title="清空" @click="query = ''">
+              <X :size="13" />
+            </button>
+          </div>
+          <button v-for="(option, index) in visibleOptions" :key="option.value" type="button" class="custom-select-option"
             :class="{ selected: option.value === modelValue, highlighted: index === highlighted }"
             :disabled="option.disabled" role="option" :aria-selected="option.value === modelValue" :data-index="index"
             @mouseenter="!option.disabled && (highlighted = index)" @click="select(option)">
@@ -222,6 +299,7 @@ onBeforeUnmount(() => {
             </span>
             <Check v-if="option.value === modelValue" :size="16" />
           </button>
+          <p v-if="visibleOptions.length === 0" class="custom-select-empty">没有匹配的选项</p>
         </div>
       </Transition>
     </Teleport>
@@ -291,6 +369,8 @@ onBeforeUnmount(() => {
   z-index: 240;
   padding: 4px;
   overflow-y: auto;
+  /* Keep the sticky search bar clear of items scrolled into view. */
+  scroll-padding-top: 44px;
   color: var(--text);
   background: color-mix(in srgb, var(--surface-raised) 96%, transparent);
   border: 1px solid var(--border);
@@ -354,6 +434,60 @@ onBeforeUnmount(() => {
 .custom-select-option>svg {
   flex: 0 0 auto;
   color: var(--accent);
+}
+
+.custom-select-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 5px 8px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.custom-select-search input {
+  min-width: 0;
+  flex: 1;
+  color: var(--text);
+  font-size: 13px;
+  background: transparent;
+  border: 0;
+}
+
+/* The search bar already has an outer border; the input must not add a second
+   (accent-colored) focus ring on top of it. */
+.custom-select-search input:focus,
+.custom-select-search input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.custom-select-search-clear {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 2px;
+  color: var(--text-muted);
+  background: transparent;
+  border-radius: 4px;
+}
+
+.custom-select-search-clear:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.custom-select-empty {
+  padding: 12px 9px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 .select-popover-enter-active,

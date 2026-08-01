@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, ImagePlus, Square, X } from '@lucide/vue'
+import { ArrowUp, Globe, ImagePlus, Square, X } from '@lucide/vue'
 import { nextTick, ref, watch } from 'vue'
 import type { ImageAttachment, ReasoningLevel } from '../types'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
@@ -15,6 +15,7 @@ const props = defineProps<{
   mode: string
   reasoningLevel: ReasoningLevel
   supportsImages: boolean
+  networkEnabled: boolean
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +24,7 @@ const emit = defineEmits<{
   changeModel: [model: string]
   changeMode: [mode: string]
   changeReasoningLevel: [level: ReasoningLevel]
+  changeNetwork: [enabled: boolean]
 }>()
 
 const maxImageCount = 10
@@ -248,8 +250,21 @@ watch(() => props.supportsImages, (supported) => {
         label="模型"
         :disabled="busy || disabled"
         :menu-min-width="300"
+        searchable
         @update:model-value="emit('changeModel', $event)"
       />
+      <button
+        class="network-toggle"
+        :class="{ active: networkEnabled }"
+        type="button"
+        :disabled="disabled"
+        :title="networkEnabled ? '联网已开启：网页搜索与访问网络可用' : '联网已关闭：网页搜索与访问网络不可用'"
+        :aria-pressed="networkEnabled"
+        @click="emit('changeNetwork', !networkEnabled)"
+      >
+        <Globe :size="15" />
+        <span>联网</span>
+      </button>
       <span class="toolbar-spacer" />
       <ReasoningDepthMenu
         :model-value="reasoningLevel"

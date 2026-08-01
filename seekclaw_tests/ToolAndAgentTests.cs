@@ -252,6 +252,21 @@ public sealed class ToolAndAgentTests
     }
 
     [Fact]
+    public void WebTools_MarkNetworkDependencyTogether()
+    {
+        // The "联网" toggle must control web_search and web_fetch as one group:
+        // both available in global tasks, both hidden when the toggle is off.
+        var prompts = new FilePromptProvider();
+        var search = new WebSearchTool(prompts);
+        var fetch = new WebFetchTool(prompts);
+
+        Assert.True(search.RequiresNetwork);
+        Assert.True(fetch.RequiresNetwork);
+        Assert.False(search.RequiresWorkspace);
+        Assert.False(fetch.RequiresWorkspace);
+    }
+
+    [Fact]
     public async Task WebFetchTool_ExtractsTextAndStripsHtml()
     {
         var prompts = new FilePromptProvider();

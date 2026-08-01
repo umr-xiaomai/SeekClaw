@@ -74,6 +74,7 @@ interface RuntimeSessionHeader {
   createdAt: string
   updatedAt: string
   reasoningLevel?: string
+  networkEnabled?: boolean
 }
 
 interface RuntimeSession extends RuntimeSessionHeader {
@@ -356,6 +357,7 @@ async function refreshProjectSessions(project: ProjectItem): Promise<void> {
         existing.updatedAt = new Date(saved.updatedAt).getTime()
         existing.archived = Boolean(saved.archived)
         existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
+        existing.networkEnabled = saved.networkEnabled ?? true
       } else {
         threads.value.push({
           id: `${project.id}:session:${saved.id}`,
@@ -366,6 +368,7 @@ async function refreshProjectSessions(project: ProjectItem): Promise<void> {
           sessionId: saved.id,
           sessionLoaded: false,
           reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
+          networkEnabled: saved.networkEnabled ?? true,
           archived: Boolean(saved.archived)
         })
       }
@@ -394,6 +397,7 @@ async function refreshGlobalSessions(): Promise<void> {
       existing.updatedAt = new Date(saved.updatedAt).getTime()
       existing.archived = Boolean(saved.archived)
       existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
+      existing.networkEnabled = saved.networkEnabled ?? true
     } else {
       threads.value.push({
         id: `global:session:${saved.id}`,
@@ -403,6 +407,7 @@ async function refreshGlobalSessions(): Promise<void> {
         sessionId: saved.id,
         sessionLoaded: false,
         reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
+        networkEnabled: saved.networkEnabled ?? true,
         archived: Boolean(saved.archived)
       })
     }
@@ -593,6 +598,7 @@ function newTask(projectId?: string): void {
     updatedAt: Date.now(),
     messages: [],
     reasoningLevel: ReasoningLevel.High,
+    networkEnabled: true,
     archived: false
   }
   threads.value.unshift(thread)
@@ -706,6 +712,7 @@ async function selectThread(id: string): Promise<void> {
       thread.title = saved.title || thread.title
       thread.archived = Boolean(saved.archived)
       thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
+      thread.networkEnabled = saved.networkEnabled ?? true
     }
   } catch {
     thread.sessionLoaded = false
@@ -857,7 +864,8 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
     if (!thread.sessionId) {
       const sessionResponse = await window.seekclaw.daemon.request('session.new', {
         ...scope,
-        reasoningLevel
+        reasoningLevel,
+        networkEnabled: thread.networkEnabled ?? true
       })
       thread.sessionId = sessionResponse.data
       thread.sessionLoaded = true
@@ -1349,6 +1357,21 @@ async function stopTurn(): Promise<void> {
   } catch { /* sendMessage owns the final state */ }
 }
 
+async function changeNetwork(enabled: boolean): Promise<void> {
+  const thread = activeThread.value
+  if (!thread || thread.archived) return
+  thread.networkEnabled = enabled
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  if (!thread.sessionId || !daemonState.value.connected || (thread.projectId && !project)) return
+  try {
+    await window.seekclaw.daemon.request('session.update', {
+      id: thread.sessionId,
+      ...sessionScope(thread, project),
+      networkEnabled: enabled
+    })
+  } catch { /* The in-memory toggle is still applied to the next turn. */ }
+}
+
 async function changeModel(model: string): Promise<void> {
   const previousModel = activeModel.value
   activeModel.value = model
@@ -1598,11 +1621,13 @@ watch(theme, applyTheme)
             :task-id="activeThread?.id"
             :supports-images="activeModelSupportsImages"
             :reasoning-level="activeReasoningLevel"
+            :network-enabled="activeThread?.networkEnabled ?? true"
             @send="sendMessage"
             @stop="stopTurn"
             @change-model="changeModel"
             @change-mode="changeMode"
             @change-reasoning-level="changeReasoningLevel"
+            @change-network="changeNetwork"
           />
           <p class="composer-caption">
             {{ conversationLoading

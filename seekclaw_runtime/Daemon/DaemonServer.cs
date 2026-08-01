@@ -614,7 +614,8 @@ public sealed class DaemonServer : IAsyncDisposable
                             await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
                             break;
                         }
-                        session = _runtime.Sessions.Create(workspace, reasoningLevel);
+                        var networkEnabled = Params(request)["networkEnabled"]?.GetValue<bool?>() ?? true;
+                        session = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled);
                         await WriteAsync(writer, writerGate, id, "result", session.Header.Id, ct).ConfigureAwait(false);
                         break;
                     }

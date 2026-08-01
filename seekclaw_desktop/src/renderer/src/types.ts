@@ -82,6 +82,8 @@ export interface ThreadItem {
   assistantId?: string
   /** Per-task reasoning depth, independent from other concurrent tasks. */
   reasoningLevel?: ReasoningLevel
+  /** Per-task "联网" toggle; controls web_search + web_fetch together. */
+  networkEnabled?: boolean
   /** Messages waiting for the current agent turn to finish. */
   queuedMessages?: QueuedMessage[]
   /** Prevents multiple queued messages from starting at the same time. */
