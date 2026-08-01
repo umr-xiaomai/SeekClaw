@@ -59,7 +59,10 @@ public sealed class Agent(
                 ct.ThrowIfCancellationRequested();
                 PublishSteering(AppendSteering(session, steering));
 
-                var requiresVision = session.Messages.Any(message => message.Images is { Count: > 0 });
+                // Only the current user input decides whether this turn needs vision. A
+                // text-only follow-up must not be forced onto a vision model, and re-uploading
+                // every earlier image would make it slow and force the non-streaming provider path.
+                var requiresVision = userMessage.Images is { Count: > 0 };
                 var model = requiresVision
                     ? providerManager.BuildCandidates(workspace.Config)
                         .FirstOrDefault(candidate => candidate.Model.Capabilities.Vision)
@@ -69,7 +72,9 @@ public sealed class Agent(
                     : providerManager.ResolveActive(workspace.Config);
                 var tools = ActiveTools(workspace);
                 var systemPrompt = await ComposeSystemPromptAsync(workspace, model, tools, ct).ConfigureAwait(false);
-                var history = ContextPlanner.FitToWindow(session.Messages, model.Model, systemPrompt);
+                var history = ContextPlanner.FitToWindow(
+                    requiresVision ? session.Messages : WithoutImages(session.Messages),
+                    model.Model, systemPrompt);
 
                 events.Publish(new StatusEvent("Thinking"));
                 if (step == 1 && userMessage.Images is { Count: > 0 })
@@ -208,6 +213,34 @@ public sealed class Agent(
     }
 
     // ---------------------------------------------------------------- llm streaming
+
+    /// <summary>
+    /// History copy with image payloads removed, used for text-only turns so earlier
+    /// attachments are not re-uploaded on every follow-up message (slow) and do not
+    /// force the non-streaming provider path.
+    /// </summary>
+    internal static IReadOnlyList<ChatMessage> WithoutImages(IReadOnlyList<ChatMessage> messages)
+    {
+        if (messages.All(message => message.Images is not { Count: > 0 }))
+            return messages;
+        return messages
+            .Select(message => message.Images is not { Count: > 0 }
+                ? message
+                : new ChatMessage
+                {
+                    Role = message.Role,
+                    Text = message.Text,
+                    Thinking = message.Thinking,
+                    ViewedImages = message.ViewedImages,
+                    ToolCalls = message.ToolCalls,
+                    ToolCallId = message.ToolCallId,
+                    ToolName = message.ToolName,
+                    ToolSuccess = message.ToolSuccess,
+                    ToolDiff = message.ToolDiff,
+                    ToolFilePath = message.ToolFilePath,
+                })
+            .ToList();
+    }
 
     private async Task<LlmCompletion> StreamOnceAsync(
         ModelInfo activeModel,

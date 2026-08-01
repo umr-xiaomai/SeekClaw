@@ -42,6 +42,31 @@ public sealed class ToolAndAgentTests
     }
 
     [Fact]
+    public void WithoutImages_StripsImagePayloadsButKeepsText()
+    {
+        var image = new ChatImageAttachment("id", "p.png", "image/png", "AAAA", 4);
+        var messages = new List<ChatMessage>
+        {
+            ChatMessage.User("look at this", [image]),
+            ChatMessage.Assistant("I see it"),
+            ChatMessage.User("follow up"),
+        };
+
+        var stripped = Agent.WithoutImages(messages);
+        Assert.All(stripped, message => Assert.Null(message.Images));
+        Assert.Equal("look at this", stripped[0].Text);
+        Assert.Equal("I see it", stripped[1].Text);
+        Assert.Equal("follow up", stripped[2].Text);
+    }
+
+    [Fact]
+    public void WithoutImages_ReturnsSameListWhenNothingHasImages()
+    {
+        var plain = new List<ChatMessage> { ChatMessage.User("text only") };
+        Assert.Same(plain, Agent.WithoutImages(plain));
+    }
+
+    [Fact]
     public void ContextPlanner_KeepsHistoryWithinBudget()
     {
         var model = new ModelConfig { ContextWindow = 4000, MaxOutput = 1000 };
