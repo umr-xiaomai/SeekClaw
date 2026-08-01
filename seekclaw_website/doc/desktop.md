@@ -8,6 +8,8 @@ SeekClaw Desktop 是基于 Electron 与 Vue 的桌面客户端。它通过本地
 
 ### 使用已发布版本
 
+<LatestRelease />
+
 当前 Desktop 发布目标为 **Windows x64**。下载或接收发布包后，请保留整个 `SeekClaw-win-x64` 文件夹并运行其中的 `SeekClaw.exe`，不要只复制 EXE。
 
 发布包已经包含自包含的 Runtime：

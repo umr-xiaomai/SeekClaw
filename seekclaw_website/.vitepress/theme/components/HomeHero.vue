@@ -28,6 +28,7 @@
         <a href="https://github.com/umr-xiaomai/SeekClaw" target="_blank" rel="noopener noreferrer" class="github-action" aria-label="GitHub">
           <Github :size="19" />
         </a>
+        <LatestRelease />
       </div>
 
       <div class="hero-facts">

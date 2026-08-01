@@ -8,6 +8,8 @@ SeekClaw Desktop is an Electron and Vue client for the same .NET Runtime used by
 
 ### Use a packaged release
 
+<LatestRelease />
+
 The current Desktop release target is **Windows x64**. Keep the complete `SeekClaw-win-x64` directory and run `SeekClaw.exe`; copying the EXE by itself is not supported.
 
 The package contains a self-contained Runtime:
