@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace SeekClaw.Runtime.Tools;
@@ -74,7 +75,7 @@ public static class FileWalker
     public sealed class IgnoreMatcher
     {
         private readonly string _root;
-        private readonly List<(Regex Regex, bool DirOnly)> _rules = [];
+        private readonly List<(Regex Regex, bool DirOnly, bool Negated, bool Anchored)> _rules = [];
 
         private IgnoreMatcher(string root)
         {
@@ -95,21 +96,30 @@ public static class FileWalker
                     var line = rawLine.Trim();
                     if (line.Length == 0 || line.StartsWith('#')) continue;
 
+                    var negated = line[0] == '!';
+                    if (negated) line = line[1..].TrimStart();
+                    else if (line.StartsWith(@"\#") || line.StartsWith(@"\!")) line = line[1..];
+                    if (line.Length == 0) continue;
+
                     var dirOnly = line.EndsWith('/');
-                    var pattern = line.TrimEnd('/');
+                    line = line.TrimEnd('/');
 
-                    if (pattern.StartsWith('/')) pattern = pattern[1..];
-                    if (pattern.Length == 0) continue;
+                    // A leading slash anchors the pattern to the ignore-file root.
+                    var anchored = line.StartsWith('/');
+                    if (anchored) line = line[1..];
+                    if (line.Length == 0) continue;
 
-                    var regexPattern = "^" + Regex.Escape(pattern)
-                        .Replace(@"\*\*", ".*")
-                        .Replace(@"\*", @"[^/]*")
-                        .Replace(@"\?", ".") + "(?:$|/)";
+                    // Git semantics: a pattern without a slash matches the basename at
+                    // any depth; a pattern containing a slash is root-anchored.
+                    anchored |= line.Contains('/');
 
+                    var regexPattern = "^" + Translate(line) + "(?:$|/)";
                     try
                     {
-                        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromMilliseconds(100));
-                        _rules.Add((regex, dirOnly));
+                        var regex = new Regex(
+                            regexPattern, RegexOptions.IgnoreCase | RegexOptions.Compiled,
+                            TimeSpan.FromMilliseconds(200));
+                        _rules.Add((regex, dirOnly, negated, anchored));
                     }
                     catch (ArgumentException) { }
                 }
@@ -117,21 +127,108 @@ public static class FileWalker
             catch (IOException) { }
         }
 
+        /// <summary>Translates one gitignore pattern (without a leading '!' or '/') into regex source.</summary>
+        private static string Translate(string pattern)
+        {
+            var sb = new StringBuilder(pattern.Length + 8);
+            var i = 0;
+            while (i < pattern.Length)
+            {
+                var ch = pattern[i];
+                if (ch == '*')
+                {
+                    var isDouble = i + 1 < pattern.Length && pattern[i + 1] == '*';
+                    if (isDouble)
+                    {
+                        var prevSlash = i == 0 || pattern[i - 1] == '/';
+                        var nextSlash = i + 2 < pattern.Length && pattern[i + 2] == '/';
+                        var atEnd = i + 2 == pattern.Length;
+
+                        if (i == 0 && nextSlash)
+                        {
+                            // leading "**/" matches any number of directory levels
+                            sb.Append("(?:[^/]+/)*");
+                            i += 3;
+                            continue;
+                        }
+                        if (prevSlash && atEnd)
+                        {
+                            // trailing "/**" matches the directory and everything below
+                            sb.Append("(?:/.*)?");
+                            i += 2;
+                            continue;
+                        }
+                        if (prevSlash && nextSlash)
+                        {
+                            // "a/**/b" — zero or more directory levels between segments
+                            sb.Append("(?:[^/]+/)*");
+                            i += 3;
+                            continue;
+                        }
+                        // Any other "**" behaves like a single "*" (no crossing '/')
+                        sb.Append("[^/]*");
+                        i += 2;
+                        continue;
+                    }
+
+                    sb.Append("[^/]*");
+                    i++;
+                }
+                else if (ch == '?')
+                {
+                    sb.Append("[^/]");
+                    i++;
+                }
+                else if (ch == '[')
+                {
+                    var end = pattern.IndexOf(']', i + 1);
+                    if (end < 0)
+                    {
+                        sb.Append(@"\[");
+                        i++;
+                        continue;
+                    }
+                    var cls = pattern[(i + 1)..end];
+                    sb.Append('[');
+                    if (cls.StartsWith('!')) { sb.Append('^'); cls = cls[1..]; }
+                    foreach (var c in cls)
+                    {
+                        if (c is '\\' or ']' or '^' or '[') sb.Append('\\');
+                        sb.Append(c);
+                    }
+                    sb.Append(']');
+                    i = end + 1;
+                }
+                else
+                {
+                    sb.Append(Regex.Escape(ch.ToString()));
+                    i++;
+                }
+            }
+            return sb.ToString();
+        }
+
         public bool IsIgnored(string fullPath, bool isDir)
         {
             if (_rules.Count == 0) return false;
             var relative = Path.GetRelativePath(_root, fullPath).Replace('\\', '/');
+            var slash = relative.LastIndexOf('/');
+            var basename = slash < 0 ? relative : relative[(slash + 1)..];
 
-            foreach (var (regex, dirOnly) in _rules)
+            // Last matching rule wins (git semantics), including '!' negation rules.
+            var ignored = false;
+            foreach (var (regex, dirOnly, negated, anchored) in _rules)
             {
                 if (dirOnly && !isDir) continue;
+                var target = anchored ? relative : basename;
                 try
                 {
-                    if (regex.IsMatch(relative)) return true;
+                    if (!regex.IsMatch(target)) continue;
                 }
-                catch (RegexMatchTimeoutException) { }
+                catch (RegexMatchTimeoutException) { continue; }
+                ignored = !negated;
             }
-            return false;
+            return ignored;
         }
     }
 }

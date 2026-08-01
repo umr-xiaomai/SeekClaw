@@ -60,13 +60,17 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     internal static SeekClawRuntime CreateIsolated(
         WorkspaceInfo workspace,
         IFileLockCoordinator? coordinator = null,
-        string? turnOwner = null)
+        string? turnOwner = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         SeekClawPaths.EnsureCreated();
 
-        var services = new ServiceCollection()
-            .AddSeekClawRuntime(coordinator, turnOwner)
-            .BuildServiceProvider();
+        var serviceCollection = new ServiceCollection()
+            .AddSeekClawRuntime(coordinator, turnOwner);
+        // Lets the daemon inject process-wide shared infrastructure (HttpClient
+        // pool, circuit breaker) before per-turn state is added.
+        configureServices?.Invoke(serviceCollection);
+        var services = serviceCollection.BuildServiceProvider();
         var runtime = new SeekClawRuntime(services, workspace);
         runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
         runtime.Skills.Attach(workspace);
@@ -212,6 +216,10 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IModelRegistry, ModelRegistry>();
         services.AddSingleton<IUsageTracker>(sp => new UsageTracker(sp.GetRequiredService<IEventBus>()));
         services.AddSingleton<IHealthChecker, HealthChecker>();
+        // Resolvable breaker so every runtime has one; the daemon overrides this
+        // registration with a process-wide instance shared across turn runtimes.
+        services.AddSingleton<CircuitBreaker>(sp =>
+            new CircuitBreaker(sp.GetRequiredService<IConfigStore>().Config.Routing.Retry));
         services.AddSingleton<IProviderManager, ProviderManager>();
 
         services.AddSingleton<IToolRegistry, ToolRegistry>();

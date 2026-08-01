@@ -59,6 +59,26 @@ public sealed class ProjectStore(SeekClawDatabase database) : IProjectStore
             ? Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
             : name.Trim();
         if (string.IsNullOrWhiteSpace(projectName)) projectName = fullPath;
+
+        // The SELECT-then-INSERT pattern can race with another process (CLI + daemon
+        // run side by side) inserting the same path_key with a different id. Retry a
+        // few times: the retried attempt finds the row and takes the update path.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return UpsertCore(id, fullPath, projectName);
+            }
+            catch (SqliteException ex) when (IsUniquePathKey(ex) && attempt < 2)
+            {
+                // Concurrent upsert of the same path; loop and let the next attempt
+                // resolve the existing row.
+            }
+        }
+    }
+
+    private StoredProject UpsertCore(string? id, string fullPath, string projectName)
+    {
         var now = DateTimeOffset.UtcNow;
 
         using var connection = database.OpenConnection();
@@ -138,6 +158,9 @@ public sealed class ProjectStore(SeekClawDatabase database) : IProjectStore
             UpdatedAt = now,
         };
     }
+
+    private static bool IsUniquePathKey(SqliteException ex) =>
+        ex.SqliteErrorCode == 19 || ex.SqliteExtendedErrorCode is 2067 or 1555;
 
     public void Remove(string id)
     {

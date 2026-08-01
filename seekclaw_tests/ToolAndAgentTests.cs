@@ -1,5 +1,6 @@
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Tools;
@@ -200,6 +201,54 @@ public sealed class ToolAndAgentTests
         {
             if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
         }
+    }
+
+    [Fact]
+    public void IgnoreMatcher_SupportsGitignoreNegationAnchoringAndDoubleStar()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "seekclaw_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, ".gitignore"), """
+                *.log
+                !keep.log
+                temp/
+                /root-only.txt
+                **/generated/
+                """);
+            var matcher = FileWalker.IgnoreMatcher.ForRoot(tempDir);
+
+            // Non-anchored patterns match the basename at any depth.
+            Assert.True(matcher.IsIgnored(Path.Combine(tempDir, "a", "b", "debug.log"), isDir: false));
+            // Negation re-includes a previously ignored file (last matching rule wins).
+            Assert.False(matcher.IsIgnored(Path.Combine(tempDir, "keep.log"), isDir: false));
+            Assert.True(matcher.IsIgnored(Path.Combine(tempDir, "other.log"), isDir: false));
+            // A leading slash anchors the pattern to the ignore-file root.
+            Assert.True(matcher.IsIgnored(Path.Combine(tempDir, "root-only.txt"), isDir: false));
+            Assert.False(matcher.IsIgnored(Path.Combine(tempDir, "sub", "root-only.txt"), isDir: false));
+            // "**/generated/" matches generated directories at any depth.
+            Assert.True(matcher.IsIgnored(Path.Combine(tempDir, "x", "y", "generated"), isDir: true));
+            // A trailing slash restricts the pattern to directories.
+            Assert.False(matcher.IsIgnored(Path.Combine(tempDir, "temp.txt"), isDir: false));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void McpToolAdapter_BuildName_SanitizesToProviderSafeCharacters()
+    {
+        Assert.Equal("mcp__My_Server__read_file", McpToolAdapter.BuildName("My Server", "read file"));
+
+        var name = McpToolAdapter.BuildName("带空格的服务器!@#", "工具:名称");
+        Assert.Matches("^[a-zA-Z0-9_-]{1,64}$", name);
+        Assert.StartsWith("mcp__", name);
+
+        // Empty segments fall back to a placeholder instead of producing "mcp______".
+        Assert.Equal("mcp__tool__tool", McpToolAdapter.BuildName("", ""));
     }
 
     [Fact]

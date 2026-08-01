@@ -39,11 +39,14 @@ public sealed class ProviderManager(
     ILlmClientFactory clientFactory,
     ILlmHttpFactory httpFactory,
     IUsageTracker usageTracker,
-    IEventBus eventBus) : IProviderManager
+    IEventBus eventBus,
+    CircuitBreaker? breaker = null) : IProviderManager
 {
     private CircuitBreaker? _breaker;
     private RetryConfig Retry => configStore.Config.Routing.Retry;
-    private CircuitBreaker Breaker => _breaker ??= new CircuitBreaker(Retry);
+    // A shared breaker can be injected by the daemon so circuit state survives
+    // across isolated per-turn runtimes; standalone runtimes create their own.
+    private CircuitBreaker Breaker => _breaker ??= breaker ?? new CircuitBreaker(Retry);
 
     public ModelInfo ResolveActive(WorkspaceConfig? workspace = null)
     {
@@ -123,52 +126,65 @@ public sealed class ProviderManager(
                 var stopwatch = Stopwatch.StartNew();
                 var committed = false;
                 LlmCompletion? completion = null;
-                var stream = TryOpenStream(model, requestFactory, ct);
+                IAsyncEnumerator<LlmStreamEvent>? stream = null;
 
-                while (true)
+                // The finally below disposes the provider stream on every exit path,
+                // including when the consumer abandons the iterator mid-stream (for
+                // example Ctrl+C while a turn is still in "thinking"). Without it the
+                // response body/connection would stay open until the provider times out.
+                try
                 {
-                    LlmStreamEvent? evt;
-                    try
-                    {
-                        if (!await stream.MoveNextAsync().ConfigureAwait(false)) break;
-                        evt = stream.Current;
-                    }
-                    catch (LlmException ex) when (!committed && ex.Retryable && !ct.IsCancellationRequested)
-                    {
-                        lastError = ex;
-                        Breaker.RecordFailure(model.Ref);
-                        RecordUsage(model, null, stopwatch, success: false);
-                        await stream.DisposeAsync().ConfigureAwait(false);
+                    stream = TryOpenStream(model, requestFactory, ct);
 
-                        if (attempt < Retry.MaxAttempts)
+                    while (true)
+                    {
+                        LlmStreamEvent? evt;
+                        try
                         {
-                            var delay = BackoffDelay(attempt);
-                            eventBus.Publish(new ProviderRetryEvent(model.Ref, attempt, ex.Message, delay));
-                            await Task.Delay(delay, ct).ConfigureAwait(false);
+                            if (!await stream.MoveNextAsync().ConfigureAwait(false)) break;
+                            evt = stream.Current;
                         }
-                        goto NextAttempt;
-                    }
-                    catch (LlmException ex)
-                    {
-                        Breaker.RecordFailure(model.Ref);
-                        RecordUsage(model, completion, stopwatch, success: false);
-                        await stream.DisposeAsync().ConfigureAwait(false);
-                        if (committed || !ex.Retryable) throw;
-                        lastError = ex;
-                        goto NextCandidate;
+                        catch (LlmException ex) when (!committed && ex.Retryable && !ct.IsCancellationRequested)
+                        {
+                            lastError = ex;
+                            Breaker.RecordFailure(model.Ref);
+                            RecordUsage(model, null, stopwatch, success: false);
+                            await stream.DisposeAsync().ConfigureAwait(false);
+
+                            if (attempt < Retry.MaxAttempts)
+                            {
+                                var delay = BackoffDelay(attempt);
+                                eventBus.Publish(new ProviderRetryEvent(model.Ref, attempt, ex.Message, delay));
+                                await Task.Delay(delay, ct).ConfigureAwait(false);
+                            }
+                            goto NextAttempt;
+                        }
+                        catch (LlmException ex)
+                        {
+                            Breaker.RecordFailure(model.Ref);
+                            RecordUsage(model, completion, stopwatch, success: false);
+                            await stream.DisposeAsync().ConfigureAwait(false);
+                            if (committed || !ex.Retryable) throw;
+                            lastError = ex;
+                            goto NextCandidate;
+                        }
+
+                        committed = true;
+                        if (evt is LlmCompleted done) completion = done.Completion;
+                        yield return evt;
                     }
 
-                    committed = true;
-                    if (evt is LlmCompleted done) completion = done.Completion;
-                    yield return evt;
+                    Breaker.RecordSuccess(model.Ref);
+                    RecordUsage(model, completion, stopwatch, success: true);
+                    yield break;
+
+                    NextAttempt: ;
                 }
-
-                await stream.DisposeAsync().ConfigureAwait(false);
-                Breaker.RecordSuccess(model.Ref);
-                RecordUsage(model, completion, stopwatch, success: true);
-                yield break;
-
-                NextAttempt: ;
+                finally
+                {
+                    if (stream is not null)
+                        await stream.DisposeAsync().ConfigureAwait(false);
+                }
             }
 
             NextCandidate: ;

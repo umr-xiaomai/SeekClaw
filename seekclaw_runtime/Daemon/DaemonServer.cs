@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
@@ -18,7 +19,7 @@ namespace SeekClaw.Runtime.Daemon;
 /// newline-delimited JSON messages. Responses keep the legacy event envelope:
 /// {"id":1,"event":"result","data":"..."}.
 /// </summary>
-public sealed class DaemonServer
+public sealed class DaemonServer : IAsyncDisposable
 {
     public const string PipeName = "seekclaw";
     public const string ProtocolVersion = "2.1";
@@ -39,6 +40,12 @@ public sealed class DaemonServer
     // Central Task Coordinator: one instance per daemon process is the single
     // source of truth for file write locks across all concurrent agent turns.
     private readonly IFileLockCoordinator _fileLocks = new FileLockCoordinator();
+
+    // Process-wide infrastructure shared by every isolated turn runtime so the
+    // HttpClient connection pool and circuit-breaker state survive across turns
+    // instead of being rebuilt (and reset) for every single agent task.
+    private readonly LlmHttpFactory _sharedHttp = new();
+    private readonly CircuitBreaker _sharedBreaker;
 
     // Configuration and workspace administration remains serialized, while agent turns
     // execute concurrently in isolated runtime instances.
@@ -66,6 +73,15 @@ public sealed class DaemonServer
         _admin = new DaemonAdminApi(runtime, globalWorkspace, _fileLocks);
         _runTurn = runTurn;
         _useIsolatedTurnRuntime = runTurn is null;
+        _sharedBreaker = new CircuitBreaker(runtime.ConfigStore.Config.Routing.Retry);
+    }
+
+    /// <summary>Releases the shared HTTP clients when the daemon host shuts down.</summary>
+    public ValueTask DisposeAsync()
+    {
+        _sharedHttp.Dispose();
+        _shutdown.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -691,7 +707,13 @@ public sealed class DaemonServer
         // turn ends even if a tool was interrupted before its own finally ran.
         var owner = $"{session.Header.Id}/{Guid.NewGuid().ToString("N")[..8]}";
         await using var turnRuntime = _useIsolatedTurnRuntime
-            ? SeekClawRuntime.CreateIsolated(workspace, _fileLocks, owner)
+            ? SeekClawRuntime.CreateIsolated(workspace, _fileLocks, owner, services =>
+              {
+                  // Register the process-wide instances AFTER the default type
+                  // registrations so DI resolves these for every turn.
+                  services.AddSingleton<ILlmHttpFactory>(_sharedHttp);
+                  services.AddSingleton(_sharedBreaker);
+              })
             : null;
         var runtime = turnRuntime ?? _runtime;
         using var subscription = runtime.Events.Subscribe();

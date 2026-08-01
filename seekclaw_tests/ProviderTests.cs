@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
+using SeekClaw.Runtime;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
 
@@ -46,12 +49,13 @@ public sealed class ProviderTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
     }
 
-    private ProviderManager NewManager(ILlmHttpFactory? httpFactory = null) => new(
+    private ProviderManager NewManager(ILlmHttpFactory? httpFactory = null, CircuitBreaker? breaker = null) => new(
         _store, _registry,
         new LlmClientFactory([]),
         httpFactory ?? new LlmHttpFactory(),
         new UsageTracker(new EventBus(), Path.Combine(_dir, "usage.jsonl")),
-        new EventBus());
+        new EventBus(),
+        breaker);
 
     [Fact]
     public async Task FetchModels_ReadsOpenAiDataAndDeduplicatesIds()
@@ -465,6 +469,41 @@ public sealed class ProviderTests : IDisposable
 
         breaker.RecordSuccess("x/y");
         Assert.False(breaker.IsOpen("x/y"));
+    }
+
+    [Fact]
+    public void BuildCandidates_RespectsInjectedSharedCircuitBreaker()
+    {
+        // The daemon injects one process-wide breaker into every turn runtime; an
+        // opened circuit must be respected by a manager built around that breaker.
+        var breaker = new CircuitBreaker(new RetryConfig { CircuitBreakThreshold = 1, CircuitCooldownSeconds = 60 });
+        breaker.RecordFailure("alpha/big");
+
+        var candidates = NewManager(breaker: breaker).BuildCandidates();
+
+        Assert.DoesNotContain(candidates, candidate => candidate.Ref == "alpha/big");
+        Assert.Contains(candidates, candidate => candidate.Ref == "beta/big");
+    }
+
+    [Fact]
+    public void Di_LastWins_WhenDaemonOverridesHttpFactoryAndBreaker()
+    {
+        // The daemon registers process-wide instances AFTER AddSeekClawRuntime; the
+        // container must resolve those instances for the turn runtime's providers.
+        var breaker = new CircuitBreaker(new RetryConfig { CircuitBreakThreshold = 1, CircuitCooldownSeconds = 60 });
+        breaker.RecordFailure("alpha/big");
+
+        var services = new ServiceCollection()
+            .AddSeekClawRuntime()
+            .AddSingleton<IConfigStore>(_store)
+            .AddSingleton(new SeekClawDatabase(Path.Combine(_dir, "di.db")))
+            .AddSingleton<ILlmHttpFactory>(new LlmHttpFactory())
+            .AddSingleton(breaker)
+            .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<IProviderManager>();
+        Assert.DoesNotContain(manager.BuildCandidates(), candidate => candidate.Ref == "alpha/big");
+        Assert.Contains(manager.BuildCandidates(), candidate => candidate.Ref == "beta/big");
     }
 
     [Fact]

@@ -1181,11 +1181,11 @@ function handleDaemonEvent(event: DaemonMessage): void {
     ?? threads.value.find((item) => item.requestId === event.id)
     ?? (!event.sessionId && activeThread.value?.running ? activeThread.value : undefined)
   if (!thread) return
-  // A terminal response can reach the request continuation before its renderer
-  // event callback. If the next queued turn has already started, ignore all
-  // delayed events belonging to the completed request.
-  if (isChatRequest && isFinishedRequest(thread, event.id)) return
-  if (isChatRequest && thread.requestId !== undefined && thread.requestId !== event.id) return
+
+  // Guidance is drained by the Agent and forwarded under the chat request id, so it
+  // can arrive after the turn's terminal response already resolved (IPC race). It
+  // must be applied before the stale-request guards below: the optimistic guidance
+  // message is already rendered, and its pending counter always needs releasing.
   if (event.event === 'steer') {
     thread.pendingGuidance = Math.max(0, (thread.pendingGuidance ?? 1) - 1)
     const currentAssistant = thread.messages.find((item) => item.id === thread.assistantId)
@@ -1206,8 +1206,24 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       thread.messages.push(nextAssistant)
       thread.assistantId = nextAssistant.id
+      if (thread.id === activeThreadId.value) void scrollToBottom(true, true)
+    } else if (!thread.running && thread.sessionId) {
+      // The turn ended before the guidance bubble could be created (for example it
+      // was cancelled while a steer was still in flight). Reload the persisted
+      // session so the optimistic copy is replaced by the real guidance/reply pair.
+      void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
     }
+    // A steer may be the very first event of a turn; keep its chat request id so
+    // cancellation still targets this task instead of every turn on the connection.
+    if (isChatRequest) thread.requestId ??= event.id
+    return
   }
+
+  // A terminal response can reach the request continuation before its renderer
+  // event callback. If the next queued turn has already started, ignore all
+  // delayed events belonging to the completed request.
+  if (isChatRequest && isFinishedRequest(thread, event.id)) return
+  if (isChatRequest && thread.requestId !== undefined && thread.requestId !== event.id) return
   // Steering acknowledgements have their own request id and must never replace
   // the id of the active chat turn (used by cancellation and stale-event checks).
   if (isChatRequest) thread.requestId ??= event.id
@@ -1225,8 +1241,6 @@ function handleDaemonEvent(event: DaemonMessage): void {
       if (!message) break
       message.thinking = (message.thinking ?? '') + event.data
       message.state = 'thinking'
-      break
-    case 'steer':
       break
     case 'delta':
       if (!message) break

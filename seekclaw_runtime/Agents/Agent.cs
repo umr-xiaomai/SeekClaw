@@ -57,7 +57,12 @@ public sealed class Agent(
 
         try
         {
-            for (var step = 1; step <= agentConfig.MaxSteps; step++)
+            // Repair iterations are extra model turns appended after a failed build
+            // verification; they must not consume the main task's MaxSteps budget.
+            // Reserve one extra step per allowed repair so long multi-step tasks are
+            // not cut short by their own repair loop.
+            var maxSteps = agentConfig.MaxSteps + Math.Clamp(agentConfig.MaxRepairAttempts, 0, 128);
+            for (var step = 1; step <= maxSteps; step++)
             {
                 ct.ThrowIfCancellationRequested();
                 PublishSteering(AppendSteering(session, steering));

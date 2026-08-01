@@ -421,7 +421,8 @@ public static class DaemonCommand
                 ? $@"\\.\pipe\{DaemonServer.PipeName}"
                 : DaemonServer.SocketPath;
             AnsiConsole.MarkupLine($"[green]SeekClaw daemon listening[/] on [cyan]{Markup.Escape(endpoint)}[/] (ctrl+c to stop)");
-            var daemon = new DaemonServer(rt).RunAsync(ct);
+            await using var daemonServer = new DaemonServer(rt);
+            var daemon = daemonServer.RunAsync(ct);
             try { await Task.WhenAll(daemon, mcpConnection); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
             return 0;

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
@@ -129,10 +130,20 @@ public sealed class McpManager(
 
         _clients.Add(client);
 
-        // Auto-discover tools.
+        // Auto-discover tools. Names are sanitized to [a-zA-Z0-9_-] (the character set
+        // most providers accept for function names) and de-duplicated so one server
+        // cannot register two tools under the same local name.
         var tools = await client.ListToolsAsync(ct).ConfigureAwait(false);
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var tool in tools)
-            _registrations.Add(toolRegistry.Register(new McpToolAdapter(client, tool)));
+        {
+            var baseName = McpToolAdapter.BuildName(name, tool.Name);
+            var uniqueName = baseName;
+            var suffix = 2;
+            while (!usedNames.Add(uniqueName))
+                uniqueName = $"{baseName}_{suffix++}";
+            _registrations.Add(toolRegistry.Register(new McpToolAdapter(client, tool, uniqueName)));
+        }
 
         // Auto-discover prompts into the prompt registry.
         var prompts = await client.ListPromptsAsync(ct).ConfigureAwait(false);
@@ -172,28 +183,64 @@ public sealed class McpManager(
 }
 
 /// <summary>Bridges a remote MCP tool into the local tool registry as mcp__server__tool.</summary>
-public sealed class McpToolAdapter(McpClient client, McpTool tool, bool isMutating = false) : ITool
+public sealed class McpToolAdapter : ITool
 {
-    public string Name => $"mcp__{client.ServerName}__{tool.Name}";
-    public string Description => tool.Description ?? $"MCP tool {tool.Name} from server {client.ServerName}.";
-    public JsonObject ParameterSchema => tool.InputSchema;
-    public bool Mutating => isMutating || InferMutating(tool.Name);
-    public string StatusLabel => $"Calling {client.ServerName}";
+    private readonly McpClient _client;
+    private readonly McpTool _tool;
+    private readonly string _name;
+    private readonly bool _isMutating;
+
+    public McpToolAdapter(McpClient client, McpTool tool, bool isMutating = false)
+        : this(client, tool, BuildName(client.ServerName, tool.Name), isMutating)
+    {
+    }
+
+    public McpToolAdapter(McpClient client, McpTool tool, string name, bool isMutating = false)
+    {
+        _client = client;
+        _tool = tool;
+        _name = name;
+        _isMutating = isMutating;
+    }
+
+    public string Name => _name;
+    public string Description => _tool.Description ?? $"MCP tool {_tool.Name} from server {_client.ServerName}.";
+    public JsonObject ParameterSchema => _tool.InputSchema;
+    public bool Mutating => _isMutating || InferMutating(_tool.Name);
+    public string StatusLabel => $"Calling {_client.ServerName}";
 
     public async Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
         try
         {
-            var (success, text) = await client.CallToolAsync(tool.Name, arguments, ct).ConfigureAwait(false);
+            var (success, text) = await _client.CallToolAsync(_tool.Name, arguments, ct).ConfigureAwait(false);
             var output = context.Truncate(text.Length == 0 ? "(no output)" : text, "MCP output");
             return success
-                ? ToolResult.Ok(output, $"{tool.Name} via {client.ServerName}")
+                ? ToolResult.Ok(output, $"{_tool.Name} via {_client.ServerName}")
                 : ToolResult.Fail(output);
         }
         catch (McpException ex)
         {
             return ToolResult.Fail(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Builds a provider-safe local name: MCP servers may use spaces, dots or unicode
+    /// in tool names, but most LLM providers only accept [a-zA-Z0-9_-] (≤64 chars).
+    /// </summary>
+    public static string BuildName(string serverName, string toolName)
+    {
+        var full = $"mcp__{SanitizeSegment(serverName)}__{SanitizeSegment(toolName)}";
+        return full.Length > 64 ? full[..64] : full;
+    }
+
+    internal static string SanitizeSegment(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        foreach (var ch in value)
+            sb.Append(char.IsAsciiLetterOrDigit(ch) || ch is '_' or '-' ? ch : '_');
+        return sb.Length == 0 ? "tool" : sb.ToString();
     }
 
     private static bool InferMutating(string name)
