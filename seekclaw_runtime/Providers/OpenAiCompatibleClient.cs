@@ -209,6 +209,10 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
 
                 case ChatRole.Assistant:
                     var assistant = new JsonObject { ["role"] = "assistant", ["content"] = msg.Text };
+                    // DeepSeek reasoners continue a truncated thinking phase only when the
+                    // previous reasoning_content is passed back; OpenAI proper does not accept it.
+                    if (!string.IsNullOrEmpty(msg.Thinking) && ReasoningLevelAdapter.IsDeepSeek(request.Provider, request.Model))
+                        assistant["reasoning_content"] = msg.Thinking;
                     if (msg.ToolCalls is { Count: > 0 })
                     {
                         var calls = new JsonArray();
@@ -247,7 +251,13 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         if (body["stream"]?.GetValue<bool>() == true)
             body["stream_options"] = new JsonObject { ["include_usage"] = true };
 
-        if (request.MaxTokens is { } maxTokens) body["max_tokens"] = maxTokens;
+        // Reasoning models count thinking toward the completion budget; the modern
+        // max_completion_tokens parameter covers it (max_tokens is rejected by OpenAI
+        // reasoning endpoints). DeepSeek and other compatible gateways keep max_tokens.
+        var useMaxCompletionTokens = request.Model.Capabilities.Reasoning
+            && !ReasoningLevelAdapter.IsDeepSeek(request.Provider, request.Model);
+        if (request.MaxTokens is { } maxTokens)
+            body[useMaxCompletionTokens ? "max_completion_tokens" : "max_tokens"] = maxTokens;
         if (request.Temperature is { } temperature) body["temperature"] = temperature;
         if (ReasoningLevelAdapter.OpenAiEffort(request) is { } effort)
             body["reasoning_effort"] = effort;

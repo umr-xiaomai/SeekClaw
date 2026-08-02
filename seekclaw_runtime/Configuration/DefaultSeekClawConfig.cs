@@ -56,6 +56,7 @@ public static class DefaultSeekClawConfig
             AutoVerify = true,
             MaxRepairAttempts = 3,
             EnableContextCompaction = true,
+            MaxOutputContinuations = 6,
             SystemPrompt = "system/default",
             ThinkingBudgetTokens = 16_384,
             ReasoningLevel = ReasoningLevel.High,

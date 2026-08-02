@@ -190,7 +190,91 @@ public sealed class ContextCompactionTests
         }
     }
 
+    [Fact]
+    public async Task AgentTurn_TruncatedOutput_AutoContinuesWithoutUserPrompt()
+    {
+        var dir = TempDir();
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Clear();
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "deepseek",
+                Kind = "openai",
+                BaseUrl = "https://api.deepseek.com",
+                Models =
+                [
+                    new ModelConfig
+                    {
+                        Id = "reasoner",
+                        ContextWindow = 2_000,
+                        MaxOutput = 256,
+                        Capabilities = new ModelCapabilities { ToolCalling = true },
+                    },
+                ],
+            });
+            store.Config.Profiles["default"].Strategy = "fast";
+            store.Config.Routing.Strategies["fast"] = ["deepseek/reasoner"];
+            store.Config.Routing.Fallback = ["deepseek/reasoner"];
+
+            var capture = new SequenceClientFactory(
+                new LlmCompletion { Text = "", Thinking = "long thinking that exceeded max output", FinishReason = "length" },
+                new LlmCompletion { Text = "finished answer", FinishReason = "stop" });
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            var session = runtime.Sessions.Create(globalWorkspace);
+            var result = await runtime.Agent.RunTurnAsync(session, globalWorkspace, "build the game", CancellationToken.None);
+
+            // The truncated "thinking-only" completion must not end the turn; the agent
+            // continues automatically and finishes once the model produces real output.
+            Assert.Null(result.Error);
+            Assert.Equal("finished answer", result.Text);
+            Assert.Equal(2, capture.Requests.Count);
+            Assert.Contains(session.Messages, message =>
+                message.Role == ChatRole.User && message.Text.Contains("[output truncated]"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    private sealed class SequenceClientFactory(params LlmCompletion[] completions) : ILlmClientFactory
+    {
+        public List<LlmRequest> Requests { get; } = [];
+        private readonly Queue<LlmCompletion> _completions = new(completions);
+
+        public ILlmClient GetClient(string kind) => new SequenceClient(this);
+
+        private sealed class SequenceClient(SequenceClientFactory owner) : ILlmClient
+        {
+            public string Kind => "openai";
+
+            public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
+                LlmRequest request, [EnumeratorCancellation] CancellationToken ct)
+            {
+                owner.Requests.Add(request);
+                await Task.Yield();
+                var next = owner._completions.Count > 0
+                    ? owner._completions.Dequeue()
+                    : new LlmCompletion { Text = "done", FinishReason = "stop" };
+                yield return new LlmCompleted(next);
+            }
+        }
+    }
 
     private sealed class RecordingClientFactory : ILlmClientFactory
     {

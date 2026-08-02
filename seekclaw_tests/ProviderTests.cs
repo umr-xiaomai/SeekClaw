@@ -159,6 +159,86 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
+    public void OpenAiBody_DeepSeekAssistantThinking_SendsReasoningContentBack()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig { Id = "deepseek-v4-flash" },
+            Messages =
+            [
+                ChatMessage.User("go"),
+                new ChatMessage { Role = ChatRole.Assistant, Text = "", Thinking = "previous thinking" },
+            ],
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        var assistant = body["messages"]![1]!;
+        Assert.Equal("assistant", assistant["role"]!.GetValue<string>());
+        Assert.Equal("previous thinking", assistant["reasoning_content"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void OpenAiBody_NonDeepSeekAssistantThinking_OmitsReasoningContent()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "openai", Kind = "openai", BaseUrl = "https://example.test/v1" },
+            Model = new ModelConfig { Id = "gpt" },
+            Messages =
+            [
+                ChatMessage.User("go"),
+                new ChatMessage { Role = ChatRole.Assistant, Text = "", Thinking = "private thinking" },
+            ],
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        Assert.Null(body["messages"]![1]!["reasoning_content"]);
+    }
+
+    [Fact]
+    public void OpenAiBody_ReasoningModel_UsesMaxCompletionTokens()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "openai", Kind = "openai", BaseUrl = "https://api.openai.com/v1" },
+            Model = new ModelConfig
+            {
+                Id = "gpt-5.5",
+                MaxOutput = 128_000,
+                Capabilities = new ModelCapabilities { Reasoning = true },
+            },
+            Messages = [ChatMessage.User("hi")],
+            MaxTokens = 128_000,
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        Assert.Equal(128_000, body["max_completion_tokens"]!.GetValue<int>());
+        Assert.Null(body["max_tokens"]);
+    }
+
+    [Fact]
+    public void OpenAiBody_DeepSeekReasoningFlag_KeepsMaxTokens()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig
+            {
+                Id = "deepseek-v4-flash",
+                MaxOutput = 8_192,
+                Capabilities = new ModelCapabilities { Reasoning = true },
+            },
+            Messages = [ChatMessage.User("hi")],
+            MaxTokens = 8_192,
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        Assert.Equal(8_192, body["max_tokens"]!.GetValue<int>());
+        Assert.Null(body["max_completion_tokens"]);
+    }
+
+    [Fact]
     public void AnthropicBody_MapsMultipleImagesToBase64ContentParts()
     {
         var request = new LlmRequest

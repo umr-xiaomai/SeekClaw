@@ -84,6 +84,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
     "autoVerify": true,
     "maxRepairAttempts": 3,
     "enableContextCompaction": true,
+    "maxOutputContinuations": 6,
     "mode": "edit",
     "systemPrompt": "system/default",
     "thinkingBudgetTokens": 16384,
@@ -97,7 +98,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 }
 ```
 
-> `thinkingBudgetTokens` 是思考预算的基数，实际预算还会随思考深度档位放大（高×2、最大×4、极高×8、超级×16），并仅受模型 `maxOutput` 减去少量答案预留空间的限制——长任务不会被强限制在输出窗口的一半，避免思考到一半被强制截断。`enableContextCompaction` 开启后，当历史接近上下文上限时，Agent 会先把较早的对话总结成阶段性记忆（压缩上下文），再继续执行，保证一轮对话不会因为上下文或思考长度而中断；压缩失败会自动回退为普通截断，不会中断回合。
+> `thinkingBudgetTokens` 是思考预算的基数，实际预算还会随思考深度档位放大（高×2、最大×4、极高×8、超级×16），并仅受模型 `maxOutput` 减去少量答案预留空间的限制——长任务不会被强限制在输出窗口的一半，避免思考到一半被强制截断。`enableContextCompaction` 开启后，当历史接近上下文上限时，Agent 会先把较早的对话总结成阶段性记忆（压缩上下文），再继续执行。当单次输出达到模型 `maxOutput` 上限（`finish_reason` 为 length/max_tokens）时，Agent 会自动继续下一轮而不是结束回合，空输出时会提示模型直接产出内容；连续截断超过 `maxOutputContinuations`（默认 6）次才会停止并给出明确警告。
 
 
 ### Provider Key

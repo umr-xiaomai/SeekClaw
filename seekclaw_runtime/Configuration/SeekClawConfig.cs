@@ -138,6 +138,8 @@ public sealed class AgentConfig
     public int MaxRepairAttempts { get; set; } = 3;
     /// <summary>Summarizes older history when the context window would overflow, so a single turn can keep going.</summary>
     public bool EnableContextCompaction { get; set; } = true;
+    /// <summary>Consecutive output-cap truncations allowed before a turn gives up instead of ending silently.</summary>
+    public int MaxOutputContinuations { get; set; } = 6;
     /// <summary>Agent mode: edit | plan | readonly | auto.</summary>
     public string Mode { get; set; } = "edit";
     /// <summary>Prompt key of the main system prompt (relative to prompts/, no extension).</summary>

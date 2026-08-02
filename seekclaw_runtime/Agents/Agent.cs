@@ -76,8 +76,13 @@ public sealed class Agent(
             // not cut short by their own repair loop.
             var maxSteps = agentConfig.MaxSteps + Math.Clamp(agentConfig.MaxRepairAttempts, 0, 128);
             var compactedThisTurn = false;
-            for (var step = 1; step <= maxSteps; step++)
+            var truncatedSteps = 0;
+            var reachedMaxSteps = false;
+            var step = 0;
+            while (true)
             {
+                step++;
+                if (step > maxSteps) { reachedMaxSteps = true; break; }
                 ct.ThrowIfCancellationRequested();
                 PublishSteering(AppendSteering(session, steering));
 
@@ -194,6 +199,30 @@ public sealed class Agent(
                     continue;
                 }
 
+                // The model ran out of output tokens mid-answer (finish_reason length/max_tokens).
+                // That is not "done" — keep the turn going so long generations and long thinking
+                // phases can finish instead of silently ending with partial (or empty) output.
+                if (IsOutputTruncated(completion.FinishReason))
+                {
+                    truncatedSteps++;
+                    if (truncatedSteps > agentConfig.MaxOutputContinuations)
+                    {
+                        events.Publish(new WarningEvent(
+                            $"输出连续 {agentConfig.MaxOutputContinuations} 次达到长度上限，回合已停止。可在模型配置中调大 maxOutput 或拆分任务。"));
+                        break;
+                    }
+                    if (completion.Text.Length == 0)
+                    {
+                        var continuationNote = ChatMessage.User(
+                            ">>> [output truncated] 上一轮输出因达到单次长度上限被截断，且没有产出任何内容。请直接给出最终回答或调用工具开始执行，不要再进行超长思考。");
+                        sessionStore.Append(session, continuationNote);
+                    }
+                    events.Publish(new StatusEvent("Output truncated; continuing"));
+                    PublishSteering(guidance);
+                    continue;
+                }
+                truncatedSteps = 0;
+
                 // Model believes it is done. If it changed files, prove the project still builds.
                 if (mutated && ShouldVerify(workspace, agentConfig) && repairAttempts < agentConfig.MaxRepairAttempts)
                 {
@@ -215,6 +244,11 @@ public sealed class Agent(
                 if (steering is not null && !steering.TryCompleteIfEmpty()) continue;
                 break;
             }
+            if (reachedMaxSteps && error is null && !cancelled)
+            {
+                events.Publish(new WarningEvent(
+                    $"已达到最大步数 {maxSteps}，任务可能尚未完成。可在 ~/.seekclaw/config.json 中调大 agent.maxSteps。"));
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -231,6 +265,10 @@ public sealed class Agent(
         events.Publish(new TurnCompletedEvent(session.Header.Id, cancelled, error));
         return new AgentTurnResult(finalText, cancelled, error);
     }
+
+    /// <summary>True when the provider stopped because the output-token cap was hit, not because it finished.</summary>
+    private static bool IsOutputTruncated(string? finishReason) =>
+        finishReason is "length" or "max_tokens" or "incomplete";
 
     private IReadOnlyList<ChatMessage> AppendSteering(AgentSession session, AgentSteeringQueue? steering)
     {

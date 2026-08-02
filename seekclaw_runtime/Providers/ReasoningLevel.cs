@@ -129,7 +129,7 @@ public static class ReasoningLevelAdapter
         return Math.Min(requested, budgetCap);
     }
 
-    private static bool IsDeepSeek(ProviderConfig provider, ModelConfig model) =>
+    internal static bool IsDeepSeek(ProviderConfig provider, ModelConfig model) =>
         provider.Id.Contains("deepseek", StringComparison.OrdinalIgnoreCase)
         || provider.BaseUrl.Contains("deepseek", StringComparison.OrdinalIgnoreCase)
         || model.Id.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
