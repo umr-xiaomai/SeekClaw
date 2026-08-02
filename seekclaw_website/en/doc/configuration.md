@@ -11,7 +11,7 @@ SeekClaw stores Providers, models, Profiles, routing, and Agent defaults in a gl
 | `~/.seekclaw/usage.jsonl` | Calls, tokens, latency, and cost records |
 | `<workspace>/.seekclaw/config.json` | Overrides for one project |
 
-On first run, the Runtime seeds the global configuration from `defaults/config.default.json` shipped in the release. Provider and model data are user-managed after that point.
+On first run, the Runtime generates the global configuration by serializing the code-defined defaults (`DefaultSeekClawConfig`) to `~/.seekclaw/config.json`; no static default configuration file is shipped anymore. Provider and model data are user-managed after that point.
 
 ## Global configuration shape
 

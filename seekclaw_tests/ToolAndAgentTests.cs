@@ -285,6 +285,8 @@ public sealed class ToolAndAgentTests
         try
         {
             var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            // First-run defaults are seeded by code now; keep this turn isolated to its own provider.
+            store.Config.Providers.Clear();
             store.Config.Providers.Add(new ProviderConfig
             {
                 Id = "openai",

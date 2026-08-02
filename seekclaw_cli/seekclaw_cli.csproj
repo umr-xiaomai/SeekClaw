@@ -25,7 +25,6 @@
 
   <ItemGroup>
     <None Include="prompts\**\*" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="defaults\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

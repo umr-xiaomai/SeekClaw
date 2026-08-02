@@ -13,9 +13,9 @@ public interface IConfigStore
 }
 
 /// <summary>
-/// Loads / persists ~/.seekclaw/config.json. On first run the store is seeded from
-/// defaults/config.default.json shipped next to the executable, keeping all provider
-/// and model data fully data-driven.
+/// Loads / persists ~/.seekclaw/config.json. On first run the store seeds the file by
+/// serializing <see cref="DefaultSeekClawConfig"/> to JSON; provider and model data
+/// stay fully data-driven after that point.
 /// </summary>
 public sealed class ConfigStore : IConfigStore
 {
@@ -71,7 +71,7 @@ public sealed class ConfigStore : IConfigStore
             if (loaded is not null) return loaded;
         }
 
-        var seeded = LoadSeed() ?? new SeekClawConfig();
+        var seeded = DefaultSeekClawConfig.Build();
         Config = seeded;
         Save();
         return seeded;
@@ -80,12 +80,6 @@ public sealed class ConfigStore : IConfigStore
     private RuntimeState LoadState() =>
         (File.Exists(_stateFile) ? TryDeserialize(_stateFile, SeekClawJsonContext.Default.RuntimeState) : null)
         ?? new RuntimeState();
-
-    private static SeekClawConfig? LoadSeed()
-    {
-        var seedFile = Path.Combine(SeekClawPaths.AppDir, "defaults", "config.default.json");
-        return File.Exists(seedFile) ? TryDeserialize(seedFile, SeekClawJsonContext.Default.SeekClawConfig) : null;
-    }
 
     private static T? TryDeserialize<T>(string file, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo)
         where T : class

@@ -19,6 +19,9 @@ public sealed class ProviderTests : IDisposable
     {
         Directory.CreateDirectory(_dir);
         _store = new ConfigStore(Path.Combine(_dir, "config.json"), Path.Combine(_dir, "state.json"));
+        // The first-run seed now ships code-defined defaults; drop them so these tests
+        // exercise exactly the isolated provider set they declare below.
+        _store.Config.Providers.Clear();
         _store.Config.Providers.AddRange(
         [
             new ProviderConfig

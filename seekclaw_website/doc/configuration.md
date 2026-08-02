@@ -11,7 +11,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 | `~/.seekclaw/usage.jsonl` | 调用、Token、延迟和成本记录 |
 | `<workspace>/.seekclaw/config.json` | 当前项目的覆盖项 |
 
-首次运行时，Runtime 从发布包内的 `defaults/config.default.json` 创建全局配置。Provider 与模型数据随后完全由用户管理。
+首次运行时，Runtime 使用代码内建的默认配置（`DefaultSeekClawConfig`）自动序列化生成 `~/.seekclaw/config.json`，仓库不再维护静态的默认配置文件。Provider 与模型数据随后完全由用户管理。
 
 ## 全局配置结构
 
