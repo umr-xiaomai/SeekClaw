@@ -483,6 +483,9 @@ internal sealed class DaemonAdminApi(
     public string UpsertProject(JsonObject parameters)
     {
         var path = RequiredString(parameters, "path");
+        if (SeekClawPaths.IsForbiddenProjectPath(path))
+            throw new DaemonRequestException(
+                "The user profile or the SeekClaw state directory cannot be registered as a project.");
         var project = runtime.Projects.Upsert(
             OptionalString(parameters, "id"), path, OptionalString(parameters, "name"));
         return new JsonObject
@@ -498,12 +501,19 @@ internal sealed class DaemonAdminApi(
     public string RemoveProject(JsonObject parameters)
     {
         var id = RequiredString(parameters, "id");
+        // The desktop cleanup of invalid project rows (e.g. a project whose path is the
+        // user profile) keeps sessions so history is preserved instead of being deleted
+        // together with the row; a user-initiated removal still deletes the sessions.
+        var keepSessions = parameters["keepSessions"]?.GetValue<bool?>() ?? false;
         var project = runtime.Projects.Get(id)
                       ?? throw new DaemonRequestException($"Project not found: {id}");
-        var workspace = Directory.Exists(project.Path)
-            ? runtime.Workspaces.Detect(project.Path)
-            : new WorkspaceInfo { Root = Path.GetFullPath(project.Path), ProjectKinds = [] };
-        runtime.Sessions.DeleteAll(workspace);
+        if (!keepSessions)
+        {
+            var workspace = Directory.Exists(project.Path)
+                ? runtime.Workspaces.Detect(project.Path)
+                : new WorkspaceInfo { Root = Path.GetFullPath(project.Path), ProjectKinds = [] };
+            runtime.Sessions.DeleteAll(workspace);
+        }
         runtime.Projects.Remove(id);
         return id;
     }

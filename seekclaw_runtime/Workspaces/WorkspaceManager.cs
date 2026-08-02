@@ -46,6 +46,15 @@ public sealed class WorkspaceManager : IWorkspaceManager
     private static readonly string[] RootMarkers =
         [".git", ".seekclaw", "package.json", "pyproject.toml", "Cargo.toml", "go.mod"];
 
+    private readonly string _seekClawHome;
+
+    public WorkspaceManager() : this(SeekClawPaths.Home)
+    {
+    }
+
+    /// <summary>Test seam: simulates a different user profile / SeekClaw state directory.</summary>
+    internal WorkspaceManager(string seekClawHome) => _seekClawHome = seekClawHome;
+
     public WorkspaceInfo Detect(string? startDirectory = null)
     {
         var start = Path.GetFullPath(startDirectory ?? Directory.GetCurrentDirectory());
@@ -66,19 +75,36 @@ public sealed class WorkspaceManager : IWorkspaceManager
         IsGlobal = true,
     };
 
-    private static string? FindRoot(string start)
+    private string? FindRoot(string start)
     {
         for (var dir = new DirectoryInfo(start); dir is not null; dir = dir.Parent)
         {
-            if (RootMarkers.Any(marker =>
+            var matched = RootMarkers.Where(marker =>
                     Directory.Exists(Path.Combine(dir.FullName, marker)) ||
-                    File.Exists(Path.Combine(dir.FullName, marker))))
+                    File.Exists(Path.Combine(dir.FullName, marker)))
+                .ToList();
+            if (matched.Count > 0 && !IsOnlySeekClawHomeMarker(dir, matched))
                 return dir.FullName;
 
             if (HasFiles(dir, "*.sln") || HasFiles(dir, "*.slnx"))
                 return dir.FullName;
         }
         return null;
+    }
+
+    internal bool IsOnlySeekClawHomeMarker(DirectoryInfo dir, IReadOnlyList<string> matched)
+    {
+        // ~/.seekclaw is the user's own global SeekClaw state directory, not a project
+        // marker. Without this exclusion every plain folder under the user profile would
+        // resolve to the profile as its workspace root, merging unrelated projects into a
+        // single shared session scope (and making sessions appear under the wrong project).
+        if (matched.Count != 1 || !matched[0].Equals(".seekclaw", StringComparison.Ordinal))
+            return false;
+
+        var markerPath = Path.GetFullPath(Path.Combine(dir.FullName, ".seekclaw"));
+        return string.Equals(
+            markerPath, _seekClawHome,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     private static List<string> DetectKinds(string root)

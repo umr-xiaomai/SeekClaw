@@ -75,7 +75,7 @@ public sealed record LlmRequest
     public double? Temperature { get; init; }
     public int? MaxTokens { get; init; }
     public bool EnableThinking { get; init; }
-    public int ThinkingBudgetTokens { get; init; } = 4096;
+    public int ThinkingBudgetTokens { get; init; } = 16_384;
     public ReasoningLevel ReasoningLevel { get; init; } = ReasoningLevel.Medium;
 }
 

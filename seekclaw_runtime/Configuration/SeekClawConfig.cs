@@ -136,11 +136,13 @@ public sealed class AgentConfig
     public int MaxSteps { get; set; } = 40;
     public bool AutoVerify { get; set; } = true;
     public int MaxRepairAttempts { get; set; } = 3;
+    /// <summary>Summarizes older history when the context window would overflow, so a single turn can keep going.</summary>
+    public bool EnableContextCompaction { get; set; } = true;
     /// <summary>Agent mode: edit | plan | readonly | auto.</summary>
     public string Mode { get; set; } = "edit";
     /// <summary>Prompt key of the main system prompt (relative to prompts/, no extension).</summary>
     public string SystemPrompt { get; set; } = "system/default";
-    public int ThinkingBudgetTokens { get; set; } = 4_096;
+    public int ThinkingBudgetTokens { get; set; } = 16_384;
     public ReasoningLevel ReasoningLevel { get; set; } = ReasoningLevel.High;
     /// <summary>Hard cap safeguard; effective tool output budget adapts to the model context window.</summary>
     public int MaxToolOutputChars { get; set; } = 60_000;

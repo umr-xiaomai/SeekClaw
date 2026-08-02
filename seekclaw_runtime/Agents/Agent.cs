@@ -35,6 +35,19 @@ public sealed class Agent(
     IFileLockCoordinator fileLocks,
     FileLockScope lockScope)
 {
+    private const string CompactionInstruction = """
+        You are the memory compaction engine of SeekClaw, a coding agent. The conversation
+        below is about to overflow the model's context window; write a concise progress
+        summary that can replace it. Cover:
+        - The user's goal and any hard constraints.
+        - Files read or written (keep concrete paths), commands run, and their outcomes.
+        - Decisions made and the current state of the work.
+        - What remains to be done next.
+        Stay factual; do not invent anything that is not in the conversation. The summary
+        will be sent to the model as the start of the history, so prefer compact bullet
+        points over prose.
+        """;
+
     public async Task<AgentTurnResult> RunTurnAsync(
         AgentSession session,
         WorkspaceInfo workspace,
@@ -62,6 +75,7 @@ public sealed class Agent(
             // Reserve one extra step per allowed repair so long multi-step tasks are
             // not cut short by their own repair loop.
             var maxSteps = agentConfig.MaxSteps + Math.Clamp(agentConfig.MaxRepairAttempts, 0, 128);
+            var compactedThisTurn = false;
             for (var step = 1; step <= maxSteps; step++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -80,9 +94,20 @@ public sealed class Agent(
                     : providerManager.ResolveActive(workspace.Config);
                 var tools = ActiveTools(workspace, session.Header.NetworkEnabled);
                 var systemPrompt = await ComposeSystemPromptAsync(workspace, model, tools, ct).ConfigureAwait(false);
-                var history = ContextPlanner.FitToWindow(
-                    requiresVision ? session.Messages : WithoutImages(session.Messages),
-                    model.Model, systemPrompt);
+                var source = requiresVision ? session.Messages : WithoutImages(session.Messages);
+                var history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
+                // Context compaction: when plain trimming would have to drop history, first
+                // summarize the old part so long turns keep their memory and can finish.
+                // A failed compaction never aborts the turn — it falls back to the trim.
+                if (agentConfig.EnableContextCompaction
+                    && !compactedThisTurn
+                    && history.Count + 4 <= source.Count)
+                {
+                    await CompactContextAsync(session, workspace, model, source, systemPrompt, ct).ConfigureAwait(false);
+                    compactedThisTurn = true;
+                    source = requiresVision ? session.Messages : WithoutImages(session.Messages);
+                    history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
+                }
 
                 events.Publish(new StatusEvent("Thinking"));
                 if (step == 1 && userMessage.Images is { Count: > 0 })
@@ -248,6 +273,88 @@ public sealed class Agent(
                     ToolFilePath = message.ToolFilePath,
                 })
             .ToList();
+    }
+
+    private async Task CompactContextAsync(
+        AgentSession session,
+        WorkspaceInfo workspace,
+        ModelInfo model,
+        IReadOnlyList<ChatMessage> source,
+        string systemPrompt,
+        CancellationToken ct)
+    {
+        var (old, recent) = ContextPlanner.SplitForCompaction(source, model.Model, systemPrompt);
+        if (old.Count == 0) return;
+
+        events.Publish(new StatusEvent("Compacting context", $"{old.Count} earlier messages"));
+        string? summary;
+        try
+        {
+            summary = await SummarizeContextAsync(model, workspace, old, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Compaction must never break the turn: fall back to the plain window trim.
+            events.Publish(new WarningEvent($"Context compaction failed: {ex.Message}"));
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(summary)) return;
+
+        var summaryMessage = ChatMessage.User(
+            ">>> [Context compaction] 之前的对话已被压缩以保持上下文可容纳，以下是阶段性总结：\n\n"
+            + summary.Trim());
+
+        session.Messages.Clear();
+        session.Messages.Add(summaryMessage);
+        session.Messages.AddRange(recent);
+
+        try
+        {
+            sessionStore.ReplaceHistory(session, session.Messages);
+        }
+        catch (Exception ex)
+        {
+            // Keep the in-memory compacted view even if persistence fails.
+            events.Publish(new WarningEvent($"Could not persist context compaction: {ex.Message}"));
+        }
+
+        events.Publish(new StatusEvent("Context compacted", $"{old.Count} earlier messages summarized"));
+    }
+
+    private async Task<string?> SummarizeContextAsync(
+        ModelInfo model, WorkspaceInfo workspace, IReadOnlyList<ChatMessage> old, CancellationToken ct)
+    {
+        // Image payloads are not needed for the summary; dropping them keeps the call small.
+        var input = ContextPlanner.FitToWindow(WithoutImages(old), model.Model, CompactionInstruction);
+        var completion = await CollectCompletionAsync(
+            candidate => new LlmRequest
+            {
+                Provider = candidate.Provider,
+                Model = candidate.Model,
+                Messages = input,
+                System = CompactionInstruction,
+                MaxTokens = 4_096,
+                EnableThinking = false,
+                ReasoningLevel = ReasoningLevel.None,
+            },
+            workspace, ct).ConfigureAwait(false);
+        return completion?.Text;
+    }
+
+    private async Task<LlmCompletion?> CollectCompletionAsync(
+        Func<ModelInfo, LlmRequest> requestFactory, WorkspaceInfo workspace, CancellationToken ct)
+    {
+        LlmCompletion? completion = null;
+        await foreach (var evt in providerManager.StreamAsync(requestFactory, workspace.Config, ct).ConfigureAwait(false))
+        {
+            if (evt is LlmCompleted completed) completion = completed.Completion;
+        }
+        return completion;
     }
 
     private async Task<LlmCompletion> StreamOnceAsync(

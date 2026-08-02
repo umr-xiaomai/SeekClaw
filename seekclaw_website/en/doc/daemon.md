@@ -99,6 +99,8 @@ The Desktop settings workbench uses structured methods to manage the same config
 | `skill.list/toggle` | Lists and enables or disables skills |
 | `usage.get` | Returns model-level calls, tokens, cost, and latency aggregates |
 
+`project.upsert` rejects registering the user profile or the SeekClaw global state directory (`~/.seekclaw`) as a project; `project.remove` accepts `keepSessions: true` so invalid project rows can be cleaned up without deleting the sessions stored in the database.
+
 The Daemon starts listening before MCP initialization continues in the background. `mcp.reload`, MCP configuration changes, and workspace switches unregister old tools and prompts before serially connecting the new configuration.
 
 Each `chat` request is assigned an isolated Runtime, workspace Prompt/Skills state, MCP registrations, and event subscription. A connection or multiple connections can therefore run any number of turns concurrently; practical concurrency is determined by CPU, memory, Provider throughput, and local I/O. Administrative configuration writes are serialized only to prevent file races and do not block running turns.

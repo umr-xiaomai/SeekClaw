@@ -17,6 +17,7 @@ import {
   Save,
   Search,
   Settings2,
+  Store,
   Sun,
   Trash2,
   Wrench,
@@ -143,6 +144,7 @@ const emit = defineEmits<{
   changeTheme: [theme: 'system' | 'light' | 'dark']
   reconnect: []
   openWorkspace: []
+  openOfficialSkills: []
   runtimeChanged: []
 }>()
 
@@ -919,6 +921,7 @@ watch(section, () => { void loadCurrentSection() })
           <template v-else-if="section === 'skills'">
             <div class="settings-section-heading">
               <div><h3>Skills</h3><p>{{ skills.filter((skill) => skill.enabled).length }} enabled</p></div>
+              <button class="secondary-button" @click="emit('openOfficialSkills')"><Store :size="15" />官方技能市场</button>
               <button class="icon-button" title="刷新" @click="loadCurrentSection"><RefreshCw :size="17" /></button>
             </div>
             <section class="settings-list">

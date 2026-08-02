@@ -429,6 +429,61 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
+    public void AnthropicReasoning_LongThinkingUsesNearlyTheWholeOutputWindow()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "anthropic", Kind = "anthropic", BaseUrl = "https://example.test" },
+            Model = new ModelConfig
+            {
+                Id = "claude",
+                MaxOutput = 64_000,
+                Capabilities = new ModelCapabilities
+                {
+                    Thinking = true,
+                    MaxReasoningLevel = ReasoningLevel.Ultra,
+                },
+            },
+            Messages = [ChatMessage.User("think")],
+            EnableThinking = true,
+            ThinkingBudgetTokens = 16_384,
+            ReasoningLevel = ReasoningLevel.Ultra,
+        };
+
+        var body = AnthropicClient.BuildBody(request);
+        // 16_384 × 16 would be 262_144; the budget is capped only by max_tokens minus a
+        // small answer reserve, so a long reasoning phase is never cut off at half.
+        Assert.Equal(64_000 - 4_096, body["thinking"]!["budget_tokens"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void AnthropicReasoning_SmallOutputWindow_StillReservesRoomForAnswer()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "anthropic", Kind = "anthropic", BaseUrl = "https://example.test" },
+            Model = new ModelConfig
+            {
+                Id = "claude-small",
+                MaxOutput = 8_192,
+                Capabilities = new ModelCapabilities
+                {
+                    Thinking = true,
+                    MaxReasoningLevel = ReasoningLevel.Max,
+                },
+            },
+            Messages = [ChatMessage.User("think")],
+            EnableThinking = true,
+            ThinkingBudgetTokens = 16_384,
+            ReasoningLevel = ReasoningLevel.High,
+        };
+
+        var body = AnthropicClient.BuildBody(request);
+        // min(16_384 × 2, 8_192 - 2_048) → 6_144
+        Assert.Equal(6_144, body["thinking"]!["budget_tokens"]!.GetValue<int>());
+    }
+
+    [Fact]
     public void Candidates_WorkspaceOverride_BeatsProfile_ThenStrategy_ThenFallback()
     {
         var profile = _store.Config.GetActiveProfile();

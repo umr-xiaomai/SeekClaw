@@ -115,8 +115,16 @@ public static class ReasoningLevelAdapter
             ReasoningLevel.Ultra => 16.0,
             _ => 0.0,
         };
-        var budgetCap = (request.MaxTokens ?? request.Model.MaxOutput) / 2;
-        if (budgetCap < 1_024) return 0;
+
+        var maxOutput = request.MaxTokens ?? request.Model.MaxOutput;
+        if (maxOutput < 2_048) return 0; // no room for a meaningful thinking budget plus an answer
+
+        // The old cap of max_tokens / 2 truncated long reasoning phases mid-thought, forcing
+        // the model to stop thinking and answer early on large tasks. Reserve only a small
+        // slice for the final answer so thinking can use almost the entire output window.
+        var answerReserve = Math.Min(4_096, Math.Max(1_024, maxOutput / 4));
+        var budgetCap = maxOutput - answerReserve;
+
         var requested = (int)Math.Clamp(baseBudget * multiplier, 1_024, int.MaxValue);
         return Math.Min(requested, budgetCap);
     }

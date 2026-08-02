@@ -12,6 +12,7 @@ import {
   Settings2,
   SlidersHorizontal,
   SquarePen,
+  Store,
   Trash2
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -41,6 +42,7 @@ const emit = defineEmits<{
   deleteGlobalTasks: []
   openArchived: []
   openExtensions: []
+  openOfficialSkills: []
   openSettings: []
 }>()
 
@@ -163,6 +165,10 @@ onBeforeUnmount(() => {
       <button class="nav-item" @click="emit('openExtensions')">
         <Blocks :size="18" />
         <span>MCP 与技能</span>
+      </button>
+      <button class="nav-item" @click="emit('openOfficialSkills')">
+        <Store :size="18" />
+        <span>官方技能</span>
       </button>
     </nav>
 

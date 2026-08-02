@@ -169,7 +169,8 @@ function registerIpc(): void {
     platform: process.platform,
     supportsMica,
     defaultWorkspace: is.dev ? resolve(app.getAppPath(), '..') : app.getPath('userData'),
-    documentsPath: app.getPath('documents')
+    documentsPath: app.getPath('documents'),
+    userProfilePath: app.getPath('home')
   }))
 
   ipcMain.handle('app:select-workspace', async () => {

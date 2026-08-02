@@ -32,15 +32,48 @@ public static class ContextPlanner
     /// Trims history so system prompt + messages + reply head-room fit the window.
     /// Oldest messages drop first; tool results shrink before user/assistant text is touched.
     /// </summary>
-    public static IReadOnlyList<ChatMessage> FitToWindow(
-        IReadOnlyList<ChatMessage> messages, ModelConfig model, string systemPrompt)
+    /// <summary>Token budget available for conversation history inside the active model window.</summary>
+    public static int WindowBudget(ModelConfig model, string systemPrompt)
     {
-        messages = EnsureCompleteToolTurns(messages);
         var budget = model.ContextWindow
                      - model.MaxOutput
                      - EstimateTokens(systemPrompt)
                      - 1_500; // safety reserve for wire format overhead
-        if (budget <= 0) budget = model.ContextWindow / 2;
+        return budget > 0 ? budget : model.ContextWindow / 2;
+    }
+
+    /// <summary>
+    /// Splits history into the portion to summarize (Old) and the recent tail to keep
+    /// verbatim (Recent). The tail is capped at half the window budget and always starts
+    /// on a complete tool-turn boundary so no tool call is ever orphaned.
+    /// </summary>
+    public static (IReadOnlyList<ChatMessage> Old, IReadOnlyList<ChatMessage> Recent) SplitForCompaction(
+        IReadOnlyList<ChatMessage> messages, ModelConfig model, string systemPrompt)
+    {
+        var tailBudget = Math.Max(1_024, WindowBudget(model, systemPrompt) / 2);
+
+        var split = messages.Count;
+        var total = 0;
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            var cost = EstimateTokens(messages[i]);
+            if (split < messages.Count && total + cost > tailBudget) break;
+            split = i;
+            total += cost;
+        }
+
+        // Keep tool-call pairs intact: if the tail would open with a tool result, fold
+        // those results back into the summarized old part (their assistant turn is there).
+        while (split < messages.Count && messages[split].Role == ChatRole.Tool) split++;
+
+        return (messages.Take(split).ToList(), messages.Skip(split).ToList());
+    }
+
+    public static IReadOnlyList<ChatMessage> FitToWindow(
+        IReadOnlyList<ChatMessage> messages, ModelConfig model, string systemPrompt)
+    {
+        messages = EnsureCompleteToolTurns(messages);
+        var budget = WindowBudget(model, systemPrompt);
 
         var total = messages.Sum(EstimateTokens);
         if (total <= budget) return messages;

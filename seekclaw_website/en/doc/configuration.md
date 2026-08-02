@@ -81,9 +81,10 @@ This example uses the current field names:
     "maxSteps": 40,
     "autoVerify": true,
     "maxRepairAttempts": 3,
+    "enableContextCompaction": true,
     "mode": "edit",
     "systemPrompt": "system/default",
-    "thinkingBudgetTokens": 4096,
+    "thinkingBudgetTokens": 16384,
     "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
     "bashTimeoutSeconds": 180
@@ -91,6 +92,9 @@ This example uses the current field names:
   "mcp": { "servers": {} }
 }
 ```
+
+> `thinkingBudgetTokens` is the base thinking budget; the effective budget scales with the reasoning depth level (high ×2, max ×4, xhigh ×8, ultra ×16) and is capped only by the model's `maxOutput` minus a small answer reserve — long tasks are no longer forced to stop thinking at half the output window. With `enableContextCompaction` enabled (default), when the history approaches the context limit the Agent first summarizes the earlier conversation into compact memory before continuing, so a single turn is never interrupted by context or thinking length; a failed compaction falls back to plain trimming and never aborts the turn.
+
 
 ### Provider keys
 

@@ -44,6 +44,8 @@ export interface AppInfo {
   defaultWorkspace: string
   /** Used only to migrate the legacy project that Desktop implicitly created here. */
   documentsPath: string
+  /** Home profile used to reject non-project paths (user profile / SeekClaw state dir). */
+  userProfilePath: string
 }
 
 export type AppearanceTheme = 'system' | 'light' | 'dark'

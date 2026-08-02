@@ -487,6 +487,74 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ProjectUpsert_RejectsUserProfileAndSeekClawStateDirectories()
+    {
+        var workspace = CreateWorkspace("forbidden-project");
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)), workspace);
+
+        await connection.SendAsync(1, "project.upsert", new JsonObject
+        {
+            ["id"] = "home-project",
+            ["path"] = Path.GetDirectoryName(SeekClawPaths.Home)!,
+            ["name"] = "Home",
+        });
+        Assert.Equal("error", (await connection.ReadAsync())["event"]!.GetValue<string>());
+
+        await connection.SendAsync(2, "project.upsert", new JsonObject
+        {
+            ["id"] = "state-project",
+            ["path"] = SeekClawPaths.Home,
+            ["name"] = "State",
+        });
+        Assert.Equal("error", (await connection.ReadAsync())["event"]!.GetValue<string>());
+
+        // A normal project directory still registers fine.
+        await connection.SendAsync(3, "project.upsert", new JsonObject
+        {
+            ["id"] = "ok-project",
+            ["path"] = workspace,
+            ["name"] = "OK",
+        });
+        Assert.Equal("result", (await connection.ReadAsync())["event"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task RemoveProject_WithKeepSessions_PreservesSessionsInDatabase()
+    {
+        var workspace = CreateWorkspace("keep-sessions");
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)), workspace);
+
+        await connection.SendAsync(1, "project.upsert", new JsonObject
+        {
+            ["id"] = "keep-project",
+            ["path"] = workspace,
+            ["name"] = "Keep",
+        });
+        Assert.Equal("result", (await connection.ReadAsync())["event"]!.GetValue<string>());
+
+        await connection.SendAsync(2, "session.new", new JsonObject { ["workspace"] = workspace });
+        var sessionId = (await connection.ReadAsync())["data"]!.GetValue<string>();
+
+        await connection.SendAsync(3, "project.remove", new JsonObject
+        {
+            ["id"] = "keep-project",
+            ["keepSessions"] = true,
+        });
+        Assert.Equal("keep-project", (await connection.ReadAsync())["data"]!.GetValue<string>());
+
+        await connection.SendAsync(4, "session.get", new JsonObject
+        {
+            ["id"] = sessionId,
+            ["workspace"] = workspace,
+        });
+        var response = await connection.ReadAsync();
+        Assert.Equal("result", response["event"]!.GetValue<string>());
+        Assert.Equal(sessionId, ParseData(response)["id"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task GlobalSessions_RunWithoutAProjectAndRemainSeparateFromWorkspaceSessions()
     {
         var observedGlobalContext = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

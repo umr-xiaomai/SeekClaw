@@ -100,6 +100,8 @@ Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直�
 | `skill.list/toggle` | 查询和启用/禁用 Skill |
 | `usage.get` | 返回按模型聚合的调用、Token、成本和延迟 |
 
+`project.upsert` 拒绝把用户主目录或 SeekClaw 全局状态目录（`~/.seekclaw`）注册为项目；`project.remove` 支持 `keepSessions: true`，清理无效项目行时保留数据库中的会话。
+
 Daemon 会先建立 IPC 监听，再在后台初始化 MCP。`mcp.reload`、MCP 配置修改和工作区切换都会先注销旧工具与 Prompt，再串行连接新配置。
 
 Daemon 对每个 `chat` 请求按 `sessionId` 创建独立的 Agent turn。每个 turn 使用隔离的 Runtime、Prompt/Skills、MCP 注册和事件订阅，因此同一连接或多个连接可以并发运行任意数量的任务；并发度由 CPU、内存、Provider 和本机 I/O 性能共同决定。管理类配置写入仍然串行化，避免配置文件互相覆盖，但不会阻塞已经启动的 Agent turn。

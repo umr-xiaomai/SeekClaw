@@ -2075,7 +2075,9 @@ select:focus-visible {
 .modal-fade-enter-active .provider-editor-dialog,
 .modal-fade-leave-active .provider-editor-dialog,
 .modal-fade-enter-active .about-dialog,
-.modal-fade-leave-active .about-dialog {
+.modal-fade-leave-active .about-dialog,
+.modal-fade-enter-active .official-skills-dialog,
+.modal-fade-leave-active .official-skills-dialog {
   transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -2097,7 +2099,9 @@ select:focus-visible {
 .modal-fade-enter-from .provider-editor-dialog,
 .modal-fade-leave-to .provider-editor-dialog,
 .modal-fade-enter-from .about-dialog,
-.modal-fade-leave-to .about-dialog {
+.modal-fade-leave-to .about-dialog,
+.modal-fade-enter-from .official-skills-dialog,
+.modal-fade-leave-to .official-skills-dialog {
   opacity: 0;
   transform: translateY(10px) scale(.985);
 }

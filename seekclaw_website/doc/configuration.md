@@ -83,9 +83,10 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
     "maxSteps": 40,
     "autoVerify": true,
     "maxRepairAttempts": 3,
+    "enableContextCompaction": true,
     "mode": "edit",
     "systemPrompt": "system/default",
-    "thinkingBudgetTokens": 4096,
+    "thinkingBudgetTokens": 16384,
     "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
     "bashTimeoutSeconds": 180
@@ -95,6 +96,9 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
   }
 }
 ```
+
+> `thinkingBudgetTokens` 是思考预算的基数，实际预算还会随思考深度档位放大（高×2、最大×4、极高×8、超级×16），并仅受模型 `maxOutput` 减去少量答案预留空间的限制——长任务不会被强限制在输出窗口的一半，避免思考到一半被强制截断。`enableContextCompaction` 开启后，当历史接近上下文上限时，Agent 会先把较早的对话总结成阶段性记忆（压缩上下文），再继续执行，保证一轮对话不会因为上下文或思考长度而中断；压缩失败会自动回退为普通截断，不会中断回合。
+
 
 ### Provider Key
 

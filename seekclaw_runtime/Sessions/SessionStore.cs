@@ -27,6 +27,8 @@ public interface ISessionStore
     AgentSession? LoadLatest(WorkspaceInfo workspace);
     IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace, bool includeArchived = false);
     void Append(AgentSession session, ChatMessage message);
+    /// <summary>Rewrites a session's persisted history (used by context compaction).</summary>
+    void ReplaceHistory(AgentSession session, IReadOnlyList<ChatMessage> messages);
     SessionHeader UpdateMetadata(
         WorkspaceInfo workspace,
         string sessionId,
@@ -180,6 +182,50 @@ public sealed class SessionStore : ISessionStore
             if (session.Header.Title is null && suggestedTitle is not null)
                 session.Header.Title = suggestedTitle;
         }
+    }
+
+    public void ReplaceHistory(AgentSession session, IReadOnlyList<ChatMessage> messages)
+    {
+        // Snapshot before touching session.Messages: callers may pass the session's own
+        // list, and the in-memory replacement below must not alias the DB payload source.
+        var snapshot = messages.ToList();
+        lock (GateFor(session.Scope, session.Header.Id))
+        {
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(deferred: false);
+            using (var delete = connection.CreateCommand())
+            {
+                delete.Transaction = transaction;
+                delete.CommandText = """
+                    DELETE FROM messages WHERE scope = $scope AND session_id = $sessionId;
+                    """;
+                delete.Parameters.AddWithValue("$scope", session.Scope);
+                delete.Parameters.AddWithValue("$sessionId", session.Header.Id);
+                delete.ExecuteNonQuery();
+            }
+
+            foreach (var message in snapshot)
+            {
+                var record = ToRecord(message);
+                var payload = JsonSerializer.Serialize(record, SeekClawJsonContext.Compact.SessionMessage);
+                using var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    INSERT INTO messages(scope, session_id, payload_json, timestamp)
+                    VALUES($scope, $sessionId, $payload, $timestamp);
+                    """;
+                insert.Parameters.AddWithValue("$scope", session.Scope);
+                insert.Parameters.AddWithValue("$sessionId", session.Header.Id);
+                insert.Parameters.AddWithValue("$payload", payload);
+                insert.Parameters.AddWithValue("$timestamp", record.Timestamp.ToString("O"));
+                insert.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+
+        session.Messages.Clear();
+        session.Messages.AddRange(snapshot);
     }
 
     public SessionHeader UpdateMetadata(

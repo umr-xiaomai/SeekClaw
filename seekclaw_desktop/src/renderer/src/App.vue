@@ -26,11 +26,13 @@ import Composer from './components/Composer.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
+import OfficialSkillsDialog from './components/OfficialSkillsDialog.vue'
 import RuntimeReconnectDialog from './components/RuntimeReconnectDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import { confirmAction } from './confirmation'
+import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
 import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ToolActivity } from './types'
@@ -118,12 +120,14 @@ const appInfo = ref<AppInfo>({
   platform: 'win32',
   supportsMica: false,
   defaultWorkspace: '',
-  documentsPath: ''
+  documentsPath: '',
+  userProfilePath: ''
 })
 const sidebarOpen = ref(true)
 const settingsOpen = ref(false)
 const aboutOpen = ref(false)
 const archivedTasksOpen = ref(false)
+const officialSkillsOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 const gitPanelWidth = ref(560)
@@ -246,6 +250,7 @@ async function migrateStoredProjects(): Promise<void> {
   if (localStorage.getItem(PROJECTS_STORAGE_KEY) === null) return
   const stored = loadStoredProjects()
   for (const project of stored) {
+    if (isForbiddenProjectPath(project.path, appInfo.value.userProfilePath)) continue
     await window.seekclaw.daemon.request('project.upsert', {
       id: project.id,
       path: project.path,
@@ -253,6 +258,23 @@ async function migrateStoredProjects(): Promise<void> {
     })
   }
   localStorage.removeItem(PROJECTS_STORAGE_KEY)
+}
+
+async function removeInvalidProjectRows(): Promise<void> {
+  // Older builds could register the user profile (or ~/.seekclaw) as a project, which
+  // made every plain folder under the profile share one session scope. Drop those rows
+  // now; sessions are preserved in the database instead of being deleted with them.
+  const invalid = projects.value.filter((project) =>
+    isForbiddenProjectPath(project.path, appInfo.value.userProfilePath))
+  for (const project of invalid) {
+    try {
+      await window.seekclaw.daemon.request('project.remove', { id: project.id, keepSessions: true })
+    } catch {
+      continue // leave the row in place; the next launch retries the cleanup
+    }
+    projects.value = projects.value.filter((item) => item.id !== project.id)
+    if (selectedProjectId.value === project.id) selectedProjectId.value = ''
+  }
 }
 
 function showActiveProject(): void {
@@ -464,6 +486,7 @@ async function loadRuntimeState(): Promise<void> {
       path: project.path,
       loaded: false
     }))
+    await removeInvalidProjectRows()
     const available = JSON.parse(modelResponse.data) as string[]
     const catalog = JSON.parse(catalogResponse.data) as RuntimeModelCatalogItem[]
     const workspace = JSON.parse(workspaceResponse.data) as RuntimeWorkspace
@@ -565,6 +588,10 @@ function cancelRuntimeReconnect(): void {
 async function openWorkspace(): Promise<void> {
   const path = await window.seekclaw.selectWorkspace()
   if (!path) return
+  if (isForbiddenProjectPath(path, appInfo.value.userProfilePath)) {
+    window.alert('不能把用户主目录或 SeekClaw 数据目录添加为项目，请选择具体的项目文件夹。')
+    return
+  }
   const project = await saveProject(ensureProject(path))
   selectedProjectId.value = project.id
   activeThreadId.value = ''
@@ -1471,6 +1498,7 @@ watch(theme, applyTheme)
         @delete-global-tasks="deleteGlobalTasks"
         @open-archived="openArchivedTasks"
         @open-extensions="openSettings('mcp')"
+        @open-official-skills="officialSkillsOpen = true"
         @open-settings="openSettings('general')"
         />
       </Transition>
@@ -1673,7 +1701,13 @@ watch(theme, applyTheme)
       @change-theme="applyTheme"
       @reconnect="reconnectDaemon"
       @open-workspace="openWorkspace"
+      @open-official-skills="officialSkillsOpen = true"
       @runtime-changed="refreshRuntimeState"
+    />
+
+    <OfficialSkillsDialog
+      :open="officialSkillsOpen"
+      @close="officialSkillsOpen = false"
     />
 
     <ArchivedTasksDialog
