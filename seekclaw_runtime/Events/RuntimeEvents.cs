@@ -65,6 +65,11 @@ public sealed record UsageRecordedEvent(
     decimal Cost,
     TimeSpan Elapsed) : RuntimeEvent;
 
+// ---------------------------------------------------------------- workflow
+
+/// <summary>A node in the agent's live execution flowchart (think / tool / verify / review …).</summary>
+public sealed record WorkflowEvent(int Step, string Kind, string Label, string? Detail = null) : RuntimeEvent;
+
 // ---------------------------------------------------------------- panel review
 
 public sealed record PanelRoundStartedEvent(int Round) : RuntimeEvent;

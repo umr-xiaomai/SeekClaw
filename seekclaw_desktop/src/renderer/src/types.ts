@@ -62,6 +62,22 @@ export interface PanelReviewItem {
   summary?: string
 }
 
+export type WorkflowKind = 'start' | 'think' | 'tool' | 'verify' | 'repair' | 'compact' | 'review' | 'done' | 'error'
+
+export interface WorkflowNode {
+  id: string
+  step: number
+  kind: WorkflowKind
+  label: string
+  detail?: string
+  state: 'running' | 'done' | 'error'
+}
+
+export interface WorkflowState {
+  nodes: WorkflowNode[]
+  activeId: string | null
+}
+
 export interface PanelReviewState {
   round?: number
   running: boolean
@@ -95,6 +111,8 @@ export interface ThreadItem {
   activeTurnToken?: string
   /** Current work phase shown in the header (thinking/tool/verify/review…). */
   phase?: string
+  /** Live execution flowchart fed by daemon workflow events. */
+  workflow?: WorkflowState
   /** Assistant placeholder receiving streamed output for the active turn. */
   assistantId?: string
   /** Per-task reasoning depth, independent from other concurrent tasks. */

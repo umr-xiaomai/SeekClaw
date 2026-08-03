@@ -97,6 +97,7 @@ public sealed class Agent(
             var panelEnabled = session.Header.PanelEnabled;
             var reviewRounds = 0;
             var step = 0;
+            events.Publish(new WorkflowEvent(0, "start", "开始任务"));
             while (true)
             {
                 step++;
@@ -126,6 +127,7 @@ public sealed class Agent(
                     && !compactedThisTurn
                     && history.Count + 4 <= source.Count)
                 {
+                    PublishWorkflow(step, "compact", "压缩记忆");
                     await CompactContextAsync(session, workspace, model, source, systemPrompt, ct).ConfigureAwait(false);
                     compactedThisTurn = true;
                     source = requiresVision ? session.Messages : WithoutImages(session.Messages);
@@ -133,6 +135,7 @@ public sealed class Agent(
                 }
 
                 events.Publish(new StatusEvent("Thinking"));
+                PublishWorkflow(step, "think", "思考");
                 if (step == 1 && userMessage.Images is { Count: > 0 })
                     foreach (var image in userMessage.Images)
                         events.Publish(new ImageViewedEvent(image.Id, image.Name, image.MediaType));
@@ -184,7 +187,8 @@ public sealed class Agent(
                         {
                             if (readOnlyBatch.Count > 0)
                             {
-                                var batchResults = await Task.WhenAll(readOnlyBatch.Select(c => ExecuteToolAsync(c, workspace, model, ct))).ConfigureAwait(false);
+                                foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
+                        var batchResults = await Task.WhenAll(readOnlyBatch.Select(c => ExecuteToolAsync(c, workspace, model, ct))).ConfigureAwait(false);
                                 foreach (var result in batchResults)
                                 {
                                     mutated |= result.ToolMutated;
@@ -193,6 +197,7 @@ public sealed class Agent(
                                 readOnlyBatch.Clear();
                             }
 
+                            PublishWorkflow(step, "tool", call.Name);
                             var singleResult = await ExecuteToolAsync(call, workspace, model, ct).ConfigureAwait(false);
                             mutated |= singleResult.ToolMutated;
                             sessionStore.Append(session, singleResult.Message);
@@ -201,6 +206,7 @@ public sealed class Agent(
 
                     if (readOnlyBatch.Count > 0)
                     {
+                        foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
                         var batchResults = await Task.WhenAll(readOnlyBatch.Select(c => ExecuteToolAsync(c, workspace, model, ct))).ConfigureAwait(false);
                         foreach (var result in batchResults)
                         {
@@ -237,6 +243,7 @@ public sealed class Agent(
                         sessionStore.Append(session, continuationNote);
                     }
                     events.Publish(new StatusEvent("Output truncated; continuing"));
+                    PublishWorkflow(step, "think", "续写");
                     PublishSteering(guidance);
                     continue;
                 }
@@ -245,6 +252,7 @@ public sealed class Agent(
                 // Model believes it is done. If it changed files, prove the project still builds.
                 if (mutated && ShouldVerify(workspace, agentConfig) && repairAttempts < agentConfig.MaxRepairAttempts)
                 {
+                    PublishWorkflow(step, "verify", "构建验证");
                     var repairMessage = await RunVerificationAsync(workspace, repairAttempts + 1, ct).ConfigureAwait(false);
                     if (repairMessage is not null)
                     {
@@ -267,6 +275,7 @@ public sealed class Agent(
                 // model to fix, up to MaxReviewRounds.
                 if (panelEnabled && reviewRounds < agentConfig.MaxReviewRounds)
                 {
+                    PublishWorkflow(step, "review", "评审团");
                     var feedback = await RunPanelReviewAsync(
                         workspace, session, model, reviewRounds + 1, completion.Text, ct).ConfigureAwait(false);
                     if (feedback is not null)
@@ -279,6 +288,10 @@ public sealed class Agent(
                 }
                 break;
             }
+            events.Publish(new WorkflowEvent(
+                step,
+                error is null && !cancelled ? "done" : "error",
+                error is null && !cancelled ? "任务完成" : "任务失败"));
             if (reachedMaxSteps && error is null && !cancelled)
             {
                 events.Publish(new WarningEvent(
@@ -300,6 +313,9 @@ public sealed class Agent(
         events.Publish(new TurnCompletedEvent(session.Header.Id, cancelled, error));
         return new AgentTurnResult(finalText, cancelled, error);
     }
+
+    private void PublishWorkflow(int step, string kind, string label, string? detail = null) =>
+        events.Publish(new WorkflowEvent(step, kind, label, detail));
 
     /// <summary>True when the provider stopped because the output-token cap was hit, not because it finished.</summary>
     private static bool IsOutputTruncated(string? finishReason) =>

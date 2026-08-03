@@ -833,6 +833,16 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["callId"] = diff.CallId,
                         ["diff"] = diff.UnifiedDiff,
                     }),
+                WorkflowEvent workflow => (
+                    Name: (string?)"workflow",
+                    Data: workflow.Label,
+                    Details: new JsonObject
+                    {
+                        ["step"] = workflow.Step,
+                        ["kind"] = workflow.Kind,
+                        ["label"] = workflow.Label,
+                        ["detail"] = workflow.Detail,
+                    }),
                 PanelRoundStartedEvent round => (
                     Name: (string?)"panel_round",
                     Data: round.Round.ToString(),

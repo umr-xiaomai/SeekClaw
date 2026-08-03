@@ -18,6 +18,7 @@ import {
   Telescope,
   TerminalSquare,
   Trash2,
+  Workflow,
   X
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -35,11 +36,12 @@ import RuntimeReconnectDialog from './components/RuntimeReconnectDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
+import WorkflowPanel from './components/WorkflowPanel.vue'
 import { confirmAction } from './confirmation'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
-import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ToolActivity } from './types'
+import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ToolActivity, WorkflowKind } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
 const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v2'
@@ -136,6 +138,7 @@ const aboutOpen = ref(false)
 const archivedTasksOpen = ref(false)
 const officialSkillsOpen = ref(false)
 const compareOpen = ref(false)
+const workflowOpen = ref(true)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 const gitPanelWidth = ref(560)
@@ -1514,6 +1517,34 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       break
     }
+    case 'workflow': {
+      const kind = String(event.details?.kind ?? '')
+      const step = Number(event.details?.step) || 0
+      const label = event.data || String(event.details?.label ?? '')
+      const detail = typeof event.details?.detail === 'string' ? event.details.detail : undefined
+      if (kind === 'start') {
+        thread.workflow = { nodes: [], activeId: null }
+        workflowOpen.value = true
+      }
+      thread.workflow ??= { nodes: [], activeId: null }
+      if (thread.workflow.activeId) {
+        const previous = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
+        if (previous && previous.state === 'running') previous.state = 'done'
+      }
+      const nodeKind = (['start', 'think', 'tool', 'verify', 'repair', 'compact', 'review', 'done', 'error'] as const)
+        .includes(kind as never) ? kind as WorkflowKind : 'think'
+      const node = {
+        id: `${event.id}:${thread.workflow.nodes.length}:${kind}`,
+        step,
+        kind: nodeKind,
+        label,
+        detail,
+        state: (kind === 'done' || kind === 'error' ? kind : 'running') as 'running' | 'done' | 'error'
+      }
+      thread.workflow.nodes.push(node)
+      thread.workflow.activeId = node.id
+      break
+    }
     case 'panel_review_completed': {
       if (!message) break
       thread.panel ??= { round: 1, running: true, reviews: [] }
@@ -1546,6 +1577,10 @@ function handleDaemonEvent(event: DaemonMessage): void {
       thread.assistantId = undefined
       thread.panel = undefined
       thread.phase = undefined
+      if (thread.workflow?.activeId) {
+        const last = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
+        if (last && last.state === 'running') last.state = 'done'
+      }
       scheduleQueuedDrain(thread)
       if (isBackgroundThread) {
         showTaskNotice(thread, 'done')
@@ -1565,6 +1600,10 @@ function handleDaemonEvent(event: DaemonMessage): void {
       thread.assistantId = undefined
       thread.panel = undefined
       thread.phase = undefined
+      if (thread.workflow?.activeId) {
+        const last = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
+        if (last && last.state === 'running') last.state = 'error'
+      }
       scheduleQueuedDrain(thread)
       if (isBackgroundThread) {
         showTaskNotice(thread, 'error')
@@ -1805,6 +1844,14 @@ watch(theme, applyTheme)
             <button class="icon-button project-tool-button" title="多模型对比" :disabled="models.length < 2" @click="compareOpen = true">
               <GitCompareArrows :size="18" />
             </button>
+            <button
+              class="icon-button project-tool-button"
+              :class="{ active: workflowOpen }"
+              title="实时执行流程图"
+              @click="workflowOpen = !workflowOpen"
+            >
+              <Workflow :size="18" />
+            </button>
             <button class="icon-button" title="任务设置" :disabled="!activeThread" @click="openTaskSettings()">
               <MoreHorizontal :size="18" />
             </button>
@@ -1927,6 +1974,8 @@ watch(theme, applyTheme)
               </div>
             </div>
           </div>
+
+          <WorkflowPanel :workflow="activeThread?.workflow" :open="workflowOpen" @close="workflowOpen = false" />
           <PanelReviewCard :panel="activeThread?.panel" />
           <Composer
             ref="composer"
@@ -2009,6 +2058,8 @@ watch(theme, applyTheme)
       :daemon-connected="daemonState.connected"
       @close="compareOpen = false"
     />
+
+
 
     <ArchivedTasksDialog
       :open="archivedTasksOpen"

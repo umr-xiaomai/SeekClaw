@@ -8,6 +8,7 @@ export type DaemonEventName =
   | 'tool_start'
   | 'tool_done'
   | 'file_diff'
+  | 'workflow'
   | 'panel_round'
   | 'panel_review_started'
   | 'panel_review_completed'
