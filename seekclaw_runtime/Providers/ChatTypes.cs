@@ -23,6 +23,8 @@ public sealed class ChatMessage
     public string Text { get; set; } = "";
     public IReadOnlyList<ChatImageAttachment>? Images { get; init; }
     public string? Thinking { get; set; }
+    /// <summary>"provider/model" that produced this assistant message (shown by clients).</summary>
+    public string? ModelRef { get; set; }
     public IReadOnlyList<ChatImageReference>? ViewedImages { get; init; }
     public IReadOnlyList<ToolCallRequest>? ToolCalls { get; set; }
     /// <summary>Set when Role == Tool.</summary>

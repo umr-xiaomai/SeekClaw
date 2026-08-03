@@ -62,7 +62,9 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 {"id":10,"event":"cancelled","data":"取消前已生成的部分文本"}
 ```
 
-流式事件包括 `thinking`、`delta`、`steer`、`status`、`image_view`、`tool_start` 和 `tool_done`。`steer` 表示附加指导已经进入当前 turn 的上下文；`image_view` 的 `details.imageId` 指明模型正在查看哪张上传图片。终止事件包括 `done`、`cancelled` 和 `error`。
+`session.get` 返回的消息中，assistant 消息带 `modelRef`（`provider/model`），用于界面标注每条回答来自哪个模型。
+
+流式事件包括 `thinking`、`delta`、`steer`、`status`、`image_view`、`tool_start` 和 `tool_done`。`steer` 表示附加指导已经进入当前 turn 的上下文；`image_view` 的 `details.imageId` 指明模型正在查看哪张上传图片。评审团（跨厂商模型仲裁）事件包括 `panel_round`（`data` 为轮次）、`panel_review_started`（`data` 为模型 ref）和 `panel_review_completed`（`details` 含 `passed`、`issueCount`、`summary`）。终止事件包括 `done`、`cancelled` 和 `error`。
 
 ## 其他方法
 
@@ -73,8 +75,10 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `session.update` | `{ "id": "...", "title": "...", "reasoningLevel": "high" }` | 更新标题、思考深度等 Session 元数据 |
 | `session.archive` | `{ "id": "...", "archived": true }` | 归档或恢复 Session |
 | `session.delete` | `{ "id": "..." }` | 永久删除 Session |
+| `session.truncate` | `{ "id": "...", "keepCount": 5 }` | 保留前 N 条消息（"重新生成"用），返回剩余消息数 |
+| `model.compare` | `{ "prompt": "...", "models": ["a/m1", "b/m2"] }` | 让多个模型回答同一问题，返回各模型结果用于对比 |
 | `session.resume` | `{ "id": "...", "global": false }` | 恢复 Session |
-| `session.new` | `{ "workspace": "...", "reasoningLevel": "high" }` 或 `{ "global": true }` | 创建并绑定一个新 Session |
+| `session.new` | `{ "workspace": "...", "reasoningLevel": "high", "panelEnabled": true, "panelModels": ["openai/gpt-5.5"] }` 或 `{ "global": true }` | 创建并绑定一个新 Session；`panelEnabled` 开启评审团模式，`panelModels` 指定评审模型（空数组 = 自动挑选） |
 | `model.list` | 无 | 列出可用的 `provider/model` 引用 |
 | `model.catalog` | 无 | 返回模型详情、能力和活动状态 |
 | `model.switch` | `{ "model": "provider/model" }` | 切换并持久化模型 |

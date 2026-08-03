@@ -140,6 +140,10 @@ public sealed class AgentConfig
     public bool EnableContextCompaction { get; set; } = true;
     /// <summary>Consecutive output-cap truncations allowed before a turn gives up instead of ending silently.</summary>
     public int MaxOutputContinuations { get; set; } = 6;
+    /// <summary>Cross-vendor review panel: "provider/model" refs run adversarial review after each turn. Empty = auto-pick.</summary>
+    public List<string> ReviewModels { get; set; } = [];
+    /// <summary>How many review-fix rounds a turn may run before the panel stops.</summary>
+    public int MaxReviewRounds { get; set; } = 2;
     /// <summary>Agent mode: edit | plan | readonly | auto.</summary>
     public string Mode { get; set; } = "edit";
     /// <summary>Prompt key of the main system prompt (relative to prompts/, no extension).</summary>

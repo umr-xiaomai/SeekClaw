@@ -26,6 +26,12 @@ public interface IProviderManager
         CancellationToken ct,
         Func<ModelInfo, bool>? candidateFilter = null);
 
+    /// <summary>Streams a completion from one explicitly selected model (review panel), with retry/breaker/usage.</summary>
+    IAsyncEnumerable<LlmStreamEvent> StreamModelAsync(
+        ModelInfo model,
+        Func<ModelInfo, LlmRequest> requestFactory,
+        CancellationToken ct);
+
     /// <summary>Sends a minimal real completion to verify a model end-to-end.</summary>
     Task<(bool Success, string Detail, double LatencyMs)> TestModelAsync(ModelInfo model, CancellationToken ct = default);
 
@@ -191,6 +197,80 @@ public sealed class ProviderManager(
         }
 
         throw lastError ?? new LlmException("All providers failed.", retryable: false);
+    }
+
+    public async IAsyncEnumerable<LlmStreamEvent> StreamModelAsync(
+        ModelInfo model,
+        Func<ModelInfo, LlmRequest> requestFactory,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        LlmException? lastError = null;
+
+        for (var attempt = 1; attempt <= Math.Max(1, Retry.MaxAttempts); attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var stopwatch = Stopwatch.StartNew();
+            var committed = false;
+            LlmCompletion? completion = null;
+            IAsyncEnumerator<LlmStreamEvent>? stream = null;
+
+            try
+            {
+                stream = TryOpenStream(model, requestFactory, ct);
+
+                while (true)
+                {
+                    LlmStreamEvent? evt;
+                    try
+                    {
+                        if (!await stream.MoveNextAsync().ConfigureAwait(false)) break;
+                        evt = stream.Current;
+                    }
+                    catch (LlmException ex) when (!committed && ex.Retryable && !ct.IsCancellationRequested)
+                    {
+                        lastError = ex;
+                        Breaker.RecordFailure(model.Ref);
+                        RecordUsage(model, null, stopwatch, success: false);
+                        await stream.DisposeAsync().ConfigureAwait(false);
+
+                        if (attempt < Retry.MaxAttempts)
+                        {
+                            var delay = BackoffDelay(attempt);
+                            eventBus.Publish(new ProviderRetryEvent(model.Ref, attempt, ex.Message, delay));
+                            await Task.Delay(delay, ct).ConfigureAwait(false);
+                        }
+                        goto NextAttempt;
+                    }
+                    catch (LlmException ex)
+                    {
+                        Breaker.RecordFailure(model.Ref);
+                        RecordUsage(model, completion, stopwatch, success: false);
+                        await stream.DisposeAsync().ConfigureAwait(false);
+                        if (committed || !ex.Retryable) throw;
+                        lastError = ex;
+                        goto NextAttempt;
+                    }
+
+                    committed = true;
+                    if (evt is LlmCompleted done) completion = done.Completion;
+                    yield return evt;
+                }
+
+                Breaker.RecordSuccess(model.Ref);
+                RecordUsage(model, completion, stopwatch, success: true);
+                yield break;
+
+                NextAttempt: ;
+            }
+            finally
+            {
+                if (stream is not null)
+                    await stream.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        throw lastError ?? new LlmException("All attempts failed.", retryable: false);
     }
 
     public async Task<(bool Success, string Detail, double LatencyMs)> TestModelAsync(

@@ -65,6 +65,14 @@ public sealed record UsageRecordedEvent(
     decimal Cost,
     TimeSpan Elapsed) : RuntimeEvent;
 
+// ---------------------------------------------------------------- panel review
+
+public sealed record PanelRoundStartedEvent(int Round) : RuntimeEvent;
+
+public sealed record PanelReviewStartedEvent(string ModelRef) : RuntimeEvent;
+
+public sealed record PanelReviewCompletedEvent(string ModelRef, bool Passed, int IssueCount, string Summary) : RuntimeEvent;
+
 // ---------------------------------------------------------------- verification
 
 public sealed record VerificationStartedEvent(string Command, int Attempt) : RuntimeEvent;

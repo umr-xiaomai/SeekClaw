@@ -748,6 +748,108 @@ select:focus-visible {
   gap: 10px;
 }
 
+.task-phase-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 3px 10px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent-soft);
+  border-radius: 999px;
+}
+
+.phase-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: phase-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes phase-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .35; transform: scale(.8); }
+}
+
+.conversation-search {
+  display: flex;
+  height: 34px;
+  min-width: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  transition: min-width 180ms ease, border-color 180ms ease;
+}
+
+.conversation-search:focus-within,
+.conversation-search.active {
+  min-width: 210px;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.conversation-search input {
+  width: 0;
+  flex: 1;
+  color: var(--text);
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.conversation-search:focus-within input,
+.conversation-search.active input {
+  width: auto;
+  opacity: 1;
+}
+
+.conversation-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.step-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 10px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .08em;
+}
+
+.step-divider::before,
+.step-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.conversation-search-clear {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  place-items: center;
+  color: var(--text-muted);
+  border-radius: 5px;
+}
+
+.conversation-search-clear:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
 .conversation-title strong {
   max-width: min(48vw, 520px);
   overflow: hidden;
@@ -1328,6 +1430,46 @@ select:focus-visible {
 .markdown-body {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.markdown-body .mermaid-render {
+  margin: 14px 0;
+  padding: 14px;
+  display: flex;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow-x: auto;
+}
+
+.markdown-body .mermaid-render svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.markdown-body .mermaid-placeholder {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.markdown-body .mermaid-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-body .katex-display {
+  margin: 12px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+.markdown-body .katex {
+  font-size: 1.05em;
 }
 
 .markdown-body> :first-child {

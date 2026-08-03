@@ -76,6 +76,7 @@ public sealed class CoreTests : IDisposable
         {
             Role = SeekClaw.Runtime.Providers.ChatRole.Assistant,
             Text = "hi!",
+            ModelRef = "openai/gpt-5.5",
             ViewedImages = [new SeekClaw.Runtime.Providers.ChatImageReference("image-1", "screen.png")],
             ToolCalls = [new SeekClaw.Runtime.Providers.ToolCallRequest("c1", "edit_file", """{"path":"a.txt"}""")],
         };
@@ -91,6 +92,7 @@ public sealed class CoreTests : IDisposable
         Assert.Equal("AQID", loaded.Messages[0].Images![0].Data);
         Assert.Equal("screen.png", Assert.Single(loaded.Messages[1].ViewedImages!).Name);
         Assert.Equal("edit_file", loaded.Messages[1].ToolCalls![0].Name);
+        Assert.Equal("openai/gpt-5.5", loaded.Messages[1].ModelRef);
         Assert.Equal("c1", loaded.Messages[2].ToolCallId);
         Assert.Equal("a.txt", loaded.Messages[2].ToolFilePath);
         Assert.Contains("+new", loaded.Messages[2].ToolDiff);
@@ -163,6 +165,65 @@ public sealed class CoreTests : IDisposable
         Assert.True(migrated.Header.NetworkEnabled);
         migratedStore.UpdateMetadata(workspace, migrated.Header.Id, networkEnabled: false);
         Assert.False(migratedStore.Load(workspace, migrated.Header.Id)!.Header.NetworkEnabled);
+    }
+
+    [Fact]
+    public void SessionStore_TruncateDropsMessagesAfterKeepCount()
+    {
+        var workspace = NewWorkspace("truncate");
+        var store = NewSessionStore();
+        var session = store.Create(workspace);
+        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("first"));
+        store.Append(session, new SeekClaw.Runtime.Providers.ChatMessage
+        {
+            Role = SeekClaw.Runtime.Providers.ChatRole.Assistant,
+            Text = "answer one",
+        });
+        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("second"));
+        store.Append(session, new SeekClaw.Runtime.Providers.ChatMessage
+        {
+            Role = SeekClaw.Runtime.Providers.ChatRole.Assistant,
+            Text = "answer two",
+        });
+
+        store.Truncate(workspace, session.Header.Id, keepMessageCount: 2);
+
+        var reloaded = store.Load(workspace, session.Header.Id);
+        Assert.NotNull(reloaded);
+        Assert.Equal(2, reloaded!.Messages.Count);
+        Assert.Equal("first", reloaded.Messages[0].Text);
+        Assert.Equal("answer one", reloaded.Messages[1].Text);
+
+        // Truncating beyond the current size is a no-op.
+        store.Truncate(workspace, session.Header.Id, keepMessageCount: 99);
+        Assert.Equal(2, store.Load(workspace, session.Header.Id)!.Messages.Count);
+    }
+
+    [Fact]
+    public void SessionStore_PersistsPanelEnabledToggle()
+    {
+        var workspace = NewWorkspace("panel-toggle");
+        var store = NewSessionStore();
+
+        // New sessions default to panel review disabled.
+        var session = store.Create(workspace);
+        Assert.False(session.Header.PanelEnabled);
+
+        // Toggle on and verify the reloaded session keeps it.
+        store.UpdateMetadata(workspace, session.Header.Id, panelEnabled: true);
+        Assert.True(store.Load(workspace, session.Header.Id)!.Header.PanelEnabled);
+        Assert.True(Assert.Single(store.List(workspace)).PanelEnabled);
+
+        // A session created with the toggle already on round-trips too.
+        var panel = store.Create(workspace, panelEnabled: true);
+        Assert.True(store.Load(workspace, panel.Header.Id)!.Header.PanelEnabled);
+
+        // Per-session review models persist and can be cleared back to auto-pick.
+        var picked = store.Create(workspace, panelEnabled: true, panelModels: ["reviewer/critic-a", "reviewer/critic-b"]);
+        var reloaded = store.Load(workspace, picked.Header.Id)!;
+        Assert.Equal(["reviewer/critic-a", "reviewer/critic-b"], reloaded.Header.PanelModels);
+        store.UpdateMetadata(workspace, picked.Header.Id, panelModels: []);
+        Assert.Null(store.Load(workspace, picked.Header.Id)!.Header.PanelModels);
     }
 
     [Fact]

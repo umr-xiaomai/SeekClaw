@@ -1,6 +1,6 @@
 {
   "name": "seekclaw-desktop",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "private": true,
   "description": "SeekClaw desktop client",
   "main": "./out/main/index.js",
@@ -16,16 +16,18 @@
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
-    "highlight.js": "^11.11.1",
     "@lucide/vue": "^1.27.0",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.18.1",
     "markdown-it": "^14.3.0",
+    "mermaid": "^11.16.0",
     "vue": "^3.5.40"
   },
   "devDependencies": {
+    "@swc/core": "^1.15.47",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^26.1.2",
     "@vitejs/plugin-vue": "^6.0.8",
-    "@swc/core": "^1.15.47",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",

@@ -57,6 +57,8 @@ public static class DefaultSeekClawConfig
             MaxRepairAttempts = 3,
             EnableContextCompaction = true,
             MaxOutputContinuations = 6,
+            ReviewModels = [],
+            MaxReviewRounds = 2,
             SystemPrompt = "system/default",
             ThinkingBudgetTokens = 16_384,
             ReasoningLevel = ReasoningLevel.High,

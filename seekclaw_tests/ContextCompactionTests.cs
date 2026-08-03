@@ -250,7 +250,114 @@ public sealed class ContextCompactionTests
         }
     }
 
+    [Fact]
+    public async Task AgentTurn_PanelReview_LoopsUntilAllReviewersPass()
+    {
+        var dir = TempDir();
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Clear();
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "main",
+                Kind = "openai",
+                BaseUrl = "https://main.test/v1",
+                Models = [new ModelConfig { Id = "writer", ContextWindow = 8_000, MaxOutput = 1_024, Capabilities = new ModelCapabilities { ToolCalling = true } }],
+            });
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "reviewer",
+                Kind = "openai",
+                BaseUrl = "https://reviewer.test/v1",
+                Models = [new ModelConfig { Id = "critic-a", ContextWindow = 8_000, MaxOutput = 1_024 }, new ModelConfig { Id = "critic-b", ContextWindow = 8_000, MaxOutput = 1_024 }],
+            });
+            store.Config.Profiles["default"].Strategy = "fast";
+            store.Config.Routing.Strategies["fast"] = ["main/writer"];
+            store.Config.Routing.Fallback = ["reviewer/critic-a", "reviewer/critic-b"];
+            // Panel models come from the session (per-task selection), not global config.
+            store.Config.Agent.ReviewModels = [];
+            store.Config.Agent.MaxReviewRounds = 2;
+
+            // Round 1: critic-a finds issues, critic-b passes. Round 2: both pass.
+            var capture = new PanelSequenceClientFactory([
+                "VERDICT: ISSUES\n1. [S2] off-by-one in deck shuffle — src/deck.js:12 — clamp index",
+                "VERDICT: PASS",
+                "VERDICT: PASS",
+                "VERDICT: PASS",
+            ]);
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            var session = runtime.Sessions.Create(
+                globalWorkspace, panelEnabled: true, panelModels: ["reviewer/critic-a", "reviewer/critic-b"]);
+            var result = await runtime.Agent.RunTurnAsync(session, globalWorkspace, "build the game", CancellationToken.None);
+
+            Assert.Null(result.Error);
+            Assert.Equal("main-answer-2", result.Text);
+
+            // Round 1 found issues -> a panel feedback message was appended and the main
+            // model got a second chance; round 2 passed so the turn ended.
+            Assert.Contains(session.Messages, message =>
+                message.Role == ChatRole.User && message.Text.Contains("[评审团反馈]"));
+            var reviewCalls = capture.Requests.Count(request =>
+                request.System is { Length: > 0 } && request.System.Contains("adversarial reviewer"));
+            Assert.Equal(4, reviewCalls); // 2 reviewers x 2 rounds
+            Assert.All(
+                capture.Requests.Where(request => request.Tools.Count == 0),
+                request => Assert.Equal("reviewer", request.Provider.Id));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    private sealed class PanelSequenceClientFactory(ICollection<string> reviewVerdicts) : ILlmClientFactory
+    {
+        public List<LlmRequest> Requests { get; } = [];
+        private readonly Queue<string> _reviewVerdicts = new(reviewVerdicts);
+        private int _mainCalls;
+
+        public ILlmClient GetClient(string kind) => new Client(this);
+
+        private sealed class Client(PanelSequenceClientFactory owner) : ILlmClient
+        {
+            public string Kind => "openai";
+
+            public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
+                LlmRequest request, [EnumeratorCancellation] CancellationToken ct)
+            {
+                owner.Requests.Add(request);
+                await Task.Yield();
+                if (request.Tools.Count > 0)
+                {
+                    owner._mainCalls++;
+                    yield return new LlmCompleted(new LlmCompletion
+                    {
+                        Text = $"main-answer-{owner._mainCalls}",
+                        FinishReason = "stop",
+                    });
+                    yield break;
+                }
+                var verdict = owner._reviewVerdicts.Count > 0
+                    ? owner._reviewVerdicts.Dequeue()
+                    : "VERDICT: PASS";
+                yield return new LlmCompleted(new LlmCompletion { Text = verdict, FinishReason = "stop" });
+            }
+        }
+    }
 
     private sealed class SequenceClientFactory(params LlmCompletion[] completions) : ILlmClientFactory
     {

@@ -85,6 +85,8 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
     "maxRepairAttempts": 3,
     "enableContextCompaction": true,
     "maxOutputContinuations": 6,
+    "reviewModels": ["anthropic/claude-sonnet-5"],
+    "maxReviewRounds": 2,
     "mode": "edit",
     "systemPrompt": "system/default",
     "thinkingBudgetTokens": 16384,
@@ -99,6 +101,8 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 ```
 
 > `thinkingBudgetTokens` 是思考预算的基数，实际预算还会随思考深度档位放大（高×2、最大×4、极高×8、超级×16），并仅受模型 `maxOutput` 减去少量答案预留空间的限制——长任务不会被强限制在输出窗口的一半，避免思考到一半被强制截断。`enableContextCompaction` 开启后，当历史接近上下文上限时，Agent 会先把较早的对话总结成阶段性记忆（压缩上下文），再继续执行。当单次输出达到模型 `maxOutput` 上限（`finish_reason` 为 length/max_tokens）时，Agent 会自动继续下一轮而不是结束回合，空输出时会提示模型直接产出内容；连续截断超过 `maxOutputContinuations`（默认 6）次才会停止并给出明确警告。
+
+**评审团（跨厂商模型仲裁）**：会话/任务开启评审团后，每轮 Agent 认为完成时，会调用 `reviewModels` 里的模型（留空则自动从路由链挑选不同厂商的模型）做对抗式审查，发现的问题以 `[评审团反馈]` 消息喂回主模型修复，最多 `maxReviewRounds` 轮。桌面端会实时显示每个评审模型的审查状态与问题摘要。
 
 
 ### Provider Key

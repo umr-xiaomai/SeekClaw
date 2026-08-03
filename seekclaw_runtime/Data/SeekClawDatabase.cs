@@ -81,6 +81,8 @@ public sealed class SeekClawDatabase
                     archived INTEGER NOT NULL DEFAULT 0,
                     reasoning_level INTEGER NOT NULL,
                     network_enabled INTEGER NOT NULL DEFAULT 1,
+                    panel_enabled INTEGER NOT NULL DEFAULT 0,
+                    panel_models TEXT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (scope, id)
@@ -120,6 +122,32 @@ public sealed class SeekClawDatabase
                     using var alter = connection.CreateCommand();
                     alter.CommandText = "ALTER TABLE sessions ADD COLUMN network_enabled INTEGER NOT NULL DEFAULT 1;";
                     alter.ExecuteNonQuery();
+                }
+            }
+
+            // Migration: databases created before the panel-review toggle existed get the
+            // column (existing sessions default to disabled).
+            using (var checkPanel = connection.CreateCommand())
+            {
+                checkPanel.CommandText = "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'panel_enabled';";
+                if (Convert.ToInt64(checkPanel.ExecuteScalar()) == 0)
+                {
+                    using var alterPanel = connection.CreateCommand();
+                    alterPanel.CommandText = "ALTER TABLE sessions ADD COLUMN panel_enabled INTEGER NOT NULL DEFAULT 0;";
+                    alterPanel.ExecuteNonQuery();
+                }
+            }
+
+            // Migration: databases created before per-session panel models existed get the
+            // column (existing sessions keep auto-pick semantics).
+            using (var checkPanelModels = connection.CreateCommand())
+            {
+                checkPanelModels.CommandText = "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'panel_models';";
+                if (Convert.ToInt64(checkPanelModels.ExecuteScalar()) == 0)
+                {
+                    using var alterPanelModels = connection.CreateCommand();
+                    alterPanelModels.CommandText = "ALTER TABLE sessions ADD COLUMN panel_models TEXT NULL;";
+                    alterPanelModels.ExecuteNonQuery();
                 }
             }
 

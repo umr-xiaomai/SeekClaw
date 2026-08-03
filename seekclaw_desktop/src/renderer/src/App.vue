@@ -6,6 +6,7 @@ import {
   CornerDownLeft,
   Folder,
   FolderOpen,
+  GitCompareArrows,
   Globe2,
   Hammer,
   History,
@@ -13,9 +14,11 @@ import {
   MoreHorizontal,
   PanelRight,
   RefreshCw,
+  Search,
   Telescope,
   TerminalSquare,
-  Trash2
+  Trash2,
+  X
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
@@ -23,6 +26,7 @@ import AppTitleBar from './components/AppTitleBar.vue'
 import AboutDialog from './components/AboutDialog.vue'
 import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
 import Composer from './components/Composer.vue'
+import CompareDialog from './components/CompareDialog.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
@@ -77,6 +81,8 @@ interface RuntimeSessionHeader {
   updatedAt: string
   reasoningLevel?: string
   networkEnabled?: boolean
+  panelEnabled?: boolean
+  panelModels?: string[]
 }
 
 interface RuntimeSession extends RuntimeSessionHeader {
@@ -85,6 +91,7 @@ interface RuntimeSession extends RuntimeSessionHeader {
     text: string
     images?: ImageAttachment[]
     thinking?: string
+    modelRef?: string
     viewedImages?: Array<{ id: string; name: string }>
     toolCalls?: Array<{ id: string; name: string }>
     toolCallId?: string
@@ -128,6 +135,7 @@ const settingsOpen = ref(false)
 const aboutOpen = ref(false)
 const archivedTasksOpen = ref(false)
 const officialSkillsOpen = ref(false)
+const compareOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 const gitPanelWidth = ref(560)
@@ -157,6 +165,12 @@ const autoFollowConversation = ref(true)
 const taskNotice = ref<{ threadId: string; title: string; kind: 'done' | 'error' } | null>(null)
 const conversationLoading = ref(false)
 const conversationLoadError = ref('')
+const conversationQuery = ref('')
+const messageHeights = new Map<string, number>()
+const conversationScrollTop = ref(0)
+const conversationViewportHeight = ref(600)
+/** Per-task composer drafts, kept across task switches. */
+const composerDrafts = new Map<string, string>()
 let conversationSelectionToken = 0
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
@@ -321,7 +335,12 @@ function isNearConversationBottom(element: HTMLElement, threshold = 48): boolean
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold
 }
 
+function measureConversationViewport(): void {
+  if (scrollArea.value) conversationViewportHeight.value = scrollArea.value.clientHeight
+}
+
 function handleConversationScroll(): void {
+  if (scrollArea.value) conversationScrollTop.value = scrollArea.value.scrollTop
   const element = scrollArea.value
   if (element) autoFollowConversation.value = isNearConversationBottom(element)
 }
@@ -380,6 +399,8 @@ async function refreshProjectSessions(project: ProjectItem): Promise<void> {
         existing.archived = Boolean(saved.archived)
         existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
         existing.networkEnabled = saved.networkEnabled ?? true
+        existing.panelEnabled = saved.panelEnabled ?? false
+        existing.panelModels = saved.panelModels
       } else {
         threads.value.push({
           id: `${project.id}:session:${saved.id}`,
@@ -391,6 +412,7 @@ async function refreshProjectSessions(project: ProjectItem): Promise<void> {
           sessionLoaded: false,
           reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
           networkEnabled: saved.networkEnabled ?? true,
+          panelEnabled: saved.panelEnabled ?? false,
           archived: Boolean(saved.archived)
         })
       }
@@ -420,6 +442,8 @@ async function refreshGlobalSessions(): Promise<void> {
       existing.archived = Boolean(saved.archived)
       existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
       existing.networkEnabled = saved.networkEnabled ?? true
+      existing.panelEnabled = saved.panelEnabled ?? false
+      existing.panelModels = saved.panelModels
     } else {
       threads.value.push({
         id: `global:session:${saved.id}`,
@@ -430,6 +454,7 @@ async function refreshGlobalSessions(): Promise<void> {
         sessionLoaded: false,
         reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
         networkEnabled: saved.networkEnabled ?? true,
+        panelEnabled: saved.panelEnabled ?? false,
         archived: Boolean(saved.archived)
       })
     }
@@ -626,6 +651,7 @@ function newTask(projectId?: string): void {
     messages: [],
     reasoningLevel: ReasoningLevel.High,
     networkEnabled: true,
+    panelEnabled: false,
     archived: false
   }
   threads.value.unshift(thread)
@@ -678,6 +704,7 @@ function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
       content: item.text,
       images: item.images,
       thinking: item.thinking,
+      modelRef: item.modelRef,
       viewedImages: item.viewedImages,
       tools: item.toolCalls?.map((call) => ({
         id: call.id,
@@ -717,6 +744,8 @@ async function reloadThreadSession(thread: ThreadItem, project?: ProjectItem): P
 async function selectThread(id: string): Promise<void> {
   const thread = threads.value.find((item) => item.id === id)
   if (!thread) return
+  if (activeThread.value && composer.value)
+    composerDrafts.set(activeThread.value.id, composer.value.getValue())
   const project = projects.value.find((item) => item.id === thread.projectId)
   if (thread.projectId && !project) return
   const selectionToken = ++conversationSelectionToken
@@ -749,6 +778,8 @@ async function selectThread(id: string): Promise<void> {
   if (selectionToken !== conversationSelectionToken) return
   conversationLoading.value = false
   autoFollowConversation.value = true
+  const draft = composerDrafts.get(thread.id)
+  if (draft) composer.value?.setValue(draft)
   await scrollToBottom(false, true)
 }
 
@@ -756,6 +787,134 @@ function updateThreadTitle(thread: ThreadItem, prompt: string): boolean {
   if (thread.title !== '新任务') return false
   thread.title = prompt.length > 42 ? `${prompt.slice(0, 42)}…` : prompt
   return true
+}
+
+interface ConversationItem { message: ChatMessage; step?: number }
+
+/** Adds "步骤 N" markers before assistant messages that follow tool results. */
+const conversationItems = computed<ConversationItem[]>(() => {
+  const messages = activeThread.value?.messages ?? []
+  const items: ConversationItem[] = []
+  let step = 0
+  let lastWasTool = false
+  for (const message of messages) {
+    if (message.role === 'user') {
+      step = 0
+      lastWasTool = false
+    } else {
+      // Tool results are folded into assistant.tools, so an assistant message that
+      // carries tools followed by another assistant message begins a new step.
+      if (lastWasTool) step++
+      lastWasTool = (message.tools?.length ?? 0) > 0
+      items.push({ message, step: step > 1 ? step : undefined })
+      continue
+    }
+    items.push({ message })
+  }
+  return items
+})
+
+const VIRTUAL_THRESHOLD = 60
+const VIRTUAL_OVERSCAN = 12
+const VIRTUAL_ESTIMATED_HEIGHT = 120
+
+/** Windowed rendering for very long conversations: only messages near the viewport are mounted. */
+const virtualWindow = computed(() => {
+  const items = conversationItems.value
+  const total = items.length
+  if (total <= VIRTUAL_THRESHOLD || conversationQuery.value.trim()) {
+    return { active: false, start: 0, end: total, topPad: 0, bottomPad: 0, items }
+  }
+  const heightOf = (index: number): number =>
+    messageHeights.get(items[index]?.message.id ?? '') ?? VIRTUAL_ESTIMATED_HEIGHT
+
+  const targetTop = Math.max(0, conversationScrollTop.value - VIRTUAL_OVERSCAN * VIRTUAL_ESTIMATED_HEIGHT)
+  let topPad = 0
+  let start = 0
+  for (; start < total; start++) {
+    const height = heightOf(start)
+    if (topPad + height >= targetTop) break
+    topPad += height
+  }
+
+  const targetBottom = conversationScrollTop.value + conversationViewportHeight.value
+    + VIRTUAL_OVERSCAN * VIRTUAL_ESTIMATED_HEIGHT
+  let end = start
+  let acc = topPad
+  while (end < total && acc < targetBottom) {
+    acc += heightOf(end)
+    end++
+  }
+
+  let bottomPad = 0
+  for (let i = end; i < total; i++) bottomPad += heightOf(i)
+  return { active: true, start, end, topPad, bottomPad, items: items.slice(start, end) }
+})
+
+const vMeasure = {
+  mounted(el: HTMLElement, binding: { value: string }): void {
+    const report = (): void => {
+      const height = el.getBoundingClientRect().height
+      if (height > 0) messageHeights.set(binding.value, height)
+    }
+    report()
+    const observer = new ResizeObserver(report)
+    ;(el as HTMLElement & { __heightObserver?: ResizeObserver }).__heightObserver = observer
+    observer.observe(el)
+  },
+  unmounted(el: HTMLElement & { __heightObserver?: ResizeObserver }): void {
+    el.__heightObserver?.disconnect()
+  }
+}
+
+function messageMatches(message: ChatMessage, query: string): boolean {
+  const normalized = query.trim().toLocaleLowerCase()
+  if (!normalized) return true
+  return message.content.toLocaleLowerCase().includes(normalized)
+}
+
+function phaseLabel(status: string): string {
+  const s = status.toLocaleLowerCase()
+  if (s.includes('compacting')) return '压缩记忆'
+  if (s.includes('verifying')) return '构建验证'
+  if (s.includes('reviewing')) return '评审修复'
+  if (s.includes('truncated')) return '自动续写'
+  if (s.includes('thinking')) return '思考中'
+  return status
+}
+
+function continueAssistant(): void {
+  const thread = activeThread.value
+  if (!thread || thread.running || thread.archived) return
+  void sendMessage('继续', [])
+}
+
+async function regenerateMessage(message: ChatMessage): Promise<void> {
+  const thread = activeThread.value
+  if (!thread || thread.running || thread.archived || !thread.sessionId) return
+  const index = thread.messages.findIndex((item) => item.id === message.id)
+  if (index < 0) return
+  // Re-run the turn from its user prompt: keep history through that prompt, then resend it.
+  let promptIndex = -1
+  for (let i = index; i >= 0; i--) {
+    if (thread.messages[i]?.role === 'user') { promptIndex = i; break }
+  }
+  if (promptIndex < 0) return
+  const prompt = thread.messages[promptIndex]?.content ?? ''
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  try {
+    await window.seekclaw.daemon.request('session.truncate', {
+      id: thread.sessionId,
+      ...sessionScope(thread, project),
+      keepCount: promptIndex + 1
+    })
+  } catch {
+    return
+  }
+  thread.messages = thread.messages.slice(0, promptIndex + 1)
+  thread.panel = undefined
+  thread.phase = undefined
+  await sendMessage(prompt, [])
 }
 
 async function sendMessage(content: string, images: ImageAttachment[]): Promise<void> {
@@ -768,6 +927,7 @@ async function sendMessage(content: string, images: ImageAttachment[]): Promise<
     thread.queuedMessages.push({ id: makeId(), content, images, createdAt: Date.now() })
     return
   }
+  composerDrafts.delete(thread.id)
   await runMessageTurn(thread, content, images)
 }
 
@@ -892,7 +1052,9 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
       const sessionResponse = await window.seekclaw.daemon.request('session.new', {
         ...scope,
         reasoningLevel,
-        networkEnabled: thread.networkEnabled ?? true
+        networkEnabled: thread.networkEnabled ?? true,
+        panelEnabled: thread.panelEnabled ?? false,
+        panelModels: thread.panelModels
       })
       thread.sessionId = sessionResponse.data
       thread.sessionLoaded = true
@@ -1282,9 +1444,11 @@ function handleDaemonEvent(event: DaemonMessage): void {
       message.content += event.data
       message.state = 'streaming'
       break
-    case 'status':
+    case 'status': {
       if (message && event.data.toLocaleLowerCase().includes('thinking')) message.state = 'thinking'
+      thread.phase = phaseLabel(event.data)
       break
+    }
     case 'image_view': {
       if (!message) break
       const imageId = typeof event.details?.imageId === 'string' ? event.details.imageId : ''
@@ -1294,8 +1458,9 @@ function handleDaemonEvent(event: DaemonMessage): void {
         message.viewedImages.push({ id: imageId, name: event.data || '图片' })
       break
     }
-    case 'tool_start':
+    case 'tool_start': {
       if (!message) break
+      thread.phase = '执行工具'
       message.tools ??= []
       message.tools.push({
         id: eventCallId ?? `${event.id}-${message.tools.length}`,
@@ -1305,6 +1470,7 @@ function handleDaemonEvent(event: DaemonMessage): void {
         state: 'running'
       })
       break
+    }
     case 'tool_done': {
       if (!message) break
       const running = findTool()
@@ -1326,6 +1492,46 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       break
     }
+    case 'panel_round': {
+      if (!message) break
+      const round = Number(event.data) || 1
+      thread.panel = { round, running: true, reviews: [] }
+      break
+    }
+    case 'panel_review_started': {
+      if (!message) break
+      thread.phase = '评审团审查'
+      thread.panel ??= { round: 1, running: true, reviews: [] }
+      thread.panel.running = true
+      const ref = event.data
+      const existing = thread.panel.reviews.find((review) => review.ref === ref)
+      if (existing) {
+        existing.status = 'reviewing'
+        existing.summary = undefined
+        existing.issueCount = undefined
+      } else {
+        thread.panel.reviews.push({ ref, status: 'reviewing' })
+      }
+      break
+    }
+    case 'panel_review_completed': {
+      if (!message) break
+      thread.panel ??= { round: 1, running: true, reviews: [] }
+      const ref = event.data
+      const passed = event.details?.passed === true
+      const issueCount = Number(event.details?.issueCount) || 0
+      const summary = typeof event.details?.summary === 'string' ? event.details.summary : ''
+      const existing = thread.panel.reviews.find((review) => review.ref === ref)
+      if (existing) {
+        existing.status = passed ? 'passed' : 'issues'
+        existing.issueCount = issueCount
+        existing.summary = summary
+      } else {
+        thread.panel.reviews.push({ ref, status: passed ? 'passed' : 'issues', issueCount, summary })
+      }
+      thread.panel.running = thread.panel.reviews.some((review) => review.status === 'reviewing')
+      break
+    }
     case 'done':
     case 'cancelled':
       if (message) {
@@ -1338,6 +1544,8 @@ function handleDaemonEvent(event: DaemonMessage): void {
       thread.running = false
       thread.requestId = undefined
       thread.assistantId = undefined
+      thread.panel = undefined
+      thread.phase = undefined
       scheduleQueuedDrain(thread)
       if (isBackgroundThread) {
         showTaskNotice(thread, 'done')
@@ -1355,6 +1563,8 @@ function handleDaemonEvent(event: DaemonMessage): void {
       thread.running = false
       thread.requestId = undefined
       thread.assistantId = undefined
+      thread.panel = undefined
+      thread.phase = undefined
       scheduleQueuedDrain(thread)
       if (isBackgroundThread) {
         showTaskNotice(thread, 'error')
@@ -1415,6 +1625,41 @@ async function changeMode(nextMode: string): Promise<void> {
   } catch { /* Keep showing the active Runtime mode. */ }
 }
 
+async function changePanel(enabled: boolean): Promise<void> {
+  const thread = activeThread.value
+  if (!thread || thread.archived) return
+  thread.panelEnabled = enabled
+  if (!thread.panel?.running) thread.panel = undefined
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  if (!thread.sessionId || !daemonState.value.connected || (thread.projectId && !project)) return
+  try {
+    await window.seekclaw.daemon.request('session.update', {
+      id: thread.sessionId,
+      ...sessionScope(thread, project),
+      panelEnabled: enabled
+    })
+  } catch {
+    // Persist failure leaves the toggle local; the next turn still honors it.
+  }
+}
+
+async function changePanelModels(models: string[] | undefined): Promise<void> {
+  const thread = activeThread.value
+  if (!thread || thread.archived) return
+  thread.panelModels = models && models.length > 0 ? [...models] : undefined
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  if (!thread.sessionId || !daemonState.value.connected || (thread.projectId && !project)) return
+  try {
+    await window.seekclaw.daemon.request('session.update', {
+      id: thread.sessionId,
+      ...sessionScope(thread, project),
+      panelModels: thread.panelModels ?? []
+    })
+  } catch {
+    // Persist failure leaves the selection local; the next turn still honors it.
+  }
+}
+
 async function changeReasoningLevel(level: ReasoningLevel): Promise<void> {
   const thread = activeThread.value
   if (!thread || thread.running || thread.archived) return
@@ -1444,12 +1689,15 @@ onMounted(async () => {
   unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
   appReadyForRecovery = true
   await runReconnectCycle(true)
+  measureConversationViewport()
+  window.addEventListener('resize', measureConversationViewport)
   if (!daemonState.value.connected) projects.value.forEach((project) => { project.loaded = true })
   if (activeThread.value) composer.value?.focus()
 })
 
 onBeforeUnmount(() => {
   appReadyForRecovery = false
+  window.removeEventListener('resize', measureConversationViewport)
   unsubscribeEvent?.()
   unsubscribeState?.()
 })
@@ -1514,8 +1762,22 @@ watch(theme, applyTheme)
             <Folder v-else :size="20" />
             <strong>{{ conversationTitle }}</strong>
             <small v-if="activeThread">{{ activeProject?.name || '全局任务' }}</small>
+            <span v-if="activeThread?.running && activeThread?.phase" class="task-phase-chip">
+              <span class="phase-dot" />{{ activeThread.phase }}
+            </span>
           </div>
           <div class="conversation-actions">
+            <label class="conversation-search" :class="{ active: Boolean(conversationQuery.trim()) }">
+              <Search :size="15" />
+              <input v-model="conversationQuery" placeholder="搜索对话" aria-label="搜索对话" />
+              <button
+                v-if="conversationQuery"
+                type="button"
+                class="conversation-search-clear"
+                title="清除搜索"
+                @click="conversationQuery = ''"
+              ><X :size="13" /></button>
+            </label>
             <button
               v-if="!daemonState.connected"
               class="connection-button"
@@ -1540,6 +1802,9 @@ watch(theme, applyTheme)
             <button v-if="activeProject" class="icon-button project-tool-button" title="查看 Git 提交记录" @click="openGitPanel('history')">
               <History :size="18" />
             </button>
+            <button class="icon-button project-tool-button" title="多模型对比" :disabled="models.length < 2" @click="compareOpen = true">
+              <GitCompareArrows :size="18" />
+            </button>
             <button class="icon-button" title="任务设置" :disabled="!activeThread" @click="openTaskSettings()">
               <MoreHorizontal :size="18" />
             </button>
@@ -1558,13 +1823,36 @@ watch(theme, applyTheme)
             <button class="secondary-button empty-state-action" @click="selectThread(activeThreadId)">重新加载</button>
           </div>
           <div v-else-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
-            <ConversationMessage
-              v-for="message in activeThread.messages"
-              :key="message.id"
-              :message="message"
-              :image-sources="activeImageSources"
-              @open-diff="openToolDiff"
-            />
+            <template v-if="virtualWindow.active">
+              <div class="virtual-pad" :style="{ height: `${virtualWindow.topPad}px` }" />
+              <template v-for="item in virtualWindow.items" :key="item.message.id">
+                <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
+                <div v-measure="item.message.id" class="virtual-message">
+                  <ConversationMessage
+                    :message="item.message"
+                    :image-sources="activeImageSources"
+                    :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
+                    @open-diff="openToolDiff"
+                    @continue="continueAssistant"
+                    @regenerate="regenerateMessage"
+                  />
+                </div>
+              </template>
+              <div class="virtual-pad" :style="{ height: `${virtualWindow.bottomPad}px` }" />
+            </template>
+            <template v-else>
+              <template v-for="item in conversationItems" :key="item.message.id">
+                <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
+                <ConversationMessage
+                  :message="item.message"
+                  :image-sources="activeImageSources"
+                  :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
+                  @open-diff="openToolDiff"
+                  @continue="continueAssistant"
+                  @regenerate="regenerateMessage"
+                />
+              </template>
+            </template>
           </div>
           <div v-else-if="activeThread" class="empty-state">
             <h1>今天从哪里开始？</h1>
@@ -1639,6 +1927,7 @@ watch(theme, applyTheme)
               </div>
             </div>
           </div>
+          <PanelReviewCard :panel="activeThread?.panel" />
           <Composer
             ref="composer"
             :busy="busy"
@@ -1650,12 +1939,16 @@ watch(theme, applyTheme)
             :supports-images="activeModelSupportsImages"
             :reasoning-level="activeReasoningLevel"
             :network-enabled="activeThread?.networkEnabled ?? true"
+            :panel-enabled="activeThread?.panelEnabled ?? false"
+            :panel-models="activeThread?.panelModels"
             @send="sendMessage"
             @stop="stopTurn"
             @change-model="changeModel"
             @change-mode="changeMode"
             @change-reasoning-level="changeReasoningLevel"
             @change-network="changeNetwork"
+            @change-panel="changePanel"
+            @change-panel-models="changePanelModels"
           />
           <p class="composer-caption">
             {{ conversationLoading
@@ -1708,6 +2001,13 @@ watch(theme, applyTheme)
     <OfficialSkillsDialog
       :open="officialSkillsOpen"
       @close="officialSkillsOpen = false"
+    />
+
+    <CompareDialog
+      :open="compareOpen"
+      :models="models"
+      :daemon-connected="daemonState.connected"
+      @close="compareOpen = false"
     />
 
     <ArchivedTasksDialog

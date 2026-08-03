@@ -25,6 +25,7 @@ public sealed record AgentTurnResult(string Text, bool Cancelled, string? Error)
 public sealed class Agent(
     IConfigStore configStore,
     IProviderManager providerManager,
+    IModelRegistry modelRegistry,
     IToolRegistry toolRegistry,
     IPromptProvider promptProvider,
     PromptComposer promptComposer,
@@ -46,6 +47,21 @@ public sealed class Agent(
         Stay factual; do not invent anything that is not in the conversation. The summary
         will be sent to the model as the start of the history, so prefer compact bullet
         points over prose.
+        """;
+
+    private const string PanelReviewInstruction = """
+        You are an adversarial reviewer on SeekClaw's cross-vendor review panel. A coding
+        agent just finished the work shown below and asks for your critical review.
+        Hunt for real bugs, edge cases, security issues, and gaps against the request.
+        Be specific: reference concrete files, functions, and behavior you can observe.
+        Do not invent problems; ignore style nits; focus on correctness.
+        Reply in exactly this format:
+
+        VERDICT: PASS
+        (or)
+        VERDICT: ISSUES
+        1. [S1|S2|S3] <problem> — <where> — <suggested fix>
+        2. ...
         """;
 
     public async Task<AgentTurnResult> RunTurnAsync(
@@ -78,6 +94,8 @@ public sealed class Agent(
             var compactedThisTurn = false;
             var truncatedSteps = 0;
             var reachedMaxSteps = false;
+            var panelEnabled = session.Header.PanelEnabled;
+            var reviewRounds = 0;
             var step = 0;
             while (true)
             {
@@ -129,6 +147,7 @@ public sealed class Agent(
                     Role = ChatRole.Assistant,
                     Text = completion.Text,
                     Thinking = completion.Thinking.Length > 0 ? completion.Thinking : null,
+                    ModelRef = $"{model.Provider.Id}/{model.Model.Id}",
                     ToolCalls = completion.ToolCalls.Count > 0 ? completion.ToolCalls : null,
                     ViewedImages = step == 1
                         ? userMessage.Images?.Select(image => new ChatImageReference(image.Id, image.Name)).ToList()
@@ -242,6 +261,22 @@ public sealed class Agent(
                     continue;
                 }
                 if (steering is not null && !steering.TryCompleteIfEmpty()) continue;
+
+                // Cross-vendor review panel (评审团): adversarial reviewers from other model
+                // vendors examine the finished work; reported issues loop back to the main
+                // model to fix, up to MaxReviewRounds.
+                if (panelEnabled && reviewRounds < agentConfig.MaxReviewRounds)
+                {
+                    var feedback = await RunPanelReviewAsync(
+                        workspace, session, model, reviewRounds + 1, completion.Text, ct).ConfigureAwait(false);
+                    if (feedback is not null)
+                    {
+                        reviewRounds++;
+                        sessionStore.Append(session, ChatMessage.User(feedback));
+                        events.Publish(new StatusEvent("Reviewing", $"panel round {reviewRounds}"));
+                        continue;
+                    }
+                }
                 break;
             }
             if (reachedMaxSteps && error is null && !cancelled)
@@ -311,6 +346,141 @@ public sealed class Agent(
                     ToolFilePath = message.ToolFilePath,
                 })
             .ToList();
+    }
+
+    private sealed record PanelReport(string ModelRef, bool Passed, int IssueCount, string Summary);
+
+    private async Task<string?> RunPanelReviewAsync(
+        WorkspaceInfo workspace,
+        AgentSession session,
+        ModelInfo activeModel,
+        int round,
+        string finalText,
+        CancellationToken ct)
+    {
+        var panel = ResolvePanelModels(session, activeModel);
+        if (panel.Count == 0) return null;
+
+        events.Publish(new PanelRoundStartedEvent(round));
+        var context = BuildPanelContext(session, finalText);
+        var reviewTasks = panel
+            .Select(model => ReviewWithModelAsync(model, workspace, context, ct))
+            .ToList();
+        var reports = await Task.WhenAll(reviewTasks).ConfigureAwait(false);
+
+        var failing = reports.Where(report => report is { IssueCount: > 0 }).ToList();
+        if (failing.Count == 0) return null;
+
+        var builder = new StringBuilder();
+        builder.Append(
+            $">>> [评审团反馈] 第 {round} 轮：{failing.Count}/{reports.Length} 个评审模型发现问题，请逐项修复后重新验证。\n");
+        foreach (var report in reports)
+        {
+            if (report.IssueCount == 0) continue;
+            builder.Append($"\n### {report.ModelRef}（{report.IssueCount} 个问题）\n");
+            builder.Append(report.Summary.Trim());
+            builder.Append('\n');
+        }
+        return builder.ToString();
+    }
+
+    private async Task<PanelReport> ReviewWithModelAsync(
+        ModelInfo model, WorkspaceInfo workspace, IReadOnlyList<ChatMessage> context, CancellationToken ct)
+    {
+        events.Publish(new PanelReviewStartedEvent(model.Ref));
+        try
+        {
+            LlmCompletion? completion = null;
+            await foreach (var evt in providerManager.StreamModelAsync(
+                model,
+                candidate => new LlmRequest
+                {
+                    Provider = candidate.Provider,
+                    Model = candidate.Model,
+                    Messages = context,
+                    System = PanelReviewInstruction,
+                    MaxTokens = 4_096,
+                    EnableThinking = false,
+                    ReasoningLevel = ReasoningLevel.None,
+                },
+                ct).ConfigureAwait(false))
+            {
+                if (evt is LlmCompleted completed) completion = completed.Completion;
+            }
+            var text = completion?.Text ?? "";
+            var (passed, issueCount) = ParsePanelVerdict(text);
+            events.Publish(new PanelReviewCompletedEvent(model.Ref, passed, issueCount, text));
+            return new PanelReport(model.Ref, passed, issueCount, text);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // A failed reviewer must never break the turn; treat it as a pass and continue.
+            events.Publish(new WarningEvent($"评审模型 {model.Ref} 调用失败：{ex.Message}"));
+            events.Publish(new PanelReviewCompletedEvent(model.Ref, true, 0, ""));
+            return new PanelReport(model.Ref, true, 0, "");
+        }
+    }
+
+    private IReadOnlyList<ModelInfo> ResolvePanelModels(AgentSession session, ModelInfo activeModel)
+    {
+        var config = configStore.Config;
+        // Per-session panel selection wins; fall back to the global list, then auto-pick.
+        var refs = session.Header.PanelModels is { Count: > 0 }
+            ? session.Header.PanelModels
+            : config.Agent.ReviewModels is { Count: > 0 }
+                ? config.Agent.ReviewModels
+                : AutoPanelRefs(config, activeModel);
+        return refs
+            .Select(modelRegistry.Resolve)
+            .Where(model => model is not null && model.Provider.Enabled)
+            .Take(3)
+            .Select(model => model!)
+            .ToList();
+    }
+
+    /// <summary>Auto-picks panel candidates from the active routing chain, preferring a different vendor.</summary>
+    private static List<string> AutoPanelRefs(SeekClawConfig config, ModelInfo activeModel)
+    {
+        var strategy = config.GetActiveProfile().Strategy ?? "balanced";
+        var strategyRefs = config.Routing.Strategies.TryGetValue(strategy, out var refs) ? refs : [];
+        return strategyRefs
+            .Concat(config.Routing.Fallback)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(candidate => !candidate.StartsWith(activeModel.Provider.Id + "/", StringComparison.OrdinalIgnoreCase))
+            .Take(2)
+            .ToList();
+    }
+
+    private static IReadOnlyList<ChatMessage> BuildPanelContext(AgentSession session, string finalText)
+    {
+        var context = new List<ChatMessage>();
+        var start = Math.Max(0, session.Messages.Count - 8);
+        for (var i = start; i < session.Messages.Count; i++)
+            context.Add(session.Messages[i]);
+        if (!string.IsNullOrWhiteSpace(finalText))
+            context.Add(ChatMessage.User($"以下是编码 Agent 本轮完成的最终结果，请重点审查：\n\n{finalText}"));
+        return context;
+    }
+
+    private static (bool Passed, int IssueCount) ParsePanelVerdict(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return (true, 0);
+        var lines = text.Split('\n');
+        var verdict = lines.FirstOrDefault(line =>
+            line.TrimStart().StartsWith("VERDICT:", StringComparison.OrdinalIgnoreCase));
+        var issueCount = lines.Count(line =>
+        {
+            var trimmed = line.TrimStart();
+            return trimmed.Length >= 2 && char.IsAsciiDigit(trimmed[0]) && trimmed[1] == '.';
+        });
+        if (issueCount > 0) return (false, issueCount);
+        if (verdict is not null && verdict.Contains("ISSUES", StringComparison.OrdinalIgnoreCase))
+            return (false, 1);
+        return (true, 0);
     }
 
     private async Task CompactContextAsync(

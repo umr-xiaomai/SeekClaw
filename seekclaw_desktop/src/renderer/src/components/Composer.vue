@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ArrowUp, Globe, ImagePlus, Square, X } from '@lucide/vue'
-import { nextTick, ref, watch } from 'vue'
+import { ArrowUp, Gavel, Globe, ImagePlus, Sparkles, Square, X } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ImageAttachment, ReasoningLevel } from '../types'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
+import PanelModelsMenu from './PanelModelsMenu.vue'
 import ReasoningDepthMenu from './ReasoningDepthMenu.vue'
 import SelectMenu from './SelectMenu.vue'
 
@@ -16,6 +17,8 @@ const props = defineProps<{
   reasoningLevel: ReasoningLevel
   supportsImages: boolean
   networkEnabled: boolean
+  panelEnabled: boolean
+  panelModels: string[] | undefined
 }>()
 
 const emit = defineEmits<{
@@ -25,6 +28,8 @@ const emit = defineEmits<{
   changeMode: [mode: string]
   changeReasoningLevel: [level: ReasoningLevel]
   changeNetwork: [enabled: boolean]
+  changePanel: [enabled: boolean]
+  changePanelModels: [models: string[] | undefined]
 }>()
 
 const maxImageCount = 10
@@ -141,6 +146,50 @@ async function handlePaste(event: ClipboardEvent): Promise<void> {
   }
 }
 
+const dropNotice = ref('')
+
+async function handleDrop(event: DragEvent): Promise<void> {
+  event.preventDefault()
+  if (props.disabled) return
+  const files = Array.from(event.dataTransfer?.files ?? [])
+  if (files.length === 0) return
+  const images = files.filter((file) => file.type.startsWith('image/'))
+  const texts = files.filter((file) => !file.type.startsWith('image/'))
+  let notice = ''
+  if (images.length > 0) {
+    const candidates = images.map((file) => ({
+      name: file.name,
+      mediaType: file.type || 'image/png',
+      data: '',
+      sizeBytes: file.size
+    }))
+    const decoded = await Promise.all(images.map((file) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
+      reader.onerror = () => reject(new Error('无法读取图片'))
+      reader.readAsDataURL(file)
+    })))
+    candidates.forEach((candidate, index) => { candidate.data = decoded[index] ?? '' })
+    const warning = addImages(candidates)
+    notice = [notice, warning].filter(Boolean).join(' ')
+  }
+  if (texts.length > 0) {
+    const parts: string[] = []
+    for (const file of texts.slice(0, 3)) {
+      const text = (await file.text()).slice(0, 16_000)
+      parts.push(`[附件：${file.name}]\n\`\`\`\n${text}\n\`\`\``)
+    }
+    if (parts.length > 0) {
+      const block = parts.join('\n\n')
+      value.value = value.value.trim() ? `${value.value.trim()}\n\n${block}` : block
+      notice = [notice, '文本附件已加入输入框，可编辑后发送。'].filter(Boolean).join(' ')
+      void nextTick(() => { resize(); focus() })
+    }
+  }
+  dropNotice.value = notice
+  window.setTimeout(() => { dropNotice.value = '' }, 4000)
+}
+
 function removeImage(id: string): void {
   images.value = images.value.filter((image) => image.id !== id)
   imageNotice.value = ''
@@ -175,6 +224,50 @@ function handleKeydown(event: KeyboardEvent): void {
   submit()
 }
 
+const promptMenuOpen = ref(false)
+const promptMenuStyle = ref<Record<string, string>>({})
+
+const quickPrompts = [
+  { label: '探索并理解当前项目', text: '请阅读当前项目并总结结构、技术栈与关键模块，方便后续开发。' },
+  { label: '审查代码', text: '请审查当前代码，找出 bug、边界问题与改进点，并给出具体修改建议。' },
+  { label: '修复构建/测试错误', text: '请运行构建与测试，修复所有报错，并确保验证通过。' },
+  { label: '编写单元测试', text: '请为当前模块编写覆盖关键路径的单元测试，并运行验证。' }
+]
+
+function togglePrompts(event: MouseEvent): void {
+  if (props.disabled) { promptMenuOpen.value = false; return }
+  promptMenuOpen.value = !promptMenuOpen.value
+  if (promptMenuOpen.value) {
+    const trigger = event.currentTarget as HTMLElement
+    const rect = trigger.getBoundingClientRect()
+    const edge = 10
+    const width = Math.min(320, window.innerWidth - edge * 2)
+    const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge))
+    const placeAbove = window.innerHeight - rect.bottom < 300
+    promptMenuStyle.value = placeAbove
+      ? { width: `${width}px`, left: `${left}px`, bottom: `${window.innerHeight - rect.top + 8}px` }
+      : { width: `${width}px`, left: `${left}px`, top: `${rect.bottom + 8}px` }
+  }
+}
+
+function insertPrompt(text: string): void {
+  promptMenuOpen.value = false
+  value.value = value.value.trim() ? `${value.value.trim()}\n\n${text}` : text
+  void nextTick(() => { resize(); focus() })
+}
+
+function closePromptsOnOutside(event: MouseEvent): void {
+  const target = event.target as Node
+  if (!(target instanceof Element) || !target.closest('.prompt-menu, .prompt-menu-trigger'))
+    promptMenuOpen.value = false
+}
+
+onBeforeUnmount(() => document.removeEventListener('mousedown', closePromptsOnOutside, true))
+
+function insertPromptsListeners(): void {
+  document.addEventListener('mousedown', closePromptsOnOutside, true)
+}
+
 function focus(): void {
   textarea.value?.focus()
 }
@@ -187,7 +280,14 @@ function setValue(nextValue: string): void {
   })
 }
 
-defineExpose({ focus, setValue })
+function getValue(): string {
+  return value.value
+}
+
+defineExpose({ focus, setValue, getValue })
+watch(promptMenuOpen, (open) => {
+  if (open) insertPromptsListeners()
+})
 watch(value, resize)
 watch(() => props.taskId, () => {
   images.value = []
@@ -203,7 +303,8 @@ watch(() => props.supportsImages, (supported) => {
 </script>
 
 <template>
-  <div class="composer-shell">
+  <div class="composer-shell" @drop.prevent="handleDrop" @dragover.prevent>
+    <p v-if="dropNotice" class="composer-image-notice">{{ dropNotice }}</p>
     <div v-if="images.length" class="composer-image-strip" aria-label="待发送图片">
       <div v-for="image in images" :key="image.id" class="composer-image-card">
         <button type="button" class="composer-image-preview" :title="`预览 ${image.name}`" @click="previewImage = image">
@@ -246,6 +347,54 @@ watch(() => props.supportsImages, (supported) => {
         <Globe :size="15" />
         <span>联网</span>
       </button>
+      <div class="prompt-menu-root">
+        <button
+          class="icon-button composer-icon prompt-menu-trigger"
+          type="button"
+          :title="'快捷提示词'"
+          :disabled="disabled"
+          @click="togglePrompts"
+        >
+          <Sparkles :size="16" />
+        </button>
+        <Teleport to="body">
+          <Transition name="select-popover">
+            <section v-if="promptMenuOpen" class="prompt-menu" role="menu" :style="promptMenuStyle">
+              <header class="prompt-menu-header"><strong>快捷提示词</strong></header>
+              <button
+                v-for="prompt in quickPrompts"
+                :key="prompt.label"
+                type="button"
+                class="prompt-menu-item"
+                role="menuitem"
+                @click="insertPrompt(prompt.text)"
+              >
+                <span>{{ prompt.label }}</span>
+                <small>{{ prompt.text }}</small>
+              </button>
+            </section>
+          </Transition>
+        </Teleport>
+      </div>
+      <button
+        class="network-toggle"
+        :class="{ active: panelEnabled }"
+        type="button"
+        :disabled="disabled"
+        :title="panelEnabled ? '评审团已开启：任务完成后由其他厂商模型对抗式审查，发现问题自动修复' : '评审团已关闭：任务完成后直接结束'"
+        :aria-pressed="panelEnabled"
+        @click="emit('changePanel', !panelEnabled)"
+      >
+        <Gavel :size="15" />
+        <span>评审团</span>
+      </button>
+      <PanelModelsMenu
+        v-if="panelEnabled"
+        :model-value="panelModels"
+        :models="models"
+        :disabled="busy || disabled"
+        @update:model-value="emit('changePanelModels', $event)"
+      />
       <SelectMenu
         class="composer-select mode-control"
         :model-value="mode"
@@ -292,3 +441,64 @@ watch(() => props.supportsImages, (supported) => {
     @close="previewImage = null"
   />
 </template>
+<style scoped>
+.prompt-menu-root {
+  display: inline-flex;
+}
+
+.prompt-menu {
+  position: fixed;
+  z-index: 210;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.prompt-menu-header {
+  padding: 11px 14px 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+
+.prompt-menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.prompt-menu-item:last-child {
+  border-bottom: 0;
+}
+
+.prompt-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.prompt-menu-item span,
+.prompt-menu-item small {
+  display: block;
+}
+
+.prompt-menu-item span {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.prompt-menu-item small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>

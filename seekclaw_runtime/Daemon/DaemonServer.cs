@@ -454,6 +454,11 @@ public sealed class DaemonServer : IAsyncDisposable
                             token => _admin.FetchProviderModelsAsync(Params(request), token), ct).ConfigureAwait(false);
                         break;
 
+                    case "model.compare":
+                        await RunAdminAsync(writer, writerGate, id, false,
+                            ct => _admin.CompareModels(Params(request), ct), ct).ConfigureAwait(false);
+                        break;
+
                     case "model.catalog":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _ => Task.FromResult(_admin.ModelCatalog()), ct).ConfigureAwait(false);
@@ -539,6 +544,11 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.GetSession(Params(request))), ct).ConfigureAwait(false);
                         break;
 
+                    case "session.truncate":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.TruncateSession(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
                     case "session.update":
                         await RunAdminAsync(writer, writerGate, id, true,
                             _ => Task.FromResult(_admin.UpdateSession(Params(request))), ct).ConfigureAwait(false);
@@ -615,7 +625,9 @@ public sealed class DaemonServer : IAsyncDisposable
                             break;
                         }
                         var networkEnabled = Params(request)["networkEnabled"]?.GetValue<bool?>() ?? true;
-                        session = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled);
+                        var panelEnabled = Params(request)["panelEnabled"]?.GetValue<bool?>() ?? false;
+                        var panelModels = ParseStringArray(Params(request)["panelModels"]);
+                        session = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled, panelEnabled, panelModels);
                         await WriteAsync(writer, writerGate, id, "result", session.Header.Id, ct).ConfigureAwait(false);
                         break;
                     }
@@ -821,6 +833,23 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["callId"] = diff.CallId,
                         ["diff"] = diff.UnifiedDiff,
                     }),
+                PanelRoundStartedEvent round => (
+                    Name: (string?)"panel_round",
+                    Data: round.Round.ToString(),
+                    Details: (JsonObject?)null),
+                PanelReviewStartedEvent review => (
+                    Name: (string?)"panel_review_started",
+                    Data: review.ModelRef,
+                    Details: (JsonObject?)null),
+                PanelReviewCompletedEvent review => (
+                    Name: (string?)"panel_review_completed",
+                    Data: review.ModelRef,
+                    Details: new JsonObject
+                    {
+                        ["passed"] = review.Passed,
+                        ["issueCount"] = review.IssueCount,
+                        ["summary"] = review.Summary,
+                    }),
                 _ => (Name: (string?)null, Data: "", Details: (JsonObject?)null),
             };
             if (payload.Name is not null)
@@ -846,6 +875,18 @@ public sealed class DaemonServer : IAsyncDisposable
         if (!Directory.Exists(fullPath))
             throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
         return _runtime.Workspaces.Detect(fullPath);
+    }
+
+    private static List<string>? ParseStringArray(JsonNode? node)
+    {
+        // Null when the parameter is absent; an empty array clears the value.
+        if (node is not JsonArray array) return null;
+        return array
+            .Select(item => item?.GetValue<string>()?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static IReadOnlyList<ChatImageAttachment> ParseImages(JsonNode? node)

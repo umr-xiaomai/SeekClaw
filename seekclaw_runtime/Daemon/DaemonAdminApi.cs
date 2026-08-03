@@ -17,6 +17,76 @@ internal sealed class DaemonAdminApi(
     IFileLockCoordinator fileLocks)
 {
     /// <summary>Snapshot of the current file-task ownership table.</summary>
+    /// <summary>One-shot answers to the same prompt from several models, for side-by-side comparison.</summary>
+    public async Task<string> CompareModels(JsonObject parameters, CancellationToken ct)
+    {
+        var prompt = RequiredString(parameters, "prompt");
+        var refs = ParseStringArray(parameters["models"]) ?? [];
+        if (refs.Count < 2)
+            throw new DaemonRequestException("请至少选择两个模型进行对比");
+        if (string.IsNullOrWhiteSpace(prompt))
+            throw new DaemonRequestException("params.prompt is required");
+
+        var results = new JsonArray();
+        foreach (var modelRef in refs)
+        {
+            var model = runtime.Models.Resolve(modelRef);
+            if (model is null)
+            {
+                results.Add((JsonNode)new JsonObject
+                {
+                    ["ref"] = modelRef,
+                    ["text"] = "",
+                    ["error"] = $"未知模型 {modelRef}",
+                });
+                continue;
+            }
+
+            string text = "";
+            string? error = null;
+            try
+            {
+                var completion = await CollectModelCompletionAsync(model, prompt, ct).ConfigureAwait(false);
+                text = completion?.Text ?? "";
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                error = ex.Message;
+            }
+
+            results.Add((JsonNode)new JsonObject
+            {
+                ["ref"] = model.Ref,
+                ["text"] = text,
+                ["error"] = error,
+            });
+        }
+
+        return results.ToJsonString();
+    }
+
+    private async Task<LlmCompletion?> CollectModelCompletionAsync(
+        ModelInfo model, string prompt, CancellationToken ct)
+    {
+        LlmCompletion? completion = null;
+        var maxTokens = Math.Min(8_192, Math.Max(512, model.Model.MaxOutput));
+        await foreach (var evt in runtime.Providers.StreamModelAsync(
+            model,
+            candidate => new LlmRequest
+            {
+                Provider = candidate.Provider,
+                Model = candidate.Model,
+                Messages = [ChatMessage.User(prompt)],
+                MaxTokens = maxTokens,
+                ReasoningLevel = ReasoningLevel.None,
+            },
+            ct).ConfigureAwait(false))
+        {
+            if (evt is LlmCompleted completed) completion = completed.Completion;
+        }
+        return completion;
+    }
+
     public string ListLocks()
     {
         var locks = new JsonArray();
@@ -604,16 +674,35 @@ internal sealed class DaemonAdminApi(
         var networkEnabled = parameters.ContainsKey("networkEnabled")
             ? parameters["networkEnabled"]?.GetValue<bool?>() ?? true
             : (bool?)null;
+        var panelEnabled = parameters.ContainsKey("panelEnabled")
+            ? parameters["panelEnabled"]?.GetValue<bool?>() ?? false
+            : (bool?)null;
+        var panelModels = parameters.ContainsKey("panelModels")
+            ? ParseStringArray(parameters["panelModels"])
+            : null;
         try
         {
             var header = runtime.Sessions.UpdateMetadata(
-                workspace, id, title: title, reasoningLevel: reasoningLevel, networkEnabled: networkEnabled);
+                workspace, id, title: title, reasoningLevel: reasoningLevel,
+                networkEnabled: networkEnabled, panelEnabled: panelEnabled, panelModels: panelModels);
             return JsonSerializer.Serialize(header, SeekClawJsonContext.Default.SessionHeader);
         }
         catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)
         {
             throw new DaemonRequestException(ex.Message);
         }
+    }
+
+    public string TruncateSession(JsonObject parameters)
+    {
+        var workspace = SessionWorkspace(parameters);
+        var id = RequiredString(parameters, "id");
+        var keepCount = parameters["keepCount"]?.GetValue<int?>();
+        if (keepCount is null or < 0)
+            throw new DaemonRequestException("params.keepCount is required (>= 0)");
+        runtime.Sessions.Truncate(workspace, id, keepCount.Value);
+        var remaining = runtime.Sessions.Load(workspace, id)?.Messages.Count ?? 0;
+        return remaining.ToString();
     }
 
     public string ArchiveSession(JsonObject parameters)
@@ -799,6 +888,18 @@ internal sealed class DaemonAdminApi(
         if (!Directory.Exists(fullPath))
             throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
         return runtime.Workspaces.Detect(fullPath);
+    }
+
+    private static List<string>? ParseStringArray(JsonNode? node)
+    {
+        // Null when the parameter is absent; an empty array clears the value.
+        if (node is not JsonArray array) return null;
+        return array
+            .Select(item => item?.GetValue<string>()?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static JsonArray Strings(IEnumerable<string> values) =>
