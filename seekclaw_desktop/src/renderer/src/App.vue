@@ -38,6 +38,7 @@ import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import WorkflowPanel from './components/WorkflowPanel.vue'
 import { confirmAction } from './confirmation'
+import { finalizeAssistantBubbles } from './conversation-state'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
@@ -1543,6 +1544,13 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       thread.workflow.nodes.push(node)
       thread.workflow.activeId = node.id
+      // Once the turn moves to build verification or panel review the visible answer is
+      // complete; stop showing the "..." placeholder until repair continues the bubble.
+      if ((kind === 'verify' || kind === 'review')
+        && message?.content
+        && (message.state === 'thinking' || message.state === 'streaming')) {
+        message.state = 'done'
+      }
       break
     }
     case 'panel_review_completed': {
@@ -1569,6 +1577,10 @@ function handleDaemonEvent(event: DaemonMessage): void {
         message.state = 'done'
         if (!message.content && event.data) message.content = event.data
       }
+      // Safety net: the assistantId pointer can miss the real bubble (e.g. a steer
+      // created a fresh bubble or the message list was replaced mid-flight), which
+      // used to leave the "..." placeholder on screen forever after the turn ended.
+      finalizeAssistantBubbles(thread.messages, 'done')
       if (isChatRequest) rememberFinishedRequest(thread, event.id)
       thread.activeTurnToken = undefined
       thread.pendingGuidance = 0
@@ -1592,6 +1604,7 @@ function handleDaemonEvent(event: DaemonMessage): void {
         message.state = 'error'
         appendModelError(message, event.data)
       }
+      finalizeAssistantBubbles(thread.messages, 'error')
       if (isChatRequest) rememberFinishedRequest(thread, event.id)
       thread.activeTurnToken = undefined
       thread.pendingGuidance = 0
