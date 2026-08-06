@@ -706,17 +706,17 @@ public sealed class Agent(
 
         events.Publish(new StatusEvent(tool.StatusLabel, argsSummary));
 
-        JsonObject arguments;
-        try
+        // Best-effort repair of truncated / trailing-garbage arguments, then execute with
+        // the recovered object. Unrecoverable arguments become an explicit tool error so the
+        // model regenerates the call instead of the provider rejecting the whole request.
+        var parsedArguments = ToolArguments.Parse(call.ArgumentsJson);
+        if (parsedArguments.Obj is null)
         {
-            arguments = JsonNode.Parse(call.ArgumentsJson) as JsonObject ?? [];
-        }
-        catch (JsonException ex)
-        {
-            var message = $"Invalid tool arguments: {ex.Message}";
+            var message = "Invalid tool arguments: the model produced arguments that are not valid JSON. Regenerate the tool call with valid JSON arguments.";
             events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
             return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
         }
+        var arguments = parsedArguments.Obj;
 
         var context = new ToolContext
         {

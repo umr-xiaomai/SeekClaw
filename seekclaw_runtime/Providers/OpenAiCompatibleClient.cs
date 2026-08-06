@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using SeekClaw.Runtime.Tools;
 
 namespace SeekClaw.Runtime.Providers;
 
@@ -122,10 +123,14 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
 
     internal static LlmCompletion ParseCompletion(JsonNode? root, string providerId)
     {
-        if (root?["error"] is JsonNode error)
+        // Some gateways answer with a JSON array or scalar (e.g. a raw error body); the
+        // indexer below would otherwise throw "The node must be of type 'JsonObject'.".
+        if (root is not JsonObject obj)
+            throw new LlmException($"{providerId} returned an invalid non-streaming response.", retryable: false);
+        if (obj["error"] is JsonNode error)
             throw new LlmException($"{providerId} returned an error: {ExtractErrorMessage(error.ToJsonString())}", retryable: false);
 
-        var choice = root?["choices"]?.AsArray().FirstOrDefault();
+        var choice = obj["choices"]?.AsArray().FirstOrDefault();
         var message = choice?["message"];
         if (message is null)
             throw new LlmException($"{providerId} returned no completion choices.", retryable: false);
@@ -221,7 +226,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                             {
                                 ["id"] = call.Id,
                                 ["type"] = "function",
-                                ["function"] = new JsonObject { ["name"] = call.Name, ["arguments"] = call.ArgumentsJson },
+                                ["function"] = new JsonObject { ["name"] = call.Name, ["arguments"] = ToolArguments.Sanitize(call.ArgumentsJson) },
                             });
                         assistant["tool_calls"] = calls;
                     }
@@ -319,13 +324,22 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         if (string.IsNullOrWhiteSpace(body)) return "(empty body)";
         try
         {
-            var node = JsonNode.Parse(body);
-            var message = node?["error"]?["message"]?.GetValue<string>() ?? node?["message"]?.GetValue<string>();
-            if (!string.IsNullOrWhiteSpace(message)) return message;
+            if (JsonNode.Parse(body) is not JsonObject root) return Truncate(body);
+            // Gateways differ: {"error":{"message":"..."}} or {"error":"plain text"} or {"message":"..."}.
+            if (root["error"] is JsonObject errorObject
+                && errorObject["message"] is JsonValue errorMessage
+                && errorMessage.TryGetValue<string>(out var nested))
+                return nested;
+            if (root["error"] is JsonValue flatError && flatError.TryGetValue<string>(out var flat))
+                return flat;
+            if (root["message"] is JsonValue message && message.TryGetValue<string>(out var topLevel))
+                return topLevel;
         }
         catch (JsonException) { }
-        return body.Length > 400 ? body[..400] : body;
+        return Truncate(body);
     }
+
+    private static string Truncate(string body) => body.Length > 400 ? body[..400] : body;
 
     /// <summary>Accumulates streaming deltas into a full completion.</summary>
     private sealed class Accumulator
@@ -340,7 +354,10 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
 
         public IEnumerable<LlmStreamEvent> Consume(JsonNode? chunk)
         {
-            if (chunk?["usage"] is JsonObject usage)
+            // Non-object SSE payloads (arrays, scalars, blank lines) are not valid
+            // chat.completion.chunk frames; skip them instead of throwing.
+            if (chunk is not JsonObject frame) yield break;
+            if (frame["usage"] is JsonObject usage)
             {
                 _inputTokens = usage["prompt_tokens"]?.GetValue<long>() ?? _inputTokens;
                 _outputTokens = usage["completion_tokens"]?.GetValue<long>() ?? _outputTokens;
@@ -350,7 +367,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                     ?? _cachedInputTokens;
             }
 
-            if (chunk?["choices"] is not JsonArray { Count: > 0 } choices) yield break;
+            if (frame["choices"] is not JsonArray { Count: > 0 } choices) yield break;
             var choice = choices[0];
 
             if (choice?["finish_reason"]?.GetValue<string>() is { Length: > 0 } finish)

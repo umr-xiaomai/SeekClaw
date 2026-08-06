@@ -130,10 +130,14 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
 
     internal static LlmCompletion ParseCompletion(JsonNode? root, string providerId)
     {
-        if (root?["error"] is JsonNode error)
+        // Non-object payloads must not reach the indexer below ("The node must be of
+        // type 'JsonObject'."); report them as a clean provider error instead.
+        if (root is not JsonObject obj)
+            throw new LlmException($"{providerId} returned an invalid non-streaming response.", retryable: false);
+        if (obj["error"] is JsonNode error)
             throw new LlmException($"{providerId} returned an error: {OpenAiCompatibleClient.ExtractErrorMessage(error.ToJsonString())}", retryable: false);
 
-        if (root?["content"] is not JsonArray content)
+        if (obj["content"] is not JsonArray content)
             throw new LlmException($"{providerId} returned no completion content.", retryable: false);
 
         var text = new StringBuilder();
@@ -160,7 +164,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             }
         }
 
-        var usage = root["usage"] as JsonObject;
+        var usage = obj["usage"] as JsonObject;
         var inputTokens = usage?["input_tokens"]?.GetValue<long>() ?? 0;
         var outputTokens = usage?["output_tokens"]?.GetValue<long>() ?? 0;
         return new LlmCompletion
@@ -168,7 +172,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             Text = text.ToString(),
             Thinking = thinking.ToString(),
             ToolCalls = calls,
-            FinishReason = root["stop_reason"]?.GetValue<string>() ?? "",
+            FinishReason = obj["stop_reason"]?.GetValue<string>() ?? "",
             Usage = new TokenUsage(inputTokens, outputTokens)
             {
                 TotalInputTokens = inputTokens,

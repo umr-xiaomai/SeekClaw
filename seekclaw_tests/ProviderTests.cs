@@ -1,12 +1,14 @@
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
+using SeekClaw.Runtime.Tools;
 
 namespace SeekClaw.Tests;
 
@@ -843,6 +845,110 @@ public sealed class ProviderTests : IDisposable
             if (error is not null) throw error;
             foreach (var evt in events) yield return evt;
         }
+    }
+
+[Fact]
+    public void ToolArguments_ParsesValidJsonUnchanged()
+    {
+        var raw = """{"path": "a.txt", "content": "hello"}""";
+        var (obj, json) = ToolArguments.Parse(raw);
+        Assert.NotNull(obj);
+        Assert.Equal(raw, json);
+    }
+
+    [Fact]
+    public void ToolArguments_RepairsTruncatedJson()
+    {
+        // Cut off mid-string by the output-token cap.
+        var (obj, json) = ToolArguments.Parse("""{"path": "a.txt", "content": "hello""");
+        Assert.NotNull(obj);
+        Assert.Equal("hello", obj!["content"]!.GetValue<string>());
+
+        // Cut off mid-object with an open brace.
+        var (obj2, json2) = ToolArguments.Parse("""{"a": {"b": 1""");
+        Assert.NotNull(obj2);
+        Assert.Equal(1, obj2!["a"]!["b"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void ToolArguments_ExtractsBalancedObjectFromTrailingText()
+    {
+        var (obj, json) = ToolArguments.Parse("""{"a": 1} and some trailing notes""");
+        Assert.NotNull(obj);
+        Assert.Equal("""{"a": 1}""", json);
+    }
+
+    [Fact]
+    public void ToolArguments_Unrecoverable_ReturnsEmptyObject()
+    {
+        var (obj, json) = ToolArguments.Parse("this is not json at all");
+        Assert.Null(obj);
+        Assert.Equal("{}", json);
+        Assert.Equal("{}", ToolArguments.Sanitize("not json"));
+        Assert.Equal("{}", ToolArguments.Sanitize(""));
+    }
+
+    [Fact]
+    public void ExtractErrorMessage_HandlesStringErrorsAndNonObjectBodies()
+    {
+        Assert.Equal("plain message", OpenAiCompatibleClient.ExtractErrorMessage("""{"error": "plain message"}"""));
+        Assert.Equal("nested", OpenAiCompatibleClient.ExtractErrorMessage("""{"error": {"message": "nested"}}"""));
+        Assert.Equal("top", OpenAiCompatibleClient.ExtractErrorMessage("""{"message": "top"}"""));
+        // A JSON array body must not throw "The node must be of type 'JsonObject'.".
+        Assert.StartsWith("[", OpenAiCompatibleClient.ExtractErrorMessage("""["not","an","object"]"""));
+    }
+
+    [Fact]
+    public void ParseCompletion_NonObjectRoot_ThrowsCleanLlmException()
+    {
+        var ex = Assert.Throws<LlmException>(() =>
+            OpenAiCompatibleClient.ParseCompletion(JsonNode.Parse("""[1, 2]"""), "local"));
+        Assert.Contains("invalid non-streaming response", ex.Message);
+    }
+
+    [Fact]
+    public async Task StreamAsync_SkipsNonObjectSseFrames()
+    {
+        // Some gateways emit non-object frames (arrays, scalars) in the event stream;
+        // they must be skipped instead of aborting the turn with a JsonNode type error.
+        var body = "data: [1, 2]\n\ndata: \"scalar\"\n\ndata: [DONE]\n\n";
+        var client = new OpenAiCompatibleClient(new StubHttpFactory(body, "text/event-stream"));
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "local", Kind = "openai", BaseUrl = "https://example.test", TimeoutSeconds = 10 },
+            Model = new ModelConfig { Id = "m" },
+            Messages = [ChatMessage.User("hi")],
+        };
+
+        LlmCompletion? completion = null;
+        var ex = await Record.ExceptionAsync(async () =>
+        {
+            await foreach (var evt in client.StreamAsync(request, CancellationToken.None))
+                if (evt is LlmCompleted done) completion = done.Completion;
+        });
+
+        Assert.Null(ex);
+        Assert.NotNull(completion);
+    }
+
+    [Fact]
+    public void BuildBody_SanitizesMalformedToolArguments()
+    {
+        var assistant = new ChatMessage
+        {
+            Role = ChatRole.Assistant,
+            ToolCalls = [new ToolCallRequest("c1", "write_file", """{"path": "a.txt", "content": "oops""")],
+        };
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "local", Kind = "openai", BaseUrl = "https://example.test" },
+            Model = new ModelConfig { Id = "m" },
+            Messages = [assistant],
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        var arguments = body["messages"]![0]!["tool_calls"]![0]!["function"]!["arguments"]!.GetValue<string>();
+        Assert.NotNull(JsonNode.Parse(arguments) as JsonObject); // valid JSON in the outbound request
     }
 
     private static LlmRequest VisionRequest(string kind) => new()
