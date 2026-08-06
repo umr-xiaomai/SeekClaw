@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime;
@@ -668,6 +669,180 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal(150, aggregate.OutputTokens);
         Assert.Equal(0.03m, aggregate.Cost);
         Assert.Equal(0.5, aggregate.SuccessRate);
+    }
+
+    [Fact]
+    public async Task StreamAsync_ContinuesPastNonRetryableFallbackFailure()
+    {
+        var store = _store;
+        store.Config.Routing.Retry.MaxAttempts = 1;
+        store.Config.Routing.Strategies.Clear();
+        store.Config.Routing.Fallback = ["beta/tiny", "gamma/ok"];
+        store.Config.GetActiveProfile().Provider = "alpha";
+        store.Config.GetActiveProfile().Model = "big";
+        store.Config.Providers.Add(new ProviderConfig
+        {
+            Id = "gamma", Kind = "gamma", BaseUrl = "https://gamma.test", Priority = 2,
+            Models = [new ModelConfig { Id = "ok" }],
+        });
+
+        var manager = NewManagerWithClients(
+            store, _registry, Path.Combine(_dir, "usage2.jsonl"),
+            new StubLlmClient("openai", new LlmException("local server failed", 500, retryable: true)),
+            new StubLlmClient("anthropic", new LlmException("HTTP 401: x-api-key header is required", 401, retryable: false)),
+            new StubLlmClient("gamma", null, new LlmCompleted(new LlmCompletion { Text = "ok" })));
+
+        var request = new LlmRequest
+        {
+            Provider = store.Config.Providers[0],
+            Model = store.Config.Providers[0].Models[0],
+            Messages = [ChatMessage.User("hi")],
+        };
+
+        var text = "";
+        var ex = await Record.ExceptionAsync(async () =>
+        {
+            await foreach (var evt in manager.StreamAsync(_ => request, null, CancellationToken.None))
+                if (evt is LlmCompleted done) text = done.Completion.Text;
+        });
+
+        // A non-retryable rejection by a fallback candidate must not abort the chain:
+        // the working third candidate still completes the stream.
+        Assert.Null(ex);
+        Assert.Equal("ok", text);
+    }
+
+    [Fact]
+    public async Task StreamAsync_AllCandidatesFailed_AggregatesEveryModelError()
+    {
+        var store = _store;
+        store.Config.Routing.Retry.MaxAttempts = 1;
+        store.Config.Routing.Strategies.Clear();
+        store.Config.Routing.Fallback = ["beta/tiny"];
+        store.Config.GetActiveProfile().Provider = "alpha";
+        store.Config.GetActiveProfile().Model = "big";
+
+        var manager = NewManagerWithClients(
+            store, _registry, Path.Combine(_dir, "usage3.jsonl"),
+            new StubLlmClient("openai", new LlmException("local server exploded", 500, retryable: true)),
+            new StubLlmClient("anthropic", new LlmException("HTTP 401: x-api-key header is required", 401, retryable: false)));
+
+        var request = new LlmRequest
+        {
+            Provider = store.Config.Providers[0],
+            Model = store.Config.Providers[0].Models[0],
+            Messages = [ChatMessage.User("hi")],
+        };
+
+        var ex = await Record.ExceptionAsync(async () =>
+        {
+            await foreach (var _ in manager.StreamAsync(_ => request, null, CancellationToken.None)) { }
+        });
+
+        // The final error must explain every attempted model, the active model first,
+        // instead of surfacing only the last fallback's confusing 401.
+        var aggregate = Assert.IsType<LlmException>(ex);
+        Assert.Contains("alpha/big", aggregate.Message);
+        Assert.Contains("local server exploded", aggregate.Message);
+        Assert.Contains("beta/tiny", aggregate.Message);
+        Assert.Contains("HTTP 401: x-api-key header is required", aggregate.Message);
+    }
+
+    [Fact]
+    public async Task StreamAsync_FailoverDisabled_StopsAfterActiveModelFails()
+    {
+        var store = _store;
+        store.Config.Routing.FailoverEnabled = false;
+        store.Config.Routing.Retry.MaxAttempts = 1;
+        store.Config.Routing.Strategies.Clear();
+        store.Config.Routing.Fallback = ["beta/tiny"];
+        store.Config.GetActiveProfile().Provider = "alpha";
+        store.Config.GetActiveProfile().Model = "big";
+
+        var alpha = new StubLlmClient("openai", new LlmException("local server exploded", 500, retryable: true));
+        var beta = new StubLlmClient("anthropic", new LlmException("HTTP 401: x-api-key header is required", 401, retryable: false));
+        var manager = NewManagerWithClients(store, _registry, Path.Combine(_dir, "usage5.jsonl"), alpha, beta);
+
+        var request = new LlmRequest
+        {
+            Provider = store.Config.Providers[0],
+            Model = store.Config.Providers[0].Models[0],
+            Messages = [ChatMessage.User("hi")],
+        };
+
+        var ex = await Record.ExceptionAsync(async () =>
+        {
+            await foreach (var _ in manager.StreamAsync(_ => request, null, CancellationToken.None)) { }
+        });
+
+        // With failover disabled only the active model is tried; the turn stops with the
+        // real error and the fallback provider is never contacted.
+        Assert.NotNull(ex);
+        Assert.Equal("local server exploded", ex.Message);
+        Assert.Equal(1, alpha.Calls);
+        Assert.Equal(0, beta.Calls);
+    }
+
+    [Fact]
+    public async Task StreamAsync_ActiveModelNonRetryableError_SurfacesImmediately()
+    {
+        var store = _store;
+        store.Config.Routing.Retry.MaxAttempts = 1;
+        store.Config.Routing.Strategies.Clear();
+        store.Config.Routing.Fallback = ["beta/tiny"];
+        store.Config.GetActiveProfile().Provider = "alpha";
+        store.Config.GetActiveProfile().Model = "big";
+
+        var manager = NewManagerWithClients(
+            store, _registry, Path.Combine(_dir, "usage4.jsonl"),
+            new StubLlmClient("openai", new LlmException("HTTP 401: bad key", 401, retryable: false)),
+            new StubLlmClient("anthropic", new LlmException("HTTP 401: x-api-key header is required", 401, retryable: false)));
+
+        var request = new LlmRequest
+        {
+            Provider = store.Config.Providers[0],
+            Model = store.Config.Providers[0].Models[0],
+            Messages = [ChatMessage.User("hi")],
+        };
+
+        var ex = await Record.ExceptionAsync(async () =>
+        {
+            await foreach (var _ in manager.StreamAsync(_ => request, null, CancellationToken.None)) { }
+        });
+
+        // A non-retryable failure of the model the user actually selected is the real
+        // problem; it must be reported directly instead of being hidden by failover.
+        Assert.NotNull(ex);
+        Assert.Equal("HTTP 401: bad key", ex.Message);
+    }
+
+    private static ProviderManager NewManagerWithClients(
+        ConfigStore store,
+        ModelRegistry registry,
+        string usageFile,
+        params ILlmClient[] clients) => new(
+        store,
+        registry,
+        new LlmClientFactory(clients),
+        new LlmHttpFactory(),
+        new UsageTracker(new EventBus(), usageFile),
+        new EventBus());
+
+    private sealed class StubLlmClient(string kind, LlmException? error = null, params LlmStreamEvent[] events) : ILlmClient
+    {
+        public int Calls { get; private set; }
+
+        public string Kind => kind;
+
+        public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
+            LlmRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            Calls++;
+            await Task.Yield();
+            ct.ThrowIfCancellationRequested();
+            if (error is not null) throw error;
+            foreach (var evt in events) yield return evt;
+        }
     }
 
     private static LlmRequest VisionRequest(string kind) => new()

@@ -66,6 +66,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
     }
   ],
   "routing": {
+    "failoverEnabled": true,
     "strategies": {
       "balanced": ["openai/gpt-5.5"]
     },
@@ -118,6 +119,8 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 ### 路由
 
 `loadBalance` 支持 `priority`、`roundRobin`、`leastUsed`、`lowestCost`、`fastest` 与 `sticky`。`strategies` 和 `fallback` 中的每个项目必须是 `provider/model` 引用。
+
+`failoverEnabled`（默认 `true`）控制失败转移：开启时激活模型请求失败后会自动按路由链尝试其他候选模型；关闭时只使用激活模型，失败即停止并直接返回该模型的真实错误，不会静默切换到其他 Provider/模型（适合只使用本地模型的场景）。
 
 ### Agent 模式
 

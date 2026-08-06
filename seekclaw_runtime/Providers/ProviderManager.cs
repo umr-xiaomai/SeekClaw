@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
@@ -116,7 +117,17 @@ public sealed class ProviderManager(
                 candidateFilter is null ? "No models configured." : "No compatible models configured.",
                 retryable: false);
 
+        // Optional automatic failover: when disabled, only the active model is tried and a
+        // failed request stops the turn with the real error instead of switching to another
+        // provider/model (routing.failoverEnabled, default on).
+        if (!configStore.Config.Routing.FailoverEnabled && candidates.Count > 1)
+            candidates = candidates.Take(1).ToList();
+
         LlmException? lastError = null;
+        // Every candidate failure is remembered so the final error can explain each model
+        // that was tried (the active model first) instead of surfacing only the last
+        // fallback's error -- e.g. a default cloud provider that has no API key configured.
+        var failures = new List<(string Ref, string Error)>();
 
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
@@ -170,8 +181,15 @@ public sealed class ProviderManager(
                             Breaker.RecordFailure(model.Ref);
                             RecordUsage(model, completion, stopwatch, success: false);
                             await stream.DisposeAsync().ConfigureAwait(false);
-                            if (committed || !ex.Retryable) throw;
+                            // Once the stream has yielded tokens we can no longer switch providers
+                            // mid-answer, so propagate immediately. A non-retryable failure of the
+                            // active model (bad key, invalid request...) is also surfaced directly
+                            // instead of being hidden by a silent failover. But a fallback candidate
+                            // rejecting the request (e.g. HTTP 401 from an unconfigured default)
+                            // must not abort the remaining candidates: record it and keep walking.
+                            if (committed || (candidateIndex == 0 && !ex.Retryable)) throw;
                             lastError = ex;
+                            failures.Add((model.Ref, ex.Message));
                             goto NextCandidate;
                         }
 
@@ -193,10 +211,41 @@ public sealed class ProviderManager(
                 }
             }
 
+            // All retries for this candidate were exhausted; remember the failure too.
+            if (lastError is not null && !failures.Exists(failure => failure.Ref == model.Ref))
+                failures.Add((model.Ref, lastError.Message));
+
             NextCandidate: ;
         }
 
-        throw lastError ?? new LlmException("All providers failed.", retryable: false);
+        throw BuildFailoverException(failures, lastError);
+    }
+
+    /// <summary>
+    /// Builds the terminal error when every candidate model failed. A single failure keeps its
+    /// original message; multiple failures are aggregated in candidate order (the active model
+    /// first) so clients see the real cause instead of a confusing fallback error.
+    /// </summary>
+    private static LlmException BuildFailoverException(
+        IReadOnlyList<(string Ref, string Error)> failures,
+        LlmException? lastError)
+    {
+        if (failures.Count == 0)
+            return lastError ?? new LlmException("All providers failed.", retryable: false);
+        if (failures.Count == 1)
+            return lastError ?? new LlmException(failures[0].Error, retryable: false);
+
+        var builder = new StringBuilder();
+        builder.Append($"All candidate models failed after automatic failover ({failures.Count} tried):");
+        foreach (var (refName, error) in failures)
+        {
+            builder.Append('\n');
+            builder.Append("- ");
+            builder.Append(refName);
+            builder.Append(": ");
+            builder.Append(error);
+        }
+        return new LlmException(builder.ToString(), lastError?.StatusCode, retryable: false, inner: lastError);
     }
 
     public async IAsyncEnumerable<LlmStreamEvent> StreamModelAsync(

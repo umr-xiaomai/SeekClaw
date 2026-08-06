@@ -109,6 +109,13 @@ public sealed class ModelCapabilities
 
 public sealed class RoutingConfig
 {
+    /// <summary>
+    /// When true, a failed model request automatically fails over to the next candidate in
+    /// the routing chain. When false, only the active model is tried and the turn stops with
+    /// the real error instead of silently switching to another provider/model.
+    /// </summary>
+    public bool FailoverEnabled { get; set; } = true;
+
     /// <summary>strategy name → ordered "provider/model" references.</summary>
     public Dictionary<string, List<string>> Strategies { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

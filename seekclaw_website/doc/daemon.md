@@ -98,6 +98,8 @@ Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直�
 
 | 方法 | 说明 |
 | --- | --- |
+| `routing.get` | 返回 `{ "failoverEnabled": true }`，读取失败转移开关 |
+| `routing.set` | 参数 `{ "failoverEnabled": false }`，保存失败转移开关 |
 | `profile.list/upsert/use/remove` | 管理运行 Profile |
 | `provider.list/upsert/use/remove/test` | 管理和测试 Provider |
 | `mcp.list/upsert/remove/reload` | 管理、重连 MCP Server 并刷新工具注册 |

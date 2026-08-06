@@ -57,6 +57,32 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Routing_GetAndSet_FailoverEnabled()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("", false, null)));
+
+        await connection.SendAsync(1, "routing.get");
+        var initial = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 1
+                        && response["event"]!.GetValue<string>() == "result");
+        var initialEnabled = JsonNode.Parse(initial["data"]!.GetValue<string>())!["failoverEnabled"]!.GetValue<bool>();
+        Assert.True(initialEnabled); // default on
+
+        await connection.SendAsync(2, "routing.set", new JsonObject { ["failoverEnabled"] = false });
+        var set = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 2
+                        && response["event"]!.GetValue<string>() == "result");
+        Assert.False(JsonNode.Parse(set["data"]!.GetValue<string>())!["failoverEnabled"]!.GetValue<bool>());
+
+        await connection.SendAsync(3, "routing.get");
+        var after = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 3
+                        && response["event"]!.GetValue<string>() == "result");
+        Assert.False(JsonNode.Parse(after["data"]!.GetValue<string>())!["failoverEnabled"]!.GetValue<bool>());
+    }
+
+    [Fact]
     public async Task ActiveChat_AcceptsSteeringWithoutCancellingTheTurn()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

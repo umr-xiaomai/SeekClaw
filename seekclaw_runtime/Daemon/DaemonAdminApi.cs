@@ -113,6 +113,25 @@ internal sealed class DaemonAdminApi(
         }.ToJsonString();
     }
 
+    public string GetRoutingConfig() => new JsonObject
+    {
+        ["failoverEnabled"] = runtime.ConfigStore.Config.Routing.FailoverEnabled,
+    }.ToJsonString();
+
+    public string SetRoutingConfig(JsonObject parameters)
+    {
+        if (parameters["failoverEnabled"] is not JsonValue value
+            || !value.TryGetValue<bool>(out var failoverEnabled))
+            throw new DaemonRequestException("params.failoverEnabled (boolean) is required");
+
+        runtime.ConfigStore.Config.Routing.FailoverEnabled = failoverEnabled;
+        runtime.ConfigStore.Save();
+        return new JsonObject
+        {
+            ["failoverEnabled"] = failoverEnabled,
+        }.ToJsonString();
+    }
+
     public string ListProfiles()
     {
         var profiles = new JsonArray();

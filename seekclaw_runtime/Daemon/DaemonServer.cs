@@ -404,6 +404,15 @@ public sealed class DaemonServer : IAsyncDisposable
                         break;
                     }
 
+                    case "routing.get":
+                        await WriteAsync(writer, writerGate, id, "result", _admin.GetRoutingConfig(), ct).ConfigureAwait(false);
+                        break;
+
+                    case "routing.set":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.SetRoutingConfig(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
                     case "profile.list":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _ => Task.FromResult(_admin.ListProfiles()), ct).ConfigureAwait(false);
@@ -1035,10 +1044,11 @@ public sealed class DaemonServer : IAsyncDisposable
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
-            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks"),
+            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
+            "routing.get", "routing.set",
             "profile.list", "profile.upsert", "profile.use", "profile.remove",
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
             "model.list", "model.catalog", "model.switch", "model.test", "model.update",

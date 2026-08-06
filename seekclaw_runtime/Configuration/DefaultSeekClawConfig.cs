@@ -31,6 +31,7 @@ public static class DefaultSeekClawConfig
         ],
         Routing = new RoutingConfig
         {
+            FailoverEnabled = true,
             Strategies = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
             {
                 ["fast"] = ["openai/gpt-5.5-mini", "google/gemini-2.5-flash"],

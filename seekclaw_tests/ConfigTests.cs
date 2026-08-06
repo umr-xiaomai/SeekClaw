@@ -32,6 +32,7 @@ public sealed class ConfigTests : IDisposable
             new[] { "anthropic/claude-sonnet-5", "openai/gpt-5.5", "google/gemini-2.5-pro", "mimo/mimo-v2-pro" },
             store.Config.Routing.Strategies["balanced"]);
         Assert.Equal(40, store.Config.Agent.MaxSteps);
+        Assert.True(store.Config.Routing.FailoverEnabled); // failover default on
     }
 
     [Fact]
@@ -57,6 +58,17 @@ public sealed class ConfigTests : IDisposable
         Assert.Equal("one", provider.Models[0].Alias);
         Assert.Equal(1.5m, provider.Models[0].InputPricePerMTok);
         Assert.Equal(0.3, reloaded.Config.Profiles["work"].Temperature);
+    }
+
+    [Fact]
+    public void Routing_FailoverEnabled_RoundTrips()
+    {
+        var store = NewStore();
+        store.Config.Routing.FailoverEnabled = false;
+        store.Save();
+
+        var reloaded = NewStore();
+        Assert.False(reloaded.Config.Routing.FailoverEnabled);
     }
 
     [Fact]

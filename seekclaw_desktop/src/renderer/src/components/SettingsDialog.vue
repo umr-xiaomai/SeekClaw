@@ -150,6 +150,7 @@ const emit = defineEmits<{
 
 const section = ref<SettingsSection>('general')
 const loading = ref(false)
+const failoverEnabled = ref(true)
 const action = ref('')
 const error = ref('')
 const notice = ref('')
@@ -278,6 +279,7 @@ async function loadCurrentSection(): Promise<void> {
   error.value = ''
   notice.value = ''
   try {
+    if (section.value === 'general') await loadGeneral()
     if (section.value === 'models') await loadModels()
     if (section.value === 'mcp') mcpServers.value = await requestJson<McpServerInfo[]>('mcp.list')
     if (section.value === 'skills') skills.value = await requestJson<SkillInfo[]>('skill.list')
@@ -286,6 +288,30 @@ async function loadCurrentSection(): Promise<void> {
     fail(reason)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadGeneral(): Promise<void> {
+  const routing = await requestJson<{ failoverEnabled: boolean }>('routing.get')
+  failoverEnabled.value = routing.failoverEnabled
+}
+
+async function toggleFailover(): Promise<void> {
+  beginAction('routing.set')
+  try {
+    const routing = await requestJson<{ failoverEnabled: boolean }>('routing.set', {
+      failoverEnabled: failoverEnabled.value
+    })
+    failoverEnabled.value = routing.failoverEnabled
+    notice.value = failoverEnabled.value ? '已开启自动切换其他模型' : '已关闭自动切换，失败即停止'
+  } catch (reason) {
+    fail(reason)
+    try {
+      const routing = await requestJson<{ failoverEnabled: boolean }>('routing.get')
+      failoverEnabled.value = routing.failoverEnabled
+    } catch { /* keep the last known state */ }
+  } finally {
+    endAction()
   }
 }
 
@@ -770,6 +796,23 @@ watch(section, () => { void loadCurrentSection() })
                 <div><strong>Daemon</strong><small>{{ daemonEndpoint }}</small></div>
                 <button class="secondary-button" @click="emit('reconnect')"><RefreshCw :size="15" /> 重新连接</button>
               </div>
+            </section>
+
+            <section class="settings-group">
+              <label class="provider-enabled-row">
+                <span>
+                  <strong>自动切换其他模型</strong>
+                  <small>激活模型请求失败时自动尝试路由链中的其他模型；关闭后失败即停止，并显示真实错误</small>
+                </span>
+                <input
+                  v-model="failoverEnabled"
+                  class="sr-only"
+                  type="checkbox"
+                  :disabled="action === 'routing.set'"
+                  @change="toggleFailover"
+                />
+                <span class="toggle-switch" aria-hidden="true"><span /></span>
+              </label>
             </section>
           </template>
 
