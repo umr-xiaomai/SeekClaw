@@ -2,6 +2,7 @@
 import {
   Archive,
   Blocks,
+  CalendarClock,
   CircleHelp,
   Folder,
   Globe2,
@@ -41,6 +42,7 @@ const emit = defineEmits<{
   archiveGlobalTasks: []
   deleteGlobalTasks: []
   openArchived: []
+  openScheduledTasks: []
   openExtensions: []
   openOfficialSkills: []
   openSettings: []
@@ -161,6 +163,10 @@ onBeforeUnmount(() => {
       <button class="nav-item" @click="emit('openArchived')">
         <Archive :size="18" />
         <span>已归档</span>
+      </button>
+      <button class="nav-item" @click="emit('openScheduledTasks')">
+        <CalendarClock :size="18" />
+        <span>计划任务</span>
       </button>
       <button class="nav-item" @click="emit('openExtensions')">
         <Blocks :size="18" />

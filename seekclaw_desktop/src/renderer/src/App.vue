@@ -26,6 +26,7 @@ import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../..
 import AppTitleBar from './components/AppTitleBar.vue'
 import AboutDialog from './components/AboutDialog.vue'
 import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
+import ScheduledTasksDialog from './components/ScheduledTasksDialog.vue'
 import Composer from './components/Composer.vue'
 import CompareDialog from './components/CompareDialog.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -137,6 +138,7 @@ const sidebarOpen = ref(true)
 const settingsOpen = ref(false)
 const aboutOpen = ref(false)
 const archivedTasksOpen = ref(false)
+const scheduledTasksOpen = ref(false)
 const officialSkillsOpen = ref(false)
 const compareOpen = ref(false)
 const workflowOpen = ref(true)
@@ -1797,6 +1799,7 @@ watch(theme, applyTheme)
         @archive-global-tasks="archiveGlobalTasks"
         @delete-global-tasks="deleteGlobalTasks"
         @open-archived="openArchivedTasks"
+        @open-scheduled-tasks="scheduledTasksOpen = true"
         @open-extensions="openSettings('mcp')"
         @open-official-skills="officialSkillsOpen = true"
         @open-settings="openSettings('general')"
@@ -2073,6 +2076,12 @@ watch(theme, applyTheme)
     />
 
 
+
+    <ScheduledTasksDialog
+      :open="scheduledTasksOpen"
+      :projects="projects"
+      @close="scheduledTasksOpen = false"
+    />
 
     <ArchivedTasksDialog
       :open="archivedTasksOpen"

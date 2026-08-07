@@ -1,9 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Cronos;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Providers;
+using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Daemon;
@@ -14,7 +16,8 @@ internal sealed class DaemonRequestException(string message) : Exception(message
 internal sealed class DaemonAdminApi(
     SeekClawRuntime runtime,
     WorkspaceInfo globalWorkspace,
-    IFileLockCoordinator fileLocks)
+    IFileLockCoordinator fileLocks,
+    IScheduleService? scheduler = null)
 {
     /// <summary>Snapshot of the current file-task ownership table.</summary>
     /// <summary>One-shot answers to the same prompt from several models, for side-by-side comparison.</summary>
@@ -130,6 +133,70 @@ internal sealed class DaemonAdminApi(
         {
             ["failoverEnabled"] = failoverEnabled,
         }.ToJsonString();
+    }
+
+    public string ListSchedules() =>
+        JsonSerializer.Serialize(runtime.Schedules.List(), SeekClawJsonContext.Compact.ListScheduledTask);
+
+    public string UpsertSchedule(JsonObject parameters)
+    {
+        var id = OptionalString(parameters, "id");
+        var name = RequiredString(parameters, "name");
+        var prompt = RequiredString(parameters, "prompt");
+        var cron = RequiredString(parameters, "cron");
+        var workspace = OptionalString(parameters, "workspace");
+        var enabled = parameters["enabled"] is JsonValue enabledValue && enabledValue.TryGetValue<bool>(out var on)
+            ? on
+            : true;
+        try
+        {
+            var task = runtime.Schedules.Upsert(id, name, workspace, prompt, cron, enabled);
+            return JsonSerializer.Serialize(task, SeekClawJsonContext.Compact.ScheduledTask);
+        }
+        catch (CronFormatException ex)
+        {
+            throw new DaemonRequestException($"Invalid cron expression: {ex.Message}");
+        }
+    }
+
+    public string ToggleSchedule(JsonObject parameters)
+    {
+        var id = RequiredString(parameters, "id");
+        var enabled = parameters["enabled"] is JsonValue enabledValue && enabledValue.TryGetValue<bool>(out var on)
+            ? on
+            : throw new DaemonRequestException("params.enabled (boolean) is required");
+        try
+        {
+            var task = runtime.Schedules.SetEnabled(id, enabled);
+            return JsonSerializer.Serialize(task, SeekClawJsonContext.Compact.ScheduledTask);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new DaemonRequestException(ex.Message);
+        }
+    }
+
+    public string DeleteSchedule(JsonObject parameters)
+    {
+        var id = RequiredString(parameters, "id");
+        runtime.Schedules.Remove(id);
+        return "ok";
+    }
+
+    public async Task<string> RunScheduleAsync(JsonObject parameters, CancellationToken ct)
+    {
+        var id = RequiredString(parameters, "id");
+        if (scheduler is null)
+            throw new DaemonRequestException("Scheduler is not available in this host.");
+        try
+        {
+            await scheduler.RunNowAsync(id, ct).ConfigureAwait(false);
+            return "started";
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new DaemonRequestException(ex.Message);
+        }
     }
 
     public string ListProfiles()

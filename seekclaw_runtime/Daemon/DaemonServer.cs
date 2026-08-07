@@ -9,6 +9,7 @@ using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
+using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Workspaces;
 
@@ -46,6 +47,7 @@ public sealed class DaemonServer : IAsyncDisposable
     // instead of being rebuilt (and reset) for every single agent task.
     private readonly LlmHttpFactory _sharedHttp = new();
     private readonly CircuitBreaker _sharedBreaker;
+    private readonly ScheduleService _scheduler;
 
     // Configuration and workspace administration remains serialized, while agent turns
     // execute concurrently in isolated runtime instances.
@@ -70,24 +72,30 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         _runtime = runtime;
         _globalWorkspace = globalWorkspace;
-        _admin = new DaemonAdminApi(runtime, globalWorkspace, _fileLocks);
         _runTurn = runTurn;
         _useIsolatedTurnRuntime = runTurn is null;
         _sharedBreaker = new CircuitBreaker(runtime.ConfigStore.Config.Routing.Retry);
+        // Tests inject a stub turn runner; route scheduled runs through it too so the
+        // daemon harness stays deterministic. Production keeps the isolated runtime path.
+        _scheduler = new ScheduleService(
+            runtime.Schedules, runtime, _fileLocks, _sharedHttp, _sharedBreaker,
+            runTurn is null ? null : (workspace, session, prompt, ct) => runTurn(session, workspace, prompt, ct));
+        _admin = new DaemonAdminApi(runtime, globalWorkspace, _fileLocks, _scheduler);
     }
 
-    /// <summary>Releases the shared HTTP clients when the daemon host shuts down.</summary>
-    public ValueTask DisposeAsync()
+    /// <summary>Releases the scheduler and shared HTTP clients when the daemon host shuts down.</summary>
+    public async ValueTask DisposeAsync()
     {
+        await _scheduler.DisposeAsync().ConfigureAwait(false);
         _sharedHttp.Dispose();
         _shutdown.Dispose();
-        return ValueTask.CompletedTask;
     }
 
     public async Task RunAsync(CancellationToken ct)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdown.Token);
         var runCt = linkedCts.Token;
+        var schedulerTask = RunSchedulerAsync(runCt);
         while (!runCt.IsCancellationRequested)
         {
             try
@@ -105,6 +113,24 @@ public sealed class DaemonServer : IAsyncDisposable
             {
                 await Task.Delay(100, runCt).ConfigureAwait(false);
             }
+        }
+        try
+        {
+            await schedulerTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (runCt.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task RunSchedulerAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _scheduler.RunAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
         }
     }
 
@@ -411,6 +437,32 @@ public sealed class DaemonServer : IAsyncDisposable
                     case "routing.set":
                         await RunAdminAsync(writer, writerGate, id, true,
                             _ => Task.FromResult(_admin.SetRoutingConfig(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
+                    case "schedule.list":
+                        await RunAdminAsync(writer, writerGate, id, false,
+                            _ => Task.FromResult(_admin.ListSchedules()), ct).ConfigureAwait(false);
+                        break;
+
+                    case "schedule.create":
+                    case "schedule.update":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.UpsertSchedule(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
+                    case "schedule.toggle":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.ToggleSchedule(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
+                    case "schedule.delete":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.DeleteSchedule(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
+                    case "schedule.run":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            token => _admin.RunScheduleAsync(Params(request), token), ct).ConfigureAwait(false);
                         break;
 
                     case "profile.list":
@@ -1044,11 +1096,12 @@ public sealed class DaemonServer : IAsyncDisposable
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
-            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing"),
+            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing", "schedule"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
             "routing.get", "routing.set",
+            "schedule.list", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run",
             "profile.list", "profile.upsert", "profile.use", "profile.remove",
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
             "model.list", "model.catalog", "model.switch", "model.test", "model.update",

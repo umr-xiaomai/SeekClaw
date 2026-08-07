@@ -6,6 +6,7 @@ using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Daemon;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Workspaces;
 
@@ -80,6 +81,52 @@ public sealed class DaemonServerTests : IAsyncDisposable
             response => response["id"]!.GetValue<long>() == 3
                         && response["event"]!.GetValue<string>() == "result");
         Assert.False(JsonNode.Parse(after["data"]!.GetValue<string>())!["failoverEnabled"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task Schedule_AdminMethods_CrudToggleRunAndList()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+
+        await connection.SendAsync(1, "schedule.create", new JsonObject
+        {
+            ["name"] = "每日检查",
+            ["prompt"] = "检查项目状态",
+            ["cron"] = "0 9 * * *",
+            ["workspace"] = _tempDir,
+        });
+        var created = ParseData(await connection.ReadAsync());
+        var id = created["id"]!.GetValue<string>();
+        Assert.False(string.IsNullOrWhiteSpace(id));
+
+        await connection.SendAsync(2, "schedule.toggle", new JsonObject { ["id"] = id, ["enabled"] = false });
+        var toggled = ParseData(await connection.ReadAsync());
+        Assert.False(toggled["enabled"]!.GetValue<bool>());
+
+        await connection.SendAsync(3, "schedule.run", new JsonObject { ["id"] = id });
+        var run = await connection.ReadAsync();
+        Assert.Equal("result", run["event"]!.GetValue<string>());
+
+        await connection.SendAsync(4, "schedule.list");
+        var list = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
+        Assert.Contains(list, item => item!["id"]!.GetValue<string>() == id);
+        var listed = list.First(item => item!["id"]!.GetValue<string>() == id)!;
+        Assert.Equal("success", listed["lastStatus"]!.GetValue<string>());
+
+        await connection.SendAsync(5, "schedule.create", new JsonObject
+        {
+            ["name"] = "坏任务",
+            ["prompt"] = "x",
+            ["cron"] = "not a cron",
+        });
+        var invalid = await connection.ReadAsync();
+        Assert.Equal("error", invalid["event"]!.GetValue<string>());
+        Assert.Contains("cron", invalid["data"]!.GetValue<string>(), StringComparison.OrdinalIgnoreCase);
+
+        await connection.SendAsync(6, "schedule.delete", new JsonObject { ["id"] = id });
+        var deleted = await connection.ReadAsync();
+        Assert.Equal("result", deleted["event"]!.GetValue<string>());
     }
 
     [Fact]
@@ -632,7 +679,10 @@ public sealed class DaemonServerTests : IAsyncDisposable
             Path.Combine(_tempDir, "config.json"),
             Path.Combine(_tempDir, "state.json"));
         _runtime = SeekClawRuntime.Create(
-            workspace, configStore, Path.Combine(_tempDir, "seekclaw.db"));
+            workspace,
+            configStore,
+            Path.Combine(_tempDir, "seekclaw.db"),
+            new OfflineHealthChecker(new HealthChecker(new LlmHttpFactory(), configStore)));
         var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(_tempDir, "global-state"));
         var server = new DaemonServer(_runtime, runTurn, globalWorkspace);
 
@@ -679,6 +729,20 @@ public sealed class DaemonServerTests : IAsyncDisposable
         _serverCts.Dispose();
         try { Directory.Delete(_tempDir, recursive: true); }
         catch (IOException) { }
+    }
+
+    /// <summary>
+    /// Keeps daemon tests hermetic: local <see cref="IHealthChecker.RunChecks"/> still run,
+    /// but provider probes never touch the network. A filtered/absent localhost port could
+    /// otherwise stall <c>doctor.run</c> past the test read timeout and flake the build.
+    /// </summary>
+    private sealed class OfflineHealthChecker(IHealthChecker inner) : IHealthChecker
+    {
+        public Task<HealthReport> CheckAsync(ProviderConfig provider, CancellationToken ct = default)
+            => Task.FromResult(new HealthReport(provider.Id, false, 0, "offline (test stub)"));
+
+        public IReadOnlyList<HealthCheckResult> RunChecks(WorkspaceInfo workspace)
+            => inner.RunChecks(workspace);
     }
 
     private sealed class TestConnection(

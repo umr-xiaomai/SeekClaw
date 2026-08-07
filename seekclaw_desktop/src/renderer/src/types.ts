@@ -55,6 +55,22 @@ export interface ChatMessage {
   createdAt: number
 }
 
+export interface ScheduledTaskInfo {
+  id: string
+  name: string
+  workspace?: string
+  prompt: string
+  cron: string
+  enabled: boolean
+  lastRunAt?: string
+  nextRunAt?: string
+  lastStatus?: string
+  lastError?: string
+  lastOutput?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface PanelReviewItem {
   ref: string
   status: 'reviewing' | 'passed' | 'issues' | 'failed'

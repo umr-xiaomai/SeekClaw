@@ -104,6 +104,25 @@ public sealed class SeekClawDatabase
                 CREATE INDEX IF NOT EXISTS ix_messages_session
                     ON messages(scope, session_id, id);
 
+                CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    workspace TEXT NULL,
+                    prompt TEXT NOT NULL,
+                    cron TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_run_at TEXT NULL,
+                    next_run_at TEXT NULL,
+                    last_status TEXT NULL,
+                    last_error TEXT NULL,
+                    last_output TEXT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_enabled
+                    ON scheduled_tasks(enabled, next_run_at);
+
                 CREATE TABLE IF NOT EXISTS migrations (
                     scope TEXT NOT NULL PRIMARY KEY,
                     source_dir TEXT NOT NULL,

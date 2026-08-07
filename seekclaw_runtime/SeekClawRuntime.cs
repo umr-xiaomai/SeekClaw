@@ -8,6 +8,7 @@ using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Projects;
+using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Skills;
 using SeekClaw.Runtime.Tools;
@@ -39,6 +40,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public IWorkspaceManager Workspaces => _services.GetRequiredService<IWorkspaceManager>();
     public ISessionStore Sessions => _services.GetRequiredService<ISessionStore>();
     public IProjectStore Projects => _services.GetRequiredService<IProjectStore>();
+    public IScheduleStore Schedules => _services.GetRequiredService<IScheduleStore>();
     public SkillManager Skills => _services.GetRequiredService<SkillManager>();
     public IMcpManager Mcp => _services.GetRequiredService<IMcpManager>();
     public Agent Agent => _services.GetRequiredService<Agent>();
@@ -82,12 +84,15 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     internal static SeekClawRuntime Create(
         string startDirectory,
         IConfigStore configStore,
-        string? databaseFile = null)
+        string? databaseFile = null,
+        IHealthChecker? healthChecker = null)
         => CreateCore(startDirectory, services =>
         {
             services.AddSingleton(configStore);
             if (databaseFile is not null)
                 services.AddSingleton(new SeekClawDatabase(databaseFile));
+            if (healthChecker is not null)
+                services.AddSingleton(healthChecker);
         });
 
     private static SeekClawRuntime CreateCore(
@@ -227,6 +232,7 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<SeekClawDatabase>();
         services.AddSingleton<ISessionStore, SessionStore>();
         services.AddSingleton<IProjectStore, ProjectStore>();
+        services.AddSingleton<IScheduleStore, ScheduleStore>();
         services.AddSingleton<IVerifier, BuildVerifier>();
         services.AddSingleton<SkillManager>();
         services.AddSingleton<ISkillManager>(sp => sp.GetRequiredService<SkillManager>());
