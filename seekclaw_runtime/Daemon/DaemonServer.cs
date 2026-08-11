@@ -515,11 +515,6 @@ public sealed class DaemonServer : IAsyncDisposable
                             token => _admin.FetchProviderModelsAsync(Params(request), token), ct).ConfigureAwait(false);
                         break;
 
-                    case "model.compare":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            ct => _admin.CompareModels(Params(request), ct), ct).ConfigureAwait(false);
-                        break;
-
                     case "model.catalog":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _ => Task.FromResult(_admin.ModelCatalog()), ct).ConfigureAwait(false);

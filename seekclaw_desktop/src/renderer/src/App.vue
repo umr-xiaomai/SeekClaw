@@ -6,7 +6,6 @@ import {
   CornerDownLeft,
   Folder,
   FolderOpen,
-  GitCompareArrows,
   Globe2,
   Hammer,
   History,
@@ -28,7 +27,6 @@ import AboutDialog from './components/AboutDialog.vue'
 import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
 import ScheduledTasksDialog from './components/ScheduledTasksDialog.vue'
 import Composer from './components/Composer.vue'
-import CompareDialog from './components/CompareDialog.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
@@ -140,7 +138,6 @@ const aboutOpen = ref(false)
 const archivedTasksOpen = ref(false)
 const scheduledTasksOpen = ref(false)
 const officialSkillsOpen = ref(false)
-const compareOpen = ref(false)
 const workflowOpen = ref(true)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
@@ -1857,9 +1854,6 @@ watch(theme, applyTheme)
             <button v-if="activeProject" class="icon-button project-tool-button" title="查看 Git 提交记录" @click="openGitPanel('history')">
               <History :size="18" />
             </button>
-            <button class="icon-button project-tool-button" title="多模型对比" :disabled="models.length < 2" @click="compareOpen = true">
-              <GitCompareArrows :size="18" />
-            </button>
             <button
               class="icon-button project-tool-button"
               :class="{ active: workflowOpen }"
@@ -2067,15 +2061,6 @@ watch(theme, applyTheme)
       :open="officialSkillsOpen"
       @close="officialSkillsOpen = false"
     />
-
-    <CompareDialog
-      :open="compareOpen"
-      :models="models"
-      :daemon-connected="daemonState.connected"
-      @close="compareOpen = false"
-    />
-
-
 
     <ScheduledTasksDialog
       :open="scheduledTasksOpen"

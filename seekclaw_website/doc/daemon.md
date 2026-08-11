@@ -76,7 +76,6 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `session.archive` | `{ "id": "...", "archived": true }` | 归档或恢复 Session |
 | `session.delete` | `{ "id": "..." }` | 永久删除 Session |
 | `session.truncate` | `{ "id": "...", "keepCount": 5 }` | 保留前 N 条消息（"重新生成"用），返回剩余消息数 |
-| `model.compare` | `{ "prompt": "...", "models": ["a/m1", "b/m2"] }` | 让多个模型回答同一问题，返回各模型结果用于对比 |
 | `session.resume` | `{ "id": "...", "global": false }` | 恢复 Session |
 | `session.new` | `{ "workspace": "...", "reasoningLevel": "high", "panelEnabled": true, "panelModels": ["openai/gpt-5.5"] }` 或 `{ "global": true }` | 创建并绑定一个新 Session；`panelEnabled` 开启评审团模式，`panelModels` 指定评审模型（空数组 = 自动挑选） |
 | `model.list` | 无 | 列出可用的 `provider/model` 引用 |

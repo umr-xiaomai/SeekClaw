@@ -74,7 +74,6 @@ Assistant messages returned by `session.get` carry `modelRef` (`provider/model`)
 | `session.archive` | `{ "id": "...", "archived": true }` | Archives or restores a session |
 | `session.delete` | `{ "id": "..." }` | Permanently deletes a session |
 | `session.truncate` | `{ "id": "...", "keepCount": 5 }` | Keeps only the first N messages (used by "regenerate"); returns the remaining count |
-| `model.compare` | `{ "prompt": "...", "models": ["a/m1", "b/m2"] }` | Answers the same prompt with several models and returns each result for side-by-side comparison |
 | `session.resume` | `{ "id": "...", "global": false }` | Resumes a session |
 | `session.new` | `{ "workspace": "...", "reasoningLevel": "high", "panelEnabled": true, "panelModels": ["openai/gpt-5.5"] }` or `{ "global": true }` | Creates and binds a new Session; `panelEnabled` enables the review panel, `panelModels` selects the reviewer models (empty array = auto-pick) |
 | `model.list` | none | Lists available `provider/model` references |
