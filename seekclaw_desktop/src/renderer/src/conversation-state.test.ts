@@ -27,4 +27,16 @@ describe('finalizeAssistantBubbles', () => {
     expect(messages[0]!.state).toBe('error')
     expect(messages[1]!.state).toBe('error')
   })
+
+  it('finalizes a mid-turn steer bubble even when the captured assistant is the older one', () => {
+    // A steer closes the current bubble and opens a fresh one; when the turn
+    // settles the continuation only knows the old bubble, so the walk must
+    // finalize both and not leave the fresh "..." placeholder on screen.
+    const messages = [
+      assistant({ id: 'captured', state: 'done', content: 'answer so far' }),
+      assistant({ id: 'steer-bubble', state: 'streaming', content: 'steered answer' })
+    ]
+    finalizeAssistantBubbles(messages, 'done')
+    expect(messages[1]!.state).toBe('done')
+  })
 })

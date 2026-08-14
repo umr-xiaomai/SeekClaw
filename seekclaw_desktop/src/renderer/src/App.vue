@@ -135,7 +135,7 @@ type AppPage = 'main' | 'settings' | 'extensions' | 'archived' | 'scheduled' | '
 const sidebarOpen = ref(true)
 const activePage = ref<AppPage>('main')
 const aboutOpen = ref(false)
-const workflowOpen = ref(true)
+const workflowOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 const gitPanelWidth = ref(560)
@@ -1099,6 +1099,11 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
     // A terminal event may already have started the next queued turn. Do not let
     // this older request clear that newer turn's state.
     if (thread.activeTurnToken !== turnToken) return
+    // Belt-and-braces: finalize every leftover "..." placeholder when this turn
+    // settles. The captured assistant can be a stale bubble (a mid-turn steer
+    // created a fresh one) and the terminal event itself may have been dropped
+    // by the finished-request guard, so walk all messages instead of one.
+    finalizeAssistantBubbles(thread.messages, assistant.state === 'error' ? 'error' : 'done')
     thread.activeTurnToken = undefined
     thread.running = false
     thread.requestId = undefined
@@ -1425,8 +1430,16 @@ function handleDaemonEvent(event: DaemonMessage): void {
 
   // A terminal response can reach the request continuation before its renderer
   // event callback. If the next queued turn has already started, ignore all
-  // delayed events belonging to the completed request.
-  if (isChatRequest && isFinishedRequest(thread, event.id)) return
+  // delayed events belonging to the completed request — but still finalize any
+  // leftover "..." placeholder bubbles, otherwise a dropped terminal event
+  // leaves them on screen forever.
+  if (isChatRequest && isFinishedRequest(thread, event.id)) {
+    if (event.event === 'done' || event.event === 'cancelled')
+      finalizeAssistantBubbles(thread.messages, 'done')
+    else if (event.event === 'error')
+      finalizeAssistantBubbles(thread.messages, 'error')
+    return
+  }
   if (isChatRequest && thread.requestId !== undefined && thread.requestId !== event.id) return
   // Steering acknowledgements have their own request id and must never replace
   // the id of the active chat turn (used by cancellation and stale-event checks).
@@ -1506,7 +1519,6 @@ function handleDaemonEvent(event: DaemonMessage): void {
       const detail = typeof event.details?.detail === 'string' ? event.details.detail : undefined
       if (kind === 'start') {
         thread.workflow = { nodes: [], activeId: null }
-        workflowOpen.value = true
       }
       thread.workflow ??= { nodes: [], activeId: null }
       if (thread.workflow.activeId) {
@@ -1781,6 +1793,7 @@ watch(theme, applyTheme)
                   <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
                   <div v-measure="item.message.id" class="virtual-message">
                     <ConversationMessage :message="item.message" :image-sources="activeImageSources"
+                      :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
                       :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
                       @open-diff="openToolDiff" @continue="continueAssistant" @regenerate="regenerateMessage" />
                   </div>
@@ -1791,6 +1804,7 @@ watch(theme, applyTheme)
                 <template v-for="item in conversationItems" :key="item.message.id">
                   <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
                   <ConversationMessage :message="item.message" :image-sources="activeImageSources"
+                    :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
                     :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
                     @open-diff="openToolDiff" @continue="continueAssistant" @regenerate="regenerateMessage" />
                 </template>

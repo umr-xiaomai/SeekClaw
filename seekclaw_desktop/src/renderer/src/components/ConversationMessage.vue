@@ -22,6 +22,8 @@ const props = withDefaults(defineProps<{
   imageSources?: Record<string, string>
   /** Dimmed while the conversation search does not match this message. */
   dimmed?: boolean
+  /** True while this bubble belongs to the actively running turn. Gates the "..." placeholder. */
+  streaming?: boolean
 }>(), { imageSources: () => ({}) })
 
 const emit = defineEmits<{
@@ -52,7 +54,7 @@ const systemBody = computed(() => {
 })
 
 const thinkingLabel = computed(() => {
-  if (props.message.state === 'thinking') {
+  if (props.streaming && props.message.state === 'thinking') {
     const chars = props.message.thinking?.length ?? 0
     return chars > 0 ? `正在思考 · 已 ${chars.toLocaleString()} 字` : '正在思考'
   }
@@ -137,9 +139,9 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
       </div>
 
       <div v-if="message.thinking || regularTools.length || editedTools.length" class="assistant-activity">
-        <button v-if="message.thinking" class="thinking-toggle" :class="{ active: message.state === 'thinking' }"
+        <button v-if="message.thinking" class="thinking-toggle" :class="{ active: streaming && message.state === 'thinking' }"
           @click="thinkingOpen = !thinkingOpen">
-          <LoaderCircle v-if="message.state === 'thinking'" :size="15" class="spin" />
+          <LoaderCircle v-if="streaming && message.state === 'thinking'" :size="15" class="spin" />
           <Check v-else :size="15" />
           <span>{{ thinkingLabel }}</span>
           <ChevronDown :size="14" :class="{ rotated: thinkingOpen }" />
@@ -178,8 +180,8 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
       </div>
 
       <MarkdownMessage v-if="message.content" :content="message.content" />
-      <div v-if="message.state === 'thinking' || message.state === 'streaming'" class="response-placeholder"
-        aria-label="AI 正在思考">
+      <div v-if="streaming && (message.state === 'thinking' || message.state === 'streaming')"
+        class="response-placeholder" aria-label="AI 正在思考">
         <span /><span /><span />
       </div>
 
