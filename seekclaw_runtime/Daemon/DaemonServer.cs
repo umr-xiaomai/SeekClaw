@@ -799,6 +799,7 @@ public sealed class DaemonServer : IAsyncDisposable
             var details = new JsonObject
             {
                 ["taskId"] = schedule.TaskId,
+                ["name"] = schedule.Name,
                 ["status"] = schedule.Status,
             };
             if (!string.IsNullOrWhiteSpace(schedule.SessionId)) details["sessionId"] = schedule.SessionId;

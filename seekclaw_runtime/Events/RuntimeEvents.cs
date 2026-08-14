@@ -89,6 +89,7 @@ public sealed record ScheduledTaskUpcomingEvent(
 /// <summary>Emitted after a scheduled task run records its outcome.</summary>
 public sealed record ScheduledTaskCompletedEvent(
     string TaskId,
+    string Name,
     string? SessionId,
     string Status,
     string? Error = null,

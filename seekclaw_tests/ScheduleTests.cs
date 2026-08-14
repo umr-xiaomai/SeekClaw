@@ -188,6 +188,7 @@ public sealed class ScheduleTests : IDisposable
 
         var completed = Assert.IsType<ScheduledTaskCompletedEvent>(await events.Reader.ReadAsync());
         Assert.Equal(task.Id, completed.TaskId);
+        Assert.Equal("事件通知", completed.Name);
         Assert.False(string.IsNullOrWhiteSpace(completed.SessionId));
         Assert.Equal(ScheduleRunStatus.Success, completed.Status);
         Assert.Null(completed.Error);

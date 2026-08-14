@@ -3,10 +3,10 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, extname, join, resolve } from 'node:path'
 import { release } from 'node:os'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
-import type { DaemonRequestOptions } from '../shared/ipc.js'
+import type { DaemonMessage, DaemonRequestOptions } from '../shared/ipc.js'
 import { DaemonClient } from './daemon-client.js'
 import { getGitHistory, getGitOverview, openProjectTerminal } from './project-tools.js'
 
@@ -14,6 +14,7 @@ const daemon = new DaemonClient()
 let mainWindow: BrowserWindow | null = null
 let managedDaemon: ChildProcess | null = null
 let runtimeShutdownStarted = false
+const activeNotifications = new Set<Notification>()
 const supportsMica = process.platform === 'win32' && Number(release().split('.')[2] ?? 0) >= 22000
 const maxImageCount = 10
 const maxImageBytes = 10 * 1024 * 1024
@@ -122,6 +123,52 @@ function syncNativeWindowTheme(): void {
       height: 42
     })
   }
+}
+
+function notificationText(message: DaemonMessage, key: string): string {
+  const value = message.details?.[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function showNativeNotification(title: string, body: string): void {
+  if (!Notification.isSupported()) return
+  const notification = new Notification({ title, body })
+  activeNotifications.add(notification)
+  notification.once('click', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+  notification.once('close', () => activeNotifications.delete(notification))
+  notification.show()
+}
+
+function showScheduleNativeNotification(message: DaemonMessage): void {
+  if (message.event === 'schedule.upcoming') {
+    const name = notificationText(message, 'name') || '计划任务'
+    showNativeNotification('计划任务提醒', `一分钟后「${name}」将自动执行`)
+    return
+  }
+
+  if (message.event !== 'schedule.updated') return
+  const name =
+    notificationText(message, 'name')
+    || notificationText(message, 'taskId')
+    || '计划任务'
+  const status = notificationText(message, 'status')
+  const error = notificationText(message, 'error')
+
+  if (status === 'cancelled') {
+    showNativeNotification('计划任务已取消', `「${name}」已取消`)
+    return
+  }
+  if (status === 'error') {
+    const suffix = error ? `：${error}` : ''
+    showNativeNotification('计划任务执行失败', `「${name}」执行失败${suffix}`)
+    return
+  }
+  showNativeNotification('计划任务完成', `「${name}」已完成`)
 }
 
 function createWindow(): void {
@@ -251,7 +298,10 @@ function registerIpc(): void {
     (_event, method: string, params?: Record<string, unknown>, options?: DaemonRequestOptions) =>
       daemon.request(method, params, options))
 
-  daemon.on('event', (message) => mainWindow?.webContents.send('daemon:event', message))
+  daemon.on('event', (message) => {
+    showScheduleNativeNotification(message)
+    mainWindow?.webContents.send('daemon:event', message)
+  })
   daemon.on('state', (state) => mainWindow?.webContents.send('daemon:state', state))
 }
 

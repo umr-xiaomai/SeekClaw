@@ -204,7 +204,7 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
     {
         var updated = _store.RecordRun(id, status, error, output);
         _runtime.Events.Publish(new ScheduledTaskCompletedEvent(
-            updated.Id, sessionId, status, updated.LastError, updated.LastOutput));
+            updated.Id, updated.DisplayName, sessionId, status, updated.LastError, updated.LastOutput));
         return updated;
     }
 

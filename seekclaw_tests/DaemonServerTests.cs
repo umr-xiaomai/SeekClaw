@@ -191,6 +191,7 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Equal(0, updated["id"]!.GetValue<long>());
         var details = updated["details"]!.AsObject();
         Assert.Equal(id, details["taskId"]!.GetValue<string>());
+        Assert.Equal("广播通知", details["name"]!.GetValue<string>());
         Assert.Equal("success", details["status"]!.GetValue<string>());
         Assert.False(string.IsNullOrWhiteSpace(details["sessionId"]!.GetValue<string>()));
     }
