@@ -32,6 +32,7 @@ interface ScheduleForm {
 
 const tasks = ref<ScheduledTaskInfo[]>([])
 const loading = ref(false)
+let unsubscribeDaemonEvent: (() => void) | undefined
 const error = ref('')
 const notice = ref('')
 const action = ref('')
@@ -221,8 +222,17 @@ watch(() => props.open, (open) => {
   }
 })
 
-onMounted(() => document.addEventListener('keydown', closeOnEscape))
-onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
+onMounted(() => {
+  document.addEventListener('keydown', closeOnEscape)
+  unsubscribeDaemonEvent = window.seekclaw.daemon.onEvent((message) => {
+    if (message.event === 'schedule.updated') void loadTasks()
+  })
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', closeOnEscape)
+  unsubscribeDaemonEvent?.()
+})
 </script>
 
 <template>

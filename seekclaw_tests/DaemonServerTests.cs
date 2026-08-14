@@ -150,6 +150,35 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Schedule_Completion_BroadcastsUpdatedEvent()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+
+        await connection.SendAsync(1, "schedule.create", new JsonObject
+        {
+            ["name"] = "广播通知",
+            ["prompt"] = "检查项目状态",
+            ["cron"] = "0 9 * * *",
+            ["workspace"] = _tempDir,
+        });
+        var created = ParseData(await connection.ReadAsync());
+        var id = created["id"]!.GetValue<string>();
+
+        await connection.SendAsync(2, "schedule.run", new JsonObject { ["id"] = id });
+        var run = await connection.ReadAsync();
+        Assert.Equal("result", run["event"]!.GetValue<string>());
+
+        var updated = await connection.ReadUntilAsync(item =>
+            item["event"]!.GetValue<string>() == "schedule.updated");
+        Assert.Equal(0, updated["id"]!.GetValue<long>());
+        var details = updated["details"]!.AsObject();
+        Assert.Equal(id, details["taskId"]!.GetValue<string>());
+        Assert.Equal("success", details["status"]!.GetValue<string>());
+        Assert.False(string.IsNullOrWhiteSpace(details["sessionId"]!.GetValue<string>()));
+    }
+
+    [Fact]
     public async Task ActiveChat_AcceptsSteeringWithoutCancellingTheTurn()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -705,6 +734,7 @@ public sealed class DaemonServerTests : IAsyncDisposable
             new OfflineHealthChecker(new HealthChecker(new LlmHttpFactory(), configStore)));
         var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(_tempDir, "global-state"));
         var server = new DaemonServer(_runtime, runTurn, globalWorkspace);
+        _asyncDisposables.Add(server);
 
         var pipeName = $"seekclaw-test-{Guid.NewGuid():N}";
         var serverPipe = new NamedPipeServerStream(

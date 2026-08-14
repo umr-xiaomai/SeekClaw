@@ -94,6 +94,17 @@ export interface QueuedMessage {
   createdAt: number
 }
 
+/** Per-session runtime statistics accumulated from daemon events. */
+export interface ThreadStats {
+  llmRounds?: number
+  executionSteps?: number
+  inputTokens?: number
+  outputTokens?: number
+  totalInputTokens?: number
+  cachedInputTokens?: number
+  outputElapsedMs?: number
+}
+
 export interface ThreadItem {
   id: string
   title: string
@@ -128,4 +139,8 @@ export interface ThreadItem {
   queueDraining?: boolean
   /** Locally displayed guidance messages waiting to be persisted by the Agent. */
   pendingGuidance?: number
+  /** Live per-session model/token statistics, populated from daemon events. */
+  stats?: ThreadStats
+  /** Tracks the highest workflow step seen in the current turn. */
+  turnStepHighWater?: number
 }

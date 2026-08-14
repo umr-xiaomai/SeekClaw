@@ -4,6 +4,7 @@ using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Data;
+using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
@@ -139,6 +140,30 @@ public sealed class ScheduleTests : IDisposable
         var ran = store.Get(task.Id)!;
         Assert.Equal(ScheduleRunStatus.Success, ran.LastStatus);
         Assert.NotNull(ran.LastRunAt);
+    }
+
+    [Fact]
+    public async Task Service_RunNow_PublishesCompletionEvent()
+    {
+        var store = NewStore();
+        var runtime = SeekClawRuntime.Create(
+            _dir,
+            new ConfigStore(Path.Combine(_dir, "config-event.json"), Path.Combine(_dir, "state-event.json")),
+            Path.Combine(_dir, "runtime-event.db"));
+        var task = store.Upsert(null, "事件通知", null, "跑一遍", "0 9 * * *", false);
+
+        var service = new ScheduleService(
+            store, runtime, new FileLockCoordinator(), new LlmHttpFactory(),
+            new CircuitBreaker(new RetryConfig()), StubRunner);
+        using var events = runtime.Events.Subscribe();
+
+        await service.RunNowAsync(task.Id, CancellationToken.None);
+
+        var completed = Assert.IsType<ScheduledTaskCompletedEvent>(await events.Reader.ReadAsync());
+        Assert.Equal(task.Id, completed.TaskId);
+        Assert.False(string.IsNullOrWhiteSpace(completed.SessionId));
+        Assert.Equal(ScheduleRunStatus.Success, completed.Status);
+        Assert.Null(completed.Error);
     }
 
     [Fact]

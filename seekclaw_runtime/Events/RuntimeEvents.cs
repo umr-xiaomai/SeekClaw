@@ -63,7 +63,9 @@ public sealed record UsageRecordedEvent(
     long InputTokens,
     long OutputTokens,
     decimal Cost,
-    TimeSpan Elapsed) : RuntimeEvent;
+    TimeSpan Elapsed,
+    long TotalInputTokens,
+    long CachedInputTokens) : RuntimeEvent;
 
 // ---------------------------------------------------------------- workflow
 
@@ -75,6 +77,16 @@ public sealed record WorkflowEvent(int Step, string Kind, string Label, string? 
 public sealed record VerificationStartedEvent(string Command, int Attempt) : RuntimeEvent;
 
 public sealed record VerificationCompletedEvent(bool Success, string Summary, int Attempt) : RuntimeEvent;
+
+// ---------------------------------------------------------------- scheduling
+
+/// <summary>Emitted after a scheduled task run records its outcome.</summary>
+public sealed record ScheduledTaskCompletedEvent(
+    string TaskId,
+    string? SessionId,
+    string Status,
+    string? Error = null,
+    string? Output = null) : RuntimeEvent;
 
 // ---------------------------------------------------------------- diagnostics
 

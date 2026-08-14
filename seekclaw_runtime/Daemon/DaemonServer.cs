@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
@@ -48,10 +49,18 @@ public sealed class DaemonServer : IAsyncDisposable
     private readonly LlmHttpFactory _sharedHttp = new();
     private readonly CircuitBreaker _sharedBreaker;
     private readonly ScheduleService _scheduler;
+    private readonly IEventSubscription _runtimeEvents;
+    private readonly Task _scheduleEventsTask;
 
     // Configuration and workspace administration remains serialized, while agent turns
     // execute concurrently in isolated runtime instances.
     private readonly SemaphoreSlim _adminGate = new(1, 1);
+
+    // Connected clients that receive unsolicited daemon events (such as scheduled-task
+    // completion). Each connection owns a writer and a gate so broadcasts stay ordered.
+    private readonly Lock _clientsGate = new();
+    private readonly Dictionary<long, ClientSink> _clients = [];
+    private long _nextClientId;
 
     public DaemonServer(SeekClawRuntime runtime)
         : this(runtime, null, runtime.Workspaces.CreateGlobal())
@@ -80,12 +89,23 @@ public sealed class DaemonServer : IAsyncDisposable
         _scheduler = new ScheduleService(
             runtime.Schedules, runtime, _fileLocks, _sharedHttp, _sharedBreaker,
             runTurn is null ? null : (workspace, session, prompt, ct) => runTurn(session, workspace, prompt, ct));
+        _runtimeEvents = _runtime.Events.Subscribe();
+        _scheduleEventsTask = BroadcastScheduleEventsAsync(_runtimeEvents.Reader, _shutdown.Token);
         _admin = new DaemonAdminApi(runtime, globalWorkspace, _fileLocks, _scheduler);
     }
 
     /// <summary>Releases the scheduler and shared HTTP clients when the daemon host shuts down.</summary>
     public async ValueTask DisposeAsync()
     {
+        _shutdown.Cancel();
+        try
+        {
+            await _scheduleEventsTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        _runtimeEvents.Dispose();
         await _scheduler.DisposeAsync().ConfigureAwait(false);
         _sharedHttp.Dispose();
         _shutdown.Dispose();
@@ -183,6 +203,7 @@ public sealed class DaemonServer : IAsyncDisposable
             AutoFlush = true,
         };
         using var writerGate = new SemaphoreSlim(1, 1);
+        var clientId = RegisterClient(writer, writerGate);
 
         // A connection can own many independent tasks. The legacy `session` field is
         // retained only for CLI-style requests that omit an explicit sessionId.
@@ -749,12 +770,64 @@ public sealed class DaemonServer : IAsyncDisposable
         }
         finally
         {
+            UnregisterClient(clientId);
             foreach (var turn in activeTurns.Values) turn.Cancellation.Cancel();
             foreach (var turn in activeTurns.Values)
                 if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
             foreach (var turn in activeTurns.Values) turn.Cancellation.Dispose();
             activeTurns.Clear();
         }
+    }
+
+    private async Task BroadcastScheduleEventsAsync(ChannelReader<RuntimeEvent> reader, CancellationToken ct)
+    {
+        await foreach (var evt in reader.ReadAllAsync(ct).ConfigureAwait(false))
+        {
+            if (evt is not ScheduledTaskCompletedEvent schedule) continue;
+            var details = new JsonObject
+            {
+                ["taskId"] = schedule.TaskId,
+                ["status"] = schedule.Status,
+            };
+            if (!string.IsNullOrWhiteSpace(schedule.SessionId)) details["sessionId"] = schedule.SessionId;
+            if (!string.IsNullOrWhiteSpace(schedule.Error)) details["error"] = schedule.Error;
+            await BroadcastAsync(0, "schedule.updated", schedule.TaskId, ct, details).ConfigureAwait(false);
+        }
+    }
+
+    private async Task BroadcastAsync(
+        long id,
+        string eventName,
+        string data,
+        CancellationToken ct,
+        JsonObject? details = null)
+    {
+        List<ClientSink> clients;
+        lock (_clientsGate) clients = _clients.Values.ToList();
+        foreach (var client in clients)
+        {
+            try
+            {
+                await WriteAsync(client.Writer, client.WriterGate, id, eventName, data, ct, details: details)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+            {
+                // The client disconnected while the broadcast was in flight.
+            }
+        }
+    }
+
+    private long RegisterClient(StreamWriter writer, SemaphoreSlim writerGate)
+    {
+        var clientId = Interlocked.Increment(ref _nextClientId);
+        lock (_clientsGate) _clients[clientId] = new ClientSink(writer, writerGate);
+        return clientId;
+    }
+
+    private void UnregisterClient(long clientId)
+    {
+        lock (_clientsGate) _clients.Remove(clientId);
     }
 
     private async Task RunTurnAsync(
@@ -886,6 +959,28 @@ public sealed class DaemonServer : IAsyncDisposable
                     {
                         ["callId"] = diff.CallId,
                         ["diff"] = diff.UnifiedDiff,
+                    }),
+                ModelInvocationStartedEvent model => (
+                    Name: (string?)"model_start",
+                    Data: $"{model.ProviderId}/{model.ModelId}",
+                    Details: new JsonObject
+                    {
+                        ["provider"] = model.ProviderId,
+                        ["model"] = model.ModelId,
+                        ["step"] = model.Step,
+                    }),
+                UsageRecordedEvent usage => (
+                    Name: (string?)"usage",
+                    Data: $"{usage.ProviderId}/{usage.ModelId}",
+                    Details: new JsonObject
+                    {
+                        ["provider"] = usage.ProviderId,
+                        ["model"] = usage.ModelId,
+                        ["inputTokens"] = usage.InputTokens,
+                        ["outputTokens"] = usage.OutputTokens,
+                        ["totalInputTokens"] = usage.TotalInputTokens,
+                        ["cachedInputTokens"] = usage.CachedInputTokens,
+                        ["elapsedMs"] = usage.Elapsed.TotalMilliseconds,
                     }),
                 WorkflowEvent workflow => (
                     Name: (string?)"workflow",
@@ -1142,6 +1237,8 @@ public sealed class DaemonServer : IAsyncDisposable
         try { await task.ConfigureAwait(false); }
         catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
     }
+
+    private sealed record ClientSink(StreamWriter Writer, SemaphoreSlim WriterGate);
 
     private static bool SessionBelongsTo(AgentSession session, WorkspaceInfo workspace) =>
         workspace.IsGlobal

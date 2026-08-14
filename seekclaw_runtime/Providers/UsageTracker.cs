@@ -32,7 +32,8 @@ public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : 
 
         eventBus.Publish(new UsageRecordedEvent(
             entry.Provider, entry.Model, entry.InputTokens, entry.OutputTokens,
-            entry.Cost, TimeSpan.FromMilliseconds(entry.ElapsedMs)));
+            entry.Cost, TimeSpan.FromMilliseconds(entry.ElapsedMs),
+            entry.TotalInputTokens, entry.CachedInputTokens));
     }
 
     public IReadOnlyList<UsageEntry> ReadAll(DateTimeOffset? since = null)

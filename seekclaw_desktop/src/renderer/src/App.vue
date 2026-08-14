@@ -190,6 +190,25 @@ const activeProject = computed(() => {
   return projects.value.find((project) => project.id === projectId)
 })
 const globalTaskActive = computed(() => activeThread.value ? !activeThread.value.projectId : !selectedProjectId.value)
+const composerCaption = computed(() => {
+  if (conversationLoading.value) return '正在读取会话历史…'
+  if (!activeThread.value) return '选择一个任务，或新建任务开始。'
+  if (activeThread.value.archived) return '此任务已归档，恢复后可继续。'
+  const stats = activeThread.value.stats
+  const number = (value?: number): string =>
+    typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '—'
+  const totalInputTokens = stats?.totalInputTokens ?? 0
+  const cachedInputTokens = stats?.cachedInputTokens ?? 0
+  const cacheRate = totalInputTokens > 0
+    ? `${Math.min(100, Math.round(cachedInputTokens / totalInputTokens * 100))}%`
+    : '—'
+  const outputTokens = stats?.outputTokens ?? 0
+  const outputElapsedMs = stats?.outputElapsedMs ?? 0
+  const speed = outputTokens > 0 && outputElapsedMs > 0
+    ? (outputTokens / (outputElapsedMs / 1000)).toFixed(1)
+    : '—'
+  return `${number(stats?.llmRounds)} 轮 · ${number(stats?.executionSteps)} 步 | 缓存命中 ${cacheRate} | ${speed} tok/s | 输入 ${number(stats?.inputTokens)} tok · 输出 ${number(stats?.outputTokens)} tok`
+})
 const settingsThread = computed(() => threads.value.find((thread) => thread.id === taskSettingsThreadId.value))
 const settingsProject = computed(() => projects.value.find((project) => project.id === settingsThread.value?.projectId))
 const conversationTitle = computed(() =>
@@ -362,6 +381,15 @@ function showTaskNotice(thread: ThreadItem, kind: 'done' | 'error'): void {
     taskNotice.value = null
     taskNoticeTimer = undefined
   }, 4200)
+}
+
+async function handleScheduleUpdated(event: DaemonMessage): Promise<void> {
+  if (!daemonState.value.connected) return
+  await refreshAllProjectSessions().catch(() => undefined)
+  const sessionId = typeof event.details?.sessionId === 'string' ? event.details.sessionId : ''
+  if (!sessionId) return
+  const thread = threads.value.find((item) => item.sessionId === sessionId)
+  if (thread) showTaskNotice(thread, event.details?.status === 'error' ? 'error' : 'done')
 }
 
 function normalizeReasoningLevel(value?: string): ReasoningLevel {
@@ -663,7 +691,16 @@ function newTask(projectId?: string): void {
     messages: [],
     reasoningLevel: ReasoningLevel.High,
     networkEnabled: true,
-    archived: false
+    archived: false,
+    stats: {
+      llmRounds: 0,
+      executionSteps: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalInputTokens: 0,
+      cachedInputTokens: 0,
+      outputElapsedMs: 0
+    }
   }
   threads.value.unshift(thread)
   selectedProjectId.value = project?.id ?? ''
@@ -747,6 +784,10 @@ async function reloadThreadSession(thread: ThreadItem, project?: ProjectItem): P
     thread.title = saved.title || thread.title
     thread.archived = Boolean(saved.archived)
     thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
+    if (!thread.stats) {
+      const assistantCount = saved.messages.filter((item) => item.role === 'assistant').length
+      thread.stats = { llmRounds: assistantCount, executionSteps: assistantCount }
+    }
   } catch {
     thread.sessionLoaded = false
   }
@@ -780,6 +821,10 @@ async function selectThread(id: string): Promise<void> {
       thread.archived = Boolean(saved.archived)
       thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
       thread.networkEnabled = saved.networkEnabled ?? true
+      if (!thread.stats) {
+        const assistantCount = saved.messages.filter((item) => item.role === 'assistant').length
+        thread.stats = { llmRounds: assistantCount, executionSteps: assistantCount }
+      }
     }
   } catch {
     thread.sessionLoaded = false
@@ -1376,6 +1421,10 @@ async function deleteProject(project: ProjectItem): Promise<void> {
 }
 
 function handleDaemonEvent(event: DaemonMessage): void {
+  if (event.event === 'schedule.updated') {
+    void handleScheduleUpdated(event)
+    return
+  }
   const isChatRequest = event.requestMethod === 'chat'
     || event.requestMethod === 'agent.runTurn'
     || event.requestMethod === 'agent/runTurn'
@@ -1512,6 +1561,25 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       break
     }
+    case 'model_start': {
+      thread.stats ??= {}
+      thread.stats.llmRounds = (thread.stats.llmRounds ?? 0) + 1
+      break
+    }
+    case 'usage': {
+      thread.stats ??= {}
+      const inputTokens = Number(event.details?.inputTokens) || 0
+      const outputTokens = Number(event.details?.outputTokens) || 0
+      const totalInputTokens = Number(event.details?.totalInputTokens) || inputTokens
+      const cachedInputTokens = Number(event.details?.cachedInputTokens) || 0
+      const elapsedMs = Number(event.details?.elapsedMs) || 0
+      thread.stats.inputTokens = (thread.stats.inputTokens ?? 0) + inputTokens
+      thread.stats.outputTokens = (thread.stats.outputTokens ?? 0) + outputTokens
+      thread.stats.totalInputTokens = (thread.stats.totalInputTokens ?? 0) + totalInputTokens
+      thread.stats.cachedInputTokens = (thread.stats.cachedInputTokens ?? 0) + cachedInputTokens
+      thread.stats.outputElapsedMs = (thread.stats.outputElapsedMs ?? 0) + elapsedMs
+      break
+    }
     case 'workflow': {
       const kind = String(event.details?.kind ?? '')
       const step = Number(event.details?.step) || 0
@@ -1519,6 +1587,12 @@ function handleDaemonEvent(event: DaemonMessage): void {
       const detail = typeof event.details?.detail === 'string' ? event.details.detail : undefined
       if (kind === 'start') {
         thread.workflow = { nodes: [], activeId: null }
+        thread.turnStepHighWater = 0
+      } else if (step > (thread.turnStepHighWater ?? 0)) {
+        thread.stats ??= {}
+        thread.stats.executionSteps = (thread.stats.executionSteps ?? 0)
+          + step - (thread.turnStepHighWater ?? 0)
+        thread.turnStepHighWater = step
       }
       thread.workflow ??= { nodes: [], activeId: null }
       if (thread.workflow.activeId) {
@@ -1868,17 +1942,7 @@ watch(theme, applyTheme)
               :reasoning-level="activeReasoningLevel" :network-enabled="activeThread?.networkEnabled ?? true"
               @send="sendMessage" @stop="stopTurn" @change-model="changeModel" @change-mode="changeMode"
               @change-reasoning-level="changeReasoningLevel" @change-network="changeNetwork" />
-            <p class="composer-caption">
-              {{ conversationLoading
-                ? '正在读取会话历史…'
-                : !activeThread
-                  ? '选择一个任务，或新建任务开始。'
-                  : activeThread.archived
-                    ? '此任务已归档，恢复后可继续。'
-                    : globalTaskActive
-                      ? '全局任务不使用本地文件、终端或 Git 工具。'
-                      : 'SeekClaw 可能会出错，请检查生成的代码和命令。' }}
-            </p>
+            <p class="composer-caption">{{ composerCaption }}</p>
           </footer>
         </main>
 

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Coordination;
+using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Workspaces;
@@ -140,6 +141,7 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
         using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         runCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         var runCt = runCts.Token;
+        string? sessionId = null;
 
         try
         {
@@ -148,31 +150,46 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
                 workspace,
                 reasoningLevel: _runtime.ConfigStore.Config.Agent.ReasoningLevel,
                 networkEnabled: true);
+            sessionId = session.Header.Id;
             _runtime.Sessions.UpdateMetadata(workspace, session.Header.Id, title: $"{task.Name}（计划任务）");
             var result = await _turnRunner(workspace, session, task.Prompt, runCt).ConfigureAwait(false);
-            _store.RecordRun(
+            RecordRun(
                 task.Id,
+                sessionId,
                 result.Error is null ? ScheduleRunStatus.Success : ScheduleRunStatus.Error,
                 result.Error,
                 result.Text);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            _store.RecordRun(task.Id, ScheduleRunStatus.Cancelled, "任务已取消");
+            RecordRun(task.Id, sessionId, ScheduleRunStatus.Cancelled, "任务已取消");
         }
         catch (OperationCanceledException) when (runCt.IsCancellationRequested)
         {
-            _store.RecordRun(task.Id, ScheduleRunStatus.Cancelled, $"任务执行超过 {timeoutSeconds} 秒，已中止");
+            RecordRun(task.Id, sessionId, ScheduleRunStatus.Cancelled, $"任务执行超过 {timeoutSeconds} 秒，已中止");
         }
         catch (Exception ex)
         {
-            _store.RecordRun(task.Id, ScheduleRunStatus.Error, ex.Message);
+            RecordRun(task.Id, sessionId, ScheduleRunStatus.Error, ex.Message);
         }
         finally
         {
             _running.TryRemove(task.Id, out _);
             _gate.Release();
         }
+    }
+
+    private ScheduledTask RecordRun(
+        string id,
+        string? sessionId,
+        string status,
+        string? error = null,
+        string? output = null)
+    {
+        var updated = _store.RecordRun(id, status, error, output);
+        _runtime.Events.Publish(new ScheduledTaskCompletedEvent(
+            updated.Id, sessionId, status, updated.LastError, updated.LastOutput));
+        return updated;
     }
 
     private WorkspaceInfo ResolveWorkspace(ScheduledTask task)

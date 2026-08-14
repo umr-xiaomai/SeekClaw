@@ -8,12 +8,15 @@ export type DaemonEventName =
   | 'tool_start'
   | 'tool_done'
   | 'file_diff'
+  | 'model_start'
+  | 'usage'
   | 'workflow'
   | 'result'
   | 'done'
   | 'cancelled'
   | 'error'
   | 'bye'
+  | 'schedule.updated'
 
 export interface DaemonMessage {
   id: number
