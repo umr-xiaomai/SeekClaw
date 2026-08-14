@@ -280,6 +280,10 @@ function registerIpc(): void {
 
   ipcMain.handle('app:close', () => mainWindow?.close())
 
+  ipcMain.handle('app:notify', (_event, title: string, body: string) => {
+    if (typeof title === 'string' && typeof body === 'string') showNativeNotification(title, body)
+  })
+
   ipcMain.handle('app:set-theme', (_event, theme: 'system' | 'light' | 'dark') => {
     if (theme === 'system' || theme === 'light' || theme === 'dark') {
       nativeTheme.themeSource = theme

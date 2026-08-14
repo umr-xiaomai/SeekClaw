@@ -8,6 +8,7 @@ const api: DesktopApi = {
   showItemInFolder: (path) => ipcRenderer.invoke('app:show-item', path),
   closeApp: () => ipcRenderer.invoke('app:close'),
   setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),
+  notify: (title, body) => ipcRenderer.invoke('app:notify', title, body),
   project: {
     openTerminal: (path) => ipcRenderer.invoke('project:open-terminal', path),
     gitOverview: (path) => ipcRenderer.invoke('project:git-overview', path),

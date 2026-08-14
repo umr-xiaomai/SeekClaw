@@ -96,6 +96,7 @@ export interface DesktopApi {
   showItemInFolder(path: string): Promise<void>
   closeApp(): Promise<void>
   setTheme(theme: AppearanceTheme): Promise<void>
+  notify(title: string, body: string): Promise<void>
   project: {
     openTerminal(path: string): Promise<void>
     gitOverview(path: string): Promise<GitOverview>

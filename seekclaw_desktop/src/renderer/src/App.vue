@@ -163,7 +163,6 @@ const busy = computed(() => Boolean(activeThread.value?.running))
 const scrollArea = ref<HTMLElement | null>(null)
 const composer = ref<InstanceType<typeof Composer> | null>(null)
 const autoFollowConversation = ref(true)
-const taskNotice = ref<{ threadId: string; title: string; kind: 'done' | 'error' } | null>(null)
 const conversationLoading = ref(false)
 const conversationLoadError = ref('')
 const conversationQuery = ref('')
@@ -372,17 +371,6 @@ async function scrollToBottom(smooth = false, force = false): Promise<void> {
   element.scrollTo({ top: element.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
 }
 
-let taskNoticeTimer: number | undefined
-
-function showTaskNotice(thread: ThreadItem, kind: 'done' | 'error'): void {
-  taskNotice.value = { threadId: thread.id, title: thread.title, kind }
-  if (taskNoticeTimer !== undefined) window.clearTimeout(taskNoticeTimer)
-  taskNoticeTimer = window.setTimeout(() => {
-    taskNotice.value = null
-    taskNoticeTimer = undefined
-  }, 4200)
-}
-
 async function handleScheduleUpdated(): Promise<void> {
   if (!daemonState.value.connected) return
   await refreshAllProjectSessions().catch(() => undefined)
@@ -393,13 +381,6 @@ function normalizeReasoningLevel(value?: string): ReasoningLevel {
   return Object.values(ReasoningLevel).includes(normalized as ReasoningLevel)
     ? normalized as ReasoningLevel
     : ReasoningLevel.High
-}
-
-function openTaskNotice(): void {
-  const notice = taskNotice.value
-  taskNotice.value = null
-  if (!notice) return
-  if (notice.threadId) void selectThread(notice.threadId)
 }
 
 async function refreshProjectSessions(project: ProjectItem): Promise<void> {
@@ -1641,7 +1622,7 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       scheduleQueuedDrain(thread)
       if (isBackgroundThread) {
-        showTaskNotice(thread, 'done')
+        void window.seekclaw.notify('后台任务完成', `「${thread.title}」已完成`)
       }
       if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
       break
@@ -1664,7 +1645,7 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       scheduleQueuedDrain(thread)
       if (isBackgroundThread) {
-        showTaskNotice(thread, 'error')
+        void window.seekclaw.notify('后台任务执行失败', `「${thread.title}」执行失败`)
       }
       if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
       break
@@ -1901,18 +1882,6 @@ watch(theme, applyTheme)
               </button>
             </div>
           </section>
-
-          <Transition name="task-notice">
-            <button v-if="taskNotice" type="button" class="task-notice" :class="{ error: taskNotice.kind === 'error' }"
-              @click="openTaskNotice">
-              <span>{{
-                taskNotice.kind === 'error'
-                  ? '任务执行失败'
-                  : '后台任务已完成'
-              }}</span>
-              <small>{{ taskNotice.title }}</small>
-            </button>
-          </Transition>
 
           <footer class="composer-region">
             <div v-if="activeThread?.queuedMessages?.length" class="pending-message-stack" aria-label="等待发送的消息">
