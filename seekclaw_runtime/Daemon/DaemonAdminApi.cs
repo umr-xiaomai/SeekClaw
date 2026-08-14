@@ -121,14 +121,16 @@ internal sealed class DaemonAdminApi(
         return "ok";
     }
 
-    public async Task<string> RunScheduleAsync(JsonObject parameters, CancellationToken ct)
+    public string RunSchedule(JsonObject parameters)
     {
         var id = RequiredString(parameters, "id");
         if (scheduler is null)
             throw new DaemonRequestException("Scheduler is not available in this host.");
         try
         {
-            await scheduler.RunNowAsync(id, ct).ConfigureAwait(false);
+            // Fire-and-forget: acknowledge immediately instead of blocking the
+            // admin gate and the connection for the whole agent turn.
+            scheduler.StartRun(id);
             return "started";
         }
         catch (InvalidOperationException ex)

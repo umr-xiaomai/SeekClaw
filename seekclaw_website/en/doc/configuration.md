@@ -88,7 +88,8 @@ This example uses the current field names:
     "thinkingBudgetTokens": 16384,
     "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
-    "bashTimeoutSeconds": 180
+    "bashTimeoutSeconds": 180,
+    "scheduledTurnTimeoutSeconds": 1800
   },
   "mcp": { "servers": {} }
 }

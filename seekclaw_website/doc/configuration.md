@@ -91,7 +91,8 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
     "thinkingBudgetTokens": 16384,
     "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
-    "bashTimeoutSeconds": 180
+    "bashTimeoutSeconds": 180,
+    "scheduledTurnTimeoutSeconds": 1800
   },
   "mcp": {
     "servers": {}

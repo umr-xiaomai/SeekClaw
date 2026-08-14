@@ -461,8 +461,8 @@ public sealed class DaemonServer : IAsyncDisposable
                         break;
 
                     case "schedule.run":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            token => _admin.RunScheduleAsync(Params(request), token), ct).ConfigureAwait(false);
+                        await RunAdminAsync(writer, writerGate, id, false,
+                            _ => Task.FromResult(_admin.RunSchedule(Params(request))), ct).ConfigureAwait(false);
                         break;
 
                     case "profile.list":

@@ -15,7 +15,14 @@ public delegate Task<AgentTurnResult> ScheduleTurnRunner(
 /// <summary>Manual trigger surface used by daemon admin methods.</summary>
 public interface IScheduleService
 {
+    /// <summary>Runs a task to completion (used by tests and legacy callers).</summary>
     Task RunNowAsync(string id, CancellationToken ct);
+
+    /// <summary>
+    /// Triggers a task without waiting: the run continues in the background while
+    /// the caller is acknowledged immediately.
+    /// </summary>
+    void StartRun(string id);
 }
 
 /// <summary>
@@ -37,6 +44,7 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _running = new();
     private readonly CancellationTokenSource _dispose = new();
+    private readonly CancellationTokenSource _lifetime = new();
     private TimeProvider _clock = TimeProvider.System;
 
     public ScheduleService(
@@ -105,6 +113,16 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
         await RunTaskAsync(task, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Triggers a task without blocking the caller. A scheduled task that is still
+    /// running from a previous trigger is silently skipped.
+    /// </summary>
+    public void StartRun(string id)
+    {
+        var task = _store.Get(id) ?? throw new InvalidOperationException($"Scheduled task not found: {id}");
+        if (!_running.ContainsKey(task.Id)) _ = RunTaskAsync(task, _lifetime.Token);
+    }
+
     private async Task RunTaskAsync(ScheduledTask task, CancellationToken ct)
     {
         // Serialize executions so scheduled runs cannot pile up on the same machine,
@@ -115,6 +133,14 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
             _gate.Release();
             return;
         }
+
+        // A hung turn must not wedge the scheduler forever: give every run a hard
+        // wall-clock budget, then record the timeout and free the task's slot.
+        var timeoutSeconds = Math.Clamp(_runtime.ConfigStore.Config.Agent.ScheduledTurnTimeoutSeconds, 60, 86_400);
+        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        runCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        var runCt = runCts.Token;
+
         try
         {
             var workspace = ResolveWorkspace(task);
@@ -123,7 +149,7 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
                 reasoningLevel: _runtime.ConfigStore.Config.Agent.ReasoningLevel,
                 networkEnabled: true);
             _runtime.Sessions.UpdateMetadata(workspace, session.Header.Id, title: $"{task.Name}（计划任务）");
-            var result = await _turnRunner(workspace, session, task.Prompt, ct).ConfigureAwait(false);
+            var result = await _turnRunner(workspace, session, task.Prompt, runCt).ConfigureAwait(false);
             _store.RecordRun(
                 task.Id,
                 result.Error is null ? ScheduleRunStatus.Success : ScheduleRunStatus.Error,
@@ -133,6 +159,10 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             _store.RecordRun(task.Id, ScheduleRunStatus.Cancelled, "任务已取消");
+        }
+        catch (OperationCanceledException) when (runCt.IsCancellationRequested)
+        {
+            _store.RecordRun(task.Id, ScheduleRunStatus.Cancelled, $"任务执行超过 {timeoutSeconds} 秒，已中止");
         }
         catch (Exception ex)
         {
@@ -179,7 +209,9 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        _lifetime.Cancel();
         _dispose.Cancel();
+        _lifetime.Dispose();
         _dispose.Dispose();
         _gate.Dispose();
         return ValueTask.CompletedTask;

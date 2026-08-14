@@ -103,7 +103,7 @@ Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直�
 | `schedule.create` / `schedule.update` | 参数 `{ "name", "prompt", "cron", "workspace"? , "enabled"? }`；`cron` 为 5 段表达式（分 时 日 月 周，本地时区），非法表达式返回错误 |
 | `schedule.toggle` | 参数 `{ "id", "enabled" }`，启用/暂停任务 |
 | `schedule.delete` | 参数 `{ "id" }`，删除任务 |
-| `schedule.run` | 参数 `{ "id" }`，立即执行一次（手动触发），执行完成后返回 `started` |
+| `schedule.run` | 参数 `{ "id" }`，立即触发一次执行（后台运行，不等执行完成即返回 `started`） |
 | `profile.list/upsert/use/remove` | 管理运行 Profile |
 | `provider.list/upsert/use/remove/test` | 管理和测试 Provider |
 | `mcp.list/upsert/remove/reload` | 管理、重连 MCP Server 并刷新工具注册 |
@@ -114,7 +114,7 @@ Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直�
 
 Daemon 会先建立 IPC 监听，再在后台初始化 MCP。`mcp.reload`、MCP 配置修改和工作区切换都会先注销旧工具与 Prompt，再串行连接新配置。
 
-**计划任务**：Daemon 启动时内置调度器，每 10 秒检查一次启用中的计划任务，到点后为每个到期任务新建一个 Session 并执行一次 Agent turn（使用隔离 Runtime，与普通任务共享 HttpClient 连接池、熔断器与文件写锁），结果（成功/失败/取消与截断输出）记录回任务。手动 `schedule.run` 会立即执行一次并重新计算下次运行时间。计划任务只在 Daemon 运行时才会触发；桌面端关闭后不会自动补跑。
+**计划任务**：Daemon 启动时内置调度器，每 10 秒检查一次启用中的计划任务，到点后为每个到期任务新建一个 Session 并执行一次 Agent turn（使用隔离 Runtime，与普通任务共享 HttpClient 连接池、熔断器与文件写锁），结果（成功/失败/取消与截断输出）记录回任务。手动 `schedule.run` 会立即触发一次并重新计算下次运行时间。单次执行有超时保护（`agent.scheduledTurnTimeoutSeconds`，默认 30 分钟），超时会中止并记录，避免卡死的回合永久阻塞调度器。计划任务只在 Daemon 运行时才会触发；桌面端关闭后不会自动补跑。
 
 Daemon 对每个 `chat` 请求按 `sessionId` 创建独立的 Agent turn。每个 turn 使用隔离的 Runtime、Prompt/Skills、MCP 注册和事件订阅，因此同一连接或多个连接可以并发运行任意数量的任务；并发度由 CPU、内存、Provider 和本机 I/O 性能共同决定。管理类配置写入仍然串行化，避免配置文件互相覆盖，但不会阻塞已经启动的 Agent turn。
 

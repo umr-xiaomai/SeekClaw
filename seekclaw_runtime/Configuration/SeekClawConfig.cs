@@ -162,6 +162,8 @@ public sealed class AgentConfig
     /// <summary>Hard cap safeguard; effective tool output budget adapts to the model context window.</summary>
     public int MaxToolOutputChars { get; set; } = 60_000;
     public int BashTimeoutSeconds { get; set; } = 180;
+    /// <summary>Wall-clock budget for one scheduled-task turn; exceeded runs are cancelled and recorded.</summary>
+    public int ScheduledTurnTimeoutSeconds { get; set; } = 1_800;
 }
 
 public sealed class McpConfig

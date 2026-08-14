@@ -118,11 +118,21 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var run = await connection.ReadAsync();
         Assert.Equal("result", run["event"]!.GetValue<string>());
 
-        await connection.SendAsync(4, "schedule.list");
-        var list = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
-        Assert.Contains(list, item => item!["id"]!.GetValue<string>() == id);
-        var listed = list.First(item => item!["id"]!.GetValue<string>() == id)!;
-        Assert.Equal("success", listed["lastStatus"]!.GetValue<string>());
+        // schedule.run acknowledges immediately and executes in the background;
+        // poll the list until the (instant) stub turn records its outcome.
+        JsonObject? listed = null;
+        for (var attempt = 0; attempt < 40; attempt++)
+        {
+            await connection.SendAsync(4, "schedule.list");
+            var listResponse = await connection.ReadUntilAsync(item =>
+                item["id"]!.GetValue<long>() == 4 && item["event"]!.GetValue<string>() == "result");
+            var listNow = JsonNode.Parse(listResponse["data"]!.GetValue<string>())!.AsArray();
+            listed = listNow.FirstOrDefault(item => item!["id"]!.GetValue<string>() == id)?.AsObject();
+            if (listed is not null && listed["lastStatus"]!.GetValue<string>() is not null) break;
+            await Task.Delay(50);
+        }
+        Assert.NotNull(listed);
+        Assert.Equal("success", listed!["lastStatus"]!.GetValue<string>());
 
         await connection.SendAsync(5, "schedule.create", new JsonObject
         {

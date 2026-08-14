@@ -613,6 +613,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   font-size: 11px;
 }
 
+/* The editor toggle mirrors the list-row switch so toggling gives visible feedback. */
+.scheduled-enabled-row input:checked + .toggle-switch {
+  background: var(--accent);
+}
+
+.scheduled-enabled-row input:checked + .toggle-switch > span {
+  transform: translateX(16px);
+}
+
+.scheduled-enabled-row input:focus-visible + .toggle-switch {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 2px;
+}
+
 .span-2 {
   grid-column: span 2;
 }

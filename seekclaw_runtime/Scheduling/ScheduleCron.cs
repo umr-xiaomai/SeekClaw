@@ -24,10 +24,12 @@ public static class ScheduleCron
         {
             var expression = Parse(cron);
             var zone = TimeZoneInfo.Local;
-            var next = expression.GetNextOccurrence(after.UtcDateTime, zone);
-            if (next is null) return null;
-            var unspecified = DateTime.SpecifyKind(next.Value, DateTimeKind.Unspecified);
-            return new DateTimeOffset(unspecified, zone.GetUtcOffset(unspecified)).ToUniversalTime();
+            // Use the DateTimeOffset overload: the DateTime overload interprets the
+            // instant's wall clock in the target zone, which shifts the result by the
+            // UTC offset and can yield an occurrence in the past (tasks then never fire
+            // or fire on every tick).
+            var next = expression.GetNextOccurrence(after, zone);
+            return next?.ToUniversalTime();
         }
         catch (CronFormatException)
         {

@@ -141,6 +141,74 @@ public sealed class ScheduleTests : IDisposable
         Assert.NotNull(ran.LastRunAt);
     }
 
+    [Fact]
+    public void NextOccurrence_IsStrictlyAfterTheGivenInstant()
+    {
+        // Regression: the previous DateTime-based Cronos call interpreted the UTC
+        // wall clock as local time, producing an occurrence 8 hours in the past
+        // (UTC+8) so hourly tasks fired on every tick instead of the next hour.
+        var after = DateTimeOffset.Parse("2026-08-14T16:15:03Z");
+        var next = ScheduleCron.NextOccurrence("0 * * * *", after);
+
+        Assert.NotNull(next);
+        Assert.True(next > after, $"next={next} must be strictly after {after}");
+
+        var afterLocal = after.ToLocalTime();
+        var nextLocal = next.Value.ToLocalTime();
+        Assert.Equal(0, nextLocal.Minute);
+        Assert.Equal(0, nextLocal.Second);
+        var gap = nextLocal - afterLocal;
+        Assert.True(gap > TimeSpan.Zero && gap <= TimeSpan.FromMinutes(60), $"gap {gap} should be within the next hour");
+    }
+
+    [Fact]
+    public void NextOccurrence_DailyCron_LandsOnTheCorrectLocalWallClock()
+    {
+        // 09:00 daily: whatever the machine timezone, the next occurrence must be
+        // the next local 09:00 after the given instant.
+        var after = DateTimeOffset.Parse("2026-08-14T16:15:03Z");
+        var next = ScheduleCron.NextOccurrence("0 9 * * *", after);
+
+        Assert.NotNull(next);
+        Assert.True(next > after);
+        var nextLocal = next.Value.ToLocalTime();
+        Assert.Equal(9, nextLocal.Hour);
+        Assert.Equal(0, nextLocal.Minute);
+        Assert.True(nextLocal.Date > after.ToLocalTime().Date || nextLocal.TimeOfDay > after.ToLocalTime().TimeOfDay);
+    }
+
+    [Fact]
+    public async Task Service_StartRun_TriggersWithoutBlockingAndRecordsOutcome()
+    {
+        var store = NewStore();
+        var runtime = SeekClawRuntime.Create(
+            _dir,
+            new ConfigStore(Path.Combine(_dir, "config4.json"), Path.Combine(_dir, "state4.json")),
+            Path.Combine(_dir, "runtime4.db"));
+        var task = store.Upsert(null, "手动任务", null, "跑一遍", "0 9 * * *", false);
+
+        var service = new ScheduleService(
+            store, runtime, new FileLockCoordinator(), new LlmHttpFactory(),
+            new CircuitBreaker(new RetryConfig()), StubRunner);
+
+        // StartRun returns immediately; the run records its outcome in the background.
+        service.StartRun(task.Id);
+        ScheduledTask ran;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        do
+        {
+            await Task.Delay(20);
+            ran = store.Get(task.Id)!;
+        }
+        while (ran.LastRunAt is null && DateTimeOffset.UtcNow < deadline);
+
+        Assert.Equal(ScheduleRunStatus.Success, ran.LastStatus);
+        Assert.NotNull(ran.LastRunAt);
+        Assert.Null(ran.NextRunAt); // disabled task: no next occurrence
+
+        await service.DisposeAsync();
+    }
+
     private static Task<AgentTurnResult> StubRunner(
         WorkspaceInfo workspace, AgentSession session, string prompt, CancellationToken ct) =>
         Task.FromResult(new AgentTurnResult("完成", false, null));

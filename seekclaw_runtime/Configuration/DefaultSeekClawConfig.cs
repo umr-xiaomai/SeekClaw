@@ -64,6 +64,7 @@ public static class DefaultSeekClawConfig
             ReasoningLevel = ReasoningLevel.High,
             MaxToolOutputChars = 60_000,
             BashTimeoutSeconds = 180,
+            ScheduledTurnTimeoutSeconds = 1_800,
         },
         Mcp = new McpConfig(),
     };
