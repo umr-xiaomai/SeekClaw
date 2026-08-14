@@ -158,19 +158,6 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
     </template>
 
     <div v-else class="assistant-message">
-      <button
-        v-if="message.thinking"
-        class="thinking-toggle"
-        :class="{ active: message.state === 'thinking' }"
-        @click="thinkingOpen = !thinkingOpen"
-      >
-        <LoaderCircle v-if="message.state === 'thinking'" :size="16" class="spin" />
-        <Check v-else :size="16" />
-        <span>{{ thinkingLabel }}</span>
-        <ChevronDown :size="15" :class="{ rotated: thinkingOpen }" />
-      </button>
-      <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
-
       <div v-if="message.viewedImages?.length" class="image-view-list" aria-label="AI 已查看的图片">
         <button
           v-for="image in message.viewedImages"
@@ -192,43 +179,64 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
         </button>
       </div>
 
-      <div v-if="regularTools.length" class="tool-list">
-        <div v-for="tool in regularTools" :key="tool.id" class="tool-row">
-          <LoaderCircle v-if="tool.state === 'running'" :size="15" class="spin" />
-          <CircleAlert v-else-if="tool.state === 'error'" :size="15" />
-          <Wrench v-else :size="15" />
-          <span>{{ tool.name }}</span>
-          <small v-if="tool.detail">{{ tool.detail }}</small>
-        </div>
-      </div>
+      <div
+        v-if="message.thinking || regularTools.length || editedTools.length"
+        class="assistant-activity"
+      >
+        <button
+          v-if="message.thinking"
+          class="thinking-toggle"
+          :class="{ active: message.state === 'thinking' }"
+          @click="thinkingOpen = !thinkingOpen"
+        >
+          <LoaderCircle v-if="message.state === 'thinking'" :size="15" class="spin" />
+          <Check v-else :size="15" />
+          <span>{{ thinkingLabel }}</span>
+          <ChevronDown :size="14" :class="{ rotated: thinkingOpen }" />
+        </button>
+        <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
 
-      <section v-if="editedTools.length" class="change-card" aria-label="代码修改">
-        <header class="change-card-header">
-          <div class="change-card-icon"><Braces :size="18" /></div>
-          <div class="change-card-title">
+        <div v-if="regularTools.length" class="tool-list">
+          <div
+            v-for="tool in regularTools"
+            :key="tool.id"
+            class="tool-row"
+            :title="tool.detail || tool.name"
+          >
+            <LoaderCircle v-if="tool.state === 'running'" :size="14" class="spin" />
+            <CircleAlert v-else-if="tool.state === 'error'" :size="14" class="tool-error" />
+            <Wrench v-else :size="14" class="tool-done" />
+            <span>{{ tool.name }}</span>
+            <small v-if="tool.detail">{{ tool.detail }}</small>
+          </div>
+        </div>
+
+        <section v-if="editedTools.length" class="change-card" aria-label="代码修改">
+          <header class="change-card-header">
+            <Braces :size="14" />
             <strong>已编辑 {{ editedTools.length }} 个文件</strong>
-            <span>
+            <span class="change-file-stats">
               <b class="change-added">+{{ editStats.added }}</b>
               <b class="change-removed">-{{ editStats.removed }}</b>
             </span>
-          </div>
-          <span class="change-card-state">已完成</span>
-        </header>
-        <button
-          v-for="tool in editedTools"
-          :key="tool.id"
-          type="button"
-          class="change-file-row"
-          :title="`查看 ${tool.filePath} 的 Diff`"
-          @click="emit('openDiff', tool.filePath!, tool.diff!)"
-        >
-          <span class="change-file-path">{{ tool.filePath }}</span>
-          <span class="change-file-stats">
-            <b class="change-added">+{{ diffStats(tool.diff).added }}</b>
-            <b class="change-removed">-{{ diffStats(tool.diff).removed }}</b>
-          </span>
-        </button>
-      </section>
+            <span class="change-card-state">已完成</span>
+          </header>
+          <button
+            v-for="tool in editedTools"
+            :key="tool.id"
+            type="button"
+            class="change-file-row"
+            :title="`查看 ${tool.filePath} 的 Diff`"
+            @click="emit('openDiff', tool.filePath!, tool.diff!)"
+          >
+            <span class="change-file-path">{{ tool.filePath }}</span>
+            <span class="change-file-stats">
+              <b class="change-added">+{{ diffStats(tool.diff).added }}</b>
+              <b class="change-removed">-{{ diffStats(tool.diff).removed }}</b>
+            </span>
+          </button>
+        </section>
+      </div>
 
       <MarkdownMessage v-if="message.content" :content="message.content" />
       <div

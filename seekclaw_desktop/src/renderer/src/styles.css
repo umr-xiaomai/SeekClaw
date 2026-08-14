@@ -981,7 +981,7 @@ select:focus-visible {
 .message {
   display: flex;
   width: 100%;
-  margin-bottom: 34px;
+  margin-bottom: 22px;
 }
 
 .message-user {
@@ -1069,9 +1069,10 @@ select:focus-visible {
 
 .thinking-toggle {
   gap: 7px;
-  margin: 0 0 12px;
-  padding: 5px 0;
+  margin: 0 0 8px;
+  padding: 3px 0;
   color: var(--text-muted);
+  font-size: 12.5px;
   background: transparent;
 }
 
@@ -1088,19 +1089,22 @@ select:focus-visible {
 }
 
 .thinking-content {
-  margin: -3px 0 17px 22px;
-  padding-left: 13px;
+  margin: 0 0 10px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.65;
   white-space: pre-wrap;
-  border-left: 2px solid var(--border-strong);
+}
+
+.assistant-activity {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
 }
 
 .tool-list {
   display: grid;
-  gap: 6px;
-  margin: 6px 0 18px;
+  gap: 2px;
 }
 
 .image-view-list {
@@ -1173,18 +1177,29 @@ select:focus-visible {
   min-width: 0;
   box-sizing: border-box;
   max-width: 100%;
-  overflow: hidden;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 3px 0;
   color: var(--text-secondary);
-  font-size: 13px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 12px;
+}
+
+.tool-row > svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.tool-row > svg.spin {
+  color: var(--accent);
+}
+
+.tool-row > svg.tool-error {
+  color: var(--danger);
 }
 
 .tool-row > span {
   flex: 0 0 auto;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -1200,47 +1215,37 @@ select:focus-visible {
 }
 
 .change-card {
-  margin: 6px 0 18px;
+  margin: 6px 0 0;
   overflow: hidden;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 3px 12px rgb(16 19 16 / 4%);
+  border-radius: 8px;
 }
 
 .change-card-header {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 11px;
-  padding: 12px 13px;
+  gap: 8px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--border);
 }
 
-.change-card-icon {
-  display: grid;
-  width: 38px;
-  height: 38px;
+.change-card-header > svg {
   flex: 0 0 auto;
-  place-items: center;
   color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 9px;
 }
 
-.change-card-title {
-  display: grid;
+.change-card-header strong {
   min-width: 0;
   flex: 1;
-  gap: 3px;
-}
-
-.change-card-title strong {
-  font-size: 13px;
+  overflow: hidden;
+  font-size: 12.5px;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.change-card-title span,
 .change-file-stats {
   display: inline-flex;
   gap: 8px;
@@ -1252,7 +1257,7 @@ select:focus-visible {
 .change-card-state {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 .change-added {
@@ -1743,6 +1748,12 @@ select:focus-visible {
   border: 1px solid var(--border-strong);
   border-radius: 18px;
   box-shadow: var(--composer-shadow);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), var(--composer-shadow);
 }
 
 .composer-image-strip {
@@ -2172,9 +2183,17 @@ select:focus-visible {
   height: 33px;
   padding: 0;
   place-items: center;
-  color: white;
+  color: var(--surface-raised);
   background: var(--text);
   border-radius: 50%;
+}
+
+.send-button:not(:disabled):hover {
+  background: color-mix(in srgb, var(--text) 86%, var(--accent));
+}
+
+.send-button:not(:disabled):active {
+  transform: scale(.95);
 }
 
 .send-button:disabled {
