@@ -143,6 +143,33 @@ public sealed class ScheduleTests : IDisposable
     }
 
     [Fact]
+    public async Task Service_Tick_PublishesUpcomingNoticeOnce()
+    {
+        var store = NewStore();
+        var runtime = SeekClawRuntime.Create(
+            _dir,
+            new ConfigStore(Path.Combine(_dir, "config-upcoming.json"), Path.Combine(_dir, "state-upcoming.json")),
+            Path.Combine(_dir, "runtime-upcoming.db"));
+        var task = store.Upsert(null, "即将执行", null, "跑一遍", "* * * * *", true);
+
+        var clock = new StubClock(task.NextRunAt!.Value.AddSeconds(-30));
+        var service = new ScheduleService(
+            store, runtime, new FileLockCoordinator(), new LlmHttpFactory(),
+            new CircuitBreaker(new RetryConfig()), StubRunner, clock);
+        using var events = runtime.Events.Subscribe();
+
+        await service.TickAsync(CancellationToken.None);
+
+        var upcoming = Assert.IsType<ScheduledTaskUpcomingEvent>(await events.Reader.ReadAsync());
+        Assert.Equal(task.Id, upcoming.TaskId);
+        Assert.Equal("即将执行", upcoming.Name);
+        Assert.Null(store.Get(task.Id)!.LastRunAt);
+
+        await service.TickAsync(CancellationToken.None);
+        Assert.False(events.Reader.TryRead(out _));
+    }
+
+    [Fact]
     public async Task Service_RunNow_PublishesCompletionEvent()
     {
         var store = NewStore();

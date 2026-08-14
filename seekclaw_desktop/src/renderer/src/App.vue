@@ -163,7 +163,7 @@ const busy = computed(() => Boolean(activeThread.value?.running))
 const scrollArea = ref<HTMLElement | null>(null)
 const composer = ref<InstanceType<typeof Composer> | null>(null)
 const autoFollowConversation = ref(true)
-const taskNotice = ref<{ threadId: string; title: string; kind: 'done' | 'error' } | null>(null)
+const taskNotice = ref<{ threadId: string; title: string; kind: 'done' | 'error' | 'upcoming' } | null>(null)
 const conversationLoading = ref(false)
 const conversationLoadError = ref('')
 const conversationQuery = ref('')
@@ -383,6 +383,15 @@ function showTaskNotice(thread: ThreadItem, kind: 'done' | 'error'): void {
   }, 4200)
 }
 
+function showScheduleUpcomingNotice(name: string): void {
+  taskNotice.value = { threadId: '', title: `一分钟后「${name}」将自动执行`, kind: 'upcoming' }
+  if (taskNoticeTimer !== undefined) window.clearTimeout(taskNoticeTimer)
+  taskNoticeTimer = window.setTimeout(() => {
+    taskNotice.value = null
+    taskNoticeTimer = undefined
+  }, 8000)
+}
+
 async function handleScheduleUpdated(event: DaemonMessage): Promise<void> {
   if (!daemonState.value.connected) return
   await refreshAllProjectSessions().catch(() => undefined)
@@ -402,7 +411,12 @@ function normalizeReasoningLevel(value?: string): ReasoningLevel {
 function openTaskNotice(): void {
   const notice = taskNotice.value
   taskNotice.value = null
-  if (notice) void selectThread(notice.threadId)
+  if (!notice) return
+  if (notice.kind === 'upcoming') {
+    openScheduledTasks()
+    return
+  }
+  if (notice.threadId) void selectThread(notice.threadId)
 }
 
 async function refreshProjectSessions(project: ProjectItem): Promise<void> {
@@ -1421,6 +1435,11 @@ async function deleteProject(project: ProjectItem): Promise<void> {
 }
 
 function handleDaemonEvent(event: DaemonMessage): void {
+  if (event.event === 'schedule.upcoming') {
+    showScheduleUpcomingNotice(
+      typeof event.details?.name === 'string' ? event.details.name : '计划任务')
+    return
+  }
   if (event.event === 'schedule.updated') {
     void handleScheduleUpdated(event)
     return
@@ -1907,7 +1926,13 @@ watch(theme, applyTheme)
           <Transition name="task-notice">
             <button v-if="taskNotice" type="button" class="task-notice" :class="{ error: taskNotice.kind === 'error' }"
               @click="openTaskNotice">
-              <span>{{ taskNotice.kind === 'error' ? '任务执行失败' : '后台任务已完成' }}</span>
+              <span>{{
+                taskNotice.kind === 'error'
+                  ? '任务执行失败'
+                  : taskNotice.kind === 'upcoming'
+                    ? '计划任务提醒'
+                    : '后台任务已完成'
+              }}</span>
               <small>{{ taskNotice.title }}</small>
             </button>
           </Transition>

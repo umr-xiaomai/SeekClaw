@@ -150,6 +150,23 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Schedule_Upcoming_BroadcastsNotice()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+        _runtime!.Events.Publish(new ScheduledTaskUpcomingEvent(
+            "upcoming-id", "即将执行", DateTimeOffset.UtcNow.AddMinutes(1)));
+
+        var notice = await connection.ReadUntilAsync(item =>
+            item["event"]!.GetValue<string>() == "schedule.upcoming");
+        Assert.Equal(0, notice["id"]!.GetValue<long>());
+        var details = notice["details"]!.AsObject();
+        Assert.Equal("upcoming-id", details["taskId"]!.GetValue<string>());
+        Assert.Equal("即将执行", details["name"]!.GetValue<string>());
+        Assert.False(string.IsNullOrWhiteSpace(details["runAt"]!.GetValue<string>()));
+    }
+
+    [Fact]
     public async Task Schedule_Completion_BroadcastsUpdatedEvent()
     {
         var connection = await StartServerAsync(

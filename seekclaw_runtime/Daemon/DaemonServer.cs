@@ -783,6 +783,18 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         await foreach (var evt in reader.ReadAllAsync(ct).ConfigureAwait(false))
         {
+            if (evt is ScheduledTaskUpcomingEvent upcoming)
+            {
+                var upcomingDetails = new JsonObject
+                {
+                    ["taskId"] = upcoming.TaskId,
+                    ["name"] = upcoming.Name,
+                    ["runAt"] = upcoming.RunAt.ToString("O"),
+                };
+                await BroadcastAsync(0, "schedule.upcoming", upcoming.Name, ct, upcomingDetails)
+                    .ConfigureAwait(false);
+                continue;
+            }
             if (evt is not ScheduledTaskCompletedEvent schedule) continue;
             var details = new JsonObject
             {

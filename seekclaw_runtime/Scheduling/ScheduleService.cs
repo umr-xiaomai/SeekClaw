@@ -35,6 +35,7 @@ public interface IScheduleService
 public sealed class ScheduleService : IScheduleService, IAsyncDisposable
 {
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan UpcomingNoticeWindow = TimeSpan.FromMinutes(1);
 
     private readonly IScheduleStore _store;
     private readonly SeekClawRuntime _runtime;
@@ -44,6 +45,7 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
     private readonly ScheduleTurnRunner _turnRunner;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _running = new();
+    private readonly ConcurrentDictionary<string, string> _upcomingNotified = new();
     private readonly CancellationTokenSource _dispose = new();
     private readonly CancellationTokenSource _lifetime = new();
     private TimeProvider _clock = TimeProvider.System;
@@ -102,9 +104,23 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
         foreach (var task in _store.List())
         {
             if (!task.Enabled || _running.ContainsKey(task.Id)) continue;
-            if (task.NextRunAt is not { } next || next > now) continue;
+            if (task.NextRunAt is not { } next) continue;
+            if (next > now)
+            {
+                PublishUpcomingNoticeIfNeeded(task, now, next);
+                continue;
+            }
             await RunTaskAsync(task, ct).ConfigureAwait(false);
         }
+    }
+
+    private void PublishUpcomingNoticeIfNeeded(ScheduledTask task, DateTimeOffset now, DateTimeOffset runAt)
+    {
+        if (runAt - now > UpcomingNoticeWindow) return;
+        var key = runAt.ToString("O");
+        if (_upcomingNotified.TryGetValue(task.Id, out var notified) && notified == key) return;
+        _upcomingNotified[task.Id] = key;
+        _runtime.Events.Publish(new ScheduledTaskUpcomingEvent(task.Id, task.DisplayName, runAt));
     }
 
     /// <summary>Runs a task immediately, then recomputes its next occurrence.</summary>

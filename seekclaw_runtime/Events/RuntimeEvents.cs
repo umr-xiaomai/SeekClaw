@@ -80,6 +80,12 @@ public sealed record VerificationCompletedEvent(bool Success, string Summary, in
 
 // ---------------------------------------------------------------- scheduling
 
+/// <summary>Emitted when a scheduled task enters the one-minute pre-run window.</summary>
+public sealed record ScheduledTaskUpcomingEvent(
+    string TaskId,
+    string Name,
+    DateTimeOffset RunAt) : RuntimeEvent;
+
 /// <summary>Emitted after a scheduled task run records its outcome.</summary>
 public sealed record ScheduledTaskCompletedEvent(
     string TaskId,

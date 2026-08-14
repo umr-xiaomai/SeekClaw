@@ -17,6 +17,7 @@ export type DaemonEventName =
   | 'error'
   | 'bye'
   | 'schedule.updated'
+  | 'schedule.upcoming'
 
 export interface DaemonMessage {
   id: number
