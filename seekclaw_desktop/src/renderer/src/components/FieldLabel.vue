@@ -11,8 +11,8 @@ defineProps<{
 
 <template>
   <span class="bilingual-field-label">
-    <span><strong>{{ en }}</strong><span class="field-label-divider">/</span>{{ zh }}<em v-if="required">*</em></span>
-    <span class="field-tooltip" tabindex="0" :aria-label="`${en} / ${zh}：${help}`">
+    <span><strong>{{ zh }}</strong><em v-if="required">*</em></span>
+    <span class="field-tooltip" tabindex="0" :aria-label="`${zh}：${help}`">
       <CircleHelp :size="14" />
       <span class="field-tooltip-bubble" role="tooltip">{{ help }}</span>
     </span>

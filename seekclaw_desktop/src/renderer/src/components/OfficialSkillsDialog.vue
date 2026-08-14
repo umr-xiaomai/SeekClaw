@@ -60,12 +60,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 </script>
 
 <template>
-  <section
-    v-if="open"
-    class="official-skills-dialog embedded-page"
-    role="region"
-    aria-labelledby="official-skills-title"
-  >
+  <section v-if="open" class="official-skills-dialog embedded-page" role="region"
+    aria-labelledby="official-skills-title">
     <header class="official-skills-header">
       <div class="official-skills-heading">
         <button class="page-back-button" type="button" @click="emit('close')">
@@ -73,7 +69,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
           <span>返回应用</span>
         </button>
         <div class="official-skills-title-copy">
-          <span class="official-skills-eyebrow"><Store :size="14" /> OFFICIAL SKILLS</span>
           <h2 id="official-skills-title">
             官方技能
             <span class="official-skills-chip">建设中</span>
@@ -83,48 +78,50 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
       </div>
     </header>
 
-        <div class="official-skills-toolbar">
-          <label class="official-skills-search">
-            <Search :size="17" />
-            <input v-model="query" autofocus placeholder="搜索官方技能" aria-label="搜索官方技能" />
-          </label>
-          <button class="icon-button" title="刷新" :disabled="loading" @click="loadCatalog">
-            <RefreshCw :size="17" :class="{ spinning: loading }" />
-          </button>
-        </div>
+    <div class="official-skills-toolbar">
+      <label class="official-skills-search">
+        <Search :size="17" />
+        <input v-model="query" autofocus placeholder="搜索官方技能" aria-label="搜索官方技能" />
+      </label>
+      <button class="icon-button" title="刷新" :disabled="loading" @click="loadCatalog">
+        <RefreshCw :size="17" :class="{ spinning: loading }" />
+      </button>
+    </div>
 
-        <div class="official-skills-list">
-          <div v-if="catalog.length === 0" class="official-skills-empty">
-            <PackageOpen :size="34" />
-            <strong>{{ query.trim() ? '没有匹配的官方技能' : '官方技能列表为空' }}</strong>
-            <span>
-              {{ query.trim() ? '试试其他搜索词。' : '官方技能市场正在建设中，更多可选的官方能力即将上线。' }}
-            </span>
+    <div class="official-skills-list">
+      <div v-if="catalog.length === 0" class="official-skills-empty">
+        <PackageOpen :size="34" />
+        <strong>{{ query.trim() ? '没有匹配的官方技能' : '官方技能列表为空' }}</strong>
+        <span>
+          {{ query.trim() ? '试试其他搜索词。' : '官方技能市场正在建设中，更多可选的官方能力即将上线。' }}
+        </span>
+      </div>
+      <div v-else-if="filtered.length === 0" class="official-skills-empty">
+        <Search :size="30" />
+        <strong>没有匹配的官方技能</strong>
+        <span>试试其他搜索词。</span>
+      </div>
+      <div v-else class="official-skills-items">
+        <div v-for="skill in filtered" :key="skill.id" class="official-skill-row">
+          <div class="official-skill-icon">
+            <PackageOpen :size="18" />
           </div>
-          <div v-else-if="filtered.length === 0" class="official-skills-empty">
-            <Search :size="30" />
-            <strong>没有匹配的官方技能</strong>
-            <span>试试其他搜索词。</span>
-          </div>
-          <div v-else class="official-skills-items">
-            <div v-for="skill in filtered" :key="skill.id" class="official-skill-row">
-              <div class="official-skill-icon"><PackageOpen :size="18" /></div>
-              <div class="list-main">
-                <div>
-                  <strong>{{ skill.name }}</strong>
-                  <span v-if="skill.version" class="version-text">v{{ skill.version }}</span>
-                  <span v-for="tag in skill.tags" :key="tag" class="inline-badge">{{ tag }}</span>
-                </div>
-                <small>{{ skill.description }}</small>
-              </div>
-              <button class="switch-control" :class="{ active: skill.enabled }" aria-label="启用/禁用"><span /></button>
+          <div class="list-main">
+            <div>
+              <strong>{{ skill.name }}</strong>
+              <span v-if="skill.version" class="version-text">v{{ skill.version }}</span>
+              <span v-for="tag in skill.tags" :key="tag" class="inline-badge">{{ tag }}</span>
             </div>
+            <small>{{ skill.description }}</small>
           </div>
+          <button class="switch-control" :class="{ active: skill.enabled }" aria-label="启用/禁用"><span /></button>
         </div>
+      </div>
+    </div>
 
-        <footer class="official-skills-footer">
-          官方技能由 SeekClaw 团队维护 · 本地技能请前往「设置 → Skills」管理
-        </footer>
+    <footer class="official-skills-footer">
+      官方技能由 SeekClaw 团队维护 · 本地技能请前往「设置 → 技能」管理
+    </footer>
   </section>
 </template>
 
@@ -323,7 +320,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   flex: 1;
 }
 
-.official-skill-row .list-main > div {
+.official-skill-row .list-main>div {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -352,6 +349,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 @keyframes official-skills-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

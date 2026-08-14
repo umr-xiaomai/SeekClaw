@@ -209,7 +209,7 @@ onBeforeUnmount(stopResize)
               <span><GitBranch :size="15" />{{ overview.branch }}</span>
               <small>{{ overview.root }}</small>
             </div>
-            <div v-if="overview?.error" class="git-panel-state is-error">{{ overview.error }}</div>
+            <div v-if="overview?.error" class="git-panel-state" :class="{ 'is-error': overview?.isRepository }">{{ overview.error }}</div>
             <template v-else-if="overview?.isRepository">
               <section v-if="overview.status.length" class="git-status-list">
                 <div v-for="line in overview.status" :key="line" class="git-status-row">
@@ -230,7 +230,7 @@ onBeforeUnmount(stopResize)
           </template>
 
           <template v-else>
-            <div v-if="history?.error" class="git-panel-state is-error">{{ history.error }}</div>
+            <div v-if="history?.error" class="git-panel-state">{{ history.error }}</div>
             <ol v-else-if="history?.commits.length" class="git-history-list">
               <li v-for="commit in history.commits" :key="commit.hash">
                 <span class="git-history-dot" />

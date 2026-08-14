@@ -39,7 +39,7 @@ const form = reactive<ProviderFormValue>({
 const firstInput = ref<HTMLInputElement | null>(null)
 const revealKey = ref(false)
 const protocolOptions = [
-  { value: 'openai', label: 'OpenAI-compatible', description: '兼容 OpenAI Chat Completions API' },
+  { value: 'openai', label: 'OpenAI 兼容', description: '兼容 OpenAI Chat Completions 接口' },
   { value: 'anthropic', label: 'Anthropic', description: '使用 Anthropic Messages API' }
 ]
 
@@ -82,9 +82,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
         <form class="provider-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-editor-title" @submit.prevent="save">
           <header class="provider-editor-header">
             <div>
-              <span class="provider-editor-eyebrow">MODEL PROVIDER</span>
+              <span class="provider-editor-eyebrow">模型提供商</span>
               <h2 id="provider-editor-title">{{ editingId ? '编辑模型提供商' : '新增模型提供商' }}</h2>
-              <p>{{ editingId ? `Edit Provider · ${editingId}` : 'Add Provider · 配置模型服务的连接和路由信息' }}</p>
+              <p>{{ editingId ? `编辑模型提供商 · ${editingId}` : '新增模型提供商 · 配置模型服务的连接和路由信息' }}</p>
             </div>
             <button class="icon-button" type="button" title="关闭" :disabled="saving" @click="close"><X :size="18" /></button>
           </header>
@@ -92,7 +92,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
           <div class="provider-editor-body">
             <section class="provider-form-section">
               <div class="provider-section-heading">
-                <strong>基本信息</strong><span>Identity</span>
+                <strong>基本信息</strong>
               </div>
               <div class="provider-form-grid">
                 <label>
@@ -100,19 +100,19 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                   <input ref="firstInput" v-model="form.id" :disabled="!!editingId" placeholder="openai" autocomplete="off" />
                 </label>
                 <label>
-                  <FieldLabel en="Display Name" zh="显示名称" help="仅用于界面展示；留空时会使用 Provider ID。" />
+                  <FieldLabel en="Display Name" zh="显示名称" help="仅用于界面展示；留空时会使用提供商 ID。" />
                   <input v-model="form.name" placeholder="OpenAI" autocomplete="off" />
                 </label>
                 <label>
-                  <FieldLabel en="Protocol" zh="接口协议" help="选择服务端实际兼容的请求格式；协议与 Base URL 必须匹配。" required />
-                  <SelectMenu v-model="form.kind" label="Protocol / 接口协议" :options="protocolOptions" :menu-min-width="300" />
+                  <FieldLabel en="Protocol" zh="接口协议" help="选择服务端实际兼容的请求格式；协议与 API 地址必须匹配。" required />
+                  <SelectMenu v-model="form.kind" label="接口协议" :options="protocolOptions" :menu-min-width="300" />
                 </label>
                 <label>
                   <FieldLabel en="Base URL" zh="API 地址" help="模型服务的 API 根地址。OpenAI 兼容服务通常以 /v1 结尾。" required />
                   <input v-model="form.baseUrl" placeholder="https://api.openai.com/v1" spellcheck="false" />
                 </label>
                 <label class="span-2">
-                  <FieldLabel en="Model List URL" zh="模型列表 URL" help="获取模型目录的地址；留空时自动使用 Base URL 下的 /models 接口。" />
+                  <FieldLabel en="Model List URL" zh="模型列表 URL" help="获取模型目录的地址；留空时自动使用 API 地址下的 /models 接口。" />
                   <input v-model="form.modelListUrl" placeholder="留空自动推断 /models" spellcheck="false" />
                 </label>
               </div>
@@ -120,11 +120,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 
             <section class="provider-form-section">
               <div class="provider-section-heading">
-                <strong>鉴权与模型</strong><span>Authentication & Models</span>
+                <strong>鉴权与模型</strong>
               </div>
               <div class="provider-form-grid">
                 <label>
-                  <FieldLabel en="API Key" zh="API 密钥" help="直接查看和修改此 Provider 保存的访问密钥；清空后保存会删除密钥。" />
+                  <FieldLabel en="API Key" zh="API 密钥" help="直接查看和修改此模型提供商保存的访问密钥；清空后保存会删除密钥。" />
                   <span class="password-control">
                     <input
                       v-model="form.apiKey"
@@ -138,16 +138,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                   </span>
                 </label>
                 <label class="span-2">
-                  <FieldLabel en="Models" zh="模型" help="此 Provider 可用的模型 ID。每行填写一个，也支持使用英文逗号分隔。" required />
+                  <FieldLabel en="Models" zh="模型" help="此模型提供商可用的模型 ID。每行填写一个，也支持使用英文逗号分隔。" required />
                   <textarea v-model="form.models" rows="4" placeholder="gpt-5&#10;gpt-5-mini" spellcheck="false" />
-                  <small>每行一个模型 ID · One model ID per line</small>
+                  <small>每行一个模型 ID</small>
                 </label>
               </div>
             </section>
 
             <section class="provider-form-section">
               <div class="provider-section-heading">
-                <strong>请求与路由</strong><span>Request & Routing</span>
+                <strong>请求与路由</strong>
               </div>
               <div class="provider-form-grid three-columns">
                 <label>
@@ -155,25 +155,25 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                   <input v-model.number="form.timeoutSeconds" type="number" min="5" step="1" />
                 </label>
                 <label>
-                  <FieldLabel en="Priority" zh="优先级" help="自动路由时的 Provider 顺序。数值越小优先级越高；相同数值按配置顺序选择。" />
+                  <FieldLabel en="Priority" zh="优先级" help="自动路由时的模型提供商顺序。数值越小优先级越高；相同数值按配置顺序选择。" />
                   <input v-model.number="form.priority" type="number" step="1" />
                 </label>
                 <label>
-                  <FieldLabel en="Proxy" zh="代理地址" help="仅此 Provider 使用的 HTTP/HTTPS 代理；留空表示遵循 Runtime 默认网络设置。" />
+                  <FieldLabel en="Proxy" zh="代理地址" help="仅此模型提供商使用的 HTTP/HTTPS 代理；留空表示遵循运行时默认网络设置。" />
                   <input v-model="form.proxy" placeholder="http://127.0.0.1:7890" spellcheck="false" />
                 </label>
               </div>
               <label class="provider-enabled-row">
                 <span>
-                  <strong>Enabled / 启用</strong>
-                  <small>允许该 Provider 参与模型选择和自动路由</small>
+                  <strong>启用</strong>
+                  <small>允许该模型提供商参与模型选择和自动路由</small>
                 </span>
                 <input v-model="form.enabled" class="sr-only" type="checkbox" />
                 <span class="toggle-switch" aria-hidden="true"><span /></span>
               </label>
               <label class="provider-enabled-row">
                 <span>
-                  <strong>Prompt Cache / 提示词缓存</strong>
+                  <strong>提示词缓存</strong>
                   <small>保持稳定前缀；Anthropic 会发送原生 cache_control 检查点</small>
                 </span>
                 <input v-model="form.promptCaching" class="sr-only" type="checkbox" />
@@ -189,7 +189,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
             <div>
               <button class="secondary-button" type="button" :disabled="saving" @click="close">取消</button>
               <button class="secondary-button primary-action" type="submit" :disabled="saving || !form.id.trim()">
-                <Save :size="15" /> {{ saving ? '正在保存…' : '保存 Provider' }}
+                <Save :size="15" /> {{ saving ? '正在保存…' : '保存模型提供商' }}
               </button>
             </div>
           </footer>

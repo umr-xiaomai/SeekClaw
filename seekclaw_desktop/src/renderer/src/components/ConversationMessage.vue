@@ -141,14 +141,8 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
       </div>
       <div v-else class="user-message-stack">
         <div v-if="message.images?.length" class="user-image-grid" :class="{ single: message.images.length === 1 }">
-          <button
-            v-for="image in message.images"
-            :key="image.id"
-            type="button"
-            class="user-image-button"
-            :title="`预览 ${image.name}`"
-            @click="previewImage(image.id, image.name)"
-          >
+          <button v-for="image in message.images" :key="image.id" type="button" class="user-image-button"
+            :title="`预览 ${image.name}`" @click="previewImage(image.id, image.name)">
             <img :src="imageUrl(image.id)" :alt="image.name">
             <span>{{ image.name }}</span>
           </button>
@@ -159,16 +153,9 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
 
     <div v-else class="assistant-message">
       <div v-if="message.viewedImages?.length" class="image-view-list" aria-label="AI 已查看的图片">
-        <button
-          v-for="image in message.viewedImages"
-          :key="image.id"
-          type="button"
-          class="image-view-row"
-          :class="{ previewable: Boolean(imageUrl(image.id)) }"
-          :disabled="!imageUrl(image.id)"
-          :title="imageUrl(image.id) ? `预览 ${image.name}` : image.name"
-          @click="previewImage(image.id, image.name)"
-        >
+        <button v-for="image in message.viewedImages" :key="image.id" type="button" class="image-view-row"
+          :class="{ previewable: Boolean(imageUrl(image.id)) }" :disabled="!imageUrl(image.id)"
+          :title="imageUrl(image.id) ? `预览 ${image.name}` : image.name" @click="previewImage(image.id, image.name)">
           <span class="image-view-thumbnail">
             <img v-if="imageUrl(image.id)" :src="imageUrl(image.id)" :alt="image.name">
             <ImageIcon v-else :size="16" />
@@ -179,16 +166,9 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
         </button>
       </div>
 
-      <div
-        v-if="message.thinking || regularTools.length || editedTools.length"
-        class="assistant-activity"
-      >
-        <button
-          v-if="message.thinking"
-          class="thinking-toggle"
-          :class="{ active: message.state === 'thinking' }"
-          @click="thinkingOpen = !thinkingOpen"
-        >
+      <div v-if="message.thinking || regularTools.length || editedTools.length" class="assistant-activity">
+        <button v-if="message.thinking" class="thinking-toggle" :class="{ active: message.state === 'thinking' }"
+          @click="thinkingOpen = !thinkingOpen">
           <LoaderCircle v-if="message.state === 'thinking'" :size="15" class="spin" />
           <Check v-else :size="15" />
           <span>{{ thinkingLabel }}</span>
@@ -197,12 +177,7 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
         <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
 
         <div v-if="regularTools.length" class="tool-list">
-          <div
-            v-for="tool in regularTools"
-            :key="tool.id"
-            class="tool-row"
-            :title="tool.detail || tool.name"
-          >
+          <div v-for="tool in regularTools" :key="tool.id" class="tool-row" :title="tool.detail || tool.name">
             <LoaderCircle v-if="tool.state === 'running'" :size="14" class="spin" />
             <CircleAlert v-else-if="tool.state === 'error'" :size="14" class="tool-error" />
             <Wrench v-else :size="14" class="tool-done" />
@@ -221,14 +196,8 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
             </span>
             <span class="change-card-state">已完成</span>
           </header>
-          <button
-            v-for="tool in editedTools"
-            :key="tool.id"
-            type="button"
-            class="change-file-row"
-            :title="`查看 ${tool.filePath} 的 Diff`"
-            @click="emit('openDiff', tool.filePath!, tool.diff!)"
-          >
+          <button v-for="tool in editedTools" :key="tool.id" type="button" class="change-file-row"
+            :title="`查看 ${tool.filePath} 的 Diff`" @click="emit('openDiff', tool.filePath!, tool.diff!)">
             <span class="change-file-path">{{ tool.filePath }}</span>
             <span class="change-file-stats">
               <b class="change-added">+{{ diffStats(tool.diff).added }}</b>
@@ -239,20 +208,19 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
       </div>
 
       <MarkdownMessage v-if="message.content" :content="message.content" />
-      <div
-        v-if="message.state === 'thinking' || message.state === 'streaming'"
-        class="response-placeholder"
-        aria-label="AI 正在思考"
-      >
+      <div v-if="message.state === 'thinking' || message.state === 'streaming'" class="response-placeholder"
+        aria-label="AI 正在思考">
         <span /><span /><span />
       </div>
 
-      <div v-if="message.modelRef && message.state !== 'streaming' && message.state !== 'thinking'" class="assistant-meta">
+      <div v-if="message.modelRef && message.state !== 'streaming' && message.state !== 'thinking'"
+        class="assistant-meta">
         <span class="model-badge">{{ message.modelRef }}</span>
         <button class="continue-button" type="button" title="继续生成" @click="emit('continue', message)">
           <MessageSquarePlus :size="13" />继续
         </button>
-        <button class="continue-button regenerate-button" type="button" title="重新生成这条回答" @click="emit('regenerate', message)">
+        <button class="continue-button regenerate-button" type="button" title="重新生成这条回答"
+          @click="emit('regenerate', message)">
           <RefreshCw :size="13" />重新生成
         </button>
       </div>
@@ -338,13 +306,13 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
   white-space: nowrap;
 }
 
-.system-card-header > .lucide-chevron-down {
+.system-card-header>.lucide-chevron-down {
   flex: none;
   color: var(--text-muted);
   transition: transform 160ms ease;
 }
 
-.system-card-header > .lucide-chevron-down.rotated {
+.system-card-header>.lucide-chevron-down.rotated {
   transform: rotate(180deg);
 }
 
@@ -364,7 +332,7 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
   word-break: break-word;
 }
 
-.review-section + .review-section {
+.review-section+.review-section {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px dashed var(--border);
@@ -382,11 +350,11 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
   line-height: 1.65;
 }
 
-.thinking-toggle > .lucide-chevron-down {
+.thinking-toggle>.lucide-chevron-down {
   transition: transform 160ms ease;
 }
 
-.thinking-toggle > .lucide-chevron-down.rotated {
+.thinking-toggle>.lucide-chevron-down.rotated {
   transform: rotate(180deg);
 }
 

@@ -189,29 +189,41 @@ const mcpForm = reactive({
   command: '', args: '', url: '', env: '', enabled: true
 })
 
+const strategyLabelMap: Record<string, string> = {
+  balanced: '平衡',
+  fast: '快速',
+  quality: '高质量',
+  cheap: '低成本',
+  offline: '离线'
+}
+
+function strategyLabel(value?: string): string {
+  return value ? strategyLabelMap[value] ?? value : ''
+}
+
 const activeProfile = computed(() => profiles.value.find((profile) => profile.active))
 const activeModel = computed(() => models.value.find((model) => model.active))
 const profileOptions = computed(() => profiles.value.map((profile) => ({
   value: profile.name,
   label: profile.name,
-  description: profile.strategy ? `Strategy · ${profile.strategy}` : undefined
+  description: profile.strategy ? `策略 · ${strategyLabel(profile.strategy)}` : undefined
 })))
 const modelOptions = computed(() => models.value.map((model) => ({
   value: model.ref,
   label: model.ref,
-  description: `${model.contextWindow.toLocaleString()} context · ${model.provider}`,
+  description: `${model.contextWindow.toLocaleString()} 上下文 · ${model.provider}`,
   disabled: !model.providerEnabled
 })))
 const providerOptions = computed(() => [
-  { value: '', label: '自动选择', description: 'Automatic routing' },
+  { value: '', label: '自动选择', description: '自动路由' },
   ...providers.value.map((provider) => ({ value: provider.id, label: provider.name, description: provider.id }))
 ])
 const strategyOptions = [
-  { value: 'balanced', label: 'Balanced', description: '平衡质量、速度和成本' },
-  { value: 'fast', label: 'Fast', description: '优先选择响应更快的模型' },
-  { value: 'quality', label: 'Quality', description: '优先选择能力更强的模型' },
-  { value: 'cheap', label: 'Cheap', description: '优先降低调用成本' },
-  { value: 'offline', label: 'Offline', description: '仅使用离线模型' }
+  { value: 'balanced', label: '平衡', description: '平衡质量、速度和成本' },
+  { value: 'fast', label: '快速', description: '优先选择响应更快的模型' },
+  { value: 'quality', label: '高质量', description: '优先选择能力更强的模型' },
+  { value: 'cheap', label: '低成本', description: '优先降低调用成本' },
+  { value: 'offline', label: '离线', description: '仅使用离线模型' }
 ]
 const mcpScopeOptions = [
   { value: 'workspace', label: '当前工作区', description: '仅在此工作区生效' },
@@ -247,9 +259,9 @@ function cacheHitRate(item: UsageInfo): number {
 
 const sections: Array<{ id: SettingsSection; label: string; icon: typeof Settings2 }> = [
   { id: 'general', label: '常规', icon: Settings2 },
-  { id: 'models', label: '模型与 Provider', icon: Bot },
+  { id: 'models', label: '模型与提供商', icon: Bot },
   { id: 'mcp', label: 'MCP', icon: Blocks },
-  { id: 'skills', label: 'Skills', icon: Wrench },
+  { id: 'skills', label: '技能', icon: Wrench },
   { id: 'diagnostics', label: '诊断与用量', icon: Activity }
 ]
 
@@ -435,7 +447,7 @@ async function saveProfile(): Promise<void> {
 
 async function removeProfile(profile: ProfileInfo): Promise<void> {
   if (!await confirmAction({
-    title: '删除 Profile', message: `删除 Profile “${profile.name}”？`, confirmLabel: '删除', danger: true
+    title: '删除配置方案', message: `删除配置方案 “${profile.name}”？`, confirmLabel: '删除', danger: true
   })) return
   beginAction('profile.remove')
   try {
@@ -572,7 +584,7 @@ async function testProvider(provider: ProviderInfo): Promise<void> {
     const [result] = await requestJson<Array<{ online: boolean; latencyMs: number; detail: string }>>('provider.test', { id: provider.id })
     const message = result
       ? `${provider.id}: ${result.online ? '在线' : '离线'} · ${Math.round(result.latencyMs)} ms · ${result.detail}`
-      : 'Provider 测试没有返回结果'
+      : '模型提供商测试没有返回结果'
     if (result?.online) notice.value = message
     else error.value = message
   } catch (reason) {
@@ -584,7 +596,7 @@ async function testProvider(provider: ProviderInfo): Promise<void> {
 
 async function removeProvider(provider: ProviderInfo): Promise<void> {
   if (!await confirmAction({
-    title: '删除 Provider', message: `删除 Provider “${provider.id}”？`, confirmLabel: '删除', danger: true
+    title: '删除模型提供商', message: `删除模型提供商 “${provider.id}”？`, confirmLabel: '删除', danger: true
   })) return
   beginAction('provider.remove')
   try {
@@ -719,7 +731,7 @@ async function toggleMcp(server: McpServerInfo): Promise<void> {
 
 async function removeMcp(server: McpServerInfo): Promise<void> {
   if (!await confirmAction({
-    title: '删除 MCP Server', message: `删除 MCP Server “${server.name}”？`, confirmLabel: '删除', danger: true
+    title: '删除 MCP 服务器', message: `删除 MCP 服务器 “${server.name}”？`, confirmLabel: '删除', danger: true
   })) return
   beginAction('mcp.remove')
   try {
@@ -793,7 +805,7 @@ watch(section, () => { void loadCurrentSection() })
         <h2>{{ pageTitle }}</h2>
         <span class="settings-connection" :class="{ online: daemonConnected }">
           <Circle :size="8" fill="currentColor" />
-          {{ daemonConnected ? 'Runtime 已连接' : 'Runtime 离线' }}
+          {{ daemonConnected ? '运行时已连接' : '运行时离线' }}
         </span>
       </div>
     </header>
@@ -816,7 +828,7 @@ watch(section, () => { void loadCurrentSection() })
 
           <template v-else-if="section === 'general'">
             <div class="settings-section-heading">
-              <div><h3>常规</h3><p>桌面外观与当前 Runtime</p></div>
+              <div><h3>常规</h3><p>桌面外观与当前运行时</p></div>
             </div>
 
             <section class="settings-group">
@@ -846,7 +858,7 @@ watch(section, () => { void loadCurrentSection() })
                 </div>
               </div>
               <div class="settings-row">
-                <div><strong>Daemon</strong><small>{{ daemonEndpoint }}</small></div>
+                <div><strong>守护进程</strong><small>{{ daemonEndpoint }}</small></div>
                 <button class="secondary-button" @click="emit('reconnect')"><RefreshCw :size="15" /> 重新连接</button>
               </div>
             </section>
@@ -885,28 +897,28 @@ watch(section, () => { void loadCurrentSection() })
 
           <template v-else-if="section === 'models'">
             <div class="settings-section-heading">
-              <div><h3>模型与 Provider</h3><p>{{ activeModel?.ref || '未选择模型' }}</p></div>
-              <button class="secondary-button" @click="newProvider"><Plus :size="15" /> Provider</button>
+              <div><h3>模型与提供商</h3><p>{{ activeModel?.ref || '未选择模型' }}</p></div>
+              <button class="secondary-button" @click="newProvider"><Plus :size="15" /> 模型提供商</button>
             </div>
 
             <section class="settings-group compact-group">
               <div class="settings-row">
-                <div><strong>活动 Profile</strong><small>{{ activeProfile?.strategy || '未设置路由策略' }}</small></div>
+                <div><strong>活动配置方案</strong><small>{{ strategyLabel(activeProfile?.strategy) || '未设置路由策略' }}</small></div>
                 <div class="row-actions">
                   <SelectMenu
                     class="settings-select"
                     :model-value="activeProfile?.name ?? ''"
                     :options="profileOptions"
-                    label="活动 Profile"
+                    label="活动配置方案"
                     :menu-min-width="240"
                     @update:model-value="switchProfile"
                   />
-                  <button class="icon-button" title="编辑 Profile" @click="activeProfile && editProfile(activeProfile)"><Settings2 :size="16" /></button>
-                  <button class="icon-button" title="新增 Profile" @click="newProfile"><Plus :size="16" /></button>
+                  <button class="icon-button" title="编辑配置方案" @click="activeProfile && editProfile(activeProfile)"><Settings2 :size="16" /></button>
+                  <button class="icon-button" title="新增配置方案" @click="newProfile"><Plus :size="16" /></button>
                 </div>
               </div>
               <div class="settings-row">
-                <div><strong>活动模型</strong><small>{{ activeModel ? `${activeModel.contextWindow.toLocaleString()} context` : '无可用模型' }}</small></div>
+                <div><strong>活动模型</strong><small>{{ activeModel ? `${activeModel.contextWindow.toLocaleString()} 上下文` : '无可用模型' }}</small></div>
                 <div class="row-actions model-actions">
                   <SelectMenu v-model="selectedModel" class="settings-select model-select" :options="modelOptions" label="活动模型" :menu-min-width="330" />
                   <button class="secondary-button" :disabled="!selectedModel" @click="testModel">测试</button>
@@ -916,13 +928,13 @@ watch(section, () => { void loadCurrentSection() })
             </section>
 
             <section v-if="profileEditorOpen" class="settings-editor">
-              <div class="editor-heading"><strong>Profile</strong><button class="icon-button compact" @click="profileEditorOpen = false"><X :size="15" /></button></div>
+              <div class="editor-heading"><strong>配置方案</strong><button class="icon-button compact" @click="profileEditorOpen = false"><X :size="15" /></button></div>
               <div class="form-grid">
                 <label><span>名称</span><input v-model="profileForm.name" :disabled="profiles.some((item) => item.name === profileForm.name)" /></label>
-                <label><span>Provider</span><SelectMenu v-model="profileForm.provider" :options="providerOptions" label="Profile Provider" :menu-min-width="240" /></label>
-                <label><span>Model</span><input v-model="profileForm.model" /></label>
-                <label><span>Strategy</span><SelectMenu v-model="profileForm.strategy" :options="strategyOptions" label="Profile Strategy" :menu-min-width="250" /></label>
-                <label><span>Temperature</span><input v-model="profileForm.temperature" type="number" min="0" max="2" step="0.1" /></label>
+                <label><span>提供商</span><SelectMenu v-model="profileForm.provider" :options="providerOptions" label="配置方案提供商" :menu-min-width="240" /></label>
+                <label><span>模型</span><input v-model="profileForm.model" /></label>
+                <label><span>策略</span><SelectMenu v-model="profileForm.strategy" :options="strategyOptions" label="配置方案策略" :menu-min-width="250" /></label>
+                <label><span>温度</span><input v-model="profileForm.temperature" type="number" min="0" max="2" step="0.1" /></label>
               </div>
               <div class="editor-actions">
                 <button v-if="profiles.some((item) => item.name === profileForm.name && !item.active)" class="danger-button" @click="removeProfile(profiles.find((item) => item.name === profileForm.name)!)"><Trash2 :size="15" /> 删除</button>
@@ -932,13 +944,13 @@ watch(section, () => { void loadCurrentSection() })
               </div>
             </section>
 
-            <section class="settings-list" aria-label="Provider 列表">
-              <div v-if="providers.length === 0" class="empty-settings">尚未配置 Provider</div>
+            <section class="settings-list" aria-label="提供商列表">
+              <div v-if="providers.length === 0" class="empty-settings">尚未配置提供商</div>
               <div v-for="provider in providers" :key="provider.id" class="settings-list-row">
                 <span class="status-dot" :class="{ online: provider.enabled }" />
                 <div class="list-main">
                   <div><strong>{{ provider.name }}</strong><span v-if="provider.active" class="inline-badge">活动</span></div>
-                  <small>{{ provider.kind }} · {{ provider.models.length }} models · {{ provider.baseUrl }}</small>
+                  <small>{{ provider.kind }} · {{ provider.models.length }} 个模型 · {{ provider.baseUrl }}</small>
                 </div>
                 <KeyRound :size="15" :class="provider.apiKeyConfigured ? 'key-set' : 'key-missing'" />
                 <button class="secondary-button compact-button" :disabled="action === `provider.test:${provider.id}`" @click="testProvider(provider)">测试</button>
@@ -962,8 +974,8 @@ watch(section, () => { void loadCurrentSection() })
               </div>
               <div class="form-grid">
                 <label><span>显示别名</span><input v-model="modelForm.alias" placeholder="可选" /></label>
-                <label><span>上下文长度（tokens）</span><input v-model.number="modelForm.contextWindow" type="number" min="1024" max="10000000" step="1024" /></label>
-                <label><span>最大输出（tokens）</span><input v-model.number="modelForm.maxOutput" type="number" min="128" max="1000000" step="128" /></label>
+                <label><span>上下文长度（词元）</span><input v-model.number="modelForm.contextWindow" type="number" min="1024" max="10000000" step="1024" /></label>
+                <label><span>最大输出（词元）</span><input v-model.number="modelForm.maxOutput" type="number" min="128" max="1000000" step="128" /></label>
                 <fieldset class="model-capability-fieldset">
                   <legend>视觉 / 多模态输入</legend>
                   <label class="radio-option"><input v-model="modelForm.vision" type="radio" :value="true" name="model-vision" /><span>支持</span></label>
@@ -971,7 +983,7 @@ watch(section, () => { void loadCurrentSection() })
                   <small>声明后，上传图片时会优先使用支持视觉的模型。</small>
                 </fieldset>
               </div>
-              <small class="model-context-hint">当会话估算 token 接近该上下文长度时，Runtime 会自动压缩较早的历史消息。</small>
+              <small class="model-context-hint">当会话估算词元接近该上下文长度时，运行时会自动压缩较早的历史消息。</small>
               <div class="editor-actions"><span class="toolbar-spacer" /><button class="secondary-button" @click="modelEditorOpen = false">取消</button><button class="secondary-button primary-action" @click="saveModel"><Save :size="15" /> 保存模型</button></div>
             </section>
             <section class="settings-list model-catalog" aria-label="模型目录">
@@ -980,7 +992,7 @@ watch(section, () => { void loadCurrentSection() })
                 <span class="status-dot" :class="{ online: model.providerEnabled }" />
                 <div class="list-main">
                   <div><strong>{{ model.ref }}</strong><span v-if="model.active" class="inline-badge">活动</span><span v-if="model.alias" class="version-text">{{ model.alias }}</span></div>
-                  <small>{{ model.contextWindow.toLocaleString() }} context · {{ model.maxOutput.toLocaleString() }} output · {{ Object.entries(model.capabilities).filter(([, enabled]) => enabled).map(([name]) => name).join(', ') }}</small>
+                  <small>{{ model.contextWindow.toLocaleString() }} 上下文 · {{ model.maxOutput.toLocaleString() }} 输出 · {{ Object.entries(model.capabilities).filter(([, enabled]) => enabled).map(([name]) => name).join(', ') }}</small>
                 </div>
                 <button class="secondary-button compact-button" @click="testModelReference(model.ref)">测试</button>
                 <button class="icon-button compact" title="编辑模型能力与上下文" @click="editModel(model)"><Settings2 :size="15" /></button>
@@ -991,35 +1003,35 @@ watch(section, () => { void loadCurrentSection() })
 
           <template v-else-if="section === 'mcp'">
             <div class="settings-section-heading">
-              <div><h3>MCP Servers</h3><p>{{ mcpServers.filter((server) => server.connected).length }} connected · {{ mcpServers.reduce((sum, server) => sum + server.toolCount, 0) }} tools</p></div>
+              <div><h3>MCP 服务器</h3><p>{{ mcpServers.filter((server) => server.connected).length }} 已连接 · {{ mcpServers.reduce((sum, server) => sum + server.toolCount, 0) }} 个工具</p></div>
               <div class="row-actions">
                 <button class="icon-button" title="重新加载" :disabled="action === 'mcp.reload'" @click="reloadMcp"><RefreshCw :class="{ spin: action === 'mcp.reload' }" :size="17" /></button>
-                <button class="secondary-button" @click="newMcpServer"><Plus :size="15" /> Server</button>
+                <button class="secondary-button" @click="newMcpServer"><Plus :size="15" /> 服务器</button>
               </div>
             </div>
 
             <section v-if="mcpEditorOpen" class="settings-editor">
-              <div class="editor-heading"><strong>{{ editingMcpName ? '编辑 MCP Server' : '新增 MCP Server' }}</strong><button class="icon-button compact" @click="mcpEditorOpen = false"><X :size="15" /></button></div>
+              <div class="editor-heading"><strong>{{ editingMcpName ? '编辑 MCP 服务器' : '新增 MCP 服务器' }}</strong><button class="icon-button compact" @click="mcpEditorOpen = false"><X :size="15" /></button></div>
               <div class="form-grid">
                 <label><span>名称</span><input v-model="mcpForm.name" :disabled="!!editingMcpName" placeholder="filesystem" /></label>
                 <label><span>范围</span><SelectMenu :model-value="mcpForm.scope" :options="mcpScopeOptions" label="MCP 范围" @update:model-value="updateMcpScope" /></label>
-                <label><span>Transport</span><SelectMenu :model-value="mcpForm.transport" :options="mcpTransportOptions" label="MCP Transport" @update:model-value="updateMcpTransport" /></label>
-                <label v-if="mcpForm.transport === 'stdio'" class="span-2"><span>Command</span><input v-model="mcpForm.command" placeholder="npx" /></label>
-                <label v-if="mcpForm.transport === 'stdio'" class="span-2"><span>Args</span><textarea v-model="mcpForm.args" rows="3" placeholder="-y\n@modelcontextprotocol/server-filesystem" /></label>
+                <label><span>传输方式</span><SelectMenu :model-value="mcpForm.transport" :options="mcpTransportOptions" label="MCP 传输方式" @update:model-value="updateMcpTransport" /></label>
+                <label v-if="mcpForm.transport === 'stdio'" class="span-2"><span>命令</span><input v-model="mcpForm.command" placeholder="npx" /></label>
+                <label v-if="mcpForm.transport === 'stdio'" class="span-2"><span>参数</span><textarea v-model="mcpForm.args" rows="3" placeholder="-y\n@modelcontextprotocol/server-filesystem" /></label>
                 <label v-else class="span-2"><span>URL</span><input v-model="mcpForm.url" placeholder="https://example.com/sse" /></label>
-                <label class="span-2"><span>Environment</span><textarea v-model="mcpForm.env" rows="2" placeholder="TOKEN=..." /></label>
+                <label class="span-2"><span>环境变量</span><textarea v-model="mcpForm.env" rows="2" placeholder="TOKEN=..." /></label>
                 <label class="check-label"><input v-model="mcpForm.enabled" type="checkbox" /><span>启用</span></label>
               </div>
               <div class="editor-actions"><span class="toolbar-spacer" /><button class="secondary-button" @click="mcpEditorOpen = false">取消</button><button class="secondary-button primary-action" @click="saveMcpServer"><Save :size="15" /> 保存并重载</button></div>
             </section>
 
             <section class="settings-list">
-              <div v-if="mcpServers.length === 0" class="empty-settings">尚未配置 MCP Server</div>
+              <div v-if="mcpServers.length === 0" class="empty-settings">尚未配置 MCP 服务器</div>
               <div v-for="server in mcpServers" :key="`${server.scope}:${server.name}`" class="settings-list-row">
                 <span class="status-dot" :class="{ online: server.connected }" />
                 <div class="list-main">
                   <div><strong>{{ server.name }}</strong><span class="inline-badge">{{ server.scope === 'workspace' ? '工作区' : '全局' }}</span></div>
-                  <small :title="server.error">{{ server.connected ? `${server.toolCount} tools` : server.error || (server.enabled ? '未连接' : '已禁用') }} · {{ server.transport }}</small>
+                  <small :title="server.error">{{ server.connected ? `${server.toolCount} 个工具` : server.error || (server.enabled ? '未连接' : '已禁用') }} · {{ server.transport }}</small>
                 </div>
                 <button class="switch-control" :class="{ active: server.enabled }" :aria-label="server.enabled ? '禁用' : '启用'" @click="toggleMcp(server)"><span /></button>
                 <button class="icon-button compact" title="编辑" @click="editMcpServer(server)"><Settings2 :size="15" /></button>
@@ -1030,12 +1042,12 @@ watch(section, () => { void loadCurrentSection() })
 
           <template v-else-if="section === 'skills'">
             <div class="settings-section-heading">
-              <div><h3>Skills</h3><p>{{ skills.filter((skill) => skill.enabled).length }} enabled</p></div>
+              <div><h3>技能</h3><p>{{ skills.filter((skill) => skill.enabled).length }} 已启用</p></div>
               <button class="secondary-button" @click="emit('openOfficialSkills')"><Store :size="15" />官方技能市场</button>
               <button class="icon-button" title="刷新" @click="loadCurrentSection"><RefreshCw :size="17" /></button>
             </div>
             <section class="settings-list">
-              <div v-if="skills.length === 0" class="empty-settings">当前工作区没有发现 Skill</div>
+              <div v-if="skills.length === 0" class="empty-settings">当前工作区没有发现技能</div>
               <div v-for="skill in skills" :key="skill.name" class="settings-list-row skill-row">
                 <Wrench :size="17" />
                 <div class="list-main">
@@ -1050,13 +1062,13 @@ watch(section, () => { void loadCurrentSection() })
 
           <template v-else>
             <div class="settings-section-heading">
-              <div><h3>诊断与用量</h3><p>Runtime、Provider 和模型调用</p></div>
+              <div><h3>诊断与用量</h3><p>运行时、模型提供商和模型调用</p></div>
               <button class="secondary-button" @click="loadCurrentSection"><RefreshCw :size="15" /> 重新检查</button>
             </div>
 
             <section class="usage-summary">
               <div><Gauge :size="17" /><span>调用</span><strong>{{ totalUsage.calls.toLocaleString() }}</strong></div>
-              <div><Activity :size="17" /><span>Tokens</span><strong>{{ totalUsage.tokens.toLocaleString() }}</strong></div>
+              <div><Activity :size="17" /><span>词元</span><strong>{{ totalUsage.tokens.toLocaleString() }}</strong></div>
               <div><Bot :size="17" /><span>成本</span><strong>${{ totalUsage.cost.toFixed(4) }}</strong></div>
             </section>
 
@@ -1069,7 +1081,7 @@ watch(section, () => { void loadCurrentSection() })
 
             <section v-if="usage.length > 0" class="usage-table-wrap">
               <table class="usage-table">
-                <thead><tr><th>模型</th><th>调用</th><th>成功率</th><th>缓存命中</th><th>Tokens</th><th>平均延迟</th><th>成本</th></tr></thead>
+                <thead><tr><th>模型</th><th>调用</th><th>成功率</th><th>缓存命中</th><th>词元</th><th>平均延迟</th><th>成本</th></tr></thead>
                 <tbody><tr v-for="item in usage" :key="`${item.provider}/${item.model}`"><td><strong>{{ item.provider }}/{{ item.model }}</strong></td><td>{{ item.calls }}</td><td>{{ Math.round(item.successRate * 100) }}%</td><td><span class="cache-rate">{{ cacheHitRate(item) }}%</span><small v-if="item.cachedInputTokens">命中 {{ item.cachedInputTokens.toLocaleString() }}<template v-if="item.cacheCreationInputTokens"> · 写入 {{ item.cacheCreationInputTokens.toLocaleString() }}</template></small></td><td>{{ (promptInputTokens(item) + item.outputTokens).toLocaleString() }}</td><td>{{ Math.round(item.avgLatencyMs) }} ms</td><td>${{ item.cost.toFixed(4) }}</td></tr></tbody>
               </table>
             </section>

@@ -33,7 +33,7 @@ const root = ref<HTMLElement | null>(null)
 const trigger = ref<HTMLButtonElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
 const open = ref(false)
-const highlighted = ref(-1) 
+const highlighted = ref(-1)
 const menuStyle = ref<Record<string, string>>({})
 const listboxId = `select-menu-${useId()}`
 let typeahead = ''
@@ -277,19 +277,14 @@ onBeforeUnmount(() => {
           :style="menuStyle" @keydown="handleKeydown">
           <div v-if="searchable" class="custom-select-search">
             <Search :size="14" />
-            <input
-              ref="searchInput"
-              v-model="query"
-              type="text"
-              :placeholder="`搜索${label}`"
-              aria-label="搜索选项"
-              spellcheck="false"
-            >
+            <input ref="searchInput" v-model="query" type="text" :placeholder="`搜索${label}`" aria-label="搜索选项"
+              spellcheck="false">
             <button v-if="query" type="button" class="custom-select-search-clear" title="清空" @click="query = ''">
               <X :size="13" />
             </button>
           </div>
-          <button v-for="(option, index) in visibleOptions" :key="option.value" type="button" class="custom-select-option"
+          <button v-for="(option, index) in visibleOptions" :key="option.value" type="button"
+            class="custom-select-option"
             :class="{ selected: option.value === modelValue, highlighted: index === highlighted }"
             :disabled="option.disabled" role="option" :aria-selected="option.value === modelValue" :data-index="index"
             @mouseenter="!option.disabled && (highlighted = index)" @click="select(option)">

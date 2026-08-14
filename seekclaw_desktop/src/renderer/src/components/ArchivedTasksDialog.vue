@@ -101,12 +101,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 </script>
 
 <template>
-  <section
-    v-if="open"
-    class="archived-tasks-dialog embedded-page"
-    role="region"
-    aria-labelledby="archived-title"
-  >
+  <section v-if="open" class="archived-tasks-dialog embedded-page" role="region" aria-labelledby="archived-title">
     <header class="archived-header">
       <div class="archived-heading">
         <button class="page-back-button" type="button" @click="emit('close')">
@@ -114,86 +109,74 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
           <span>返回应用</span>
         </button>
         <div class="archived-title-copy">
-          <span class="archived-eyebrow"><Archive :size="14" /> TASK HISTORY</span>
           <h2 id="archived-title">已归档任务</h2>
           <p>{{ archivedCount }} 个任务保存在这里，可随时恢复继续工作。</p>
         </div>
       </div>
       <div class="archived-header-actions">
-        <button
-          class="archive-delete-all"
-          :disabled="archivedCount === 0"
-          @click="emit('deleteAll')"
-        ><Trash2 :size="16" />全部删除</button>
+        <button class="archive-delete-all" :disabled="archivedCount === 0" @click="emit('deleteAll')">
+          <Trash2 :size="16" />全部删除
+        </button>
       </div>
     </header>
 
-        <div class="archived-toolbar">
-          <label class="archived-search">
-            <Search :size="17" />
-            <input v-model="query" autofocus placeholder="搜索已归档任务" aria-label="搜索已归档任务" />
-          </label>
+    <div class="archived-toolbar">
+      <label class="archived-search">
+        <Search :size="17" />
+        <input v-model="query" autofocus placeholder="搜索已归档任务" aria-label="搜索已归档任务" />
+      </label>
 
-          <SelectMenu
-            v-model="taskFilter"
-            class="archive-select-control"
-            :options="taskFilterOptions"
-            label="任务范围"
-            :menu-min-width="180"
-          />
+      <SelectMenu v-model="taskFilter" class="archive-select-control" :options="taskFilterOptions" label="任务范围"
+        :menu-min-width="180" />
 
-          <div class="archive-select-control project-filter-control">
-            <Folder :size="17" />
-            <SelectMenu
-              v-model="projectFilter"
-              class="archive-project-select"
-              :options="projectFilterOptions"
-              label="项目筛选"
-              :menu-min-width="220"
-            />
-          </div>
-        </div>
+      <div class="archive-select-control project-filter-control">
+        <Folder :size="17" />
+        <SelectMenu style="width: 100%;" v-model="projectFilter" class="archive-project-select"
+          :options="projectFilterOptions" label="项目筛选" :menu-min-width="220" />
+      </div>
+    </div>
 
-        <div class="archived-list-scroll">
-          <div v-if="archiveGroups.length === 0" class="archived-empty">
-            <Archive :size="28" />
-            <strong>{{ archivedCount === 0 ? '还没有已归档任务' : '没有匹配的任务' }}</strong>
-            <span>{{ archivedCount === 0 ? '归档后的任务会出现在这里。' : '试试其他搜索词或筛选条件。' }}</span>
-          </div>
+    <div class="archived-list-scroll">
+      <div v-if="archiveGroups.length === 0" class="archived-empty">
+        <Archive :size="28" />
+        <strong>{{ archivedCount === 0 ? '还没有已归档任务' : '没有匹配的任务' }}</strong>
+        <span>{{ archivedCount === 0 ? '归档后的任务会出现在这里。' : '试试其他搜索词或筛选条件。' }}</span>
+      </div>
 
-          <section v-for="group in archiveGroups" :key="group.id" class="archive-group">
-            <header class="archive-group-header">
-              <div class="archive-group-title">
-                <Globe2 v-if="group.id === 'global'" :size="18" />
-                <Folder v-else :size="18" />
-                <div>
-                  <strong>{{ group.name }}</strong>
-                  <small v-if="group.path">{{ group.path }}</small>
-                </div>
-              </div>
-              <div class="archive-group-meta">
-                <span>{{ group.threads.length }} 个任务</span>
-              </div>
-            </header>
-
-            <div class="archive-task-card">
-              <article v-for="thread in group.threads" :key="thread.id" class="archive-task-row">
-                <button class="archive-task-main" @click="emit('selectThread', thread.id)">
-                  <strong>{{ thread.title }}</strong>
-                  <time>{{ formatDate(thread.updatedAt) }}</time>
-                </button>
-                <div class="archive-task-actions">
-                  <button class="icon-button compact archive-row-delete" title="永久删除" @click.stop="emit('deleteTask', thread)">
-                    <Trash2 :size="16" />
-                  </button>
-                  <button class="archive-restore-button" @click.stop="emit('restoreTask', thread)">
-                    <RotateCcw :size="15" />恢复任务
-                  </button>
-                </div>
-              </article>
+      <section v-for="group in archiveGroups" :key="group.id" class="archive-group">
+        <header class="archive-group-header">
+          <div class="archive-group-title">
+            <Globe2 v-if="group.id === 'global'" :size="18" />
+            <Folder v-else :size="18" />
+            <div>
+              <strong>{{ group.name }}</strong>
+              <small v-if="group.path">{{ group.path }}</small>
             </div>
-          </section>
+          </div>
+          <div class="archive-group-meta">
+            <span>{{ group.threads.length }} 个任务</span>
+          </div>
+        </header>
+
+        <div class="archive-task-card">
+          <article v-for="thread in group.threads" :key="thread.id" class="archive-task-row">
+            <button class="archive-task-main" @click="emit('selectThread', thread.id)">
+              <strong>{{ thread.title }}</strong>
+              <time>{{ formatDate(thread.updatedAt) }}</time>
+            </button>
+            <div class="archive-task-actions">
+              <button class="icon-button compact archive-row-delete" title="永久删除"
+                @click.stop="emit('deleteTask', thread)">
+                <Trash2 :size="16" />
+              </button>
+              <button class="archive-restore-button" @click.stop="emit('restoreTask', thread)">
+                <RotateCcw :size="15" />恢复任务
+              </button>
+            </div>
+          </article>
         </div>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -380,7 +363,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   width: 220px;
 }
 
-.project-filter-control > svg {
+.project-filter-control>svg {
   flex: 0 0 auto;
 }
 
@@ -425,7 +408,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   gap: 10px;
 }
 
-.archive-group-title > svg {
+.archive-group-title>svg {
   flex: 0 0 auto;
   color: var(--text-secondary);
 }
@@ -475,7 +458,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   padding: 11px 14px 11px 18px;
 }
 
-.archive-task-row + .archive-task-row {
+.archive-task-row+.archive-task-row {
   border-top: 1px solid var(--border);
 }
 

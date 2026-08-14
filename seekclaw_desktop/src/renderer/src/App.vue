@@ -879,7 +879,7 @@ const vMeasure = {
     }
     report()
     const observer = new ResizeObserver(report)
-    ;(el as HTMLElement & { __heightObserver?: ResizeObserver }).__heightObserver = observer
+      ; (el as HTMLElement & { __heightObserver?: ResizeObserver }).__heightObserver = observer
     observer.observe(el)
   },
   unmounted(el: HTMLElement & { __heightObserver?: ResizeObserver }): void {
@@ -1332,7 +1332,7 @@ async function deleteArchivedTasks(): Promise<void> {
         id: thread.sessionId,
         ...sessionScope(thread, project)
       })
-      }
+    }
     threads.value = threads.value.filter((item) => item.id !== thread.id)
   }
   taskSettingsThreadId.value = ''
@@ -1775,349 +1775,225 @@ watch(theme, applyTheme)
 
 <template>
   <div class="app-shell">
-    <AppTitleBar
-      :sidebar-open="sidebarOpen"
-      :project-path="globalTaskActive ? undefined : activeProject?.path"
-      @toggle-sidebar="sidebarOpen = !sidebarOpen"
-      @new-task="newTask(selectedProjectId || undefined)"
-      @open-workspace="openWorkspace"
-      @show-project="showActiveProject"
-      @open-settings="openSettings('general')"
-      @focus-composer="composer?.focus()"
-      @open-terminal="openProjectTerminal"
-      @open-git-changes="openGitPanel('diff')"
-      @open-git-history="openGitPanel('history')"
-      @open-diagnostics="openSettings('diagnostics')"
-      @open-about="aboutOpen = true"
-    />
+    <AppTitleBar :sidebar-open="sidebarOpen" :project-path="globalTaskActive ? undefined : activeProject?.path"
+      @toggle-sidebar="sidebarOpen = !sidebarOpen" @new-task="newTask(selectedProjectId || undefined)"
+      @open-workspace="openWorkspace" @show-project="showActiveProject" @open-settings="openSettings('general')"
+      @focus-composer="composer?.focus()" @open-terminal="openProjectTerminal" @open-git-changes="openGitPanel('diff')"
+      @open-git-history="openGitPanel('history')" @open-diagnostics="openSettings('diagnostics')"
+      @open-about="aboutOpen = true" />
 
     <div class="app-body" v-show="activePage === 'main'" :class="{ 'sidebar-collapsed': !sidebarOpen }">
       <Transition name="sidebar-slide">
-        <Sidebar
-          v-if="sidebarOpen"
-        :projects="projects"
-        :threads="threads"
-        :active-thread-id="activeThreadId"
-        :active-project-id="selectedProjectId"
-        :version="appInfo.version"
-        @new-task="newTask"
-        @open-workspace="openWorkspace"
-        @select-thread="selectThread"
-        @task-settings="openTaskSettings"
-        @archive-task="archiveTask"
-        @restore-task="restoreTask"
-        @delete-task="deleteTask"
-        @delete-project="deleteProject"
-        @archive-project-tasks="archiveProjectTasks"
-        @delete-project-tasks="deleteProjectTasks"
-        @archive-global-tasks="archiveGlobalTasks"
-        @delete-global-tasks="deleteGlobalTasks"
-        @open-archived="openArchivedTasks"
-        @open-scheduled-tasks="openScheduledTasks"
-        @open-extensions="openExtensions('mcp')"
-        @open-official-skills="openOfficialSkills"
-        @open-settings="openSettings('general')"
-        />
+        <Sidebar v-if="sidebarOpen" :projects="projects" :threads="threads" :active-thread-id="activeThreadId"
+          :active-project-id="selectedProjectId" :version="appInfo.version" @new-task="newTask"
+          @open-workspace="openWorkspace" @select-thread="selectThread" @task-settings="openTaskSettings"
+          @archive-task="archiveTask" @restore-task="restoreTask" @delete-task="deleteTask"
+          @delete-project="deleteProject" @archive-project-tasks="archiveProjectTasks"
+          @delete-project-tasks="deleteProjectTasks" @archive-global-tasks="archiveGlobalTasks"
+          @delete-global-tasks="deleteGlobalTasks" @open-archived="openArchivedTasks"
+          @open-scheduled-tasks="openScheduledTasks" @open-extensions="openExtensions('mcp')"
+          @open-official-skills="openOfficialSkills" @open-settings="openSettings('general')" />
       </Transition>
       <Transition name="scrim-fade">
         <button v-if="sidebarOpen" class="sidebar-scrim" title="关闭侧栏" @click="sidebarOpen = false" />
       </Transition>
 
       <div class="workspace-content">
-      <main class="workspace-main" v-show="activePage === 'main'">
-        <header class="conversation-header">
-          <div class="conversation-title">
-            <Globe2 v-if="globalTaskActive" :size="20" />
-            <Folder v-else :size="20" />
-            <strong>{{ conversationTitle }}</strong>
-            <small v-if="activeThread">{{ activeProject?.name || '全局任务' }}</small>
-            <span v-if="activeThread?.running && activeThread?.phase" class="task-phase-chip">
-              <span class="phase-dot" />{{ activeThread.phase }}
-            </span>
-          </div>
-          <div class="conversation-actions">
-            <label class="conversation-search" :class="{ active: Boolean(conversationQuery.trim()) }">
-              <Search :size="15" />
-              <input v-model="conversationQuery" placeholder="搜索对话" aria-label="搜索对话" />
-              <button
-                v-if="conversationQuery"
-                type="button"
-                class="conversation-search-clear"
-                title="清除搜索"
-                @click="conversationQuery = ''"
-              ><X :size="13" /></button>
-            </label>
-            <button
-              v-if="!daemonState.connected"
-              class="connection-button"
-              :title="daemonState.error || daemonState.endpoint"
-              :disabled="reconnecting"
-              @click="reconnectDaemon"
-            >
-              <Circle :size="9" fill="currentColor" />
-              {{ runtimeConnectionLabel }}
-              <RefreshCw :class="{ spin: reconnecting }" :size="14" />
-            </button>
-            <button v-if="activeProject" class="open-location-button" @click="showActiveProject">
-              <FolderOpen :size="17" />
-              <span>打开位置</span>
-            </button>
-            <button v-if="activeProject" class="icon-button project-tool-button" title="在项目目录打开终端" @click="openProjectTerminal">
-              <TerminalSquare :size="18" />
-            </button>
-            <button v-if="activeProject" class="icon-button project-tool-button" title="查看代码更改" @click="openGitPanel('diff')">
-              <Braces :size="18" />
-            </button>
-            <button v-if="activeProject" class="icon-button project-tool-button" title="查看 Git 提交记录" @click="openGitPanel('history')">
-              <History :size="18" />
-            </button>
-            <button
-              class="icon-button project-tool-button"
-              :class="{ active: workflowOpen }"
-              title="实时执行流程图"
-              @click="workflowOpen = !workflowOpen"
-            >
-              <Workflow :size="18" />
-            </button>
-            <button class="icon-button" title="任务设置" :disabled="!activeThread" @click="openTaskSettings()">
-              <MoreHorizontal :size="18" />
-            </button>
-            <button class="icon-button" title="切换侧栏" @click="sidebarOpen = !sidebarOpen"><PanelRight :size="18" /></button>
-          </div>
-        </header>
-
-        <section ref="scrollArea" class="conversation-scroll" @scroll="handleConversationScroll">
-          <div v-if="conversationLoading" class="conversation-loading" role="status" aria-live="polite">
-            <LoaderCircle :size="20" class="spin" />
-            <span>正在加载会话…</span>
-          </div>
-          <div v-else-if="conversationLoadError" class="empty-state conversation-load-error">
-            <h1>会话加载失败</h1>
-            <p>{{ conversationLoadError }}</p>
-            <button class="secondary-button empty-state-action" @click="selectThread(activeThreadId)">重新加载</button>
-          </div>
-          <div v-else-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
-            <template v-if="virtualWindow.active">
-              <div class="virtual-pad" :style="{ height: `${virtualWindow.topPad}px` }" />
-              <template v-for="item in virtualWindow.items" :key="item.message.id">
-                <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
-                <div v-measure="item.message.id" class="virtual-message">
-                  <ConversationMessage
-                    :message="item.message"
-                    :image-sources="activeImageSources"
-                    :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
-                    @open-diff="openToolDiff"
-                    @continue="continueAssistant"
-                    @regenerate="regenerateMessage"
-                  />
-                </div>
-              </template>
-              <div class="virtual-pad" :style="{ height: `${virtualWindow.bottomPad}px` }" />
-            </template>
-            <template v-else>
-              <template v-for="item in conversationItems" :key="item.message.id">
-                <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
-                <ConversationMessage
-                  :message="item.message"
-                  :image-sources="activeImageSources"
-                  :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
-                  @open-diff="openToolDiff"
-                  @continue="continueAssistant"
-                  @regenerate="regenerateMessage"
-                />
-              </template>
-            </template>
-          </div>
-          <div v-else-if="activeThread" class="empty-state">
-            <h1>今天从哪里开始？</h1>
-            <p>{{ activeProject?.name || '全局任务 · 无工作目录' }}</p>
-            <div v-if="!activeThread?.archived" class="starter-prompts" aria-label="快速开始">
-              <button
-                v-for="prompt in starterPrompts"
-                :key="prompt.label"
-                type="button"
-                class="starter-prompt-card"
-                :data-tone="prompt.tone"
-                @click="useStarterPrompt(prompt.label)"
-              >
-                <component :is="prompt.icon" :size="20" aria-hidden="true" />
-                <span>{{ prompt.label }}</span>
+        <main class="workspace-main" v-show="activePage === 'main'">
+          <header class="conversation-header">
+            <div class="conversation-title">
+              <Globe2 v-if="globalTaskActive" :size="20" />
+              <Folder v-else :size="20" />
+              <strong>{{ conversationTitle }}</strong>
+              <!--  <small v-if="activeThread">{{ activeProject?.name || '全局任务' }}</small>-->
+              <span v-if="activeThread?.running && activeThread?.phase" class="task-phase-chip">
+                <span class="phase-dot" />{{ activeThread.phase }}
+              </span>
+            </div>
+            <div class="conversation-actions">
+              <label class="conversation-search" :class="{ active: Boolean(conversationQuery.trim()) }">
+                <Search :size="15" />
+                <input v-model="conversationQuery" placeholder="搜索对话" aria-label="搜索对话" />
+                <button v-if="conversationQuery" type="button" class="conversation-search-clear" title="清除搜索"
+                  @click="conversationQuery = ''">
+                  <X :size="13" />
+                </button>
+              </label>
+              <button v-if="!daemonState.connected" class="connection-button"
+                :title="daemonState.error || daemonState.endpoint" :disabled="reconnecting" @click="reconnectDaemon">
+                <Circle :size="9" fill="currentColor" />
+                {{ runtimeConnectionLabel }}
+                <RefreshCw :class="{ spin: reconnecting }" :size="14" />
+              </button>
+              <button v-if="activeProject" class="open-location-button" @click="showActiveProject">
+                <FolderOpen :size="17" />
+                <span>打开位置</span>
+              </button>
+              <button v-if="activeProject" class="icon-button project-tool-button" title="在项目目录打开终端"
+                @click="openProjectTerminal">
+                <TerminalSquare :size="18" />
+              </button>
+              <button v-if="activeProject" class="icon-button project-tool-button" title="查看代码更改"
+                @click="openGitPanel('diff')">
+                <Braces :size="18" />
+              </button>
+              <button v-if="activeProject" class="icon-button project-tool-button" title="查看 Git 提交记录"
+                @click="openGitPanel('history')">
+                <History :size="18" />
+              </button>
+              <button class="icon-button project-tool-button" :class="{ active: workflowOpen }" title="实时执行流程图"
+                @click="workflowOpen = !workflowOpen">
+                <Workflow :size="18" />
+              </button>
+              <button class="icon-button" title="任务设置" :disabled="!activeThread" @click="openTaskSettings()">
+                <MoreHorizontal :size="18" />
+              </button>
+              <button class="icon-button" title="切换侧栏" @click="sidebarOpen = !sidebarOpen">
+                <PanelRight :size="18" />
               </button>
             </div>
-          </div>
-          <div v-else class="empty-state no-task-state">
-            <h1>还没有任务</h1>
-            <p>新建一个任务以开始使用 SeekClaw</p>
-            <button class="secondary-button empty-state-action" @click="newTask(selectedProjectId || undefined)">
-              新建任务
-            </button>
-          </div>
-        </section>
+          </header>
 
-        <Transition name="task-notice">
-          <button
-            v-if="taskNotice"
-            type="button"
-            class="task-notice"
-            :class="{ error: taskNotice.kind === 'error' }"
-            @click="openTaskNotice"
-          >
-            <span>{{ taskNotice.kind === 'error' ? '任务执行失败' : '后台任务已完成' }}</span>
-            <small>{{ taskNotice.title }}</small>
-          </button>
-        </Transition>
-
-        <footer class="composer-region">
-          <div v-if="activeThread?.queuedMessages?.length" class="pending-message-stack" aria-label="等待发送的消息">
-            <div v-for="queued in activeThread.queuedMessages" :key="queued.id" class="pending-message-card">
-              <div class="pending-message-main">
-                <CornerDownLeft :size="15" aria-hidden="true" />
-                <img
-                  v-if="queued.images.length"
-                  class="pending-message-image"
-                  :src="queuedImageUrl(queued.images[0])"
-                  :alt="queued.images[0]?.name || '图片'"
-                >
-                <span>{{ queuedMessagePreview(queued) }}</span>
-              </div>
-              <div class="pending-message-actions">
-                <button
-                  type="button"
-                  class="pending-message-action"
-                  :disabled="!activeThread.running || !activeThread.sessionId || !daemonState.connected"
-                  title="作为附加指导发送，不打断当前 AI 回合"
-                  @click="steerQueuedMessage(activeThread, queued)"
-                >
-                  <CornerDownLeft :size="14" /> 引导
-                </button>
-                <button
-                  type="button"
-                  class="pending-message-action icon-only"
-                  title="删除等待中的消息"
-                  @click="removeQueuedMessage(activeThread, queued.id)"
-                >
-                  <Trash2 :size="14" />
+          <section ref="scrollArea" class="conversation-scroll" @scroll="handleConversationScroll">
+            <div v-if="conversationLoading" class="conversation-loading" role="status" aria-live="polite">
+              <LoaderCircle :size="20" class="spin" />
+              <span>正在加载会话…</span>
+            </div>
+            <div v-else-if="conversationLoadError" class="empty-state conversation-load-error">
+              <h1>会话加载失败</h1>
+              <p>{{ conversationLoadError }}</p>
+              <button class="secondary-button empty-state-action" @click="selectThread(activeThreadId)">重新加载</button>
+            </div>
+            <div v-else-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
+              <template v-if="virtualWindow.active">
+                <div class="virtual-pad" :style="{ height: `${virtualWindow.topPad}px` }" />
+                <template v-for="item in virtualWindow.items" :key="item.message.id">
+                  <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
+                  <div v-measure="item.message.id" class="virtual-message">
+                    <ConversationMessage :message="item.message" :image-sources="activeImageSources"
+                      :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
+                      @open-diff="openToolDiff" @continue="continueAssistant" @regenerate="regenerateMessage" />
+                  </div>
+                </template>
+                <div class="virtual-pad" :style="{ height: `${virtualWindow.bottomPad}px` }" />
+              </template>
+              <template v-else>
+                <template v-for="item in conversationItems" :key="item.message.id">
+                  <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
+                  <ConversationMessage :message="item.message" :image-sources="activeImageSources"
+                    :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
+                    @open-diff="openToolDiff" @continue="continueAssistant" @regenerate="regenerateMessage" />
+                </template>
+              </template>
+            </div>
+            <div v-else-if="activeThread" class="empty-state">
+              <h1>今天从哪里开始？</h1>
+              <p>{{ activeProject?.name || '全局任务 · 无工作目录' }}</p>
+              <div v-if="!activeThread?.archived" class="starter-prompts" aria-label="快速开始">
+                <button v-for="prompt in starterPrompts" :key="prompt.label" type="button" class="starter-prompt-card"
+                  :data-tone="prompt.tone" @click="useStarterPrompt(prompt.label)">
+                  <component :is="prompt.icon" :size="20" aria-hidden="true" />
+                  <span>{{ prompt.label }}</span>
                 </button>
               </div>
             </div>
-          </div>
+            <div v-else class="empty-state no-task-state">
+              <h1>还没有任务</h1>
+              <p>新建一个任务以开始使用 SeekClaw</p>
+              <button class="secondary-button empty-state-action" @click="newTask(selectedProjectId || undefined)">
+                新建任务
+              </button>
+            </div>
+          </section>
 
-          <WorkflowPanel :workflow="activeThread?.workflow" :open="workflowOpen" @close="workflowOpen = false" />
-          <PanelReviewCard :panel="activeThread?.panel" />
-          <Composer
-            ref="composer"
-            :busy="busy"
-            :disabled="!activeThread || activeThread.archived || conversationLoading"
-            :model="activeModel"
-            :models="models"
-            :mode="mode"
-            :task-id="activeThread?.id"
-            :supports-images="activeModelSupportsImages"
-            :reasoning-level="activeReasoningLevel"
-            :network-enabled="activeThread?.networkEnabled ?? true"
-            :panel-enabled="activeThread?.panelEnabled ?? false"
-            :panel-models="activeThread?.panelModels"
-            @send="sendMessage"
-            @stop="stopTurn"
-            @change-model="changeModel"
-            @change-mode="changeMode"
-            @change-reasoning-level="changeReasoningLevel"
-            @change-network="changeNetwork"
-            @change-panel="changePanel"
-            @change-panel-models="changePanelModels"
-          />
-          <p class="composer-caption">
-            {{ conversationLoading
-              ? '正在读取会话历史…'
-              : !activeThread
-              ? '选择一个任务，或新建任务开始。'
-              : activeThread.archived
-              ? '此任务已归档，恢复后可继续。'
-              : globalTaskActive
-                ? '全局任务不使用本地文件、终端或 Git 工具。'
-                : 'SeekClaw 可能会出错，请检查生成的代码和命令。' }}
-          </p>
-        </footer>
-      </main>
+          <Transition name="task-notice">
+            <button v-if="taskNotice" type="button" class="task-notice" :class="{ error: taskNotice.kind === 'error' }"
+              @click="openTaskNotice">
+              <span>{{ taskNotice.kind === 'error' ? '任务执行失败' : '后台任务已完成' }}</span>
+              <small>{{ taskNotice.title }}</small>
+            </button>
+          </Transition>
 
-      <GitWorkspacePanel
-        v-show="activePage === 'main'"
-        :open="gitPanelOpen"
-        :project="activeProject"
-        :initial-tab="gitPanelTab"
-        :diff-override="toolDiff"
-        :width="gitPanelWidth"
-        @close="closeGitPanel"
-        @resize="resizeGitPanel"
-        @open-terminal="openProjectTerminal"
-      />
+          <footer class="composer-region">
+            <div v-if="activeThread?.queuedMessages?.length" class="pending-message-stack" aria-label="等待发送的消息">
+              <div v-for="queued in activeThread.queuedMessages" :key="queued.id" class="pending-message-card">
+                <div class="pending-message-main">
+                  <CornerDownLeft :size="15" aria-hidden="true" />
+                  <img v-if="queued.images.length" class="pending-message-image" :src="queuedImageUrl(queued.images[0])"
+                    :alt="queued.images[0]?.name || '图片'">
+                  <span>{{ queuedMessagePreview(queued) }}</span>
+                </div>
+                <div class="pending-message-actions">
+                  <button type="button" class="pending-message-action"
+                    :disabled="!activeThread.running || !activeThread.sessionId || !daemonState.connected"
+                    title="作为附加指导发送，不打断当前 AI 回合" @click="steerQueuedMessage(activeThread, queued)">
+                    <CornerDownLeft :size="14" /> 引导
+                  </button>
+                  <button type="button" class="pending-message-action icon-only" title="删除等待中的消息"
+                    @click="removeQueuedMessage(activeThread, queued.id)">
+                    <Trash2 :size="14" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <WorkflowPanel :workflow="activeThread?.workflow" :open="workflowOpen" @close="workflowOpen = false" />
+            <PanelReviewCard :panel="activeThread?.panel" />
+            <Composer ref="composer" :busy="busy"
+              :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
+              :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
+              :reasoning-level="activeReasoningLevel" :network-enabled="activeThread?.networkEnabled ?? true"
+              :panel-enabled="activeThread?.panelEnabled ?? false" :panel-models="activeThread?.panelModels"
+              @send="sendMessage" @stop="stopTurn" @change-model="changeModel" @change-mode="changeMode"
+              @change-reasoning-level="changeReasoningLevel" @change-network="changeNetwork" @change-panel="changePanel"
+              @change-panel-models="changePanelModels" />
+            <p class="composer-caption">
+              {{ conversationLoading
+                ? '正在读取会话历史…'
+                : !activeThread
+                  ? '选择一个任务，或新建任务开始。'
+                  : activeThread.archived
+                    ? '此任务已归档，恢复后可继续。'
+                    : globalTaskActive
+                      ? '全局任务不使用本地文件、终端或 Git 工具。'
+                      : 'SeekClaw 可能会出错，请检查生成的代码和命令。' }}
+            </p>
+          </footer>
+        </main>
+
+        <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="activeProject"
+          :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="gitPanelWidth" @close="closeGitPanel"
+          @resize="resizeGitPanel" @open-terminal="openProjectTerminal" />
       </div>
     </div>
 
-    <SettingsDialog
-      :open="activePage === 'settings' || activePage === 'extensions'"
-      :page="activePage === 'extensions' ? 'extensions' : 'settings'"
-      :theme="theme"
-      :daemon-connected="daemonState.connected"
-      :daemon-endpoint="daemonState.endpoint"
+    <SettingsDialog :open="activePage === 'settings' || activePage === 'extensions'"
+      :page="activePage === 'extensions' ? 'extensions' : 'settings'" :theme="theme"
+      :daemon-connected="daemonState.connected" :daemon-endpoint="daemonState.endpoint"
       :workspace-path="activeProject?.path || runtimeWorkspacePath || appInfo.defaultWorkspace"
-      :initial-section="activePage === 'settings' ? settingsSection : extensionsSection"
-      @close="closePage"
-      @change-theme="applyTheme"
-      @reconnect="reconnectDaemon"
-      @open-workspace="openWorkspace"
-      @open-official-skills="openOfficialSkills"
-      @runtime-changed="refreshRuntimeState"
-    />
+      :initial-section="activePage === 'settings' ? settingsSection : extensionsSection" @close="closePage"
+      @change-theme="applyTheme" @reconnect="reconnectDaemon" @open-workspace="openWorkspace"
+      @open-official-skills="openOfficialSkills" @runtime-changed="refreshRuntimeState" />
 
-    <OfficialSkillsDialog
-      :open="activePage === 'official-skills'"
-      @close="closePage"
-    />
+    <OfficialSkillsDialog :open="activePage === 'official-skills'" @close="closePage" />
 
-    <ScheduledTasksDialog
-      :open="activePage === 'scheduled'"
-      :projects="projects"
-      @close="closePage"
-    />
+    <ScheduledTasksDialog :open="activePage === 'scheduled'" :projects="projects" @close="closePage" />
 
-    <ArchivedTasksDialog
-      :open="activePage === 'archived'"
-      :projects="projects"
-      :threads="threads"
-      @close="closePage"
-      @select-thread="selectArchivedThread"
-      @restore-task="restoreTask"
-      @delete-task="deleteTask"
-      @delete-all="deleteArchivedTasks"
-    />
+    <ArchivedTasksDialog :open="activePage === 'archived'" :projects="projects" :threads="threads" @close="closePage"
+      @select-thread="selectArchivedThread" @restore-task="restoreTask" @delete-task="deleteTask"
+      @delete-all="deleteArchivedTasks" />
 
-    <AboutDialog
-      :open="aboutOpen"
-      :app-info="appInfo"
-      @close="aboutOpen = false"
-    />
+    <AboutDialog :open="aboutOpen" :app-info="appInfo" @close="aboutOpen = false" />
 
 
-    <TaskSettingsDialog
-      :open="Boolean(taskSettingsThreadId)"
-      :thread="settingsThread"
-      :project="settingsProject"
-      @close="taskSettingsThreadId = ''"
-      @save-title="saveTaskTitle"
-      @archive="settingsThread && archiveTask(settingsThread)"
-      @restore="settingsThread && restoreTask(settingsThread)"
-      @delete="settingsThread && deleteTask(settingsThread)"
-    />
+    <TaskSettingsDialog :open="Boolean(taskSettingsThreadId)" :thread="settingsThread" :project="settingsProject"
+      @close="taskSettingsThreadId = ''" @save-title="saveTaskTitle"
+      @archive="settingsThread && archiveTask(settingsThread)" @restore="settingsThread && restoreTask(settingsThread)"
+      @delete="settingsThread && deleteTask(settingsThread)" />
 
-    <RuntimeReconnectDialog
-      :open="Boolean(reconnectPrompt)"
-      :startup="reconnectPrompt?.startup ?? false"
-      :endpoint="daemonState.endpoint"
-      :error="reconnectPrompt?.error"
-      @retry="continueRuntimeReconnect"
-      @cancel="cancelRuntimeReconnect"
-    />
+    <RuntimeReconnectDialog :open="Boolean(reconnectPrompt)" :startup="reconnectPrompt?.startup ?? false"
+      :endpoint="daemonState.endpoint" :error="reconnectPrompt?.error" @retry="continueRuntimeReconnect"
+      @cancel="cancelRuntimeReconnect" />
 
     <ConfirmDialog />
   </div>

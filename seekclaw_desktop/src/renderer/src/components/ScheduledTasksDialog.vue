@@ -40,18 +40,18 @@ const editorOpen = ref(false)
 const customCron = ref(false)
 
 const cronPresets = [
-  { value: '*/30 * * * *', label: '每 30 分钟', description: 'Every 30 minutes' },
-  { value: '0 * * * *', label: '每小时', description: 'Every hour' },
-  { value: '0 9 * * *', label: '每天 09:00', description: 'Daily at 9:00' },
-  { value: '0 18 * * *', label: '每天 18:00', description: 'Daily at 18:00' },
-  { value: '0 9 * * 1', label: '每周一 09:00', description: 'Mondays at 9:00' },
-  { value: '__custom__', label: '自定义 Cron', description: 'Custom 5-field expression' }
+  { value: '*/30 * * * *', label: '每 30 分钟', description: '每 30 分钟' },
+  { value: '0 * * * *', label: '每小时', description: '每小时' },
+  { value: '0 9 * * *', label: '每天 09:00', description: '每天 09:00' },
+  { value: '0 18 * * *', label: '每天 18:00', description: '每天 18:00' },
+  { value: '0 9 * * 1', label: '每周一 09:00', description: '每周一 09:00' },
+  { value: '__custom__', label: '自定义 Cron', description: '自定义 5 段表达式' }
 ]
 
 const form = reactive<ScheduleForm>({ name: '', workspace: '', prompt: '', cron: '0 9 * * *', enabled: true })
 
 const workspaceOptions = computed(() => [
-  { value: '', label: '全局（不绑定项目）', description: 'Global scope' },
+  { value: '', label: '全局（不绑定项目）', description: '全局范围' },
   ...props.projects.map((project) => ({ value: project.path, label: project.name, description: project.path }))
 ])
 
@@ -240,7 +240,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
         </button>
         <div>
           <h2>计划任务</h2>
-          <span class="scheduled-tasks-subtitle">按 Cron 定时执行 Agent 任务 · Scheduled tasks</span>
+          <span class="scheduled-tasks-subtitle">按 Cron 定时执行智能体任务</span>
         </div>
       </div>
       <div class="scheduled-tasks-actions">
@@ -258,7 +258,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
               <div v-if="tasks.length === 0" class="scheduled-tasks-empty">
                 <CalendarClock :size="28" />
                 <p>还没有计划任务</p>
-                <small>创建后由 Daemon 在后台按时自动执行</small>
+                <small>创建后由守护进程在后台按时自动执行</small>
               </div>
               <div v-else class="scheduled-task-list">
                 <div v-for="task in tasks" :key="task.id" class="scheduled-task-row">

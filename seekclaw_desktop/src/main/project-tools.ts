@@ -29,6 +29,11 @@ function detail(error: unknown): string {
   return candidate.stderr?.trim() || error.message
 }
 
+function friendlyGitError(error: unknown): string {
+  const message = detail(error)
+  return /not a git repository/i.test(message) ? '当前目录没有 Git 仓库信息' : message
+}
+
 export function parseGitLog(output: string): GitCommit[] {
   return output
     .split('\x1e')
@@ -60,7 +65,7 @@ export async function getGitOverview(path: string): Promise<GitOverview> {
         .filter(Boolean).join('\n\n')
     }
   } catch (error) {
-    return { isRepository: false, root: directory, branch: '', status: [], diff: '', error: detail(error) }
+    return { isRepository: false, root: directory, branch: '', status: [], diff: '', error: friendlyGitError(error) }
   }
 }
 
@@ -72,7 +77,7 @@ export async function getGitHistory(path: string): Promise<GitHistory> {
     ])
     return { commits: parseGitLog(output) }
   } catch (error) {
-    return { commits: [], error: detail(error) }
+    return { commits: [], error: friendlyGitError(error) }
   }
 }
 

@@ -94,7 +94,8 @@ function nodeTitle(node: WorkflowNode): string {
 
 <style scoped>
 .workflow-panel {
-  margin: 0 0 12px;
+  width: min(100%, 940px);
+  margin: 0 auto 12px;
   overflow: hidden;
   background: var(--surface-raised);
   border: 1px solid var(--border);
