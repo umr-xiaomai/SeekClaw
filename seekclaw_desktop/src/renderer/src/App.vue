@@ -83,8 +83,6 @@ interface RuntimeSessionHeader {
   updatedAt: string
   reasoningLevel?: string
   networkEnabled?: boolean
-  panelEnabled?: boolean
-  panelModels?: string[]
 }
 
 interface RuntimeSession extends RuntimeSessionHeader {
@@ -402,8 +400,6 @@ async function refreshProjectSessions(project: ProjectItem): Promise<void> {
         existing.archived = Boolean(saved.archived)
         existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
         existing.networkEnabled = saved.networkEnabled ?? true
-        existing.panelEnabled = saved.panelEnabled ?? false
-        existing.panelModels = saved.panelModels
       } else {
         threads.value.push({
           id: `${project.id}:session:${saved.id}`,
@@ -415,7 +411,6 @@ async function refreshProjectSessions(project: ProjectItem): Promise<void> {
           sessionLoaded: false,
           reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
           networkEnabled: saved.networkEnabled ?? true,
-          panelEnabled: saved.panelEnabled ?? false,
           archived: Boolean(saved.archived)
         })
       }
@@ -445,8 +440,6 @@ async function refreshGlobalSessions(): Promise<void> {
       existing.archived = Boolean(saved.archived)
       existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
       existing.networkEnabled = saved.networkEnabled ?? true
-      existing.panelEnabled = saved.panelEnabled ?? false
-      existing.panelModels = saved.panelModels
     } else {
       threads.value.push({
         id: `global:session:${saved.id}`,
@@ -457,7 +450,6 @@ async function refreshGlobalSessions(): Promise<void> {
         sessionLoaded: false,
         reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
         networkEnabled: saved.networkEnabled ?? true,
-        panelEnabled: saved.panelEnabled ?? false,
         archived: Boolean(saved.archived)
       })
     }
@@ -671,7 +663,6 @@ function newTask(projectId?: string): void {
     messages: [],
     reasoningLevel: ReasoningLevel.High,
     networkEnabled: true,
-    panelEnabled: false,
     archived: false
   }
   threads.value.unshift(thread)
@@ -897,7 +888,6 @@ function phaseLabel(status: string): string {
   const s = status.toLocaleLowerCase()
   if (s.includes('compacting')) return '压缩记忆'
   if (s.includes('verifying')) return '构建验证'
-  if (s.includes('reviewing')) return '评审修复'
   if (s.includes('truncated')) return '自动续写'
   if (s.includes('thinking')) return '思考中'
   return status
@@ -932,7 +922,6 @@ async function regenerateMessage(message: ChatMessage): Promise<void> {
     return
   }
   thread.messages = thread.messages.slice(0, promptIndex + 1)
-  thread.panel = undefined
   thread.phase = undefined
   await sendMessage(prompt, [])
 }
@@ -1072,9 +1061,7 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
       const sessionResponse = await window.seekclaw.daemon.request('session.new', {
         ...scope,
         reasoningLevel,
-        networkEnabled: thread.networkEnabled ?? true,
-        panelEnabled: thread.panelEnabled ?? false,
-        panelModels: thread.panelModels
+        networkEnabled: thread.networkEnabled ?? true
       })
       thread.sessionId = sessionResponse.data
       thread.sessionLoaded = true
@@ -1512,28 +1499,6 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       break
     }
-    case 'panel_round': {
-      if (!message) break
-      const round = Number(event.data) || 1
-      thread.panel = { round, running: true, reviews: [] }
-      break
-    }
-    case 'panel_review_started': {
-      if (!message) break
-      thread.phase = '评审团审查'
-      thread.panel ??= { round: 1, running: true, reviews: [] }
-      thread.panel.running = true
-      const ref = event.data
-      const existing = thread.panel.reviews.find((review) => review.ref === ref)
-      if (existing) {
-        existing.status = 'reviewing'
-        existing.summary = undefined
-        existing.issueCount = undefined
-      } else {
-        thread.panel.reviews.push({ ref, status: 'reviewing' })
-      }
-      break
-    }
     case 'workflow': {
       const kind = String(event.details?.kind ?? '')
       const step = Number(event.details?.step) || 0
@@ -1548,7 +1513,7 @@ function handleDaemonEvent(event: DaemonMessage): void {
         const previous = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
         if (previous && previous.state === 'running') previous.state = 'done'
       }
-      const nodeKind = (['start', 'think', 'tool', 'verify', 'repair', 'compact', 'review', 'done', 'error'] as const)
+      const nodeKind = (['start', 'think', 'tool', 'verify', 'repair', 'compact', 'done', 'error'] as const)
         .includes(kind as never) ? kind as WorkflowKind : 'think'
       const node = {
         id: `${event.id}:${thread.workflow.nodes.length}:${kind}`,
@@ -1560,31 +1525,13 @@ function handleDaemonEvent(event: DaemonMessage): void {
       }
       thread.workflow.nodes.push(node)
       thread.workflow.activeId = node.id
-      // Once the turn moves to build verification or panel review the visible answer is
+      // Once the turn moves to build verification the visible answer is
       // complete; stop showing the "..." placeholder until repair continues the bubble.
-      if ((kind === 'verify' || kind === 'review')
+      if (kind === 'verify'
         && message?.content
         && (message.state === 'thinking' || message.state === 'streaming')) {
         message.state = 'done'
       }
-      break
-    }
-    case 'panel_review_completed': {
-      if (!message) break
-      thread.panel ??= { round: 1, running: true, reviews: [] }
-      const ref = event.data
-      const passed = event.details?.passed === true
-      const issueCount = Number(event.details?.issueCount) || 0
-      const summary = typeof event.details?.summary === 'string' ? event.details.summary : ''
-      const existing = thread.panel.reviews.find((review) => review.ref === ref)
-      if (existing) {
-        existing.status = passed ? 'passed' : 'issues'
-        existing.issueCount = issueCount
-        existing.summary = summary
-      } else {
-        thread.panel.reviews.push({ ref, status: passed ? 'passed' : 'issues', issueCount, summary })
-      }
-      thread.panel.running = thread.panel.reviews.some((review) => review.status === 'reviewing')
       break
     }
     case 'done':
@@ -1603,7 +1550,6 @@ function handleDaemonEvent(event: DaemonMessage): void {
       thread.running = false
       thread.requestId = undefined
       thread.assistantId = undefined
-      thread.panel = undefined
       thread.phase = undefined
       if (thread.workflow?.activeId) {
         const last = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
@@ -1627,7 +1573,6 @@ function handleDaemonEvent(event: DaemonMessage): void {
       thread.running = false
       thread.requestId = undefined
       thread.assistantId = undefined
-      thread.panel = undefined
       thread.phase = undefined
       if (thread.workflow?.activeId) {
         const last = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
@@ -1691,41 +1636,6 @@ async function changeMode(nextMode: string): Promise<void> {
     const response = await window.seekclaw.daemon.request('agent.mode.switch', { mode: nextMode })
     mode.value = response.data
   } catch { /* Keep showing the active Runtime mode. */ }
-}
-
-async function changePanel(enabled: boolean): Promise<void> {
-  const thread = activeThread.value
-  if (!thread || thread.archived) return
-  thread.panelEnabled = enabled
-  if (!thread.panel?.running) thread.panel = undefined
-  const project = projects.value.find((item) => item.id === thread.projectId)
-  if (!thread.sessionId || !daemonState.value.connected || (thread.projectId && !project)) return
-  try {
-    await window.seekclaw.daemon.request('session.update', {
-      id: thread.sessionId,
-      ...sessionScope(thread, project),
-      panelEnabled: enabled
-    })
-  } catch {
-    // Persist failure leaves the toggle local; the next turn still honors it.
-  }
-}
-
-async function changePanelModels(models: string[] | undefined): Promise<void> {
-  const thread = activeThread.value
-  if (!thread || thread.archived) return
-  thread.panelModels = models && models.length > 0 ? [...models] : undefined
-  const project = projects.value.find((item) => item.id === thread.projectId)
-  if (!thread.sessionId || !daemonState.value.connected || (thread.projectId && !project)) return
-  try {
-    await window.seekclaw.daemon.request('session.update', {
-      id: thread.sessionId,
-      ...sessionScope(thread, project),
-      panelModels: thread.panelModels ?? []
-    })
-  } catch {
-    // Persist failure leaves the selection local; the next turn still honors it.
-  }
 }
 
 async function changeReasoningLevel(level: ReasoningLevel): Promise<void> {
@@ -1938,15 +1848,12 @@ watch(theme, applyTheme)
             </div>
 
             <WorkflowPanel :workflow="activeThread?.workflow" :open="workflowOpen" @close="workflowOpen = false" />
-            <PanelReviewCard :panel="activeThread?.panel" />
             <Composer ref="composer" :busy="busy"
               :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
               :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
               :reasoning-level="activeReasoningLevel" :network-enabled="activeThread?.networkEnabled ?? true"
-              :panel-enabled="activeThread?.panelEnabled ?? false" :panel-models="activeThread?.panelModels"
               @send="sendMessage" @stop="stopTurn" @change-model="changeModel" @change-mode="changeMode"
-              @change-reasoning-level="changeReasoningLevel" @change-network="changeNetwork" @change-panel="changePanel"
-              @change-panel-models="changePanelModels" />
+              @change-reasoning-level="changeReasoningLevel" @change-network="changeNetwork" />
             <p class="composer-caption">
               {{ conversationLoading
                 ? '正在读取会话历史…'

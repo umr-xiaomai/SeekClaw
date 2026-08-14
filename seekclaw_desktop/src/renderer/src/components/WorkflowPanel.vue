@@ -4,7 +4,6 @@ import {
   Bug,
   Check,
   ChevronRight,
-  Gavel,
   Hammer,
   Layers,
   Play,
@@ -31,7 +30,6 @@ const kindIcon: Record<WorkflowKind, unknown> = {
   verify: Hammer,
   repair: Bug,
   compact: Layers,
-  review: Gavel,
   done: Check,
   error: X
 }
@@ -43,7 +41,6 @@ const kindLabel: Record<WorkflowKind, string> = {
   verify: '验证',
   repair: '修复',
   compact: '压缩',
-  review: '评审',
   done: '完成',
   error: '失败'
 }

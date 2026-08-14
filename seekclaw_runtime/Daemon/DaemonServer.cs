@@ -681,9 +681,7 @@ public sealed class DaemonServer : IAsyncDisposable
                             break;
                         }
                         var networkEnabled = Params(request)["networkEnabled"]?.GetValue<bool?>() ?? true;
-                        var panelEnabled = Params(request)["panelEnabled"]?.GetValue<bool?>() ?? false;
-                        var panelModels = ParseStringArray(Params(request)["panelModels"]);
-                        session = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled, panelEnabled, panelModels);
+                        session = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled);
                         await WriteAsync(writer, writerGate, id, "result", session.Header.Id, ct).ConfigureAwait(false);
                         break;
                     }
@@ -899,23 +897,6 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["label"] = workflow.Label,
                         ["detail"] = workflow.Detail,
                     }),
-                PanelRoundStartedEvent round => (
-                    Name: (string?)"panel_round",
-                    Data: round.Round.ToString(),
-                    Details: (JsonObject?)null),
-                PanelReviewStartedEvent review => (
-                    Name: (string?)"panel_review_started",
-                    Data: review.ModelRef,
-                    Details: (JsonObject?)null),
-                PanelReviewCompletedEvent review => (
-                    Name: (string?)"panel_review_completed",
-                    Data: review.ModelRef,
-                    Details: new JsonObject
-                    {
-                        ["passed"] = review.Passed,
-                        ["issueCount"] = review.IssueCount,
-                        ["summary"] = review.Summary,
-                    }),
                 _ => (Name: (string?)null, Data: "", Details: (JsonObject?)null),
             };
             if (payload.Name is not null)
@@ -941,18 +922,6 @@ public sealed class DaemonServer : IAsyncDisposable
         if (!Directory.Exists(fullPath))
             throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
         return _runtime.Workspaces.Detect(fullPath);
-    }
-
-    private static List<string>? ParseStringArray(JsonNode? node)
-    {
-        // Null when the parameter is absent; an empty array clears the value.
-        if (node is not JsonArray array) return null;
-        return array
-            .Select(item => item?.GetValue<string>()?.Trim())
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => value!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
     }
 
     private static IReadOnlyList<ChatImageAttachment> ParseImages(JsonNode? node)

@@ -62,7 +62,7 @@ The `requestId` parameter is optional; omitting it cancels all active turns on t
 {"id":10,"event":"cancelled","data":"partial text produced before cancellation"}
 ```
 
-Assistant messages returned by `session.get` carry `modelRef` (`provider/model`) so clients can label which model produced each answer. Streaming events are `thinking`, `delta`, `steer`, `status`, `image_view`, `tool_start`, `tool_done`, and `workflow`. The `workflow` event carries `details` with `step`, `kind` (`start`/`think`/`tool`/`verify`/`repair`/`compact`/`review`/`done`/`error`), `label`, and `detail` so clients can draw the live execution flowchart. `steer` indicates that additional guidance has entered the active turn's context; `details.imageId` on `image_view` identifies the uploaded image entering the model request. Terminal events are `done`, `cancelled`, and `error`.
+Assistant messages returned by `session.get` carry `modelRef` (`provider/model`) so clients can label which model produced each answer. Streaming events are `thinking`, `delta`, `steer`, `status`, `image_view`, `tool_start`, `tool_done`, and `workflow`. The `workflow` event carries `details` with `step`, `kind` (`start`/`think`/`tool`/`verify`/`repair`/`compact`/`done`/`error`), `label`, and `detail` so clients can draw the live execution flowchart. `steer` indicates that additional guidance has entered the active turn's context; `details.imageId` on `image_view` identifies the uploaded image entering the model request. Terminal events are `done`, `cancelled`, and `error`.
 
 ## Other Methods
 
@@ -75,7 +75,7 @@ Assistant messages returned by `session.get` carry `modelRef` (`provider/model`)
 | `session.delete` | `{ "id": "..." }` | Permanently deletes a session |
 | `session.truncate` | `{ "id": "...", "keepCount": 5 }` | Keeps only the first N messages (used by "regenerate"); returns the remaining count |
 | `session.resume` | `{ "id": "...", "global": false }` | Resumes a session |
-| `session.new` | `{ "workspace": "...", "reasoningLevel": "high", "panelEnabled": true, "panelModels": ["openai/gpt-5.5"] }` or `{ "global": true }` | Creates and binds a new Session; `panelEnabled` enables the review panel, `panelModels` selects the reviewer models (empty array = auto-pick) |
+| `session.new` | `{ "workspace": "...", "reasoningLevel": "high" }` or `{ "global": true }` | Creates and binds a new Session |
 | `model.list` | none | Lists available `provider/model` references |
 | `model.catalog` | none | Returns model details, capabilities, and active state |
 | `model.switch` | `{ "model": "provider/model" }` | Switches and persists the model |

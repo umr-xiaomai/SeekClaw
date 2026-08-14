@@ -5,7 +5,6 @@ import {
   ChevronDown,
   CircleAlert,
   Eye,
-  Gavel,
   Image as ImageIcon,
   Layers,
   LoaderCircle,
@@ -38,11 +37,10 @@ const preview = ref<{ src: string; name: string } | null>(null)
 const regularTools = computed(() => (props.message.tools ?? []).filter((tool) => !tool.diff))
 const editedTools = computed(() => (props.message.tools ?? []).filter((tool) => tool.diff && tool.filePath))
 
-/** System-injected messages (compaction / review / truncation) get dedicated cards. */
-const systemKind = computed<'memory' | 'review' | 'truncated' | null>(() => {
+/** System-injected messages (compaction / truncation) get dedicated cards. */
+const systemKind = computed<'memory' | 'truncated' | null>(() => {
   const content = props.message.content
   if (content.startsWith('>>> [Context compaction]')) return 'memory'
-  if (content.startsWith('>>> [评审团反馈]')) return 'review'
   if (content.startsWith('>>> [output truncated]')) return 'truncated'
   return null
 })
@@ -51,24 +49,6 @@ const systemBody = computed(() => {
   const content = props.message.content
   const marker = content.indexOf('\n')
   return marker >= 0 ? content.slice(marker + 1).trim() : ''
-})
-
-/** Parses "### provider/model（N 个问题）\n1. ..." sections into per-model review cards. */
-const reviewSections = computed(() => {
-  const body = systemBody.value
-  const lines = body.split('\n')
-  const sections: Array<{ ref: string; lines: string[] }> = []
-  let current: { ref: string; lines: string[] } | null = null
-  for (const line of lines) {
-    const heading = /^###\s+(.+?)(?:（(\d+)\s*个问题）)?$/.exec(line.trim())
-    if (heading) {
-      current = { ref: (heading[1] ?? heading[0]).trim(), lines: [] }
-      sections.push(current)
-    } else if (current && line.trim()) {
-      current.lines.push(line.trim())
-    }
-  }
-  return sections
 })
 
 const thinkingLabel = computed(() => {
@@ -114,29 +94,19 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
         <button class="system-card-header" type="button" @click="systemOpen = !systemOpen">
           <span class="system-card-icon">
             <Layers v-if="systemKind === 'memory'" :size="15" />
-            <Gavel v-else-if="systemKind === 'review'" :size="15" />
             <CircleAlert v-else :size="15" />
           </span>
           <div class="system-card-title">
             <strong>
-              {{ systemKind === 'memory' ? '记忆压缩' : systemKind === 'review' ? '评审团反馈' : '输出截断' }}
+              {{ systemKind === 'memory' ? '记忆压缩' : '输出截断' }}
             </strong>
             <small v-if="systemKind === 'memory'">较早的对话已被总结，以保持上下文可容纳</small>
-            <small v-else-if="systemKind === 'review'">{{ reviewSections.length }} 个评审模型报告</small>
             <small v-else>上一轮输出达到长度上限，已要求模型继续</small>
           </div>
           <ChevronDown :size="15" :class="{ rotated: systemOpen }" />
         </button>
         <div v-if="systemOpen" class="system-card-body">
-          <template v-if="systemKind === 'review' && reviewSections.length > 0">
-            <div v-for="section in reviewSections" :key="section.ref" class="review-section">
-              <strong>{{ section.ref }}</strong>
-              <ul>
-                <li v-for="(line, index) in section.lines" :key="index">{{ line }}</li>
-              </ul>
-            </div>
-          </template>
-          <pre v-else class="system-card-text">{{ systemBody }}</pre>
+          <pre class="system-card-text">{{ systemBody }}</pre>
         </div>
       </div>
       <div v-else class="user-message-stack">
@@ -273,11 +243,6 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
   background: var(--accent-soft);
 }
 
-.system-review .system-card-icon {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
 .system-truncated .system-card-icon {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
@@ -330,24 +295,6 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.review-section+.review-section {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--border);
-}
-
-.review-section strong {
-  font-size: 12px;
-}
-
-.review-section ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.65;
 }
 
 .thinking-toggle>.lucide-chevron-down {

@@ -71,14 +71,7 @@ export interface ScheduledTaskInfo {
   updatedAt: string
 }
 
-export interface PanelReviewItem {
-  ref: string
-  status: 'reviewing' | 'passed' | 'issues' | 'failed'
-  issueCount?: number
-  summary?: string
-}
-
-export type WorkflowKind = 'start' | 'think' | 'tool' | 'verify' | 'repair' | 'compact' | 'review' | 'done' | 'error'
+export type WorkflowKind = 'start' | 'think' | 'tool' | 'verify' | 'repair' | 'compact' | 'done' | 'error'
 
 export interface WorkflowNode {
   id: string
@@ -92,12 +85,6 @@ export interface WorkflowNode {
 export interface WorkflowState {
   nodes: WorkflowNode[]
   activeId: string | null
-}
-
-export interface PanelReviewState {
-  round?: number
-  running: boolean
-  reviews: PanelReviewItem[]
 }
 
 export interface QueuedMessage {
@@ -125,7 +112,7 @@ export interface ThreadItem {
   finishedRequestIds?: number[]
   /** Local generation marker so an older request cannot clean up a newer turn. */
   activeTurnToken?: string
-  /** Current work phase shown in the header (thinking/tool/verify/review…). */
+  /** Current work phase shown in the header (thinking/tool/verify…). */
   phase?: string
   /** Live execution flowchart fed by daemon workflow events. */
   workflow?: WorkflowState
@@ -135,12 +122,6 @@ export interface ThreadItem {
   reasoningLevel?: ReasoningLevel
   /** Per-task "联网" toggle; controls web_search + web_fetch together. */
   networkEnabled?: boolean
-  /** Per-task "评审团" toggle; cross-vendor adversarial review runs after each turn. */
-  panelEnabled?: boolean
-  /** Per-task review panel models ("provider/model"); undefined/empty = auto-pick. */
-  panelModels?: string[]
-  /** Active panel review state, fed by daemon panel events. */
-  panel?: PanelReviewState
   /** Messages waiting for the current agent turn to finish. */
   queuedMessages?: QueuedMessage[]
   /** Prevents multiple queued messages from starting at the same time. */

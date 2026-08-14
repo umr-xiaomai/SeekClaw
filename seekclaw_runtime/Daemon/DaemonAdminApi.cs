@@ -698,17 +698,11 @@ internal sealed class DaemonAdminApi(
         var networkEnabled = parameters.ContainsKey("networkEnabled")
             ? parameters["networkEnabled"]?.GetValue<bool?>() ?? true
             : (bool?)null;
-        var panelEnabled = parameters.ContainsKey("panelEnabled")
-            ? parameters["panelEnabled"]?.GetValue<bool?>() ?? false
-            : (bool?)null;
-        var panelModels = parameters.ContainsKey("panelModels")
-            ? ParseStringArray(parameters["panelModels"])
-            : null;
         try
         {
             var header = runtime.Sessions.UpdateMetadata(
                 workspace, id, title: title, reasoningLevel: reasoningLevel,
-                networkEnabled: networkEnabled, panelEnabled: panelEnabled, panelModels: panelModels);
+                networkEnabled: networkEnabled);
             return JsonSerializer.Serialize(header, SeekClawJsonContext.Default.SessionHeader);
         }
         catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)
@@ -912,18 +906,6 @@ internal sealed class DaemonAdminApi(
         if (!Directory.Exists(fullPath))
             throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
         return runtime.Workspaces.Detect(fullPath);
-    }
-
-    private static List<string>? ParseStringArray(JsonNode? node)
-    {
-        // Null when the parameter is absent; an empty array clears the value.
-        if (node is not JsonArray array) return null;
-        return array
-            .Select(item => item?.GetValue<string>()?.Trim())
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => value!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
     }
 
     private static JsonArray Strings(IEnumerable<string> values) =>

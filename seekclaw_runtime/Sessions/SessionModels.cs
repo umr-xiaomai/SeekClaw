@@ -12,10 +12,6 @@ public sealed class SessionHeader
     public ReasoningLevel ReasoningLevel { get; set; } = ReasoningLevel.High;
     /// <summary>Per-session "联网" toggle; controls web_search + web_fetch together.</summary>
     public bool NetworkEnabled { get; set; } = true;
-    /// <summary>Per-session "评审团" toggle; runs cross-vendor model review after each turn.</summary>
-    public bool PanelEnabled { get; set; }
-    /// <summary>Review panel model refs ("provider/model"); empty/null = auto-pick.</summary>
-    public List<string>? PanelModels { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

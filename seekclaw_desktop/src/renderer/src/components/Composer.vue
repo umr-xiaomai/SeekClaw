@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ArrowUp, Gavel, Globe, ImagePlus, Sparkles, Square, X } from '@lucide/vue'
+import { ArrowUp, Globe, ImagePlus, Sparkles, Square, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ImageAttachment, ReasoningLevel } from '../types'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
-import PanelModelsMenu from './PanelModelsMenu.vue'
 import ReasoningDepthMenu from './ReasoningDepthMenu.vue'
 import SelectMenu from './SelectMenu.vue'
 
@@ -17,8 +16,6 @@ const props = defineProps<{
   reasoningLevel: ReasoningLevel
   supportsImages: boolean
   networkEnabled: boolean
-  panelEnabled: boolean
-  panelModels: string[] | undefined
 }>()
 
 const emit = defineEmits<{
@@ -28,8 +25,6 @@ const emit = defineEmits<{
   changeMode: [mode: string]
   changeReasoningLevel: [level: ReasoningLevel]
   changeNetwork: [enabled: boolean]
-  changePanel: [enabled: boolean]
-  changePanelModels: [models: string[] | undefined]
 }>()
 
 const maxImageCount = 10
@@ -376,25 +371,6 @@ watch(() => props.supportsImages, (supported) => {
           </Transition>
         </Teleport>
       </div>
-      <button
-        class="network-toggle"
-        :class="{ active: panelEnabled }"
-        type="button"
-        :disabled="disabled"
-        :title="panelEnabled ? '评审团已开启：任务完成后由其他厂商模型对抗式审查，发现问题自动修复' : '评审团已关闭：任务完成后直接结束'"
-        :aria-pressed="panelEnabled"
-        @click="emit('changePanel', !panelEnabled)"
-      >
-        <Gavel :size="15" />
-        <span>评审团</span>
-      </button>
-      <PanelModelsMenu
-        v-if="panelEnabled"
-        :model-value="panelModels"
-        :models="models"
-        :disabled="busy || disabled"
-        @update:model-value="emit('changePanelModels', $event)"
-      />
       <SelectMenu
         class="composer-select mode-control"
         :model-value="mode"

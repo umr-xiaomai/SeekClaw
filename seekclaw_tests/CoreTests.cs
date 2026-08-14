@@ -200,33 +200,6 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
-    public void SessionStore_PersistsPanelEnabledToggle()
-    {
-        var workspace = NewWorkspace("panel-toggle");
-        var store = NewSessionStore();
-
-        // New sessions default to panel review disabled.
-        var session = store.Create(workspace);
-        Assert.False(session.Header.PanelEnabled);
-
-        // Toggle on and verify the reloaded session keeps it.
-        store.UpdateMetadata(workspace, session.Header.Id, panelEnabled: true);
-        Assert.True(store.Load(workspace, session.Header.Id)!.Header.PanelEnabled);
-        Assert.True(Assert.Single(store.List(workspace)).PanelEnabled);
-
-        // A session created with the toggle already on round-trips too.
-        var panel = store.Create(workspace, panelEnabled: true);
-        Assert.True(store.Load(workspace, panel.Header.Id)!.Header.PanelEnabled);
-
-        // Per-session review models persist and can be cleared back to auto-pick.
-        var picked = store.Create(workspace, panelEnabled: true, panelModels: ["reviewer/critic-a", "reviewer/critic-b"]);
-        var reloaded = store.Load(workspace, picked.Header.Id)!;
-        Assert.Equal(["reviewer/critic-a", "reviewer/critic-b"], reloaded.Header.PanelModels);
-        store.UpdateMetadata(workspace, picked.Header.Id, panelModels: []);
-        Assert.Null(store.Load(workspace, picked.Header.Id)!.Header.PanelModels);
-    }
-
-    [Fact]
     public void SessionStore_PersistsGlobalSessionsWithoutWorkspaceMetadata()
     {
         var global = new WorkspaceManager().CreateGlobal(Path.Combine(_dir, "global-state"));
