@@ -612,6 +612,7 @@ public sealed class Agent(
             EnableThinking = reasoningLevel != ReasoningLevel.None && model.Model.Capabilities.Thinking,
             ThinkingBudgetTokens = config.Agent.ThinkingBudgetTokens,
             ReasoningLevel = reasoningLevel,
+            OptimizeDeepSeek = configStore.Config.Routing.DeepSeekOptimizationEnabled,
         };
 
         LlmCompletion? completion = null;

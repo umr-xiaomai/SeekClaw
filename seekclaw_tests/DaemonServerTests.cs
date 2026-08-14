@@ -67,20 +67,30 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var initial = await connection.ReadUntilAsync(
             response => response["id"]!.GetValue<long>() == 1
                         && response["event"]!.GetValue<string>() == "result");
-        var initialEnabled = JsonNode.Parse(initial["data"]!.GetValue<string>())!["failoverEnabled"]!.GetValue<bool>();
+        var initialData = JsonNode.Parse(initial["data"]!.GetValue<string>())!;
+        var initialEnabled = initialData["failoverEnabled"]!.GetValue<bool>();
         Assert.True(initialEnabled); // default on
+        Assert.False(initialData["deepSeekOptimizationEnabled"]!.GetValue<bool>()); // default off
 
-        await connection.SendAsync(2, "routing.set", new JsonObject { ["failoverEnabled"] = false });
+        await connection.SendAsync(2, "routing.set", new JsonObject
+        {
+            ["failoverEnabled"] = false,
+            ["deepSeekOptimizationEnabled"] = true,
+        });
         var set = await connection.ReadUntilAsync(
             response => response["id"]!.GetValue<long>() == 2
                         && response["event"]!.GetValue<string>() == "result");
-        Assert.False(JsonNode.Parse(set["data"]!.GetValue<string>())!["failoverEnabled"]!.GetValue<bool>());
+        var setData = JsonNode.Parse(set["data"]!.GetValue<string>())!;
+        Assert.False(setData["failoverEnabled"]!.GetValue<bool>());
+        Assert.True(setData["deepSeekOptimizationEnabled"]!.GetValue<bool>());
 
         await connection.SendAsync(3, "routing.get");
         var after = await connection.ReadUntilAsync(
             response => response["id"]!.GetValue<long>() == 3
                         && response["event"]!.GetValue<string>() == "result");
-        Assert.False(JsonNode.Parse(after["data"]!.GetValue<string>())!["failoverEnabled"]!.GetValue<bool>());
+        var afterData = JsonNode.Parse(after["data"]!.GetValue<string>())!;
+        Assert.False(afterData["failoverEnabled"]!.GetValue<bool>());
+        Assert.True(afterData["deepSeekOptimizationEnabled"]!.GetValue<bool>());
     }
 
     [Fact]

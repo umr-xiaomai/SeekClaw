@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PackageOpen, RefreshCw, Search, Store, X } from '@lucide/vue'
+import { ArrowLeft, PackageOpen, RefreshCw, Search, Store } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
@@ -60,24 +60,28 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 </script>
 
 <template>
-  <Transition name="modal-fade">
-    <div
-      v-if="open"
-      class="modal-backdrop official-skills-backdrop"
-      @mousedown.self="emit('close')"
-    >
-      <section class="official-skills-dialog" role="dialog" aria-modal="true" aria-labelledby="official-skills-title">
-        <header class="official-skills-header">
-          <div>
-            <span class="official-skills-eyebrow"><Store :size="14" /> OFFICIAL SKILLS</span>
-            <h2 id="official-skills-title">
-              官方技能
-              <span class="official-skills-chip">建设中</span>
-            </h2>
-            <p>从官方技能市场中选择并开启你需要的功能，随时可以关闭。</p>
-          </div>
-          <button class="icon-button" title="关闭" @click="emit('close')"><X :size="19" /></button>
-        </header>
+  <section
+    v-if="open"
+    class="official-skills-dialog embedded-page"
+    role="region"
+    aria-labelledby="official-skills-title"
+  >
+    <header class="official-skills-header">
+      <div class="official-skills-heading">
+        <button class="page-back-button" type="button" @click="emit('close')">
+          <ArrowLeft :size="18" />
+          <span>返回应用</span>
+        </button>
+        <div class="official-skills-title-copy">
+          <span class="official-skills-eyebrow"><Store :size="14" /> OFFICIAL SKILLS</span>
+          <h2 id="official-skills-title">
+            官方技能
+            <span class="official-skills-chip">建设中</span>
+          </h2>
+          <p>从官方技能市场中选择并开启你需要的功能，随时可以关闭。</p>
+        </div>
+      </div>
+    </header>
 
         <div class="official-skills-toolbar">
           <label class="official-skills-search">
@@ -121,9 +125,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
         <footer class="official-skills-footer">
           官方技能由 SeekClaw 团队维护 · 本地技能请前往「设置 → Skills」管理
         </footer>
-      </section>
-    </div>
-  </Transition>
+  </section>
 </template>
 
 <style scoped>
@@ -132,6 +134,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   padding: clamp(16px, 4vw, 54px);
   background: rgb(14 17 14 / 38%);
   backdrop-filter: blur(3px);
+}
+
+.official-skills-dialog.embedded-page {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--bg);
 }
 
 .official-skills-dialog {
@@ -154,6 +165,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   gap: 20px;
   padding: 21px 22px 18px;
   border-bottom: 1px solid var(--border);
+}
+
+.official-skills-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.official-skills-title-copy {
+  min-width: 0;
 }
 
 .official-skills-eyebrow {

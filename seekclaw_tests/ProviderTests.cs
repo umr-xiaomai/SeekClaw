@@ -241,6 +241,91 @@ public sealed class ProviderTests : IDisposable
         Assert.Null(body["max_completion_tokens"]);
     }
 
+
+    [Fact]
+    public void OpenAiBody_DeepSeekOptimization_ToolTurnKeepsReasoningContent()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig { Id = "deepseek-v4-flash" },
+            OptimizeDeepSeek = true,
+            Messages =
+            [
+                ChatMessage.User("go"),
+                new ChatMessage
+                {
+                    Role = ChatRole.Assistant,
+                    Text = "",
+                    Thinking = "previous thinking",
+                    ToolCalls = [new ToolCallRequest("call_1", "read_file", "{}")],
+                },
+            ],
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        var assistant = body["messages"]![1]!;
+        Assert.Equal("previous thinking", assistant["reasoning_content"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void OpenAiBody_DeepSeekOptimization_PureTextTurnDropsReasoningContent()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig { Id = "deepseek-v4-flash" },
+            OptimizeDeepSeek = true,
+            Messages =
+            [
+                ChatMessage.User("go"),
+                new ChatMessage { Role = ChatRole.Assistant, Text = "done", Thinking = "previous thinking" },
+            ],
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        Assert.Null(body["messages"]![1]!["reasoning_content"]);
+    }
+
+    [Fact]
+    public void OpenAiBody_DeepSeekOptimization_AddsThinkingWireAndEmptyToolFallback()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig { Id = "deepseek-v4-flash" },
+            OptimizeDeepSeek = true,
+            EnableThinking = true,
+            Messages =
+            [
+                ChatMessage.User("go"),
+                ChatMessage.ToolResult("call_1", "bash", "", true),
+            ],
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        Assert.Equal("enabled", body["thinking"]!["type"]!.GetValue<string>());
+        Assert.Equal("(no output)", body["messages"]![1]!["content"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void OpenAiBody_DeepSeekOptimization_DisabledPreservesLegacyPassback()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig { Id = "deepseek-v4-flash" },
+            Messages =
+            [
+                ChatMessage.User("go"),
+                new ChatMessage { Role = ChatRole.Assistant, Text = "", Thinking = "previous thinking" },
+            ],
+        };
+
+        var body = OpenAiCompatibleClient.BuildBody(request);
+        Assert.Equal("previous thinking", body["messages"]![1]!["reasoning_content"]!.GetValue<string>());
+    }
+
     [Fact]
     public void AnthropicBody_MapsMultipleImagesToBase64ContentParts()
     {

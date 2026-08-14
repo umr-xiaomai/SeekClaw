@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import {
   Archive,
+  ArrowLeft,
   Folder,
   Globe2,
   RotateCcw,
   Search,
-  Trash2,
-  X
+  Trash2
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ProjectItem, ThreadItem } from '../types'
@@ -101,28 +101,32 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 </script>
 
 <template>
-  <Transition name="modal-fade">
-    <div
-      v-if="open"
-      class="modal-backdrop archived-backdrop"
-      @mousedown.self="emit('close')"
-    >
-      <section class="archived-tasks-dialog" role="dialog" aria-modal="true" aria-labelledby="archived-title">
-        <header class="archived-header">
-          <div>
-            <span class="archived-eyebrow"><Archive :size="14" /> TASK HISTORY</span>
-            <h2 id="archived-title">已归档任务</h2>
-            <p>{{ archivedCount }} 个任务保存在这里，可随时恢复继续工作。</p>
-          </div>
-          <div class="archived-header-actions">
-            <button
-              class="archive-delete-all"
-              :disabled="archivedCount === 0"
-              @click="emit('deleteAll')"
-            ><Trash2 :size="16" />全部删除</button>
-            <button class="icon-button" title="关闭" @click="emit('close')"><X :size="19" /></button>
-          </div>
-        </header>
+  <section
+    v-if="open"
+    class="archived-tasks-dialog embedded-page"
+    role="region"
+    aria-labelledby="archived-title"
+  >
+    <header class="archived-header">
+      <div class="archived-heading">
+        <button class="page-back-button" type="button" @click="emit('close')">
+          <ArrowLeft :size="18" />
+          <span>返回应用</span>
+        </button>
+        <div class="archived-title-copy">
+          <span class="archived-eyebrow"><Archive :size="14" /> TASK HISTORY</span>
+          <h2 id="archived-title">已归档任务</h2>
+          <p>{{ archivedCount }} 个任务保存在这里，可随时恢复继续工作。</p>
+        </div>
+      </div>
+      <div class="archived-header-actions">
+        <button
+          class="archive-delete-all"
+          :disabled="archivedCount === 0"
+          @click="emit('deleteAll')"
+        ><Trash2 :size="16" />全部删除</button>
+      </div>
+    </header>
 
         <div class="archived-toolbar">
           <label class="archived-search">
@@ -190,9 +194,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
             </div>
           </section>
         </div>
-      </section>
-    </div>
-  </Transition>
+  </section>
 </template>
 
 <style scoped>
@@ -201,6 +203,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   padding: clamp(16px, 4vw, 54px);
   background: rgb(14 17 14 / 38%);
   backdrop-filter: blur(3px);
+}
+
+.archived-tasks-dialog.embedded-page {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--bg);
 }
 
 .archived-tasks-dialog {
@@ -218,6 +229,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
 .archived-header,
 .archived-header-actions,
+.archived-heading,
 .archived-toolbar,
 .archive-group-header,
 .archive-group-title,
@@ -232,6 +244,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   gap: 20px;
   padding: 21px 22px 18px;
   border-bottom: 1px solid var(--border);
+}
+
+.archived-heading {
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.archived-title-copy {
+  min-width: 0;
 }
 
 .archived-eyebrow {

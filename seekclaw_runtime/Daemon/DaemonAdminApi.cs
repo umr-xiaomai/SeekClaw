@@ -49,6 +49,7 @@ internal sealed class DaemonAdminApi(
     public string GetRoutingConfig() => new JsonObject
     {
         ["failoverEnabled"] = runtime.ConfigStore.Config.Routing.FailoverEnabled,
+        ["deepSeekOptimizationEnabled"] = runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled,
     }.ToJsonString();
 
     public string SetRoutingConfig(JsonObject parameters)
@@ -57,11 +58,18 @@ internal sealed class DaemonAdminApi(
             || !value.TryGetValue<bool>(out var failoverEnabled))
             throw new DaemonRequestException("params.failoverEnabled (boolean) is required");
 
+        var deepSeekOptimizationEnabled = parameters["deepSeekOptimizationEnabled"] is JsonValue deepSeekValue
+            && deepSeekValue.TryGetValue<bool>(out var enabled)
+                ? enabled
+                : runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled;
+
         runtime.ConfigStore.Config.Routing.FailoverEnabled = failoverEnabled;
+        runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled = deepSeekOptimizationEnabled;
         runtime.ConfigStore.Save();
         return new JsonObject
         {
             ["failoverEnabled"] = failoverEnabled,
+            ["deepSeekOptimizationEnabled"] = deepSeekOptimizationEnabled,
         }.ToJsonString();
     }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   Activity,
+  ArrowLeft,
   Blocks,
   Bot,
   Check,
@@ -132,6 +133,7 @@ interface UsageInfo {
 
 const props = defineProps<{
   open: boolean
+  page?: 'settings' | 'extensions'
   theme: 'system' | 'light' | 'dark'
   daemonConnected: boolean
   daemonEndpoint: string
@@ -151,6 +153,7 @@ const emit = defineEmits<{
 const section = ref<SettingsSection>('general')
 const loading = ref(false)
 const failoverEnabled = ref(true)
+const deepSeekOptimizationEnabled = ref(false)
 const action = ref('')
 const error = ref('')
 const notice = ref('')
@@ -250,6 +253,12 @@ const sections: Array<{ id: SettingsSection; label: string; icon: typeof Setting
   { id: 'diagnostics', label: '诊断与用量', icon: Activity }
 ]
 
+const pageTitle = computed(() => props.page === 'extensions' ? 'MCP 与技能' : '设置')
+const visibleSections = computed(() =>
+  props.page === 'extensions'
+    ? sections.filter((item) => item.id === 'mcp' || item.id === 'skills')
+    : sections)
+
 async function requestJson<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   const response = await window.seekclaw.daemon.request(method, params)
   return JSON.parse(response.data) as T
@@ -292,23 +301,51 @@ async function loadCurrentSection(): Promise<void> {
 }
 
 async function loadGeneral(): Promise<void> {
-  const routing = await requestJson<{ failoverEnabled: boolean }>('routing.get')
+  const routing = await requestJson<{ failoverEnabled: boolean; deepSeekOptimizationEnabled: boolean }>('routing.get')
   failoverEnabled.value = routing.failoverEnabled
+  deepSeekOptimizationEnabled.value = routing.deepSeekOptimizationEnabled
 }
 
 async function toggleFailover(): Promise<void> {
   beginAction('routing.set')
   try {
-    const routing = await requestJson<{ failoverEnabled: boolean }>('routing.set', {
-      failoverEnabled: failoverEnabled.value
+    const routing = await requestJson<{ failoverEnabled: boolean; deepSeekOptimizationEnabled: boolean }>('routing.set', {
+      failoverEnabled: failoverEnabled.value,
+      deepSeekOptimizationEnabled: deepSeekOptimizationEnabled.value
     })
     failoverEnabled.value = routing.failoverEnabled
+    deepSeekOptimizationEnabled.value = routing.deepSeekOptimizationEnabled
     notice.value = failoverEnabled.value ? '已开启自动切换其他模型' : '已关闭自动切换，失败即停止'
   } catch (reason) {
     fail(reason)
     try {
-      const routing = await requestJson<{ failoverEnabled: boolean }>('routing.get')
+      const routing = await requestJson<{ failoverEnabled: boolean; deepSeekOptimizationEnabled: boolean }>('routing.get')
       failoverEnabled.value = routing.failoverEnabled
+      deepSeekOptimizationEnabled.value = routing.deepSeekOptimizationEnabled
+    } catch { /* keep the last known state */ }
+  } finally {
+    endAction()
+  }
+}
+
+async function toggleDeepSeekOptimization(): Promise<void> {
+  beginAction('routing.set:deepseek')
+  try {
+    const routing = await requestJson<{ failoverEnabled: boolean; deepSeekOptimizationEnabled: boolean }>('routing.set', {
+      failoverEnabled: failoverEnabled.value,
+      deepSeekOptimizationEnabled: deepSeekOptimizationEnabled.value
+    })
+    failoverEnabled.value = routing.failoverEnabled
+    deepSeekOptimizationEnabled.value = routing.deepSeekOptimizationEnabled
+    notice.value = deepSeekOptimizationEnabled.value
+      ? '已开启 DeepSeek 模型优化'
+      : '已关闭 DeepSeek 模型优化'
+  } catch (reason) {
+    fail(reason)
+    try {
+      const routing = await requestJson<{ failoverEnabled: boolean; deepSeekOptimizationEnabled: boolean }>('routing.get')
+      failoverEnabled.value = routing.failoverEnabled
+      deepSeekOptimizationEnabled.value = routing.deepSeekOptimizationEnabled
     } catch { /* keep the last known state */ }
   } finally {
     endAction()
@@ -717,38 +754,54 @@ async function toggleSkill(skill: SkillInfo): Promise<void> {
   }
 }
 
+function normalizedSection(value?: SettingsSection): SettingsSection {
+  if (props.page === 'extensions') return value === 'skills' ? 'skills' : 'mcp'
+  return value ?? 'general'
+}
+
 watch(() => props.open, (open) => {
   if (!open) return
-  section.value = props.initialSection ?? 'general'
+  section.value = normalizedSection(props.initialSection)
   void loadCurrentSection()
-})
+}, { immediate: true })
 watch(() => props.initialSection, (value) => {
   if (!props.open || !value) return
-  section.value = value
+  section.value = normalizedSection(value)
+  void loadCurrentSection()
+})
+watch(() => props.page, () => {
+  if (!props.open) return
+  section.value = normalizedSection(props.initialSection)
   void loadCurrentSection()
 })
 watch(section, () => { void loadCurrentSection() })
 </script>
 
 <template>
-  <Transition name="modal-fade">
-    <div v-if="open" class="modal-backdrop" @mousedown.self="emit('close')">
-      <section class="settings-dialog settings-workbench" role="dialog" aria-modal="true" aria-label="设置">
-      <header class="settings-header">
-        <div>
-          <h2>设置</h2>
-          <span class="settings-connection" :class="{ online: daemonConnected }">
-            <Circle :size="8" fill="currentColor" />
-            {{ daemonConnected ? 'Runtime 已连接' : 'Runtime 离线' }}
-          </span>
-        </div>
-        <button class="icon-button" title="关闭" @click="emit('close')"><X :size="18" /></button>
-      </header>
+  <section
+    v-if="open"
+    class="settings-dialog settings-workbench embedded-page"
+    role="region"
+    :aria-label="pageTitle"
+  >
+    <header class="settings-header">
+      <div>
+        <button class="page-back-button" type="button" @click="emit('close')">
+          <ArrowLeft :size="18" />
+          <span>返回应用</span>
+        </button>
+        <h2>{{ pageTitle }}</h2>
+        <span class="settings-connection" :class="{ online: daemonConnected }">
+          <Circle :size="8" fill="currentColor" />
+          {{ daemonConnected ? 'Runtime 已连接' : 'Runtime 离线' }}
+        </span>
+      </div>
+    </header>
 
       <div class="settings-layout">
-        <nav class="settings-nav" aria-label="设置分区">
+        <nav class="settings-nav" aria-label="页面导航">
           <button
-            v-for="item in sections"
+            v-for="item in visibleSections"
             :key="item.id"
             :class="{ active: section === item.id }"
             @click="section = item.id"
@@ -810,6 +863,20 @@ watch(section, () => { void loadCurrentSection() })
                   type="checkbox"
                   :disabled="action === 'routing.set'"
                   @change="toggleFailover"
+                />
+                <span class="toggle-switch" aria-hidden="true"><span /></span>
+              </label>
+              <label class="provider-enabled-row">
+                <span>
+                  <strong>优化 DeepSeek 模型</strong>
+                  <small>针对 DeepSeek 启用思维链选择性回传、空响应重试与空工具结果兜底；策略集中管理，可随模型变化调整</small>
+                </span>
+                <input
+                  v-model="deepSeekOptimizationEnabled"
+                  class="sr-only"
+                  type="checkbox"
+                  :disabled="action === 'routing.set:deepseek'"
+                  @change="toggleDeepSeekOptimization"
                 />
                 <span class="toggle-switch" aria-hidden="true"><span /></span>
               </label>
@@ -1010,9 +1077,7 @@ watch(section, () => { void loadCurrentSection() })
 
         </main>
       </div>
-      </section>
-    </div>
-  </Transition>
+  </section>
   <Teleport to="body">
     <Transition name="global-toast">
       <div

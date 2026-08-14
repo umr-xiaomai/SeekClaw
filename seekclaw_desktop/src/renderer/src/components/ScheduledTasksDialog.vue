@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  ArrowLeft,
   CalendarClock,
   LoaderCircle,
   Pencil,
@@ -225,20 +226,27 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition name="modal-fade">
-      <div v-if="open" class="modal-backdrop" @mousedown.self="emit('close')">
-        <section class="scheduled-tasks-dialog" role="dialog" aria-modal="true" aria-label="计划任务">
-          <header class="scheduled-tasks-header">
-            <div>
-              <h2>计划任务</h2>
-              <span class="scheduled-tasks-subtitle">按 Cron 定时执行 Agent 任务 · Scheduled tasks</span>
-            </div>
-            <div class="scheduled-tasks-actions">
-              <button class="secondary-button" :disabled="loading" @click="newTask"><Plus :size="15" /> 新建</button>
-              <button class="icon-button" title="关闭" @click="emit('close')"><X :size="18" /></button>
-            </div>
-          </header>
+  <section
+    v-if="open"
+    class="scheduled-tasks-dialog embedded-page"
+    role="region"
+    aria-label="计划任务"
+  >
+    <header class="scheduled-tasks-header">
+      <div class="scheduled-tasks-heading">
+        <button class="page-back-button" type="button" @click="emit('close')">
+          <ArrowLeft :size="18" />
+          <span>返回应用</span>
+        </button>
+        <div>
+          <h2>计划任务</h2>
+          <span class="scheduled-tasks-subtitle">按 Cron 定时执行 Agent 任务 · Scheduled tasks</span>
+        </div>
+      </div>
+      <div class="scheduled-tasks-actions">
+        <button class="secondary-button" :disabled="loading" @click="newTask"><Plus :size="15" /> 新建</button>
+      </div>
+    </header>
 
           <div class="scheduled-tasks-body">
             <div v-if="notice" class="scheduled-tasks-notice">{{ notice }}</div>
@@ -328,13 +336,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
               </div>
             </form>
           </div>
-        </section>
-      </div>
-    </Transition>
-  </Teleport>
+  </section>
 </template>
 
 <style scoped>
+.scheduled-tasks-dialog.embedded-page {
+  width: 100%;
+  max-height: none;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--bg);
+}
+
 .scheduled-tasks-dialog {
   display: flex;
   flex-direction: column;
@@ -353,6 +368,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   gap: 12px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
+}
+
+.scheduled-tasks-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
 }
 
 .scheduled-tasks-header h2 {

@@ -79,6 +79,8 @@ public sealed record LlmRequest
     public bool EnableThinking { get; init; }
     public int ThinkingBudgetTokens { get; init; } = 16_384;
     public ReasoningLevel ReasoningLevel { get; init; } = ReasoningLevel.Medium;
+    /// <summary>Enables the opt-in DeepSeek optimization policy for this request.</summary>
+    public bool OptimizeDeepSeek { get; init; }
 }
 
 // ---------------------------------------------------------------- stream events

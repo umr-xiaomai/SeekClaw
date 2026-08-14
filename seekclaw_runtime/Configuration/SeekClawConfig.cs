@@ -116,6 +116,12 @@ public sealed class RoutingConfig
     /// </summary>
     public bool FailoverEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Opt-in DeepSeek-specific request optimizations. The policy is intentionally separate from
+    /// model selection so it can evolve independently as DeepSeek models/API surface change.
+    /// </summary>
+    public bool DeepSeekOptimizationEnabled { get; set; }
+
     /// <summary>strategy name → ordered "provider/model" references.</summary>
     public Dictionary<string, List<string>> Strategies { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

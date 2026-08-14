@@ -73,7 +73,8 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                     throw new LlmException($"{request.Provider.Id} returned an invalid non-streaming response.", inner: ex);
                 }
 
-                var completion = ParseCompletion(node, request.Provider.Id);
+                var completion = DeepSeekOptimizationPolicy.ValidateCompletion(
+                    ParseCompletion(node, request.Provider.Id), request);
                 if (completion.Thinking.Length > 0) yield return new LlmThinkingDelta(completion.Thinking);
                 foreach (var call in completion.ToolCalls)
                     yield return new LlmToolCallStarted(call.Id, call.Name);
@@ -117,7 +118,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 }
             }
 
-            yield return new LlmCompleted(acc.Build());
+            yield return new LlmCompleted(DeepSeekOptimizationPolicy.ValidateCompletion(acc.Build(), request));
         }
     }
 
@@ -215,8 +216,9 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 case ChatRole.Assistant:
                     var assistant = new JsonObject { ["role"] = "assistant", ["content"] = msg.Text };
                     // DeepSeek reasoners continue a truncated thinking phase only when the
-                    // previous reasoning_content is passed back; OpenAI proper does not accept it.
-                    if (!string.IsNullOrEmpty(msg.Thinking) && ReasoningLevelAdapter.IsDeepSeek(request.Provider, request.Model))
+                    // previous reasoning_content is passed back; the opt-in policy drops it for
+                    // pure text turns to avoid paying for ignored tokens.
+                    if (DeepSeekOptimizationPolicy.ShouldPassBackReasoning(request, msg))
                         assistant["reasoning_content"] = msg.Thinking;
                     if (msg.ToolCalls is { Count: > 0 })
                     {
@@ -238,7 +240,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                     {
                         ["role"] = "tool",
                         ["tool_call_id"] = msg.ToolCallId,
-                        ["content"] = msg.Text,
+                        ["content"] = DeepSeekOptimizationPolicy.ToolResultContent(msg.Text, request),
                     });
                     break;
             }
@@ -255,6 +257,9 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
 
         if (body["stream"]?.GetValue<bool>() == true)
             body["stream_options"] = new JsonObject { ["include_usage"] = true };
+
+        if (DeepSeekOptimizationPolicy.ThinkingWire(request) is { } thinkingWire)
+            body["thinking"] = thinkingWire;
 
         // Reasoning models count thinking toward the completion budget; the modern
         // max_completion_tokens parameter covers it (max_tokens is rejected by OpenAI

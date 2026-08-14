@@ -33,6 +33,7 @@ public sealed class ConfigTests : IDisposable
             store.Config.Routing.Strategies["balanced"]);
         Assert.Equal(40, store.Config.Agent.MaxSteps);
         Assert.True(store.Config.Routing.FailoverEnabled); // failover default on
+        Assert.False(store.Config.Routing.DeepSeekOptimizationEnabled); // DeepSeek optimization default off
     }
 
     [Fact]
@@ -69,6 +70,17 @@ public sealed class ConfigTests : IDisposable
 
         var reloaded = NewStore();
         Assert.False(reloaded.Config.Routing.FailoverEnabled);
+    }
+
+    [Fact]
+    public void Routing_DeepSeekOptimization_RoundTrips()
+    {
+        var store = NewStore();
+        store.Config.Routing.DeepSeekOptimizationEnabled = true;
+        store.Save();
+
+        var reloaded = NewStore();
+        Assert.True(reloaded.Config.Routing.DeepSeekOptimizationEnabled);
     }
 
     [Fact]

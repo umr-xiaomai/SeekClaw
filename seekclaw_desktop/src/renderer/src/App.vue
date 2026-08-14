@@ -132,18 +132,18 @@ const appInfo = ref<AppInfo>({
   documentsPath: '',
   userProfilePath: ''
 })
+type AppPage = 'main' | 'settings' | 'extensions' | 'archived' | 'scheduled' | 'official-skills'
+
 const sidebarOpen = ref(true)
-const settingsOpen = ref(false)
+const activePage = ref<AppPage>('main')
 const aboutOpen = ref(false)
-const archivedTasksOpen = ref(false)
-const scheduledTasksOpen = ref(false)
-const officialSkillsOpen = ref(false)
 const workflowOpen = ref(true)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 const gitPanelWidth = ref(560)
 const toolDiff = ref<{ path: string; diff: string } | null>(null)
 const settingsSection = ref<'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'>('general')
+const extensionsSection = ref<'mcp' | 'skills'>('mcp')
 const taskSettingsThreadId = ref('')
 const storedTheme = localStorage.getItem('seekclaw-theme')
 const theme = ref<AppearanceTheme>(
@@ -631,15 +631,32 @@ async function openWorkspace(): Promise<void> {
 
 function openSettings(section: typeof settingsSection.value = 'general'): void {
   settingsSection.value = section
-  settingsOpen.value = true
+  activePage.value = 'settings'
+}
+
+function openExtensions(section: 'mcp' | 'skills' = 'mcp'): void {
+  extensionsSection.value = section
+  activePage.value = 'extensions'
 }
 
 function openArchivedTasks(): void {
-  archivedTasksOpen.value = true
+  activePage.value = 'archived'
+}
+
+function openScheduledTasks(): void {
+  activePage.value = 'scheduled'
+}
+
+function openOfficialSkills(): void {
+  activePage.value = 'official-skills'
+}
+
+function closePage(): void {
+  activePage.value = 'main'
 }
 
 function selectArchivedThread(id: string): void {
-  archivedTasksOpen.value = false
+  activePage.value = 'main'
   void selectThread(id)
 }
 
@@ -1774,7 +1791,7 @@ watch(theme, applyTheme)
       @open-about="aboutOpen = true"
     />
 
-    <div class="app-body" :class="{ 'sidebar-collapsed': !sidebarOpen }">
+    <div class="app-body" v-show="activePage === 'main'" :class="{ 'sidebar-collapsed': !sidebarOpen }">
       <Transition name="sidebar-slide">
         <Sidebar
           v-if="sidebarOpen"
@@ -1796,9 +1813,9 @@ watch(theme, applyTheme)
         @archive-global-tasks="archiveGlobalTasks"
         @delete-global-tasks="deleteGlobalTasks"
         @open-archived="openArchivedTasks"
-        @open-scheduled-tasks="scheduledTasksOpen = true"
-        @open-extensions="openSettings('mcp')"
-        @open-official-skills="officialSkillsOpen = true"
+        @open-scheduled-tasks="openScheduledTasks"
+        @open-extensions="openExtensions('mcp')"
+        @open-official-skills="openOfficialSkills"
         @open-settings="openSettings('general')"
         />
       </Transition>
@@ -1807,7 +1824,7 @@ watch(theme, applyTheme)
       </Transition>
 
       <div class="workspace-content">
-      <main class="workspace-main">
+      <main class="workspace-main" v-show="activePage === 'main'">
         <header class="conversation-header">
           <div class="conversation-title">
             <Globe2 v-if="globalTaskActive" :size="20" />
@@ -2024,6 +2041,7 @@ watch(theme, applyTheme)
       </main>
 
       <GitWorkspacePanel
+        v-show="activePage === 'main'"
         :open="gitPanelOpen"
         :project="activeProject"
         :initial-tab="gitPanelTab"
@@ -2036,48 +2054,50 @@ watch(theme, applyTheme)
       </div>
     </div>
 
+    <SettingsDialog
+      :open="activePage === 'settings' || activePage === 'extensions'"
+      :page="activePage === 'extensions' ? 'extensions' : 'settings'"
+      :theme="theme"
+      :daemon-connected="daemonState.connected"
+      :daemon-endpoint="daemonState.endpoint"
+      :workspace-path="activeProject?.path || runtimeWorkspacePath || appInfo.defaultWorkspace"
+      :initial-section="activePage === 'settings' ? settingsSection : extensionsSection"
+      @close="closePage"
+      @change-theme="applyTheme"
+      @reconnect="reconnectDaemon"
+      @open-workspace="openWorkspace"
+      @open-official-skills="openOfficialSkills"
+      @runtime-changed="refreshRuntimeState"
+    />
+
+    <OfficialSkillsDialog
+      :open="activePage === 'official-skills'"
+      @close="closePage"
+    />
+
+    <ScheduledTasksDialog
+      :open="activePage === 'scheduled'"
+      :projects="projects"
+      @close="closePage"
+    />
+
+    <ArchivedTasksDialog
+      :open="activePage === 'archived'"
+      :projects="projects"
+      :threads="threads"
+      @close="closePage"
+      @select-thread="selectArchivedThread"
+      @restore-task="restoreTask"
+      @delete-task="deleteTask"
+      @delete-all="deleteArchivedTasks"
+    />
+
     <AboutDialog
       :open="aboutOpen"
       :app-info="appInfo"
       @close="aboutOpen = false"
     />
 
-    <SettingsDialog
-      :open="settingsOpen"
-      :theme="theme"
-      :daemon-connected="daemonState.connected"
-      :daemon-endpoint="daemonState.endpoint"
-      :workspace-path="activeProject?.path || runtimeWorkspacePath || appInfo.defaultWorkspace"
-      :initial-section="settingsSection"
-      @close="settingsOpen = false"
-      @change-theme="applyTheme"
-      @reconnect="reconnectDaemon"
-      @open-workspace="openWorkspace"
-      @open-official-skills="officialSkillsOpen = true"
-      @runtime-changed="refreshRuntimeState"
-    />
-
-    <OfficialSkillsDialog
-      :open="officialSkillsOpen"
-      @close="officialSkillsOpen = false"
-    />
-
-    <ScheduledTasksDialog
-      :open="scheduledTasksOpen"
-      :projects="projects"
-      @close="scheduledTasksOpen = false"
-    />
-
-    <ArchivedTasksDialog
-      :open="archivedTasksOpen"
-      :projects="projects"
-      :threads="threads"
-      @close="archivedTasksOpen = false"
-      @select-thread="selectArchivedThread"
-      @restore-task="restoreTask"
-      @delete-task="deleteTask"
-      @delete-all="deleteArchivedTasks"
-    />
 
     <TaskSettingsDialog
       :open="Boolean(taskSettingsThreadId)"
