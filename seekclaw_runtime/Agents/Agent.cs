@@ -35,19 +35,6 @@ public sealed class Agent(
     IFileLockCoordinator fileLocks,
     FileLockScope lockScope)
 {
-    private const string CompactionInstruction = """
-        You are the memory compaction engine of SeekClaw, a coding agent. The conversation
-        below is about to overflow the model's context window; write a concise progress
-        summary that can replace it. Cover:
-        - The user's goal and any hard constraints.
-        - Files read or written (keep concrete paths), commands run, and their outcomes.
-        - Decisions made and the current state of the work.
-        - What remains to be done next.
-        Stay factual; do not invent anything that is not in the conversation. The summary
-        will be sent to the model as the start of the history, so prefer compact bullet
-        points over prose.
-        """;
-
     public async Task<AgentTurnResult> RunTurnAsync(
         AgentSession session,
         WorkspaceInfo workspace,
@@ -384,14 +371,27 @@ public sealed class Agent(
         ModelInfo model, WorkspaceInfo workspace, IReadOnlyList<ChatMessage> old, CancellationToken ct)
     {
         // Image payloads are not needed for the summary; dropping them keeps the call small.
-        var input = ContextPlanner.FitToWindow(WithoutImages(old), model.Model, CompactionInstruction);
+        var instruction = promptProvider.TryGet("builtin/summarize")
+            ?? """
+        You are the memory compaction engine of SeekClaw, a coding agent. The conversation
+        below is about to overflow the model's context window; write a concise progress
+        summary that can replace it. Cover:
+        - The user's goal and any hard constraints.
+        - Files read or written (keep concrete paths), commands run, and their outcomes.
+        - Decisions made and the current state of the work.
+        - What remains to be done next.
+        Stay factual; do not invent anything that is not in the conversation. The summary
+        will be sent to the model as the start of the history, so prefer compact bullet
+        points over prose.
+        """;
+        var input = ContextPlanner.FitToWindow(WithoutImages(old), model.Model, instruction);
         var completion = await CollectCompletionAsync(
             candidate => new LlmRequest
             {
                 Provider = candidate.Provider,
                 Model = candidate.Model,
                 Messages = input,
-                System = CompactionInstruction,
+                System = instruction,
                 MaxTokens = 4_096,
                 EnableThinking = false,
                 ReasoningLevel = ReasoningLevel.None,
