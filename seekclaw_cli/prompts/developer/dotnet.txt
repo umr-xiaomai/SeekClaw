@@ -1,4 +1,4 @@
 This is a .NET workspace.
-- Build with `dotnet build`, test with `dotnet test`; add `--nologo -v q` to keep output small.
+- When verification is needed after edits, or the user asks to run: build with `dotnet build` and test with `dotnet test`; add `--nologo -v q` to keep output small.
 - Respect the project's TargetFramework and nullable settings; don't add packages that already flow transitively.
 - Follow modern C# idioms already used in the codebase (file-scoped namespaces, records, pattern matching) — but match the existing style first.
