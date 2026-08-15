@@ -157,7 +157,7 @@ const selectedProjectId = ref('')
 const runtimeWorkspacePath = ref('')
 const models = ref<string[]>([])
 const modelCatalog = ref<RuntimeModelCatalogItem[]>([])
-const activeModel = ref('balanced')
+const activeModel = ref('')
 const mode = ref('edit')
 const busy = computed(() => Boolean(activeThread.value?.running))
 const scrollArea = ref<HTMLElement | null>(null)
@@ -524,7 +524,9 @@ async function loadRuntimeState(): Promise<void> {
     models.value = available
     modelCatalog.value = catalog
     activeModel.value = catalog.find((model) => model.active)?.ref
-      ?? (available.includes(activeModel.value) ? activeModel.value : available[0] ?? 'balanced')
+      ?? (available.length > 0
+        ? (available.includes(activeModel.value) ? activeModel.value : available[0] ?? '')
+        : '')
     mode.value = modeResponse.data
     await refreshAllProjectSessions()
     await migrateImplicitDocumentsProject()
@@ -1690,7 +1692,7 @@ async function changeNetwork(enabled: boolean): Promise<void> {
 async function changeModel(model: string): Promise<void> {
   const previousModel = activeModel.value
   activeModel.value = model
-  if (!daemonState.value.connected || model === 'balanced') return
+  if (!daemonState.value.connected || !model) return
   try { await window.seekclaw.daemon.request('model.switch', { model }) }
   catch { activeModel.value = previousModel }
 }
@@ -1716,6 +1718,15 @@ async function changeReasoningLevel(level: ReasoningLevel): Promise<void> {
       reasoningLevel: level
     })
   } catch { /* The selected level is still sent with the next turn. */ }
+}
+
+async function optimizePrompt(text: string): Promise<string> {
+  if (!daemonState.value.connected) throw new Error('Runtime 未连接，无法优化提示词。')
+  if (!activeModel.value) throw new Error('尚未配置模型，请先在设置中新建 Provider 和模型。')
+  const params: Record<string, unknown> = { text }
+  params.model = activeModel.value
+  const response = await window.seekclaw.daemon.request('prompt.optimize', params)
+  return response.data
 }
 
 function useStarterPrompt(prompt: string): void {
@@ -1911,6 +1922,7 @@ watch(theme, applyTheme)
               :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
               :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
               :reasoning-level="activeReasoningLevel" :network-enabled="activeThread?.networkEnabled ?? true"
+              :optimize-prompt="optimizePrompt"
               @send="sendMessage" @stop="stopTurn" @change-model="changeModel" @change-mode="changeMode"
               @change-reasoning-level="changeReasoningLevel" @change-network="changeNetwork" />
             <p class="composer-caption">{{ composerCaption }}</p>

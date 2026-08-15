@@ -82,9 +82,11 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `model.catalog` | 无 | 返回模型详情、能力和活动状态 |
 | `model.switch` | `{ "model": "provider/model" }` | 切换并持久化模型 |
 | `model.test` | `{ "model": "provider/model" }` | 发送最小真实请求测试模型 |
+| `prompt.optimize` | `{ "text": "...", "model": "provider/model" }` | 使用指定或当前模型优化提示词，不创建 Session |
 | `doctor` | 无 | 返回 Runtime 健康检查摘要 |
 | `doctor.run` | 无 | 返回结构化 Runtime 与 Provider 检查 |
 | `lock.list` | 无 | 返回当前文件写锁的“文件-任务”占用表快照 |
+| `factory.reset` | 无 | 清空全局配置、会话与 SQLite 数据，恢复出厂设置并重建数据库 |
 | `shutdown` | 无 | 取消全部活动 turn，返回 `bye` 并优雅停止 Daemon |
 
 Session 方法可传 `workspace` 指向具体项目，也可传 `global: true` 使用不绑定目录的全局 Session 空间。`includeArchived` 控制列表是否包含已归档任务。Desktop 在第一次发送消息时才调用 `session.new`，因此新建一个空白任务不会产生无内容的 Session。

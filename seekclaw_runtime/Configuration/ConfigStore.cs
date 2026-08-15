@@ -10,6 +10,8 @@ public interface IConfigStore
     void Save();
     void SaveState();
     void Reload();
+    /// <summary>Restores the in-memory objects and on-disk files to factory defaults.</summary>
+    void Reset();
 }
 
 /// <summary>
@@ -63,6 +65,20 @@ public sealed class ConfigStore : IConfigStore
         }
     }
 
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            Config = DefaultSeekClawConfig.Build();
+            State = new RuntimeState();
+            DeleteIfExists(_configFile);
+            DeleteIfExists(_stateFile);
+        }
+
+        Save();
+        SaveState();
+    }
+
     private SeekClawConfig LoadConfig()
     {
         if (File.Exists(_configFile))
@@ -92,6 +108,19 @@ public sealed class ConfigStore : IConfigStore
         {
             // Corrupt file: keep it on disk for the user to inspect, fall back to defaults.
             return null;
+        }
+    }
+
+    private static void DeleteIfExists(string file)
+    {
+        if (!File.Exists(file)) return;
+        try
+        {
+            File.Delete(file);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The caller rebuilds the files below; keep reset best-effort.
         }
     }
 }

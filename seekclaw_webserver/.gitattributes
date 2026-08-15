@@ -1,0 +1,49 @@
+# Normalize all text files to LF by default.
+* text=auto eol=lf
+
+# C# / Blazor
+*.cs text diff=csharp
+*.csproj text
+*.props text
+*.targets text
+*.sln text
+*.slnx text
+*.razor text diff=html
+*.razor.cs text diff=csharp
+*.razor.css text
+*.razor.js text
+
+# Config / documentation
+*.json text
+*.jsonc text
+*.yaml text
+*.yml text
+*.toml text
+*.xml text
+*.config text
+*.pubxml text
+*.md text
+*.txt text
+
+# Web frontend
+*.html text
+*.css text
+*.js text
+
+# Scripts
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.dll binary
+*.exe binary

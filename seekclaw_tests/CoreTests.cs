@@ -4,6 +4,7 @@ using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Projects;
 using SeekClaw.Runtime.Prompts;
+using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Skills;
 using SeekClaw.Runtime.Workspaces;
@@ -212,6 +213,28 @@ public sealed class CoreTests : IDisposable
         Assert.Null(session.Header.Workspace);
         Assert.EndsWith("seekclaw.db", session.FilePath, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("global hello", store.Load(global, session.Header.Id)!.Messages[0].Text);
+    }
+
+    [Fact]
+    public void DatabaseRebuild_ClearsSessionsProjectsAndSchedules()
+    {
+        var databaseFile = Path.Combine(_dir, "state", "rebuild.db");
+        var database = new SeekClawDatabase(databaseFile);
+        var workspace = NewWorkspace("rebuild-ws");
+        var sessions = new SessionStore(database);
+        var projects = new ProjectStore(database);
+        var schedules = new ScheduleStore(database);
+
+        var session = sessions.Create(workspace);
+        sessions.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("before reset"));
+        projects.Upsert(null, workspace.Root, "Reset project");
+        schedules.Upsert(null, "Reset task", workspace.Root, "prompt", "0 9 * * *", enabled: true);
+
+        database.Rebuild();
+
+        Assert.Empty(sessions.List(workspace, includeArchived: true));
+        Assert.Empty(projects.List());
+        Assert.Empty(schedules.List());
     }
 
     [Fact]

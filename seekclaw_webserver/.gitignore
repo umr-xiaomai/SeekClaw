@@ -1,0 +1,43 @@
+# SeekClaw Web Server (.NET / Blazor Server)
+
+# Visual Studio / MSBuild
+.vs/
+bin/
+obj/
+publish/
+TestResults/
+
+# User-specific files
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+
+# .NET artifacts
+*.nupkg
+*.snupkg
+*.dg
+*.pgc
+*.pgd
+*.rsp
+*.dbmdl
+*.slnx.user
+
+# NuGet / build cache
+.nuget/
+.vscode/
+.idea/
+
+# Local environment and secrets
+appsettings.*.local.json
+secrets.json
+*.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log

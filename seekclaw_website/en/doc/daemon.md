@@ -80,8 +80,10 @@ Assistant messages returned by `session.get` carry `modelRef` (`provider/model`)
 | `model.catalog` | none | Returns model details, capabilities, and active state |
 | `model.switch` | `{ "model": "provider/model" }` | Switches and persists the model |
 | `model.test` | `{ "model": "provider/model" }` | Sends a minimal real request through the model |
+| `prompt.optimize` | `{ "text": "...", "model": "provider/model" }` | Optimizes the prompt with the specified or active model without creating a Session |
 | `doctor` | none | Returns a Runtime health-check summary |
 | `doctor.run` | none | Returns structured Runtime and Provider checks |
+| `factory.reset` | none | Clears global configuration, sessions, and SQLite data, restores factory defaults, and rebuilds the database |
 | `shutdown` | none | Cancels all active turns, returns `bye`, and gracefully stops the Daemon |
 
 Session methods accept `workspace` for a concrete project or `global: true` for the directory-free global session store. `includeArchived` controls whether archived tasks are returned. Desktop waits until the first message to call `session.new`, so creating an empty task does not create an empty Runtime Session.

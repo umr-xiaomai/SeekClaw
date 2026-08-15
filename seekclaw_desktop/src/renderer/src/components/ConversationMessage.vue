@@ -139,8 +139,8 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
       </div>
 
       <div v-if="message.thinking || regularTools.length || editedTools.length" class="assistant-activity">
-        <button v-if="message.thinking" class="thinking-toggle" :class="{ active: streaming && message.state === 'thinking' }"
-          @click="thinkingOpen = !thinkingOpen">
+        <button v-if="message.thinking" class="thinking-toggle"
+          :class="{ active: streaming && message.state === 'thinking' }" @click="thinkingOpen = !thinkingOpen">
           <LoaderCircle v-if="streaming && message.state === 'thinking'" :size="15" class="spin" />
           <Check v-else :size="15" />
           <span>{{ thinkingLabel }}</span>

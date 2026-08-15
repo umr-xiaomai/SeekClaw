@@ -41,6 +41,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public ISessionStore Sessions => _services.GetRequiredService<ISessionStore>();
     public IProjectStore Projects => _services.GetRequiredService<IProjectStore>();
     public IScheduleStore Schedules => _services.GetRequiredService<IScheduleStore>();
+    public SeekClawDatabase Database => _services.GetRequiredService<SeekClawDatabase>();
     public SkillManager Skills => _services.GetRequiredService<SkillManager>();
     public IMcpManager Mcp => _services.GetRequiredService<IMcpManager>();
     public Agent Agent => _services.GetRequiredService<Agent>();

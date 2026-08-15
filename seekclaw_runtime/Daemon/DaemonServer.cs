@@ -263,6 +263,16 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.InitializeWorkspace()), ct).ConfigureAwait(false);
                         break;
 
+                    case "factory.reset":
+                    {
+                        foreach (var turn in activeTurns.Values) turn.Cancellation.Cancel();
+                        foreach (var turn in activeTurns.Values)
+                            if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.FactoryReset()), ct).ConfigureAwait(false);
+                        break;
+                    }
+
                     case "chat":
                     case "agent.runTurn":
                     case "agent/runTurn":
@@ -458,6 +468,11 @@ public sealed class DaemonServer : IAsyncDisposable
                     case "routing.set":
                         await RunAdminAsync(writer, writerGate, id, true,
                             _ => Task.FromResult(_admin.SetRoutingConfig(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
+                    case "prompt.optimize":
+                        await RunAdminAsync(writer, writerGate, id, false,
+                            token => _admin.OptimizePromptAsync(Params(request), token), ct).ConfigureAwait(false);
                         break;
 
                     case "schedule.list":
@@ -1168,11 +1183,12 @@ public sealed class DaemonServer : IAsyncDisposable
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
-            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing", "schedule"),
+            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
             "routing.get", "routing.set",
+            "prompt.optimize",
             "schedule.list", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run",
             "profile.list", "profile.upsert", "profile.use", "profile.remove",
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
@@ -1182,7 +1198,7 @@ public sealed class DaemonServer : IAsyncDisposable
             "project.list", "project.upsert", "project.remove",
             "session.list", "session.get", "session.update", "session.archive", "session.delete",
             "session.resume", "session.new",
-            "lock.list", "shutdown"),
+            "lock.list", "factory.reset", "shutdown"),
     }.ToJsonString();
 
     private async Task RunAdminAsync(

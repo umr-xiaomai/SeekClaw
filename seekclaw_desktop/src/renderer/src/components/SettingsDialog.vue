@@ -15,6 +15,7 @@ import {
   Monitor,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
   Settings2,
@@ -316,6 +317,33 @@ async function loadGeneral(): Promise<void> {
   const routing = await requestJson<{ failoverEnabled: boolean; deepSeekOptimizationEnabled: boolean }>('routing.get')
   failoverEnabled.value = routing.failoverEnabled
   deepSeekOptimizationEnabled.value = routing.deepSeekOptimizationEnabled
+}
+
+async function factoryReset(): Promise<void> {
+  if (!props.daemonConnected) return
+  if (!await confirmAction({
+    title: '恢复出厂设置',
+    message: '将删除全局配置、会话、计划任务、项目记录、用量日志、日志、全局技能与提示词，并重建数据库。项目源码文件不会删除，此操作无法撤销。',
+    confirmLabel: '继续',
+    danger: true
+  })) return
+  if (!await confirmAction({
+    title: '再次确认恢复出厂设置',
+    message: '这是最后一次确认。确认后将清空 SeekClaw 的全部用户数据，并恢复默认设置。',
+    confirmLabel: '恢复出厂设置',
+    danger: true
+  })) return
+
+  beginAction('factory.reset')
+  try {
+    await requestJson<{ ok: boolean; home: string }>('factory.reset')
+    emit('runtimeChanged')
+    emit('close')
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
 }
 
 async function toggleFailover(): Promise<void> {
@@ -892,6 +920,19 @@ watch(section, () => { void loadCurrentSection() })
                 />
                 <span class="toggle-switch" aria-hidden="true"><span /></span>
               </label>
+            </section>
+
+            <section class="settings-group">
+              <div class="settings-row">
+                <div>
+                  <strong>恢复出厂设置</strong>
+                  <small>清空全局配置、会话数据并重建数据库；不会删除项目源码文件</small>
+                </div>
+                <button class="danger-button" :disabled="action === 'factory.reset'" @click="factoryReset">
+                  <LoaderCircle v-if="action === 'factory.reset'" class="spin" :size="15" />
+                  <RotateCcw v-else :size="15" /> 恢复出厂设置
+                </button>
+              </div>
             </section>
           </template>
 

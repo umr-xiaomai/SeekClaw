@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ArrowUp, Globe, ImagePlus, Sparkles, Square, X } from '@lucide/vue'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { ArrowUp, Globe, ImagePlus, LoaderCircle, Sparkles, Square, X } from '@lucide/vue'
+import { nextTick, ref, watch } from 'vue'
 import type { ImageAttachment, ReasoningLevel } from '../types'
+import { confirmAction } from '../confirmation'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import ReasoningDepthMenu from './ReasoningDepthMenu.vue'
 import SelectMenu from './SelectMenu.vue'
@@ -16,6 +17,7 @@ const props = defineProps<{
   reasoningLevel: ReasoningLevel
   supportsImages: boolean
   networkEnabled: boolean
+  optimizePrompt?: (text: string) => Promise<string>
 }>()
 
 const emit = defineEmits<{
@@ -35,6 +37,7 @@ const value = ref('')
 const images = ref<ImageAttachment[]>([])
 const imageNotice = ref('')
 const selectingImages = ref(false)
+const optimizing = ref(false)
 const previewImage = ref<ImageAttachment | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const modeOptions = [
@@ -66,6 +69,42 @@ async function selectImages(): Promise<void> {
     imageNotice.value = error instanceof Error ? error.message : '无法读取所选图片。'
   } finally {
     selectingImages.value = false
+  }
+}
+
+async function optimizeCurrentPrompt(): Promise<void> {
+  const text = value.value.trim()
+  if (props.disabled || props.busy || optimizing.value || !text || !props.optimizePrompt) return
+  if (!props.model) {
+    imageNotice.value = '尚未配置模型，请先在设置中新建 Provider 和模型。'
+    return
+  }
+  optimizing.value = true
+  imageNotice.value = '正在使用当前模型优化提示词…'
+  try {
+    const optimized = (await props.optimizePrompt(text)).trim()
+    if (!optimized) {
+      imageNotice.value = '模型没有返回优化结果，请重试。'
+      return
+    }
+
+    const confirmed = await confirmAction({
+      title: '确认替换提示词',
+      message: `优化后的提示词：\n\n${optimized}\n\n是否替换当前输入框内容？`,
+      confirmLabel: '替换'
+    })
+    if (!confirmed) {
+      imageNotice.value = '已取消替换，输入框内容未改变。'
+      return
+    }
+
+    value.value = optimized
+    imageNotice.value = '提示词已优化。'
+    void nextTick(() => { resize(); focus() })
+  } catch (reason) {
+    imageNotice.value = reason instanceof Error ? reason.message : '优化提示词失败，请重试。'
+  } finally {
+    optimizing.value = false
   }
 }
 
@@ -219,50 +258,6 @@ function handleKeydown(event: KeyboardEvent): void {
   submit()
 }
 
-const promptMenuOpen = ref(false)
-const promptMenuStyle = ref<Record<string, string>>({})
-
-const quickPrompts = [
-  { label: '探索并理解当前项目', text: '请阅读当前项目并总结结构、技术栈与关键模块，方便后续开发。' },
-  { label: '审查代码', text: '请审查当前代码，找出 bug、边界问题与改进点，并给出具体修改建议。' },
-  { label: '修复构建/测试错误', text: '请运行构建与测试，修复所有报错，并确保验证通过。' },
-  { label: '编写单元测试', text: '请为当前模块编写覆盖关键路径的单元测试，并运行验证。' }
-]
-
-function togglePrompts(event: MouseEvent): void {
-  if (props.disabled) { promptMenuOpen.value = false; return }
-  promptMenuOpen.value = !promptMenuOpen.value
-  if (promptMenuOpen.value) {
-    const trigger = event.currentTarget as HTMLElement
-    const rect = trigger.getBoundingClientRect()
-    const edge = 10
-    const width = Math.min(320, window.innerWidth - edge * 2)
-    const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge))
-    const placeAbove = window.innerHeight - rect.bottom < 300
-    promptMenuStyle.value = placeAbove
-      ? { width: `${width}px`, left: `${left}px`, bottom: `${window.innerHeight - rect.top + 8}px` }
-      : { width: `${width}px`, left: `${left}px`, top: `${rect.bottom + 8}px` }
-  }
-}
-
-function insertPrompt(text: string): void {
-  promptMenuOpen.value = false
-  value.value = value.value.trim() ? `${value.value.trim()}\n\n${text}` : text
-  void nextTick(() => { resize(); focus() })
-}
-
-function closePromptsOnOutside(event: MouseEvent): void {
-  const target = event.target as Node
-  if (!(target instanceof Element) || !target.closest('.prompt-menu, .prompt-menu-trigger'))
-    promptMenuOpen.value = false
-}
-
-onBeforeUnmount(() => document.removeEventListener('mousedown', closePromptsOnOutside, true))
-
-function insertPromptsListeners(): void {
-  document.addEventListener('mousedown', closePromptsOnOutside, true)
-}
-
 function focus(): void {
   textarea.value?.focus()
 }
@@ -280,9 +275,6 @@ function getValue(): string {
 }
 
 defineExpose({ focus, setValue, getValue })
-watch(promptMenuOpen, (open) => {
-  if (open) insertPromptsListeners()
-})
 watch(value, resize)
 watch(() => props.taskId, () => {
   images.value = []
@@ -342,35 +334,16 @@ watch(() => props.supportsImages, (supported) => {
         <Globe :size="15" />
         <span>联网</span>
       </button>
-      <div class="prompt-menu-root">
-        <button
-          class="icon-button composer-icon prompt-menu-trigger"
-          type="button"
-          :title="'快捷提示词'"
-          :disabled="disabled"
-          @click="togglePrompts"
-        >
-          <Sparkles :size="16" />
-        </button>
-        <Teleport to="body">
-          <Transition name="select-popover">
-            <section v-if="promptMenuOpen" class="prompt-menu" role="menu" :style="promptMenuStyle">
-              <header class="prompt-menu-header"><strong>快捷提示词</strong></header>
-              <button
-                v-for="prompt in quickPrompts"
-                :key="prompt.label"
-                type="button"
-                class="prompt-menu-item"
-                role="menuitem"
-                @click="insertPrompt(prompt.text)"
-              >
-                <span>{{ prompt.label }}</span>
-                <small>{{ prompt.text }}</small>
-              </button>
-            </section>
-          </Transition>
-        </Teleport>
-      </div>
+      <button
+        class="icon-button composer-icon"
+        type="button"
+        :title="optimizing ? '正在优化提示词' : '优化提示词'"
+        :disabled="disabled || busy || optimizing || !value.trim()"
+        @click="optimizeCurrentPrompt"
+      >
+        <LoaderCircle v-if="optimizing" class="spin" :size="16" />
+        <Sparkles v-else :size="16" />
+      </button>
       <SelectMenu
         class="composer-select mode-control"
         :model-value="mode"
@@ -383,9 +356,9 @@ watch(() => props.supportsImages, (supported) => {
       <SelectMenu
         class="composer-select model-control"
         :model-value="model"
-        :options="models.length > 0 ? models.map((item) => ({ value: item, label: item })) : [{ value: model, label: model }]"
+        :options="models.length > 0 ? models.map((item) => ({ value: item, label: item })) : [{ value: '', label: '未配置模型' }]"
         label="模型"
-        :disabled="busy || disabled"
+        :disabled="busy || disabled || models.length === 0"
         :menu-min-width="300"
         searchable
         @update:model-value="emit('changeModel', $event)"
@@ -417,64 +390,3 @@ watch(() => props.supportsImages, (supported) => {
     @close="previewImage = null"
   />
 </template>
-<style scoped>
-.prompt-menu-root {
-  display: inline-flex;
-}
-
-.prompt-menu {
-  position: fixed;
-  z-index: 210;
-  overflow: hidden;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-}
-
-.prompt-menu-header {
-  padding: 11px 14px 8px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--border);
-}
-
-.prompt-menu-item {
-  display: block;
-  width: 100%;
-  padding: 10px 14px;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
-
-.prompt-menu-item:last-child {
-  border-bottom: 0;
-}
-
-.prompt-menu-item:hover {
-  background: var(--surface-hover);
-}
-
-.prompt-menu-item span,
-.prompt-menu-item small {
-  display: block;
-}
-
-.prompt-menu-item span {
-  color: var(--text);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.prompt-menu-item small {
-  margin-top: 3px;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-</style>

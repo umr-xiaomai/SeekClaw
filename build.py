@@ -106,11 +106,14 @@ BUILDER_OUTPUT = DESKTOP_DIR / "release"
 UNPACKED_OUTPUT = BUILDER_OUTPUT / "win-unpacked"
 PUBLISH_DIR = REPO_ROOT / "publish"
 PORTABLE_OUTPUT = PUBLISH_DIR / "SeekClaw-win-x64"
+PORTABLE_ZIP_BASE_NAME = PUBLISH_DIR / "SeekClaw-portable-win-x64"
+PORTABLE_ZIP_OUTPUT = PUBLISH_DIR / "SeekClaw-portable-win-x64.zip"
 INSTALLER_OUTPUT = PUBLISH_DIR / "SeekClaw-Setup-win-x64.exe"
 DESKTOP_PACKAGE_FILE = DESKTOP_DIR / "package.json"
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 PORTABLE_TARGET = "portable"
 INSTALLER_TARGET = "installer"
+BOTH_TARGET = "both"
 
 
 class BuildError(RuntimeError):
@@ -297,6 +300,20 @@ def find_installer_artifact(version: str) -> Path:
     raise BuildError(f"Could not identify a unique installer executable: {names}")
 
 
+def create_portable_zip() -> Path:
+    r"""将 publish\SeekClaw-win-x64 文件夹压缩为 publish\SeekClaw-portable-win-x64.zip。"""
+    remove_file(PORTABLE_ZIP_OUTPUT)
+    shutil.make_archive(
+        str(PORTABLE_ZIP_BASE_NAME),
+        "zip",
+        root_dir=PUBLISH_DIR,
+        base_dir=PORTABLE_OUTPUT.name,
+    )
+    if not PORTABLE_ZIP_OUTPUT.is_file():
+        raise BuildError(f"Portable archive is missing: {PORTABLE_ZIP_OUTPUT}")
+    return PORTABLE_ZIP_OUTPUT
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build the latest self-contained Runtime and Desktop release."
@@ -306,7 +323,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("-v", "--verbose", action="store_true", help="Show full stdout from subcommands.")
     parser.add_argument(
         "--target",
-        choices=[PORTABLE_TARGET, INSTALLER_TARGET],
+        choices=[PORTABLE_TARGET, INSTALLER_TARGET, BOTH_TARGET],
         help="构建目标；省略时以交互菜单选择。",
     )
     parser.add_argument(
@@ -327,6 +344,7 @@ def prompt_build_target() -> str:
             choices=[
                 questionary.Choice("📦 免安装版 (Portable 绿色解压文件夹)", value=PORTABLE_TARGET),
                 questionary.Choice("💿 安装包版 (NSIS 可执行安装程序)", value=INSTALLER_TARGET),
+                questionary.Choice("🚀 同时打包免安装版和安装版", value=BOTH_TARGET),
             ],
             style=questionary.Style([
                 ('qmark', 'fg:#00ffff bold'),
@@ -348,16 +366,19 @@ def _prompt_build_target_stdlib() -> str:
     print("\n请选择构建类型：")
     print(f"1. 📦 免安装版 (Portable 绿色解压文件夹) [{PORTABLE_TARGET}]")
     print(f"2. 💿 安装包版 (NSIS 可执行安装程序) [{INSTALLER_TARGET}]")
+    print(f"3. 🚀 同时打包免安装版和安装版 [{BOTH_TARGET}]")
     while True:
         try:
-            raw = input("请输入 1 或 2: ").strip()
+            raw = input("请输入 1、2 或 3: ").strip()
         except (EOFError, KeyboardInterrupt):
             raise BuildError("未选择构建类型，构建已取消。")
         if raw in ("1", PORTABLE_TARGET):
             return PORTABLE_TARGET
         if raw in ("2", INSTALLER_TARGET):
             return INSTALLER_TARGET
-        print("无效输入，请重新输入 1 或 2。")
+        if raw in ("3", BOTH_TARGET):
+            return BOTH_TARGET
+        print("无效输入，请重新输入 1、2 或 3。")
 
 
 def main() -> int:
@@ -395,10 +416,11 @@ def main() -> int:
         # 1. 准备环境与工作目录
         with console.status("[bold blue]正在重置与清理构建目录...[/bold blue]", spinner="dots"):
             reset_directory(RUNTIME_STAGE)
-            if build_target == PORTABLE_TARGET:
+            PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
+            if build_target in (PORTABLE_TARGET, BOTH_TARGET):
                 reset_directory(PORTABLE_OUTPUT)
-            else:
-                PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
+                remove_file(PORTABLE_ZIP_OUTPUT)
+            if build_target in (INSTALLER_TARGET, BOTH_TARGET):
                 remove_file(INSTALLER_OUTPUT)
             remove_directory(BUILDER_OUTPUT)
         console.print("[bold green]✓[/bold green] 构建目录准备完成")
@@ -445,21 +467,26 @@ def main() -> int:
         # 5. 构建与打包 Electron 应用
         with console.status("[bold blue]正在构建前端组件并打包 Electron...[/bold blue]", spinner="dots"):
             run(pnpm, ["build"], DESKTOP_DIR, build_env, verbose=args.verbose)
-            package_desktop(pnpm, build_env, build_target, verbose=args.verbose)
+            if build_target in (PORTABLE_TARGET, BOTH_TARGET):
+                package_desktop(pnpm, build_env, PORTABLE_TARGET, verbose=args.verbose)
+            if build_target in (INSTALLER_TARGET, BOTH_TARGET):
+                package_desktop(pnpm, build_env, INSTALLER_TARGET, verbose=args.verbose)
         console.print("[bold green]✓[/bold green] Electron 应用打包完成")
 
         # 6. 校验产物与移动定位
-        if not UNPACKED_OUTPUT.is_dir():
-            raise BuildError(f"Electron builder output was not found: {UNPACKED_OUTPUT}")
+        release_outputs: list[Path] = []
 
-        desktop_executable = UNPACKED_OUTPUT / "SeekClaw.exe"
-        runtime_executable = UNPACKED_OUTPUT / "resources" / "runtime" / "seekclaw.exe"
-        if not desktop_executable.is_file():
-            raise BuildError(f"Desktop executable is missing: {desktop_executable}")
-        if not runtime_executable.is_file():
-            raise BuildError(f"Bundled Runtime executable is missing: {runtime_executable}")
+        if build_target in (PORTABLE_TARGET, BOTH_TARGET):
+            if not UNPACKED_OUTPUT.is_dir():
+                raise BuildError(f"Electron builder output was not found: {UNPACKED_OUTPUT}")
 
-        if build_target == PORTABLE_TARGET:
+            desktop_executable = UNPACKED_OUTPUT / "SeekClaw.exe"
+            runtime_executable = UNPACKED_OUTPUT / "resources" / "runtime" / "seekclaw.exe"
+            if not desktop_executable.is_file():
+                raise BuildError(f"Desktop executable is missing: {desktop_executable}")
+            if not runtime_executable.is_file():
+                raise BuildError(f"Bundled Runtime executable is missing: {runtime_executable}")
+
             shutil.copytree(UNPACKED_OUTPUT, PORTABLE_OUTPUT, dirs_exist_ok=True)
             desktop_executable = PORTABLE_OUTPUT / "SeekClaw.exe"
             runtime_executable = PORTABLE_OUTPUT / "resources" / "runtime" / "seekclaw.exe"
@@ -467,27 +494,37 @@ def main() -> int:
                 raise BuildError(f"Desktop executable is missing: {desktop_executable}")
             if not runtime_executable.is_file():
                 raise BuildError(f"Bundled Runtime executable is missing: {runtime_executable}")
-            release_output = PORTABLE_OUTPUT
-        else:
+            release_outputs.append(PORTABLE_OUTPUT)
+            release_outputs.append(create_portable_zip())
+
+        if build_target in (INSTALLER_TARGET, BOTH_TARGET):
             installer_artifact = find_installer_artifact(release_version)
             shutil.copy2(installer_artifact, INSTALLER_OUTPUT)
             if not INSTALLER_OUTPUT.is_file():
                 raise BuildError(f"Installer executable is missing: {INSTALLER_OUTPUT}")
-            release_output = INSTALLER_OUTPUT
+            release_outputs.append(INSTALLER_OUTPUT)
 
         version_committed = True
         elapsed = time.time() - start_time
 
         # 渲染最终构建结果摘要表格 (Summary Card)
+        if build_target == BOTH_TARGET:
+            target_label = "免安装版 + NSIS 安装程序"
+        elif build_target == INSTALLER_TARGET:
+            target_label = "NSIS 安装程序"
+        else:
+            target_label = "免安装版 (Portable)"
+
         console.print("\n")
         table = Table(title="🎉 SeekClaw 构建成功", border_style="green", header_style="bold green")
         table.add_column("属性", style="bold cyan")
         table.add_column("详情", style="white")
 
-        table.add_row("目标类型", "免安装版 (Portable)" if build_target == PORTABLE_TARGET else "NSIS 安装程序")
+        table.add_row("目标类型", target_label)
         table.add_row("发布版本", f"[bold yellow]{release_version}[/bold yellow]")
-        table.add_row("输出文件/路径", f"[underline cyan]{release_output}[/underline cyan]")
-        if build_target == PORTABLE_TARGET:
+        for output in release_outputs:
+            table.add_row("输出文件/路径", f"[underline cyan]{output}[/underline cyan]")
+        if build_target in (PORTABLE_TARGET, BOTH_TARGET):
             table.add_row("启动入口", str(desktop_executable))
         table.add_row("总计耗时", f"{elapsed:.1f} 秒")
 
