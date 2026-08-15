@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleHelp,
   Folder,
+  FolderCog,
   LoaderCircle,
   MoreHorizontal,
   Plus,
@@ -38,6 +39,7 @@ const emit = defineEmits<{
   restoreTask: [thread: ThreadItem]
   deleteTask: [thread: ThreadItem]
   deleteProject: [project: ProjectItem]
+  initializeProjectWorkspace: [project: ProjectItem]
   archiveProjectTasks: [project: ProjectItem]
   deleteProjectTasks: [project: ProjectItem]
   archiveGlobalTasks: []
@@ -55,12 +57,31 @@ const taskSectionExpanded = ref(true)
 const expandedProjects = ref(new Set<string>())
 const menuKey = ref('')
 const menuPlacement = ref<'up' | 'down'>('down')
+const knownThreadIds = new Set<string>()
 
 watch(() => props.projects, (items) => {
   const next = new Set(expandedProjects.value)
   items.forEach((project) => next.add(project.id))
   expandedProjects.value = next
 }, { immediate: true, deep: true })
+
+watch(() => props.threads.map((thread) => thread.id), (ids) => {
+  const current = new Set(ids)
+  for (const id of ids) {
+    if (knownThreadIds.has(id)) continue
+    const thread = props.threads.find((item) => item.id === id)
+    if (!thread) continue
+    if (thread.projectId) {
+      const next = new Set(expandedProjects.value)
+      next.add(thread.projectId)
+      expandedProjects.value = next
+    } else {
+      taskSectionExpanded.value = true
+    }
+  }
+  knownThreadIds.clear()
+  current.forEach((id) => knownThreadIds.add(id))
+}, { immediate: true })
 
 const normalizedQuery = computed(() => query.value.trim().toLocaleLowerCase())
 
@@ -73,6 +94,17 @@ function visibleThreads(projectId: string): ThreadItem[] {
 
 function projectHasRunningTask(projectId: string): boolean {
   return props.threads.some((thread) => thread.projectId === projectId && !thread.archived && thread.running)
+}
+
+function createTask(projectId?: string): void {
+  if (projectId) {
+    const next = new Set(expandedProjects.value)
+    next.add(projectId)
+    expandedProjects.value = next
+  } else {
+    taskSectionExpanded.value = true
+  }
+  emit('newTask', projectId)
 }
 
 const visibleGlobalThreads = computed(() => props.threads
@@ -99,7 +131,7 @@ function toggleMenu(key: string, event?: MouseEvent): void {
   const triggerRect = trigger?.getBoundingClientRect()
   const rowRect = row?.getBoundingClientRect()
   const sectionRect = section?.getBoundingClientRect()
-  const menuHeight = 154
+  const menuHeight = 190
   const spaceBelow = sectionRect && triggerRect ? sectionRect.bottom - triggerRect.bottom : Number.POSITIVE_INFINITY
   const spaceAbove = sectionRect && rowRect ? rowRect.top - sectionRect.top : Number.POSITIVE_INFINITY
   menuPlacement.value = spaceBelow < menuHeight && spaceAbove > spaceBelow ? 'up' : 'down'
@@ -157,7 +189,7 @@ onBeforeUnmount(() => {
     </Transition>
 
     <nav class="primary-nav">
-      <button class="nav-item is-primary" @click="emit('newTask', activeProjectId)">
+      <button class="nav-item is-primary" @click="createTask(activeProjectId)">
         <SquarePen :size="18" />
         <span>新建任务</span>
       </button>
@@ -190,7 +222,7 @@ onBeforeUnmount(() => {
 
           </button>
           <div class="section-heading-actions">
-            <button class="icon-button compact" title="新建任务" @click="emit('newTask')">
+          <button class="icon-button compact" title="新建任务" @click="createTask()">
               <Plus :size="15" />
             </button>
             <button class="icon-button compact" aria-label="任务菜单" @click.stop="toggleMenu('global', $event)">
@@ -200,7 +232,7 @@ onBeforeUnmount(() => {
           <Transition name="context-menu">
             <div v-if="menuKey === 'global'" class="sidebar-context-menu project-menu"
               :class="{ 'menu-up': menuPlacement === 'up' }">
-              <button @click="runAction(() => emit('newTask'))">
+              <button @click="runAction(() => createTask())">
                 <SquarePen :size="15" />新建任务
               </button>
               <button @click="runAction(() => emit('archiveGlobalTasks'))">
@@ -266,8 +298,11 @@ onBeforeUnmount(() => {
             <Transition name="context-menu">
               <div v-if="menuKey === `project:${project.id}`" class="sidebar-context-menu project-menu"
                 :class="{ 'menu-up': menuPlacement === 'up' }">
-                <button @click="runAction(() => emit('newTask', project.id))">
+                <button @click="runAction(() => createTask(project.id))">
                   <SquarePen :size="15" />新建任务
+                </button>
+                <button @click="runAction(() => emit('initializeProjectWorkspace', project))">
+                  <FolderCog :size="15" />初始化工作区元数据
                 </button>
                 <button @click="runAction(() => emit('archiveProjectTasks', project))">
                   <Archive :size="15" />归档全部任务

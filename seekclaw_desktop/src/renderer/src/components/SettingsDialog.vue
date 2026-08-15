@@ -6,7 +6,6 @@ import {
   Bot,
   Check,
   Circle,
-  FolderCog,
   FolderOpen,
   Gauge,
   KeyRound,
@@ -138,7 +137,6 @@ const props = defineProps<{
   theme: 'system' | 'light' | 'dark'
   daemonConnected: boolean
   daemonEndpoint: string
-  workspacePath: string
   initialSection?: SettingsSection
 }>()
 
@@ -411,18 +409,6 @@ async function loadDiagnostics(): Promise<void> {
   ])
   checks.value = healthData
   usage.value = usageData
-}
-
-async function initializeWorkspace(): Promise<void> {
-  beginAction('workspace.init')
-  try {
-    const result = await requestJson<{ created: string[] }>('workspace.init')
-    notice.value = result.created.length > 0 ? `已创建 ${result.created.length} 个工作区项目` : '工作区已经初始化'
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    endAction()
-  }
 }
 
 async function switchProfile(name: string): Promise<void> {
@@ -875,23 +861,6 @@ watch(section, () => { void loadCurrentSection() })
             <div class="settings-section-heading">
               <div><h3>常规</h3><p>桌面外观与当前运行时</p></div>
             </div>
-
-            <section class="settings-group">
-              <div class="settings-row">
-                <div><strong>工作目录</strong><small :title="workspacePath">{{ workspacePath }}</small></div>
-                <div class="row-actions">
-                  <button class="icon-button" title="打开位置" @click="showPath(workspacePath)"><FolderOpen :size="17" /></button>
-                  <button class="secondary-button" @click="emit('openWorkspace')"><FolderCog :size="16" /> 选择</button>
-                </div>
-              </div>
-              <div class="settings-row">
-                <div><strong>工作区元数据</strong><small>.seekclaw、sessions、skills、mcp、logs</small></div>
-                <button class="secondary-button" :disabled="action === 'workspace.init'" @click="initializeWorkspace">
-                  <LoaderCircle v-if="action === 'workspace.init'" class="spin" :size="15" />
-                  <Save v-else :size="15" /> 初始化
-                </button>
-              </div>
-            </section>
 
             <section class="settings-group">
               <div class="settings-row">

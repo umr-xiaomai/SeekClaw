@@ -1214,6 +1214,24 @@ async function restoreTask(thread: ThreadItem): Promise<void> {
   taskSettingsThreadId.value = ''
 }
 
+async function initializeProjectWorkspace(project: ProjectItem): Promise<void> {
+  if (!daemonState.value.connected) {
+    await reconnectDaemon()
+    if (!daemonState.value.connected) return
+  }
+  try {
+    await ensureRuntimeProject(project)
+    const response = await window.seekclaw.daemon.request('workspace.init')
+    const result = JSON.parse(response.data) as { created: string[] }
+    await window.seekclaw.notify(
+      '工作区元数据已初始化',
+      result.created.length > 0 ? `已创建 ${result.created.length} 项元数据` : '工作区元数据已就绪'
+    )
+  } catch (reason) {
+    await window.seekclaw.notify('工作区元数据初始化失败', reason instanceof Error ? reason.message : String(reason))
+  }
+}
+
 async function archiveProjectTasks(project: ProjectItem): Promise<void> {
   if (!project.loaded) await refreshProjectSessions(project).catch(() => undefined)
   const targets = threads.value.filter((thread) => thread.projectId === project.id && !thread.archived)
@@ -1775,6 +1793,7 @@ watch(theme, applyTheme)
           @open-workspace="openWorkspace" @select-thread="selectThread" @task-settings="openTaskSettings"
           @archive-task="archiveTask" @restore-task="restoreTask" @delete-task="deleteTask"
           @delete-project="deleteProject" @archive-project-tasks="archiveProjectTasks"
+          @initialize-project-workspace="initializeProjectWorkspace"
           @delete-project-tasks="deleteProjectTasks" @archive-global-tasks="archiveGlobalTasks"
           @delete-global-tasks="deleteGlobalTasks" @open-archived="openArchivedTasks"
           @open-scheduled-tasks="openScheduledTasks" @open-extensions="openExtensions('mcp')"
@@ -1938,7 +1957,6 @@ watch(theme, applyTheme)
     <SettingsDialog :open="activePage === 'settings' || activePage === 'extensions'"
       :page="activePage === 'extensions' ? 'extensions' : 'settings'" :theme="theme"
       :daemon-connected="daemonState.connected" :daemon-endpoint="daemonState.endpoint"
-      :workspace-path="activeProject?.path || runtimeWorkspacePath || appInfo.defaultWorkspace"
       :initial-section="activePage === 'settings' ? settingsSection : extensionsSection" @close="closePage"
       @change-theme="applyTheme" @reconnect="reconnectDaemon" @open-workspace="openWorkspace"
       @open-official-skills="openOfficialSkills" @runtime-changed="refreshRuntimeState" />
