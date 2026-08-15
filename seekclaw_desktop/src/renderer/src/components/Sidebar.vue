@@ -68,6 +68,10 @@ function visibleThreads(projectId: string): ThreadItem[] {
     .sort((left, right) => right.updatedAt - left.updatedAt)
 }
 
+function projectHasRunningTask(projectId: string): boolean {
+  return props.threads.some((thread) => thread.projectId === projectId && !thread.archived && thread.running)
+}
+
 const visibleGlobalThreads = computed(() => props.threads
   .filter((thread) => !thread.projectId && !thread.archived)
   .filter((thread) => !normalizedQuery.value || thread.title.toLocaleLowerCase().includes(normalizedQuery.value))
@@ -233,6 +237,12 @@ onBeforeUnmount(() => {
           <button class="project-row" :title="project.path" @click="toggleProject(project)">
             <Folder :size="18" />
             <span>{{ project.name }}</span>
+            <LoaderCircle
+              v-if="!expandedProjects.has(project.id) && projectHasRunningTask(project.id)"
+              class="thread-running-spinner"
+              :size="15"
+              aria-label="项目中有任务正在运行"
+            />
           </button>
           <button
             class="icon-button compact row-menu-button"
