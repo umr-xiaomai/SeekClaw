@@ -3,6 +3,8 @@ import {
   Archive,
   Blocks,
   CalendarClock,
+  ChevronDown,
+  ChevronRight,
   CircleHelp,
   Folder,
   LoaderCircle,
@@ -49,6 +51,7 @@ const emit = defineEmits<{
 
 const searching = ref(false)
 const query = ref('')
+const taskSectionExpanded = ref(true)
 const expandedProjects = ref(new Set<string>())
 const menuKey = ref('')
 const menuPlacement = ref<'up' | 'down'>('down')
@@ -92,7 +95,7 @@ function toggleMenu(key: string, event?: MouseEvent): void {
 
   const trigger = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
   const row = trigger?.closest<HTMLElement>('.thread-heading-row, .project-heading-row')
-  const section = trigger?.closest<HTMLElement>('.sidebar-section')
+  const section = trigger?.closest<HTMLElement>('.sidebar-scroll')
   const triggerRect = trigger?.getBoundingClientRect()
   const rowRect = row?.getBoundingClientRect()
   const sectionRect = section?.getBoundingClientRect()
@@ -176,127 +179,146 @@ onBeforeUnmount(() => {
       </button>
     </nav>
 
-    <section class="sidebar-section tasks-section">
-      <div class="section-heading task-section-heading">
-        <span>任务</span>
-        <div class="section-heading-actions">
-          <button class="icon-button compact" title="新建任务" @click="emit('newTask')">
+    <div class="sidebar-scroll" :class="{ 'menu-open': menuKey }">
+      <section class="sidebar-section tasks-section">
+        <div class="section-heading task-section-heading">
+          <button style="padding-left: unset;" class="task-section-toggle" type="button"
+            :aria-expanded="taskSectionExpanded" @click="taskSectionExpanded = !taskSectionExpanded">
+            <span>任务</span>
+            <ChevronDown v-if="taskSectionExpanded" :size="15" />
+            <ChevronRight v-else :size="15" />
+
+          </button>
+          <div class="section-heading-actions">
+            <button class="icon-button compact" title="新建任务" @click="emit('newTask')">
+              <Plus :size="15" />
+            </button>
+            <button class="icon-button compact" aria-label="任务菜单" @click.stop="toggleMenu('global', $event)">
+              <MoreHorizontal :size="16" />
+            </button>
+          </div>
+          <Transition name="context-menu">
+            <div v-if="menuKey === 'global'" class="sidebar-context-menu project-menu"
+              :class="{ 'menu-up': menuPlacement === 'up' }">
+              <button @click="runAction(() => emit('newTask'))">
+                <SquarePen :size="15" />新建任务
+              </button>
+              <button @click="runAction(() => emit('archiveGlobalTasks'))">
+                <Archive :size="15" />归档全部任务
+              </button>
+              <button class="danger" @click="runAction(() => emit('deleteGlobalTasks'))">
+                <Trash2 :size="15" />删除全部任务
+              </button>
+            </div>
+          </Transition>
+        </div>
+
+        <div v-if="taskSectionExpanded" class="task-list">
+          <div v-for="thread in visibleGlobalThreads" :key="thread.id" class="thread-heading-row"
+            :class="{ active: thread.id === activeThreadId }">
+            <button class="thread-row" @click="emit('selectThread', thread.id)">
+              <span>{{ thread.title }}</span>
+              <LoaderCircle v-if="thread.running" class="thread-running-spinner" :size="15" aria-label="运行中" />
+            </button>
+            <button class="icon-button compact row-menu-button" :aria-label="`${thread.title} 任务菜单`"
+              @click.stop="toggleMenu(`thread:${thread.id}`, $event)">
+              <MoreHorizontal :size="15" />
+            </button>
+            <Transition name="context-menu">
+              <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu"
+                :class="{ 'menu-up': menuPlacement === 'up' }">
+                <button @click="runAction(() => emit('taskSettings', thread))">
+                  <SlidersHorizontal :size="15" />任务设置
+                </button>
+                <button @click="runAction(() => emit('archiveTask', thread))">
+                  <Archive :size="15" />归档任务
+                </button>
+                <button class="danger" @click="runAction(() => emit('deleteTask', thread))">
+                  <Trash2 :size="15" />删除任务
+                </button>
+              </div>
+            </Transition>
+          </div>
+          <p v-if="visibleGlobalThreads.length === 0" class="project-empty">无任务</p>
+        </div>
+      </section>
+
+      <section class="sidebar-section project-section">
+        <div class="section-heading">
+          <span>项目</span>
+          <button class="icon-button compact" title="添加项目" @click="emit('openWorkspace')">
             <Plus :size="15" />
           </button>
-          <button class="icon-button compact" aria-label="任务菜单" @click.stop="toggleMenu('global', $event)">
-            <MoreHorizontal :size="16" />
-          </button>
         </div>
-        <Transition name="context-menu">
-          <div v-if="menuKey === 'global'" class="sidebar-context-menu project-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
-            <button @click="runAction(() => emit('newTask'))"><SquarePen :size="15" />新建任务</button>
-            <button @click="runAction(() => emit('archiveGlobalTasks'))"><Archive :size="15" />归档全部任务</button>
-            <button class="danger" @click="runAction(() => emit('deleteGlobalTasks'))"><Trash2 :size="15" />删除全部任务</button>
+
+        <div v-for="project in projects" :key="project.id" class="project-group">
+          <div class="project-heading-row">
+            <button class="project-row" :title="project.path" @click="toggleProject(project)">
+              <Folder :size="18" />
+              <span>{{ project.name }}</span>
+              <LoaderCircle v-if="!expandedProjects.has(project.id) && projectHasRunningTask(project.id)"
+                class="thread-running-spinner" :size="15" aria-label="项目中有任务正在运行" />
+            </button>
+            <button class="icon-button compact row-menu-button" :aria-label="`${project.name} 项目菜单`"
+              @click.stop="toggleMenu(`project:${project.id}`, $event)">
+              <MoreHorizontal :size="16" />
+            </button>
+            <Transition name="context-menu">
+              <div v-if="menuKey === `project:${project.id}`" class="sidebar-context-menu project-menu"
+                :class="{ 'menu-up': menuPlacement === 'up' }">
+                <button @click="runAction(() => emit('newTask', project.id))">
+                  <SquarePen :size="15" />新建任务
+                </button>
+                <button @click="runAction(() => emit('archiveProjectTasks', project))">
+                  <Archive :size="15" />归档全部任务
+                </button>
+                <button class="danger" @click="runAction(() => emit('deleteProjectTasks', project))">
+                  <Trash2 :size="15" />删除全部任务
+                </button>
+                <button class="danger" @click="runAction(() => emit('deleteProject', project))">
+                  <Trash2 :size="15" />删除项目
+                </button>
+              </div>
+            </Transition>
           </div>
-        </Transition>
-      </div>
 
-      <div class="task-list">
-        <div
-          v-for="thread in visibleGlobalThreads"
-          :key="thread.id"
-          class="thread-heading-row"
-          :class="{ active: thread.id === activeThreadId }"
-        >
-          <button class="thread-row" @click="emit('selectThread', thread.id)">
-            <span>{{ thread.title }}</span>
-            <LoaderCircle v-if="thread.running" class="thread-running-spinner" :size="15" aria-label="运行中" />
-          </button>
-          <button
-            class="icon-button compact row-menu-button"
-            :aria-label="`${thread.title} 任务菜单`"
-            @click.stop="toggleMenu(`thread:${thread.id}`, $event)"
-          ><MoreHorizontal :size="15" /></button>
-          <Transition name="context-menu">
-            <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
-              <button @click="runAction(() => emit('taskSettings', thread))"><SlidersHorizontal :size="15" />任务设置</button>
-              <button @click="runAction(() => emit('archiveTask', thread))"><Archive :size="15" />归档任务</button>
-              <button class="danger" @click="runAction(() => emit('deleteTask', thread))"><Trash2 :size="15" />删除任务</button>
-            </div>
-          </Transition>
-        </div>
-        <p v-if="visibleGlobalThreads.length === 0" class="project-empty">无任务</p>
-      </div>
-    </section>
-
-    <section class="sidebar-section project-section">
-      <div class="section-heading">
-        <span>项目</span>
-        <button class="icon-button compact" title="添加项目" @click="emit('openWorkspace')">
-          <Plus :size="15" />
-        </button>
-      </div>
-
-      <div v-for="project in projects" :key="project.id" class="project-group">
-        <div class="project-heading-row">
-          <button class="project-row" :title="project.path" @click="toggleProject(project)">
-            <Folder :size="18" />
-            <span>{{ project.name }}</span>
-            <LoaderCircle
-              v-if="!expandedProjects.has(project.id) && projectHasRunningTask(project.id)"
-              class="thread-running-spinner"
-              :size="15"
-              aria-label="项目中有任务正在运行"
-            />
-          </button>
-          <button
-            class="icon-button compact row-menu-button"
-            :aria-label="`${project.name} 项目菜单`"
-            @click.stop="toggleMenu(`project:${project.id}`, $event)"
-          >
-            <MoreHorizontal :size="16" />
-          </button>
-          <Transition name="context-menu">
-            <div v-if="menuKey === `project:${project.id}`" class="sidebar-context-menu project-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
-              <button @click="runAction(() => emit('newTask', project.id))"><SquarePen :size="15" />新建任务</button>
-              <button @click="runAction(() => emit('archiveProjectTasks', project))"><Archive :size="15" />归档全部任务</button>
-              <button class="danger" @click="runAction(() => emit('deleteProjectTasks', project))"><Trash2 :size="15" />删除全部任务</button>
-              <button class="danger" @click="runAction(() => emit('deleteProject', project))"><Trash2 :size="15" />删除项目</button>
+          <Transition name="project-collapse">
+            <div v-if="expandedProjects.has(project.id)" class="project-tasks">
+              <div v-for="thread in visibleThreads(project.id)" :key="thread.id" class="thread-heading-row"
+                :class="{ active: thread.id === activeThreadId }">
+                <button class="thread-row" @click="emit('selectThread', thread.id)">
+                  <span>{{ thread.title }}</span>
+                  <LoaderCircle v-if="thread.running" class="thread-running-spinner" :size="15" aria-label="运行中" />
+                </button>
+                <button class="icon-button compact row-menu-button" :aria-label="`${thread.title} 任务菜单`"
+                  @click.stop="toggleMenu(`thread:${thread.id}`, $event)">
+                  <MoreHorizontal :size="15" />
+                </button>
+                <Transition name="context-menu">
+                  <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu"
+                    :class="{ 'menu-up': menuPlacement === 'up' }">
+                    <button @click="runAction(() => emit('taskSettings', thread))">
+                      <SlidersHorizontal :size="15" />任务设置
+                    </button>
+                    <button @click="runAction(() => emit('archiveTask', thread))">
+                      <Archive :size="15" />归档任务
+                    </button>
+                    <button class="danger" @click="runAction(() => emit('deleteTask', thread))">
+                      <Trash2 :size="15" />删除任务
+                    </button>
+                  </div>
+                </Transition>
+              </div>
+              <p v-if="visibleThreads(project.id).length === 0" class="project-empty">
+                {{ project.loaded === false ? '正在读取任务…' : '无任务' }}
+              </p>
             </div>
           </Transition>
         </div>
 
-        <Transition name="project-collapse">
-          <div v-if="expandedProjects.has(project.id)" class="project-tasks">
-            <div
-              v-for="thread in visibleThreads(project.id)"
-              :key="thread.id"
-              class="thread-heading-row"
-              :class="{ active: thread.id === activeThreadId }"
-            >
-              <button class="thread-row" @click="emit('selectThread', thread.id)">
-                <span>{{ thread.title }}</span>
-                <LoaderCircle v-if="thread.running" class="thread-running-spinner" :size="15" aria-label="运行中" />
-              </button>
-              <button
-                class="icon-button compact row-menu-button"
-                :aria-label="`${thread.title} 任务菜单`"
-                @click.stop="toggleMenu(`thread:${thread.id}`, $event)"
-              >
-                <MoreHorizontal :size="15" />
-              </button>
-              <Transition name="context-menu">
-                <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
-                  <button @click="runAction(() => emit('taskSettings', thread))"><SlidersHorizontal :size="15" />任务设置</button>
-                  <button @click="runAction(() => emit('archiveTask', thread))"><Archive :size="15" />归档任务</button>
-                  <button class="danger" @click="runAction(() => emit('deleteTask', thread))"><Trash2 :size="15" />删除任务</button>
-                </div>
-              </Transition>
-            </div>
-            <p v-if="visibleThreads(project.id).length === 0" class="project-empty">
-              {{ project.loaded === false ? '正在读取任务…' : '无任务' }}
-            </p>
-          </div>
-        </Transition>
-      </div>
-
-      <p v-if="projects.length === 0" class="empty-recent">添加一个项目以开始任务</p>
-    </section>
+        <p v-if="projects.length === 0" class="empty-recent">添加一个项目以开始任务</p>
+      </section>
+    </div>
 
     <footer class="sidebar-footer">
       <button class="account-row" @click="emit('openSettings')">

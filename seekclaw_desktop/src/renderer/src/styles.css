@@ -484,22 +484,50 @@ select:focus-visible {
   padding-top: 0;
 }
 
-.tasks-section {
-  flex: 0 0 auto;
-  max-height: 220px;
-  padding-bottom: 12px;
-  overflow-y: auto;
-}
-
-.project-section {
+.sidebar-scroll {
   min-height: 0;
   flex: 1;
   padding-bottom: 12px;
   overflow-y: auto;
 }
 
+.sidebar-scroll.menu-open {
+  overflow: visible;
+}
+
+.tasks-section {
+  padding-bottom: 12px;
+}
+
+.project-section {
+  min-height: 0;
+}
+
 .task-section-heading {
   position: relative;
+}
+
+.task-section-toggle {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: left;
+  background: transparent;
+  border-radius: 6px;
+}
+
+.task-section-toggle:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.task-section-toggle svg {
+  flex: 0 0 auto;
 }
 
 .section-heading-actions {
