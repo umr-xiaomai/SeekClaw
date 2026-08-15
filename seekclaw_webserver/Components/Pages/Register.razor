@@ -1,0 +1,94 @@
+@page "/register"
+@rendermode InteractiveServer
+@inject NavigationManager Navigation
+
+<PageTitle>注册 — SeekClaw</PageTitle>
+
+<section class="auth-page">
+    <form class="auth-card" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+        <h1>注册</h1>
+        <p class="text-muted">@(_registrationEnabled ? "创建普通用户账号。" : "当前注册尚未开放，请联系超级管理员。")</p>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-danger">@_error</div>
+        }
+
+        <div class="mb-3">
+            <label class="form-label">用户名</label>
+            <input class="form-control" @bind="_model.Username" autocomplete="username" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">密码</label>
+            <input type="password" class="form-control" @bind="_model.Password" autocomplete="new-password" />
+        </div>
+
+        <button class="btn btn-primary w-100" type="submit" disabled="@_busy || !_registrationEnabled">
+            <i class="bi bi-person-plus"></i> @(_busy ? "注册中…" : "注册")
+        </button>
+
+        <p class="auth-footer">
+            已有账号？<a href="/login">登录</a>
+        </p>
+    </form>
+</section>
+
+@code {
+    private RegisterRequest _model = new();
+    private string? _error;
+    private bool _busy = true;
+    private bool _registrationEnabled;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var client = new HttpClient { BaseAddress = new Uri(Navigation.BaseUri) };
+            var response = await client.GetAsync("api/auth/registration");
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<RegistrationResponse>();
+                _registrationEnabled = result?.Enabled == true;
+            }
+        }
+        catch
+        {
+            _registrationEnabled = false;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            using var client = new HttpClient { BaseAddress = new Uri(Navigation.BaseUri) };
+            var response = await client.PostAsJsonAsync("api/auth/register", _model);
+            var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
+            if (result?.Success == true)
+            {
+                Navigation.NavigateTo(result.IsSuperAdmin ? "/admin" : "/", forceLoad: true);
+                return;
+            }
+
+            _error = result?.Error ?? "注册失败，请稍后重试。";
+        }
+        catch
+        {
+            _error = "无法连接服务器，请稍后重试。";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed record AuthResponse(bool Success, string? Error, bool IsSuperAdmin);
+    private sealed record RegistrationResponse(bool Enabled);
+}
+

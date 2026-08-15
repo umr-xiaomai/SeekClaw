@@ -225,7 +225,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .archived-header {
   justify-content: space-between;
   gap: 20px;
-  padding: 21px 22px 18px;
+  min-height: 62px;
+  padding: 10px 22px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -255,16 +256,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .archived-header h2 {
-  margin-top: 8px;
-  font-size: 25px;
+  margin: 0;
+  font-size: 16px;
   font-weight: 650;
-  letter-spacing: -.02em;
+  letter-spacing: -.01em;
 }
 
 .archived-header p {
-  margin-top: 7px;
+  margin-top: 2px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .archived-header-actions {
@@ -389,7 +390,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
 .archived-list-scroll {
   min-height: 0;
-  padding: 4px 22px 22px;
+  padding: 0 22px 22px;
   overflow-y: auto;
 }
 

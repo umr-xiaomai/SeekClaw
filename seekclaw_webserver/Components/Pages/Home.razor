@@ -1,7 +1,57 @@
-﻿@page "/"
+@page "/"
 
-<PageTitle>Home</PageTitle>
+<PageTitle>SeekClaw — AI Agent Runtime</PageTitle>
 
-<h1>Hello, world!</h1>
+<section class="hero">
+    <div class="hero-copy">
+        <img class="hero-logo" src="/logo.png" alt="SeekClaw" />
+        <h1>SeekClaw</h1>
+        <p class="lead">本地优先、开源、可扩展的通用 AI Agent Runtime</p>
+        <p>以 .NET 10 为核心，用同一套 Runtime、配置、工具与会话数据驱动 Desktop、CLI 与技能生态。</p>
+        <div class="hero-actions">
+            <a class="btn btn-primary" href="/doc/quickstart"><i class="bi bi-rocket-takeoff"></i> 快速开始</a>
+            <a class="btn btn-outline-light" href="/skills"><i class="bi bi-stars"></i> 技能市场</a>
+        </div>
+    </div>
+    <div class="hero-visual">
+        <img src="/screenshots/desktop/chat-and-projects.png" alt="SeekClaw Desktop 主界面" />
+    </div>
+</section>
 
-Welcome to your new app.
+<section class="section">
+    <div class="section-heading">
+        <h2>Runtime First</h2>
+        <p>业务逻辑、Provider 路由、工具执行、会话存储与构建验证内聚在 Runtime，前端只负责展示。</p>
+    </div>
+    <div class="feature-grid">
+        <div class="feature-card">
+            <h3>多提供商</h3>
+            <p>支持 Anthropic、OpenAI 兼容协议，以及 Google、OpenRouter、Ollama、LM Studio 等服务。</p>
+        </div>
+        <div class="feature-card">
+            <h3>工具与 MCP</h3>
+            <p>内置文件、搜索、Shell、网络工具，并支持 stdio / SSE MCP Server 扩展。</p>
+        </div>
+        <div class="feature-card">
+            <h3>Skills 生态</h3>
+            <p>通过官方技能市场发布、下载和复用可移植技能。</p>
+        </div>
+        <div class="feature-card">
+            <h3>自动验证与修复</h3>
+            <p>Agent 修改代码后可触发构建检查，并把错误反馈回模型持续自愈。</p>
+        </div>
+    </div>
+</section>
+
+<section class="section section-dark">
+    <div class="section-heading">
+        <h2>桌面端预览</h2>
+        <p>Desktop 自动连接或启动 Daemon，终端用户无需安装 .NET。</p>
+    </div>
+    <div class="screenshot-grid">
+        <img src="/screenshots/desktop/providers-and-models.png" alt="模型与 Provider 管理" />
+        <img src="/screenshots/desktop/diagnostics-and-usage.png" alt="Runtime 诊断与用量" />
+        <img src="/screenshots/desktop/mcp-servers.png" alt="MCP Server 配置" />
+    </div>
+</section>
+

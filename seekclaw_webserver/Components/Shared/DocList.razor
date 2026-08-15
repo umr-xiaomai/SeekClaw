@@ -1,0 +1,38 @@
+@inject DocService Docs
+
+<section class="doc-shell">
+    <header class="doc-header">
+        <p class="doc-kicker">@(Language == "en" ? "Documentation" : "文档中心")</p>
+        <h1>@(Language == "en" ? "SeekClaw Documentation" : "SeekClaw 文档")</h1>
+        <p>@(Language == "en" ? "Learn how SeekClaw works, from quick start to advanced Runtime internals." : "从快速开始到 Runtime 进阶机制，了解 SeekClaw 的完整能力。")</p>
+        <form class="search-form search-form-centered" action="/search" method="get">
+            <input class="form-control" name="q" type="search" placeholder="@(Language == "en" ? "Search docs..." : "搜索文档…")" />
+            <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> @(Language == "en" ? "Search" : "搜索")</button>
+        </form>
+    </header>
+
+    <div class="doc-grid">
+        @foreach (var doc in _documents)
+        {
+            <a class="doc-card" href="@($"{Prefix}/{doc.Slug}")">
+                <span class="doc-card-title">@doc.Title</span>
+                <span class="doc-card-slug">@doc.Slug</span>
+            </a>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter]
+    public string Language { get; set; } = "zh";
+
+    private IReadOnlyList<DocSummary> _documents = Array.Empty<DocSummary>();
+
+    private string Prefix => Language == "en" ? "/en/doc" : "/doc";
+
+    protected override void OnInitialized()
+    {
+        _documents = Docs.List(Language);
+    }
+}
+

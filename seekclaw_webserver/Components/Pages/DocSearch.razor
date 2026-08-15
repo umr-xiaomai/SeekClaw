@@ -1,0 +1,69 @@
+@page "/search"
+@rendermode InteractiveServer
+@inject DocService Docs
+@inject NavigationManager Navigation
+
+<PageTitle>文档搜索 — SeekClaw</PageTitle>
+
+<section class="page-section">
+    <header class="page-header">
+        <p class="doc-kicker">Search</p>
+        <h1>文档搜索</h1>
+        <p>搜索 SeekClaw 中文与英文文档。</p>
+    </header>
+
+    <form class="search-form" @onsubmit="SubmitSearch" @onsubmit:preventDefault>
+        <input class="form-control" @bind="_query" placeholder="输入关键词，例如：MCP、Provider、Daemon" />
+        <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> 搜索</button>
+    </form>
+
+    @if (_hasSearched)
+    {
+        <p class="search-summary">
+            @if (_results.Count == 0)
+            {
+                <text>没有找到与“@_query”相关的文档。</text>
+            }
+            else
+            {
+                <text>找到 @_results.Count 条结果。</text>
+            }
+        </p>
+    }
+
+    <div class="search-results">
+        @foreach (var result in _results)
+        {
+            <a class="search-result" href="@ResultUrl(result)">
+                <span class="search-result-title">@result.Title</span>
+                <span class="search-result-meta">@(result.Language == "en" ? "English" : "简体中文") · @result.Slug</span>
+                <span class="search-result-snippet">@result.Snippet</span>
+            </a>
+        }
+    </div>
+</section>
+
+@code {
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? Query { get; set; }
+
+    private string _query = string.Empty;
+    private IReadOnlyList<DocSearchResult> _results = Array.Empty<DocSearchResult>();
+    private bool _hasSearched;
+
+    protected override void OnParametersSet()
+    {
+        _query = Query ?? string.Empty;
+        _results = Docs.Search(_query);
+        _hasSearched = true;
+    }
+
+    private void SubmitSearch()
+    {
+        Navigation.NavigateTo($"/search?q={Uri.EscapeDataString(_query)}");
+    }
+
+    private static string ResultUrl(DocSearchResult result) =>
+        result.Language == "en" ? $"/en/doc/{result.Slug}" : $"/doc/{result.Slug}";
+}
+

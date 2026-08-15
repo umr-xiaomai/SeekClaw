@@ -1,0 +1,63 @@
+@rendermode InteractiveServer
+@inject SkillService SkillCatalog
+@inject MarkdownService Markdown
+
+@if (_loading)
+{
+    <div class="page-section text-muted">@(Language == "en" ? "Loading skill..." : "正在加载技能…")</div>
+}
+else if (_skill is null)
+{
+    <div class="empty-state">
+        <h1>@(Language == "en" ? "Skill not found" : "技能不存在")</h1>
+        <p>@(Language == "en" ? "This skill may have been unpublished or deleted." : "该技能可能已被管理员下线或删除。")</p>
+        <a class="btn btn-outline-primary" href="@(Language == "en" ? "/en/skills" : "/skills")">@(Language == "en" ? "Back to skills" : "返回技能市场")</a>
+    </div>
+}
+else
+{
+    <article class="page-section skill-detail">
+        <header class="skill-detail-header">
+            <div>
+                <p class="doc-kicker">Skill</p>
+                <h1>@_skill.Name</h1>
+                <p class="lead">@_skill.Summary</p>
+            </div>
+            @if (_skill.HasPackage)
+            {
+                <a class="btn btn-primary" href="/api/skills/@_skill.Id/download"><i class="bi bi-download"></i> @(Language == "en" ? "Download" : "下载") @_skill.PackageFileName</a>
+            }
+        </header>
+
+        <div class="skill-detail-meta">
+            <span><strong>@(Language == "en" ? "Author:" : "作者：")</strong>@_skill.Author</span>
+            <span><strong>@(Language == "en" ? "Version:" : "版本：")</strong>@_skill.Version</span>
+            @if (!string.IsNullOrWhiteSpace(_skill.Homepage))
+            {
+                <span><strong>@(Language == "en" ? "Homepage:" : "主页：")</strong><a href="@_skill.Homepage" target="_blank" rel="noopener noreferrer">@_skill.Homepage</a></span>
+            }
+        </div>
+
+        <div class="markdown-body">
+            @((MarkupString)Markdown.ToHtml(_skill.ReadmeMarkdown))
+        </div>
+    </article>
+}
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    [Parameter]
+    public string Language { get; set; } = "zh";
+
+    private SkillDetailModel? _skill;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _skill = await SkillCatalog.GetDetailAsync(Id);
+        _loading = false;
+    }
+}
+

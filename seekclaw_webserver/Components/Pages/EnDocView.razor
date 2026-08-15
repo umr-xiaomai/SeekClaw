@@ -1,0 +1,9 @@
+@page "/en/doc/{Slug}"
+
+<PageTitle>SeekClaw Documentation</PageTitle>
+<MarkdownDocument Language="en" Slug="@Slug" />
+
+@code {
+    [Parameter]
+    public string? Slug { get; set; }
+}

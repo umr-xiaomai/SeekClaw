@@ -2913,8 +2913,8 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 62px;
-  padding: 0 17px 0 21px;
+  min-height: 62px;
+  padding: 10px 22px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -2927,6 +2927,8 @@ select:focus-visible {
 .settings-header h2 {
   margin: 0;
   font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -.01em;
 }
 
 .settings-connection {

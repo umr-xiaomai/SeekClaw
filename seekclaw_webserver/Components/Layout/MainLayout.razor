@@ -1,19 +1,14 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
-
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
-        </div>
-
-        <article class="content px-4">
-            @Body
-        </article>
+<div class="site-shell">
+    <NavMenu />
+    <main class="site-main">
+        @Body
     </main>
+    <footer class="site-footer">
+        <div>© 2022 - 2026 花濑HoiLai. 保留所有权利。</div>
+        <div><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">陕ICP备2025084176号-1</a></div>
+    </footer>
 </div>
 
 <div id="blazor-error-ui" data-nosnippet>

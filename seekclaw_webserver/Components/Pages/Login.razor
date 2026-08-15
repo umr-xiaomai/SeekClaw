@@ -1,0 +1,84 @@
+@page "/login"
+@rendermode InteractiveServer
+@inject NavigationManager Navigation
+
+<PageTitle>登录 — SeekClaw</PageTitle>
+
+<section class="auth-page">
+    <form class="auth-card" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+        <h1>登录</h1>
+        <p class="text-muted">使用 SeekClaw 后台账号登录。</p>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="alert alert-danger">@_error</div>
+        }
+
+        <div class="mb-3">
+            <label class="form-label">用户名</label>
+            <input class="form-control" @bind="_model.Username" autocomplete="username" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label">密码</label>
+            <input type="password" class="form-control" @bind="_model.Password" autocomplete="current-password" />
+        </div>
+
+        <button class="btn btn-primary w-100" type="submit" disabled="@_busy">
+            <i class="bi bi-box-arrow-in-right"></i> @(_busy ? "登录中…" : "登录")
+        </button>
+
+        <p class="auth-footer">
+            还没有账号？<a href="/register">注册</a>
+        </p>
+    </form>
+</section>
+
+@code {
+    private LoginRequest _model = new();
+    private string? _error;
+    private bool _busy;
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            using var client = new HttpClient { BaseAddress = new Uri(Navigation.BaseUri) };
+            var response = await client.PostAsJsonAsync("api/auth/login", _model);
+            var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
+            if (result?.Success == true)
+            {
+                Navigation.NavigateTo(ReadReturnUrl(), forceLoad: true);
+                return;
+            }
+
+            _error = result?.Error ?? "登录失败，请稍后重试。";
+        }
+        catch
+        {
+            _error = "无法连接服务器，请稍后重试。";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private string ReadReturnUrl()
+    {
+        var query = new Uri(Navigation.Uri).Query.TrimStart('?');
+        var returnUrl = query
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .FirstOrDefault(pair => pair.Length == 2 && pair[0] == "returnUrl")?[1];
+
+        returnUrl = returnUrl is null ? null : Uri.UnescapeDataString(returnUrl);
+        return string.IsNullOrWhiteSpace(returnUrl) || !returnUrl.StartsWith('/')
+            ? "/"
+            : returnUrl;
+    }
+
+    private sealed record AuthResponse(bool Success, string? Error, bool IsSuperAdmin);
+}
+

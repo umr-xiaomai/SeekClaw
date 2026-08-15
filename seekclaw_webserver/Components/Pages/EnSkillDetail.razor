@@ -1,0 +1,9 @@
+@page "/en/skills/{Id:int}"
+
+<PageTitle>Skill Details — SeekClaw</PageTitle>
+<SkillDetailView Id="@Id" Language="en" />
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+}

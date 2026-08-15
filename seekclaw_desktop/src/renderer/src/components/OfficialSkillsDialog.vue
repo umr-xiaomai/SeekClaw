@@ -157,10 +157,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
 .official-skills-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 21px 22px 18px;
+  min-height: 62px;
+  padding: 10px 22px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -194,10 +195,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: flex;
   align-items: center;
   gap: 9px;
-  margin-top: 8px;
-  font-size: 25px;
+  margin: 0;
+  font-size: 16px;
   font-weight: 650;
-  letter-spacing: -.02em;
+  letter-spacing: -.01em;
 }
 
 .official-skills-chip {
@@ -211,9 +212,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .official-skills-header p {
-  margin-top: 7px;
+  margin-top: 2px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .official-skills-toolbar {
@@ -257,7 +258,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .official-skills-list {
   min-height: 0;
   overflow-y: auto;
-  padding: 0 22px 16px;
+  padding: 0 22px 22px;
 }
 
 .official-skills-empty {

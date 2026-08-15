@@ -1,30 +1,130 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">seekclaw_webserver</a>
+@rendermode InteractiveServer
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IDisposable
+
+<nav class="site-nav">
+    <div class="nav-inner">
+        <a class="brand" href="/">
+            <img src="/logo.png" alt="SeekClaw" />
+            <span>SeekClaw</span>
+        </a>
+
+        <div class="nav-links">
+            <NavLink href="" Match="NavLinkMatch.All"><i class="bi bi-house-door"></i><span>@(_isEnglish ? "Home" : "首页")</span></NavLink>
+            <NavLink href="@(_isEnglish ? "/en/doc" : "/doc")"><i class="bi bi-journal-text"></i><span>@(_isEnglish ? "Docs" : "文档")</span></NavLink>
+            <NavLink href="@(_isEnglish ? "/en/skills" : "/skills")"><i class="bi bi-stars"></i><span>@(_isEnglish ? "Skills" : "技能市场")</span></NavLink>
+            <NavLink href="/search"><i class="bi bi-search"></i><span>@(_isEnglish ? "Search" : "搜索")</span></NavLink>
+            <AuthorizeView Roles="SuperAdmin">
+                <Authorized>
+                    <NavLink href="/admin"><i class="bi bi-speedometer2"></i><span>@(_isEnglish ? "Admin" : "后台")</span></NavLink>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+
+        <div class="nav-actions">
+            <a class="lang-switch" href="@OtherLanguageUrl()" @onclick="SwitchLanguageAsync" @onclick:preventDefault>
+                <i class="bi bi-translate"></i><span>@(_isEnglish ? "简体中文" : "English")</span>
+            </a>
+            <button class="theme-button" type="button" @onclick="ToggleThemeAsync">
+                <i class="bi @(_theme == "light" ? "bi-moon-stars" : "bi-sun")"></i><span>@(_theme == "light" ? "浅色" : "深色")</span>
+            </button>
+
+            <AuthorizeView>
+                <Authorized>
+                    <span class="auth-username"><i class="bi bi-person-circle"></i> @context.User.Identity?.Name</span>
+                    <button class="link-button" @onclick="LogoutAsync"><i class="bi bi-box-arrow-right"></i><span>@(_isEnglish ? "Sign out" : "退出")</span></button>
+                </Authorized>
+                <NotAuthorized>
+                    <NavLink href="login"><i class="bi bi-box-arrow-in-right"></i><span>@(_isEnglish ? "Sign in" : "登录")</span></NavLink>
+                    <NavLink href="register"><i class="bi bi-person-plus"></i><span>@(_isEnglish ? "Register" : "注册")</span></NavLink>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
     </div>
-</div>
+</nav>
 
-<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+@code {
+    private string _currentPath = "/";
+    private string _theme = "light";
 
-<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
-    <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
+    private bool _isEnglish =>
+        _currentPath.StartsWith("/en", StringComparison.OrdinalIgnoreCase);
 
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
+    protected override void OnInitialized()
+    {
+        _currentPath = new Uri(Navigation.Uri).AbsolutePath;
+        Navigation.LocationChanged += OnLocationChanged;
+    }
 
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
-        </div>
-    </nav>
-</div>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var theme = await JS.InvokeAsync<string>("SeekClaw.getTheme");
+            if (_theme != theme)
+            {
+                _theme = theme;
+                StateHasChanged();
+            }
+        }
+    }
 
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        _currentPath = new Uri(e.Location).AbsolutePath;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+
+    private string OtherLanguageUrl()
+    {
+        var path = _currentPath;
+
+        if (path.Equals("/en", StringComparison.OrdinalIgnoreCase))
+        {
+            return "/";
+        }
+
+        if (path.StartsWith("/en/", StringComparison.OrdinalIgnoreCase))
+        {
+            var rest = path["/en".Length..];
+            return string.IsNullOrEmpty(rest) ? "/" : rest;
+        }
+
+        if (path == "/")
+        {
+            return "/en";
+        }
+
+        if (path.StartsWith("/doc", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/skills", StringComparison.OrdinalIgnoreCase))
+        {
+            return "/en" + path;
+        }
+
+        return "/en/doc";
+    }
+
+    private Task SwitchLanguageAsync()
+    {
+        Navigation.NavigateTo(OtherLanguageUrl());
+        return Task.CompletedTask;
+    }
+
+    private async Task ToggleThemeAsync()
+    {
+        _theme = await JS.InvokeAsync<string>("SeekClaw.toggleTheme");
+    }
+
+    private async Task LogoutAsync()
+    {
+        using var client = new HttpClient { BaseAddress = new Uri(Navigation.BaseUri) };
+        await client.PostAsync("api/auth/logout", null);
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+}

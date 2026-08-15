@@ -376,7 +376,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px;
+  min-height: 62px;
+  padding: 10px 22px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -390,9 +391,13 @@ onBeforeUnmount(() => {
 .scheduled-tasks-header h2 {
   margin: 0;
   font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -.01em;
 }
 
 .scheduled-tasks-subtitle {
+  display: block;
+  margin-top: 2px;
   color: var(--text-muted);
   font-size: 11px;
 }
@@ -406,7 +411,7 @@ onBeforeUnmount(() => {
 .scheduled-tasks-body {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 16px;
+  padding: 18px 22px 22px;
 }
 
 .scheduled-tasks-loading,

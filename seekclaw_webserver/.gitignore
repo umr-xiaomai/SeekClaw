@@ -41,3 +41,7 @@ Desktop.ini
 
 # Logs
 *.log
+# SQLite database
+App_Data/*.db
+App_Data/*.db-shm
+App_Data/*.db-wal

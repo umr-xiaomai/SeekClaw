@@ -1,0 +1,53 @@
+@page "/admin/settings"
+@attribute [Authorize(Roles = "SuperAdmin")]
+@rendermode InteractiveServer
+@inject AuthService Auth
+
+<PageTitle>站点设置 — SeekClaw 后台</PageTitle>
+
+<section class="page-section">
+    <header class="page-header">
+        <p class="doc-kicker">Settings</p>
+        <h1>站点设置</h1>
+        <p>控制普通用户注册入口。</p>
+    </header>
+
+    <div class="settings-card">
+        <div>
+            <h2>开放注册</h2>
+            <p>关闭后，新用户无法注册；第一个注册的用户永远是超级管理员。</p>
+        </div>
+        <label class="switch-row">
+            <input type="checkbox" @bind="_registrationEnabled" />
+            <span>@(_registrationEnabled ? "已开放注册" : "注册已关闭")</span>
+        </label>
+        <button class="btn btn-primary" disabled="@_saving" @onclick="SaveAsync">
+            @(_saving ? "保存中…" : "保存设置")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="alert alert-success mt-3">@_message</div>
+    }
+</section>
+
+@code {
+    private bool _registrationEnabled;
+    private bool _saving;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _registrationEnabled = await Auth.IsRegistrationEnabledAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _message = null;
+        await Auth.SetRegistrationEnabledAsync(_registrationEnabled);
+        _message = "设置已保存。";
+        _saving = false;
+    }
+}

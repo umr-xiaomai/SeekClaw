@@ -1,0 +1,56 @@
+@rendermode InteractiveServer
+@inject DocService Docs
+@inject MarkdownService Markdown
+@inject IJSRuntime JS
+
+@if (_page is null)
+{
+    <div class="empty-state">
+        <h1>文档不存在</h1>
+        <p>没有找到请求的 Markdown 文档。</p>
+        <a class="btn btn-outline-primary" href="/doc">返回文档中心</a>
+    </div>
+}
+else
+{
+    <div class="doc-view">
+        @if (_page.Outline.Count > 0)
+        {
+            <aside class="doc-toc">
+                <p class="doc-toc-title">@(Language == "en" ? "On this page" : "页面导航")</p>
+                <ul>
+                    @foreach (var heading in _page.Outline)
+                    {
+                        <li class="toc-level-@heading.Level">
+                            <a href="#@Uri.EscapeDataString(heading.Id)">@heading.Title</a>
+                        </li>
+                    }
+                </ul>
+            </aside>
+        }
+
+        <article class="markdown-body">
+            @((MarkupString)_page.Html)
+        </article>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string Language { get; set; } = "zh";
+
+    [Parameter]
+    public string? Slug { get; set; }
+
+    private DocPage? _page;
+
+    protected override void OnParametersSet()
+    {
+        _page = Docs.Get(Language, string.IsNullOrWhiteSpace(Slug) ? "index" : Slug);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("SeekClaw.enhanceMarkdown");
+    }
+}

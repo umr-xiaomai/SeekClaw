@@ -1,0 +1,29 @@
+@page "/admin"
+@attribute [Authorize(Roles = "SuperAdmin")]
+@rendermode InteractiveServer
+
+<PageTitle>后台管理 — SeekClaw</PageTitle>
+
+<section class="page-section">
+    <header class="page-header">
+        <p class="doc-kicker">Administration</p>
+        <h1>后台管理</h1>
+        <p>管理技能市场、用户与站点开放策略。</p>
+    </header>
+
+    <div class="admin-grid">
+        <a class="admin-card" href="/admin/skills">
+            <h2><i class="bi bi-stars"></i> 技能管理</h2>
+            <p>上传、编辑、下线和删除官方技能。</p>
+        </a>
+        <a class="admin-card" href="/admin/users">
+            <h2><i class="bi bi-people"></i> 用户管理</h2>
+            <p>查看已注册用户与角色。</p>
+        </a>
+        <a class="admin-card" href="/admin/settings">
+            <h2><i class="bi bi-sliders"></i> 站点设置</h2>
+            <p>控制注册开放与关闭。</p>
+        </a>
+    </div>
+</section>
+

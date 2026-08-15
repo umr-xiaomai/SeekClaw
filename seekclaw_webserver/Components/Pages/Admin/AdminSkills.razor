@@ -1,0 +1,305 @@
+@page "/admin/skills"
+@attribute [Authorize(Roles = "SuperAdmin")]
+@rendermode InteractiveServer
+@inject SkillService Skills
+@inject IJSRuntime JS
+
+<PageTitle>技能管理 — SeekClaw 后台</PageTitle>
+
+<section class="page-section">
+    <header class="page-header">
+        <p class="doc-kicker">Skills</p>
+        <h1>技能管理</h1>
+        <p>上传到 SQLite，公开展示在技能市场；关闭后仍保留数据但不再公开。</p>
+    </header>
+
+    <div class="admin-toolbar">
+        <button class="btn btn-primary" @onclick="StartNew"><i class="bi bi-plus-lg"></i> 新建技能</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert alert-danger">@_error</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="alert alert-success">@_message</div>
+    }
+
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>名称</th>
+                    <th>作者</th>
+                    <th>版本</th>
+                    <th>状态</th>
+                    <th>包</th>
+                    <th>更新时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var skill in _skills)
+                {
+                    <tr>
+                        <td>@skill.Id</td>
+                        <td>@skill.Name</td>
+                        <td>@skill.Author</td>
+                        <td>v@skill.Version</td>
+                        <td>
+                            @if (skill.Enabled)
+                            {
+                                <span class="badge text-bg-success">已发布</span>
+                            }
+                            else
+                            {
+                                <span class="badge text-bg-secondary">已关闭</span>
+                            }
+                        </td>
+                        <td>@(skill.HasPackage ? "是" : "否")</td>
+                        <td>@DateTimeOffset.FromUnixTimeMilliseconds(skill.UpdatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a class="btn btn-outline-secondary" href="/skills/@skill.Id" target="_blank"><i class="bi bi-eye"></i> 预览</a>
+                                @if (skill.HasPackage)
+                                {
+                                    <a class="btn btn-outline-secondary" href="/api/skills/@skill.Id/download"><i class="bi bi-download"></i> 下载</a>
+                                }
+                                <button class="btn btn-outline-primary" @onclick="() => EditAsync(skill.Id)"><i class="bi bi-pencil-square"></i> 编辑</button>
+                                <button class="btn btn-outline-warning" @onclick="() => ToggleAsync(skill)"><i class="bi @(skill.Enabled ? "bi-toggle-off" : "bi-toggle-on")"></i> @(skill.Enabled ? "关闭" : "开启")</button>
+                                <button class="btn btn-outline-danger" @onclick="() => DeleteAsync(skill)"><i class="bi bi-trash3"></i> 删除</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="page-section">
+    <div class="admin-form-card">
+        <h2>@(_editingId is null ? "新建技能" : "编辑技能")</h2>
+
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">名称 *</label>
+                <input class="form-control" @bind="_model.Name" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Slug（留空自动生成）</label>
+                <input class="form-control" @bind="_model.Slug" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">作者</label>
+                <input class="form-control" @bind="_model.Author" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">版本</label>
+                <input class="form-control" @bind="_model.Version" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">主页</label>
+                <input class="form-control" @bind="_model.Homepage" />
+            </div>
+            <div class="col-12">
+                <label class="form-label">简介 *</label>
+                <textarea class="form-control" rows="2" @bind="_model.Summary"></textarea>
+            </div>
+            <div class="col-12">
+                <label class="form-label">README Markdown *</label>
+                <textarea class="form-control code-editor" rows="12" @bind="_model.ReadmeMarkdown"></textarea>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">技能包（zip / md / json 等，最大 10MB）</label>
+                <InputFile class="form-control" OnChange="OnPackageSelected" accept=".zip,.md,.txt,.json" />
+                @if (_package is not null)
+                {
+                    <div class="form-text">已选择：@_package.Name（@_package.Size 字节）</div>
+                }
+                else if (_editingId is not null)
+                {
+                    <div class="form-text">不选择文件则保留现有技能包。</div>
+                }
+            </div>
+            <div class="col-md-6 d-flex align-items-end">
+                <label class="form-check">
+                    <input class="form-check-input" type="checkbox" @bind="_model.Enabled" />
+                    <span class="form-check-label">公开可见</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="mt-3">
+            <button class="btn btn-primary" disabled="@_saving" @onclick="SaveAsync">
+                <i class="bi bi-save"></i> @(_saving ? "保存中…" : "保存")
+            </button>
+            @if (_editingId is not null)
+            {
+                <button class="btn btn-outline-secondary ms-2" @onclick="StartNew"><i class="bi bi-x-lg"></i> 取消编辑</button>
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    private List<SkillSummary> _skills = new();
+    private SkillInput _model = new();
+    private int? _editingId;
+    private IBrowserFile? _package;
+    private bool _saving;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _skills = await Skills.ListAsync(includeDisabled: true);
+    }
+
+    private void StartNew()
+    {
+        _editingId = null;
+        _model = new SkillInput { Enabled = true, Version = "1.0.0" };
+        _package = null;
+        _error = null;
+        _message = null;
+    }
+
+    private async Task EditAsync(int id)
+    {
+        var detail = await Skills.GetDetailAsync(id);
+        if (detail is null)
+        {
+            _error = "未找到该技能。";
+            return;
+        }
+
+        _editingId = id;
+        _model = new SkillInput
+        {
+            Name = detail.Name,
+            Slug = detail.Slug,
+            Summary = detail.Summary,
+            ReadmeMarkdown = detail.ReadmeMarkdown,
+            Author = detail.Author,
+            Version = detail.Version,
+            Homepage = detail.Homepage,
+            Enabled = detail.Enabled
+        };
+        _package = null;
+        _error = null;
+        _message = null;
+    }
+
+    private void OnPackageSelected(InputFileChangeEventArgs e)
+    {
+        _package = e.File;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_model.Name))
+        {
+            _error = "技能名称不能为空。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_model.ReadmeMarkdown))
+        {
+            _error = "README Markdown 不能为空。";
+            return;
+        }
+
+        if (_package is not null && _package.Size > 10 * 1024 * 1024)
+        {
+            _error = "技能包不能超过 10MB。";
+            return;
+        }
+
+        _saving = true;
+        _error = null;
+        _message = null;
+
+        try
+        {
+            byte[]? data = null;
+            string? fileName = null;
+            string? contentType = null;
+
+            if (_package is not null)
+            {
+                await using var stream = _package.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                data = buffer.ToArray();
+                fileName = _package.Name;
+                contentType = string.IsNullOrWhiteSpace(_package.ContentType)
+                    ? "application/octet-stream"
+                    : _package.ContentType;
+            }
+
+            if (_editingId is null)
+            {
+                await Skills.CreateAsync(_model, data, fileName, contentType);
+                _message = "技能已创建。";
+            }
+            else
+            {
+                var updated = await Skills.UpdateAsync(
+                    _editingId.Value,
+                    _model,
+                    data,
+                    fileName,
+                    contentType,
+                    replacePackage: _package is not null);
+
+                if (updated is null)
+                {
+                    _error = "未找到要编辑的技能。";
+                    return;
+                }
+
+                _message = "技能已更新。";
+            }
+
+            StartNew();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"保存失败：{ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ToggleAsync(SkillSummary skill)
+    {
+        await Skills.SetEnabledAsync(skill.Id, !skill.Enabled);
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(SkillSummary skill)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"确认删除技能“{skill.Name}”吗？此操作不可恢复。");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        await Skills.DeleteAsync(skill.Id);
+        _message = "技能已删除。";
+        await LoadAsync();
+    }
+}
+
+

@@ -1,0 +1,59 @@
+@rendermode InteractiveServer
+@inject SkillService SkillCatalog
+
+<section class="page-section">
+    <header class="page-header">
+        <p class="doc-kicker">Skills Marketplace</p>
+        <h1>@(Language == "en" ? "Skills Marketplace" : "官方技能市场")</h1>
+        <p>@(Language == "en" ? "Browse, download, and reuse official and community-maintained SeekClaw skills." : "浏览、下载和复用 SeekClaw 官方与社区维护的技能。")</p>
+    </header>
+
+    @if (_loading)
+    {
+        <div class="text-muted">@(Language == "en" ? "Loading skills..." : "正在加载技能…")</div>
+    }
+    else if (_skills.Count == 0)
+    {
+        <div class="empty-state">
+            <h2>@(Language == "en" ? "No published skills" : "暂无已发布技能")</h2>
+            <p>@(Language == "en" ? "Skills published by the administrator will appear here." : "管理员在后台发布技能后会显示在这里。")</p>
+        </div>
+    }
+    else
+    {
+        <div class="skill-grid">
+            @foreach (var skill in _skills)
+            {
+                <a class="skill-card" href="@($"{Prefix}/{skill.Id}")">
+                    <div class="skill-card-head">
+                        <span class="skill-name">@skill.Name</span>
+                        <span class="badge text-bg-primary">v@skill.Version</span>
+                    </div>
+                    <p>@skill.Summary</p>
+                    <div class="skill-meta">
+                        <span>@skill.Author</span>
+                        @if (skill.HasPackage)
+                        {
+                            <span>@(Language == "en" ? "Downloadable" : "可下载")</span>
+                        }
+                    </div>
+                </a>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string Language { get; set; } = "zh";
+
+    private List<SkillSummary> _skills = new();
+    private bool _loading = true;
+    private string Prefix => Language == "en" ? "/en/skills" : "/skills";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _skills = await SkillCatalog.ListAsync(includeDisabled: false);
+        _loading = false;
+    }
+}

@@ -1,0 +1,57 @@
+@page "/admin/users"
+@attribute [Authorize(Roles = "SuperAdmin")]
+@rendermode InteractiveServer
+@inject AuthService Auth
+
+<PageTitle>用户管理 — SeekClaw 后台</PageTitle>
+
+<section class="page-section">
+    <header class="page-header">
+        <p class="doc-kicker">Users</p>
+        <h1>用户管理</h1>
+        <p>当前所有注册用户。</p>
+    </header>
+
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>用户名</th>
+                    <th>角色</th>
+                    <th>注册时间</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var user in _users)
+                {
+                    <tr>
+                        <td>@user.Id</td>
+                        <td>@user.Username</td>
+                        <td>
+                            @if (user.IsSuperAdmin)
+                            {
+                                <span class="badge text-bg-danger">超级管理员</span>
+                            }
+                            else
+                            {
+                                <span class="badge text-bg-secondary">普通用户</span>
+                            }
+                        </td>
+                        <td>@DateTimeOffset.FromUnixTimeMilliseconds(user.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@code {
+    private List<User> _users = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _users = await Auth.ListUsersAsync();
+    }
+}
+
