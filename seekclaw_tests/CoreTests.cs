@@ -8,6 +8,7 @@ using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Skills;
+using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Tests;
@@ -355,6 +356,25 @@ public sealed class CoreTests : IDisposable
         imported = manager.ImportGlobal(zipPath, workspace);
         var zipSkill = Assert.Single(imported, skill => skill.Name == "security-audit");
         Assert.Contains("Review for security issues.", File.ReadAllText(zipSkill.PromptFile));
+    }
+
+    [Fact]
+    public void ToolContext_GlobalTask_ResolvesRelativePathFromProcessCwd()
+    {
+        var workspace = new WorkspaceInfo
+        {
+            Root = Path.Combine(_dir, "global-root"),
+            ProjectKinds = [],
+            IsGlobal = true,
+        };
+        var context = new ToolContext
+        {
+            Workspace = workspace,
+            Events = new EventBus(),
+            Agent = new AgentConfig(),
+        };
+
+        Assert.Equal(Path.GetFullPath("notes.md"), context.ResolvePath("notes.md"));
     }
 
     [Fact]

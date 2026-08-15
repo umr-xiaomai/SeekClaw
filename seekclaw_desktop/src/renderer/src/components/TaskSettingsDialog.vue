@@ -41,7 +41,7 @@ function showWorkspace(): void {
       <header class="task-settings-header">
         <div>
           <h2 id="task-settings-title">任务设置</h2>
-          <p>{{ project ? '任务始终归属于创建它的项目。' : '全局任务不绑定项目或工作目录。' }}</p>
+          <p>{{ project ? '任务始终归属于创建它的项目。' : '任务不绑定项目或工作目录。' }}</p>
         </div>
         <button class="icon-button" title="关闭" @click="emit('close')"><X :size="18" /></button>
       </header>
@@ -55,12 +55,12 @@ function showWorkspace(): void {
         <div class="task-settings-field">
           <span>工作目录</span>
           <div class="workspace-path-control">
-            <input :value="project?.path || '无工作目录（全局任务）'" readonly />
+            <input :value="project?.path || '无工作目录（任务）'" readonly />
             <button v-if="project" class="secondary-button" @click="showWorkspace">
               <FolderOpen :size="16" />打开
             </button>
           </div>
-          <small>{{ project ? '工作目录由所属项目决定，避免任务在项目之间意外漂移。' : '全局任务不绑定项目，也不能使用本地文件和终端工具。' }}</small>
+          <small>{{ project ? '工作目录由所属项目决定，避免任务在项目之间意外漂移。' : '任务不绑定项目，但可以正常读写文件和运行终端，只是没有固定的项目工作目录。' }}</small>
         </div>
       </div>
 

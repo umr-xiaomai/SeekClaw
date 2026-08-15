@@ -656,9 +656,6 @@ public sealed class Agent(
             ? toolRegistry.All
             : toolRegistry.All.Where(t => !disabled.Contains(t.Name, StringComparer.OrdinalIgnoreCase)).ToList();
 
-        if (workspace.IsGlobal)
-            available = available.Where(tool => !tool.RequiresWorkspace).ToList();
-
         // The per-session "联网" toggle controls every network tool together
         // (web_search + web_fetch); when off the model never sees them.
         if (!networkEnabled)

@@ -211,7 +211,7 @@ const composerCaption = computed(() => {
 const settingsThread = computed(() => threads.value.find((thread) => thread.id === taskSettingsThreadId.value))
 const settingsProject = computed(() => projects.value.find((project) => project.id === settingsThread.value?.projectId))
 const conversationTitle = computed(() =>
-  activeThread.value?.title || activeProject.value?.name || '全局任务')
+  activeThread.value?.title || activeProject.value?.name || '任务')
 const runtimeConnectionLabel = computed(() => {
   if (reconnecting.value) return `正在重连 ${reconnectAttempt.value}/${RUNTIME_RECONNECT_ATTEMPTS}`
   return 'Runtime 离线'
@@ -1244,8 +1244,8 @@ async function archiveGlobalTasks(): Promise<void> {
   const targets = threads.value.filter((thread) => !thread.projectId && !thread.archived)
   if (targets.length === 0 || targets.some((thread) => thread.running)) return
   if (!await confirmAction({
-    title: '归档全局任务',
-    message: `归档全部 ${targets.length} 个全局任务？`,
+    title: '归档任务',
+    message: `归档全部 ${targets.length} 个任务？`,
     confirmLabel: '全部归档'
   })) return
 
@@ -1289,8 +1289,8 @@ async function deleteGlobalTasks(): Promise<void> {
   const targets = threads.value.filter((thread) => !thread.projectId)
   if (targets.length === 0 || targets.some((thread) => thread.running)) return
   if (!await confirmAction({
-    title: '删除全部全局任务',
-    message: `永久删除全部 ${targets.length} 个全局任务？此操作无法撤销。`,
+    title: '删除全部任务',
+    message: `永久删除全部 ${targets.length} 个任务？此操作无法撤销。`,
     confirmLabel: '全部删除',
     danger: true
   })) return
@@ -1791,7 +1791,7 @@ watch(theme, applyTheme)
               <Globe2 v-if="globalTaskActive" :size="20" />
               <Folder v-else :size="20" />
               <strong>{{ conversationTitle }}</strong>
-              <!--  <small v-if="activeThread">{{ activeProject?.name || '全局任务' }}</small>-->
+              <!--  <small v-if="activeThread">{{ activeProject?.name || '任务' }}</small>-->
               <span v-if="activeThread?.running && activeThread?.phase" class="task-phase-chip">
                 <span class="phase-dot" />{{ activeThread.phase }}
               </span>
@@ -1876,7 +1876,7 @@ watch(theme, applyTheme)
             </div>
             <div v-else-if="activeThread" class="empty-state">
               <h1>今天从哪里开始？</h1>
-              <p>{{ activeProject?.name || '全局任务 · 无工作目录' }}</p>
+              <p>{{ activeProject?.name || '任务 · 无工作目录' }}</p>
               <div v-if="!activeThread?.archived" class="starter-prompts" aria-label="快速开始">
                 <button v-for="prompt in starterPrompts" :key="prompt.label" type="button" class="starter-prompt-card"
                   :data-tone="prompt.tone" @click="useStarterPrompt(prompt.label)">

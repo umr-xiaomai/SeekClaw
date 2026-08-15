@@ -313,6 +313,8 @@ public sealed class ToolAndAgentTests
             Assert.Contains("web_search", onlineNames);
             Assert.Contains("web_fetch", onlineNames);
             Assert.Contains("web_fetch", onlineNames);
+            Assert.Contains("read_file", onlineNames);
+            Assert.Contains("write_file", onlineNames);
 
             // Global task with the toggle OFF: neither web tool is sent.
             capture.Reset();
@@ -321,6 +323,8 @@ public sealed class ToolAndAgentTests
             var offlineNames = capture.LastRequest!.Tools.Select(tool => tool.Name).ToList();
             Assert.DoesNotContain("web_search", offlineNames);
             Assert.DoesNotContain("web_fetch", offlineNames);
+            Assert.Contains("read_file", offlineNames);
+            Assert.Contains("write_file", offlineNames);
         }
         finally
         {

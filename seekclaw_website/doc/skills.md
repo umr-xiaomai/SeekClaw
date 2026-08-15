@@ -8,7 +8,7 @@ Skill 是一个目录化 Prompt 扩展。每个已启用 Skill 的 Prompt 会在
 - 工作区：`<workspace>/.seekclaw/skills/<skill-name>/`
 - 兼容旧结构：如果项目根目录已经有 `skills/`，继续使用该目录。
 
-同名工作区 Skill 覆盖全局 Skill。全局任务不绑定项目 Skill 根目录，但仍可使用全局 Skill。
+同名工作区 Skill 覆盖全局 Skill。不绑定项目的任务没有项目 Skill 根目录，但仍可使用全局 Skill。
 
 ## 文件结构
 

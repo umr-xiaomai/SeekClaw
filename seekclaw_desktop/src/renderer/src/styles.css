@@ -484,11 +484,28 @@ select:focus-visible {
   padding-top: 0;
 }
 
+.tasks-section {
+  flex: 0 0 auto;
+  max-height: 220px;
+  padding-bottom: 12px;
+  overflow-y: auto;
+}
+
 .project-section {
   min-height: 0;
   flex: 1;
   padding-bottom: 12px;
   overflow-y: auto;
+}
+
+.task-section-heading {
+  position: relative;
+}
+
+.section-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .project-group {

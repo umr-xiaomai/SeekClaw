@@ -16,7 +16,7 @@ public static class PromptVariables
         var hasWorkspace = workspace is { IsGlobal: false };
         var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["cwd"] = hasWorkspace ? workspace!.Root : "",
+            ["cwd"] = hasWorkspace ? workspace!.Root : Directory.GetCurrentDirectory(),
             ["datetime"] = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"),
             ["os"] = RuntimeInformation.OSDescription,
             ["platform"] = RuntimeInformation.RuntimeIdentifier,

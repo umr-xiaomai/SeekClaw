@@ -34,7 +34,7 @@ const projectFilter = ref('all')
 
 const taskFilterOptions = [
   { value: 'all', label: '所有任务' },
-  { value: 'global', label: '全局任务' },
+  { value: 'global', label: '不绑定项目' },
   { value: 'project', label: '项目任务' }
 ]
 
@@ -68,7 +68,7 @@ const archiveGroups = computed(() => {
     }
     groups.set(id, {
       id,
-      name: project?.name ?? '全局任务',
+      name: project?.name ?? '任务',
       path: project?.path,
       threads: [thread]
     })

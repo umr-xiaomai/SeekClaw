@@ -19,8 +19,11 @@ public sealed class ToolContext
     /// <summary>Task identity used when acquiring file write locks.</summary>
     public string Owner { get; init; } = "";
 
-    public string ResolvePath(string path) =>
-        Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(Workspace.Root, path));
+    public string ResolvePath(string path)
+    {
+        var root = Workspace.IsGlobal ? Directory.GetCurrentDirectory() : Workspace.Root;
+        return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
+    }
 
     public string Truncate(string text, string label = "output")
     {

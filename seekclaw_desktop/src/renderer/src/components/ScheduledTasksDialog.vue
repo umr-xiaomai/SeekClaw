@@ -52,7 +52,7 @@ const cronPresets = [
 const form = reactive<ScheduleForm>({ name: '', workspace: '', prompt: '', cron: '0 9 * * *', enabled: true })
 
 const workspaceOptions = computed(() => [
-  { value: '', label: '全局（不绑定项目）', description: '全局范围' },
+  { value: '', label: '不绑定项目', description: '无固定工作目录' },
   ...props.projects.map((project) => ({ value: project.path, label: project.name, description: project.path }))
 ])
 
@@ -106,7 +106,7 @@ function statusClass(task: ScheduledTaskInfo): string {
 }
 
 function taskWorkspaceName(task: ScheduledTaskInfo): string {
-  if (!task.workspace) return '全局'
+  if (!task.workspace) return '不绑定项目'
   const project = props.projects.find((item) => item.path === task.workspace)
   return project?.name ?? task.workspace
 }

@@ -5,7 +5,6 @@ import {
   CalendarClock,
   CircleHelp,
   Folder,
-  Globe2,
   LoaderCircle,
   MoreHorizontal,
   Plus,
@@ -50,7 +49,6 @@ const emit = defineEmits<{
 
 const searching = ref(false)
 const query = ref('')
-const globalExpanded = ref(true)
 const expandedProjects = ref(new Set<string>())
 const menuKey = ref('')
 const menuPlacement = ref<'up' | 'down'>('down')
@@ -75,10 +73,6 @@ const visibleGlobalThreads = computed(() => props.threads
   .filter((thread) => !normalizedQuery.value || thread.title.toLocaleLowerCase().includes(normalizedQuery.value))
   .sort((left, right) => right.updatedAt - left.updatedAt))
 
-function toggleGlobal(): void {
-  globalExpanded.value = !globalExpanded.value
-}
-
 function toggleProject(project: ProjectItem): void {
   const next = new Set(expandedProjects.value)
   if (next.has(project.id)) next.delete(project.id)
@@ -94,7 +88,7 @@ function toggleMenu(key: string, event?: MouseEvent): void {
 
   const trigger = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
   const row = trigger?.closest<HTMLElement>('.thread-heading-row, .project-heading-row')
-  const section = trigger?.closest<HTMLElement>('.project-section')
+  const section = trigger?.closest<HTMLElement>('.sidebar-section')
   const triggerRect = trigger?.getBoundingClientRect()
   const rowRect = row?.getBoundingClientRect()
   const sectionRect = section?.getBoundingClientRect()
@@ -151,7 +145,7 @@ onBeforeUnmount(() => {
     <Transition name="collapse">
       <div v-if="searching" class="sidebar-search">
         <Search :size="15" />
-        <input v-model="query" autofocus placeholder="搜索所有项目中的任务" />
+        <input v-model="query" autofocus placeholder="搜索任务" />
       </div>
     </Transition>
 
@@ -178,64 +172,60 @@ onBeforeUnmount(() => {
       </button>
     </nav>
 
+    <section class="sidebar-section tasks-section">
+      <div class="section-heading task-section-heading">
+        <span>任务</span>
+        <div class="section-heading-actions">
+          <button class="icon-button compact" title="新建任务" @click="emit('newTask')">
+            <Plus :size="15" />
+          </button>
+          <button class="icon-button compact" aria-label="任务菜单" @click.stop="toggleMenu('global', $event)">
+            <MoreHorizontal :size="16" />
+          </button>
+        </div>
+        <Transition name="context-menu">
+          <div v-if="menuKey === 'global'" class="sidebar-context-menu project-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
+            <button @click="runAction(() => emit('newTask'))"><SquarePen :size="15" />新建任务</button>
+            <button @click="runAction(() => emit('archiveGlobalTasks'))"><Archive :size="15" />归档全部任务</button>
+            <button class="danger" @click="runAction(() => emit('deleteGlobalTasks'))"><Trash2 :size="15" />删除全部任务</button>
+          </div>
+        </Transition>
+      </div>
+
+      <div class="task-list">
+        <div
+          v-for="thread in visibleGlobalThreads"
+          :key="thread.id"
+          class="thread-heading-row"
+          :class="{ active: thread.id === activeThreadId }"
+        >
+          <button class="thread-row" @click="emit('selectThread', thread.id)">
+            <span>{{ thread.title }}</span>
+            <LoaderCircle v-if="thread.running" class="thread-running-spinner" :size="15" aria-label="运行中" />
+          </button>
+          <button
+            class="icon-button compact row-menu-button"
+            :aria-label="`${thread.title} 任务菜单`"
+            @click.stop="toggleMenu(`thread:${thread.id}`, $event)"
+          ><MoreHorizontal :size="15" /></button>
+          <Transition name="context-menu">
+            <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
+              <button @click="runAction(() => emit('taskSettings', thread))"><SlidersHorizontal :size="15" />任务设置</button>
+              <button @click="runAction(() => emit('archiveTask', thread))"><Archive :size="15" />归档任务</button>
+              <button class="danger" @click="runAction(() => emit('deleteTask', thread))"><Trash2 :size="15" />删除任务</button>
+            </div>
+          </Transition>
+        </div>
+        <p v-if="visibleGlobalThreads.length === 0" class="project-empty">无任务</p>
+      </div>
+    </section>
+
     <section class="sidebar-section project-section">
       <div class="section-heading">
         <span>项目</span>
         <button class="icon-button compact" title="添加项目" @click="emit('openWorkspace')">
           <Plus :size="15" />
         </button>
-      </div>
-
-      <div class="project-group global-task-group">
-        <div class="project-heading-row">
-          <button class="project-row" title="不绑定工作目录的任务" @click="toggleGlobal">
-            <Globe2 :size="17" />
-            <span>全局任务</span>
-          </button>
-          <button
-            class="icon-button compact row-menu-button"
-            aria-label="全局任务菜单"
-            @click.stop="toggleMenu('global', $event)"
-          >
-            <MoreHorizontal :size="16" />
-          </button>
-          <Transition name="context-menu">
-            <div v-if="menuKey === 'global'" class="sidebar-context-menu project-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
-              <button @click="runAction(() => emit('newTask'))"><SquarePen :size="15" />新建全局任务</button>
-              <button @click="runAction(() => emit('archiveGlobalTasks'))"><Archive :size="15" />归档全部任务</button>
-              <button class="danger" @click="runAction(() => emit('deleteGlobalTasks'))"><Trash2 :size="15" />删除全部任务</button>
-            </div>
-          </Transition>
-        </div>
-
-        <Transition name="project-collapse">
-          <div v-if="globalExpanded" class="project-tasks">
-            <div
-              v-for="thread in visibleGlobalThreads"
-              :key="thread.id"
-              class="thread-heading-row"
-              :class="{ active: thread.id === activeThreadId }"
-            >
-              <button class="thread-row" @click="emit('selectThread', thread.id)">
-                <span>{{ thread.title }}</span>
-                <LoaderCircle v-if="thread.running" class="thread-running-spinner" :size="15" aria-label="运行中" />
-              </button>
-              <button
-                class="icon-button compact row-menu-button"
-                :aria-label="`${thread.title} 任务菜单`"
-                @click.stop="toggleMenu(`thread:${thread.id}`, $event)"
-              ><MoreHorizontal :size="15" /></button>
-              <Transition name="context-menu">
-                <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
-                  <button @click="runAction(() => emit('taskSettings', thread))"><SlidersHorizontal :size="15" />任务设置</button>
-                  <button @click="runAction(() => emit('archiveTask', thread))"><Archive :size="15" />归档任务</button>
-                  <button class="danger" @click="runAction(() => emit('deleteTask', thread))"><Trash2 :size="15" />删除任务</button>
-                </div>
-              </Transition>
-            </div>
-            <p v-if="visibleGlobalThreads.length === 0" class="project-empty">无任务</p>
-          </div>
-        </Transition>
       </div>
 
       <div v-for="project in projects" :key="project.id" class="project-group">
@@ -254,9 +244,7 @@ onBeforeUnmount(() => {
           <Transition name="context-menu">
             <div v-if="menuKey === `project:${project.id}`" class="sidebar-context-menu project-menu" :class="{ 'menu-up': menuPlacement === 'up' }">
               <button @click="runAction(() => emit('newTask', project.id))"><SquarePen :size="15" />新建任务</button>
-              <button
-                @click="runAction(() => emit('archiveProjectTasks', project))"
-              ><Archive :size="15" />归档全部任务</button>
+              <button @click="runAction(() => emit('archiveProjectTasks', project))"><Archive :size="15" />归档全部任务</button>
               <button class="danger" @click="runAction(() => emit('deleteProjectTasks', project))"><Trash2 :size="15" />删除全部任务</button>
               <button class="danger" @click="runAction(() => emit('deleteProject', project))"><Trash2 :size="15" />删除项目</button>
             </div>
