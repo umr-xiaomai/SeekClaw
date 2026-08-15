@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO.Compression;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
@@ -324,6 +325,36 @@ public sealed class CoreTests : IDisposable
         manager.SetEnabled("unity-helper", false);
         skill = Assert.Single(manager.Discover(workspace), s => s.Name == "unity-helper");
         Assert.False(skill.Enabled);
+    }
+
+    [Fact]
+    public void SkillManager_ImportsMarkdownAndZipIntoGlobalSkills()
+    {
+        var workspace = NewWorkspace("skill-import-workspace");
+        var globalSkills = Path.Combine(_dir, "global-skills");
+        Directory.CreateDirectory(globalSkills);
+        var configStore = new ConfigStore(
+            Path.Combine(_dir, "skill-import-config.json"),
+            Path.Combine(_dir, "skill-import-state.json"));
+        var manager = new SkillManager(configStore, new PromptRegistry(), globalSkills);
+
+        var markdown = Path.Combine(_dir, "code-review.md");
+        File.WriteAllText(markdown, "# Code Review\nReview changes carefully.");
+        var imported = manager.ImportGlobal(markdown, workspace);
+        var markdownSkill = Assert.Single(imported, skill => skill.Name == "code-review");
+        Assert.Equal(Path.GetFullPath(globalSkills), Path.GetDirectoryName(markdownSkill.Directory));
+        Assert.Contains("Review changes carefully.", File.ReadAllText(markdownSkill.PromptFile));
+
+        var zipSource = Path.Combine(_dir, "security-audit");
+        Directory.CreateDirectory(zipSource);
+        File.WriteAllText(Path.Combine(zipSource, "skill.yaml"), "name: security-audit\ndescription: Security review\n");
+        File.WriteAllText(Path.Combine(zipSource, "prompt.txt"), "Review for security issues.");
+        var zipPath = Path.Combine(_dir, "security-audit.zip");
+        ZipFile.CreateFromDirectory(zipSource, zipPath);
+
+        imported = manager.ImportGlobal(zipPath, workspace);
+        var zipSkill = Assert.Single(imported, skill => skill.Name == "security-audit");
+        Assert.Contains("Review for security issues.", File.ReadAllText(zipSkill.PromptFile));
     }
 
     [Fact]

@@ -591,6 +591,11 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.ListSkills()), ct).ConfigureAwait(false);
                         break;
 
+                    case "skill.import":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.ImportSkill(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
                     case "skill.toggle":
                         await RunAdminAsync(writer, writerGate, id, true,
                             _ => Task.FromResult(_admin.ToggleSkill(Params(request))), ct).ConfigureAwait(false);
@@ -1194,7 +1199,7 @@ public sealed class DaemonServer : IAsyncDisposable
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
             "model.list", "model.catalog", "model.switch", "model.test", "model.update",
             "mcp.list", "mcp.upsert", "mcp.remove", "mcp.reload",
-            "skill.list", "skill.toggle", "usage.get", "doctor", "doctor.run",
+            "skill.list", "skill.import", "skill.toggle", "usage.get", "doctor", "doctor.run",
             "project.list", "project.upsert", "project.remove",
             "session.list", "session.get", "session.update", "session.archive", "session.delete",
             "session.resume", "session.new",

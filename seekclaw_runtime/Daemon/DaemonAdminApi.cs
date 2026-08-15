@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text;
+using System.IO;
 using Cronos;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
@@ -625,6 +626,30 @@ internal sealed class DaemonAdminApi(
             });
         }
         return skills.ToJsonString();
+    }
+
+    public string ImportSkill(JsonObject parameters)
+    {
+        var path = RequiredString(parameters, "path");
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new DaemonRequestException($"Invalid skill import path: {ex.Message}");
+        }
+
+        try
+        {
+            runtime.Skills.ImportGlobal(fullPath, runtime.Workspace);
+            return ListSkills();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            throw new DaemonRequestException($"Skill import failed: {ex.Message}");
+        }
     }
 
     public string ToggleSkill(JsonObject parameters)

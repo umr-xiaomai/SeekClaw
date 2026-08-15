@@ -19,9 +19,9 @@ import {
   Save,
   Search,
   Settings2,
-  Store,
   Sun,
   Trash2,
+  Upload,
   Wrench,
   X
 } from '@lucide/vue'
@@ -794,6 +794,23 @@ async function toggleSkill(skill: SkillInfo): Promise<void> {
   }
 }
 
+async function importSkills(): Promise<void> {
+  if (!props.daemonConnected) return
+  const selection = await window.seekclaw.selectSkillFiles()
+  if (selection.paths.length === 0) return
+
+  beginAction('skill.import')
+  try {
+    for (const path of selection.paths)
+      skills.value = await requestJson<SkillInfo[]>('skill.import', { path })
+    notice.value = `已导入 ${selection.paths.length} 个全局技能`
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
+}
+
 function normalizedSection(value?: SettingsSection): SettingsSection {
   if (props.page === 'extensions') return value === 'skills' ? 'skills' : 'mcp'
   return value ?? 'general'
@@ -1084,11 +1101,14 @@ watch(section, () => { void loadCurrentSection() })
           <template v-else-if="section === 'skills'">
             <div class="settings-section-heading">
               <div><h3>技能</h3><p>{{ skills.filter((skill) => skill.enabled).length }} 已启用</p></div>
-              <button class="secondary-button" @click="emit('openOfficialSkills')"><Store :size="15" />官方技能市场</button>
+              <button class="secondary-button" :disabled="action === 'skill.import'" @click="importSkills">
+                <LoaderCircle v-if="action === 'skill.import'" class="spin" :size="15" />
+                <Upload v-else :size="15" />导入技能
+              </button>
               <button class="icon-button" title="刷新" @click="loadCurrentSection"><RefreshCw :size="17" /></button>
             </div>
             <section class="settings-list">
-              <div v-if="skills.length === 0" class="empty-settings">当前工作区没有发现技能</div>
+              <div v-if="skills.length === 0" class="empty-settings">尚未发现技能，可导入 .md 或 .zip 文件</div>
               <div v-for="skill in skills" :key="skill.name" class="settings-list-row skill-row">
                 <Wrench :size="17" />
                 <div class="list-main">

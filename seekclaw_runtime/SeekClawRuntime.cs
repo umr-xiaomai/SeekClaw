@@ -235,7 +235,9 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IProjectStore, ProjectStore>();
         services.AddSingleton<IScheduleStore, ScheduleStore>();
         services.AddSingleton<IVerifier, BuildVerifier>();
-        services.AddSingleton<SkillManager>();
+        services.AddSingleton(sp => new SkillManager(
+            sp.GetRequiredService<IConfigStore>(),
+            sp.GetRequiredService<IPromptRegistry>()));
         services.AddSingleton<ISkillManager>(sp => sp.GetRequiredService<SkillManager>());
         services.AddSingleton<IMcpManager, McpManager>();
         // Central file write-lock coordinator shared by all concurrent turns in the

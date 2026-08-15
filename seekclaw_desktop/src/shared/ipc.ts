@@ -89,10 +89,16 @@ export interface DesktopImageSelection {
   warning?: string
 }
 
+export interface DesktopSkillFileSelection {
+  paths: string[]
+  warning?: string
+}
+
 export interface DesktopApi {
   getAppInfo(): Promise<AppInfo>
   selectWorkspace(): Promise<string | null>
   selectImages(): Promise<DesktopImageSelection>
+  selectSkillFiles(): Promise<DesktopSkillFileSelection>
   showItemInFolder(path: string): Promise<void>
   closeApp(): Promise<void>
   setTheme(theme: AppearanceTheme): Promise<void>

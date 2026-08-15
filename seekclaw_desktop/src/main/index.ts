@@ -274,6 +274,19 @@ function registerIpc(): void {
     return { images, warning: warnings.join(' ') || undefined }
   })
 
+  ipcMain.handle('app:select-skill-files', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: '导入全局技能',
+      filters: [{ name: 'Skill 文件', extensions: ['md', 'zip'] }],
+      properties: ['openFile', 'multiSelections']
+    }
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled) return { paths: [] }
+    return { paths: result.filePaths }
+  })
+
   ipcMain.handle('app:show-item', async (_event, path: string) => {
     shell.showItemInFolder(path)
   })
