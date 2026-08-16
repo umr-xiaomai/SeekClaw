@@ -62,6 +62,38 @@ public sealed class DaemonServer : IAsyncDisposable
     private readonly Dictionary<long, ClientSink> _clients = [];
     private long _nextClientId;
 
+    private sealed class SessionUsageAccumulator
+    {
+        public long LlmRounds { get; set; }
+        public long ExecutionSteps { get; set; }
+        public long InputTokens { get; set; }
+        public long TotalInputTokens { get; set; }
+        public long CachedInputTokens { get; set; }
+        public long OutputTokens { get; set; }
+        public long OutputElapsedMs { get; set; }
+        public int LastWorkflowStep { get; set; }
+
+        public SessionUsage ToUsage() => new()
+        {
+            LlmRounds = LlmRounds,
+            ExecutionSteps = ExecutionSteps,
+            InputTokens = InputTokens,
+            TotalInputTokens = TotalInputTokens,
+            CachedInputTokens = CachedInputTokens,
+            OutputTokens = OutputTokens,
+            OutputElapsedMs = OutputElapsedMs,
+        };
+
+        public bool HasActivity =>
+            LlmRounds > 0
+            || ExecutionSteps > 0
+            || InputTokens > 0
+            || TotalInputTokens > 0
+            || CachedInputTokens > 0
+            || OutputTokens > 0
+            || OutputElapsedMs > 0;
+    }
+
     public DaemonServer(SeekClawRuntime runtime)
         : this(runtime, null, runtime.Workspaces.CreateGlobal())
     {
@@ -890,8 +922,9 @@ public sealed class DaemonServer : IAsyncDisposable
             : null;
         var runtime = turnRuntime ?? _runtime;
         using var subscription = runtime.Events.Subscribe();
+        var sessionUsage = new SessionUsageAccumulator();
         var forwarder = ForwardEventsAsync(
-            subscription, writer, writerGate, id, session.Header.Id, connectionCt);
+            subscription, writer, writerGate, id, session.Header.Id, connectionCt, sessionUsage);
         AgentTurnResult? result = null;
         Exception? failure = null;
 
@@ -920,6 +953,25 @@ public sealed class DaemonServer : IAsyncDisposable
             subscription.Dispose();
             try { await forwarder.ConfigureAwait(false); }
             catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
+            if (sessionUsage.HasActivity)
+            {
+                try
+                {
+                    var persisted = _runtime.Sessions.RecordUsage(workspace, session.Header.Id, sessionUsage.ToUsage());
+                    session.Header.LlmRounds = persisted.LlmRounds;
+                    session.Header.ExecutionSteps = persisted.ExecutionSteps;
+                    session.Header.InputTokens = persisted.InputTokens;
+                    session.Header.TotalInputTokens = persisted.TotalInputTokens;
+                    session.Header.CachedInputTokens = persisted.CachedInputTokens;
+                    session.Header.OutputTokens = persisted.OutputTokens;
+                    session.Header.OutputElapsedMs = persisted.OutputElapsedMs;
+                    session.Header.UpdatedAt = persisted.UpdatedAt;
+                }
+                catch
+                {
+                    // Usage persistence must not fail the turn.
+                }
+            }
             _fileLocks.ReleaseAll(owner);
         }
 
@@ -946,10 +998,12 @@ public sealed class DaemonServer : IAsyncDisposable
         SemaphoreSlim writerGate,
         long id,
         string sessionId,
-        CancellationToken ct)
+        CancellationToken ct,
+        SessionUsageAccumulator usage)
     {
         await foreach (var evt in subscription.Reader.ReadAllAsync(ct).ConfigureAwait(false))
         {
+            AccumulateSessionUsage(usage, evt);
             // ErrorEvent is a runtime diagnostic, not a terminal protocol response. The turn
             // result below sends the final `error` envelope with the provider's full detail.
             // Forwarding this event as `error` would terminate desktop clients early and lose
@@ -1002,18 +1056,18 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["model"] = model.ModelId,
                         ["step"] = model.Step,
                     }),
-                UsageRecordedEvent usage => (
+                UsageRecordedEvent tokenEvent => (
                     Name: (string?)"usage",
-                    Data: $"{usage.ProviderId}/{usage.ModelId}",
+                    Data: $"{tokenEvent.ProviderId}/{tokenEvent.ModelId}",
                     Details: new JsonObject
                     {
-                        ["provider"] = usage.ProviderId,
-                        ["model"] = usage.ModelId,
-                        ["inputTokens"] = usage.InputTokens,
-                        ["outputTokens"] = usage.OutputTokens,
-                        ["totalInputTokens"] = usage.TotalInputTokens,
-                        ["cachedInputTokens"] = usage.CachedInputTokens,
-                        ["elapsedMs"] = usage.Elapsed.TotalMilliseconds,
+                        ["provider"] = tokenEvent.ProviderId,
+                        ["model"] = tokenEvent.ModelId,
+                        ["inputTokens"] = tokenEvent.InputTokens,
+                        ["outputTokens"] = tokenEvent.OutputTokens,
+                        ["totalInputTokens"] = tokenEvent.TotalInputTokens,
+                        ["cachedInputTokens"] = tokenEvent.CachedInputTokens,
+                        ["elapsedMs"] = tokenEvent.Elapsed.TotalMilliseconds,
                     }),
                 WorkflowEvent workflow => (
                     Name: (string?)"workflow",
@@ -1029,6 +1083,30 @@ public sealed class DaemonServer : IAsyncDisposable
             };
             if (payload.Name is not null)
                 await WriteAsync(writer, writerGate, id, payload.Name, payload.Data, ct, sessionId, payload.Details).ConfigureAwait(false);
+        }
+    }
+
+    private static void AccumulateSessionUsage(SessionUsageAccumulator usage, RuntimeEvent evt)
+    {
+        switch (evt)
+        {
+            case ModelInvocationStartedEvent:
+                usage.LlmRounds++;
+                break;
+            case WorkflowEvent workflow:
+                if (workflow.Step > usage.LastWorkflowStep)
+                {
+                    usage.ExecutionSteps += workflow.Step - usage.LastWorkflowStep;
+                    usage.LastWorkflowStep = workflow.Step;
+                }
+                break;
+            case UsageRecordedEvent token:
+                usage.InputTokens += token.InputTokens;
+                usage.TotalInputTokens += token.TotalInputTokens;
+                usage.CachedInputTokens += token.CachedInputTokens;
+                usage.OutputTokens += token.OutputTokens;
+                usage.OutputElapsedMs += (long)token.Elapsed.TotalMilliseconds;
+                break;
         }
     }
 

@@ -637,7 +637,8 @@ public sealed class Agent(
 
         var modeInstruction = mode switch
         {
-            AgentMode.Plan => "\n\n[MODE: PLAN]\nYou are in PLAN MODE. Focus on researching, analyzing code, and outputting structured step-by-step implementation plans. File modifications and write tools are disabled in this mode.",
+            AgentMode.Plan when workspace.IsGlobal => "\n\n[MODE: PLAN]\nYou are in PLAN MODE. Focus on researching, analyzing code, and outputting structured step-by-step implementation plans. File modifications and write tools are disabled in this mode.",
+            AgentMode.Plan => "",
             AgentMode.ReadOnly => "\n\n[MODE: READ-ONLY]\nYou are in READ-ONLY MODE. You can read, search, and analyze files, but you cannot modify files or execute mutating commands.",
             AgentMode.Auto => "\n\n[MODE: AUTO]\nYou are in AUTO MODE. Take full initiative to perform edits, multi-step repairs, and automatic verification loops.",
             _ => "",

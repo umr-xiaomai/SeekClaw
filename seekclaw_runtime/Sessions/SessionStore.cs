@@ -38,6 +38,7 @@ public interface ISessionStore
         bool? archived = null,
         ReasoningLevel? reasoningLevel = null,
         bool? networkEnabled = null);
+    SessionHeader RecordUsage(WorkspaceInfo workspace, string sessionId, SessionUsage usage);
     void Delete(WorkspaceInfo workspace, string sessionId);
     void DeleteAll(WorkspaceInfo workspace);
 }
@@ -123,7 +124,10 @@ public sealed class SessionStore : ISessionStore
         using var connection = _database.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = $"""
-            SELECT id, title, workspace, archived, reasoning_level, network_enabled, created_at, updated_at
+            SELECT id, title, workspace, archived, reasoning_level, network_enabled,
+                   llm_rounds, execution_steps, input_tokens, total_input_tokens,
+                   cached_input_tokens, output_tokens, output_elapsed_ms,
+                   created_at, updated_at
             FROM sessions
             WHERE scope = $scope {(includeArchived ? "" : "AND archived = 0")}
             ORDER BY updated_at DESC;
@@ -324,6 +328,43 @@ public sealed class SessionStore : ISessionStore
         }
     }
 
+    public SessionHeader RecordUsage(WorkspaceInfo workspace, string sessionId, SessionUsage usage)
+    {
+        ValidateSessionId(sessionId);
+        EnsureLegacyImported(workspace);
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+        lock (GateFor(scope, sessionId))
+        {
+            using var connection = _database.OpenConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE sessions SET
+                    llm_rounds = llm_rounds + $llmRounds,
+                    execution_steps = execution_steps + $executionSteps,
+                    input_tokens = input_tokens + $inputTokens,
+                    total_input_tokens = total_input_tokens + $totalInputTokens,
+                    cached_input_tokens = cached_input_tokens + $cachedInputTokens,
+                    output_tokens = output_tokens + $outputTokens,
+                    output_elapsed_ms = output_elapsed_ms + $outputElapsedMs,
+                    updated_at = $updatedAt
+                WHERE scope = $scope AND id = $sessionId;
+                """;
+            command.Parameters.AddWithValue("$llmRounds", usage.LlmRounds);
+            command.Parameters.AddWithValue("$executionSteps", usage.ExecutionSteps);
+            command.Parameters.AddWithValue("$inputTokens", usage.InputTokens);
+            command.Parameters.AddWithValue("$totalInputTokens", usage.TotalInputTokens);
+            command.Parameters.AddWithValue("$cachedInputTokens", usage.CachedInputTokens);
+            command.Parameters.AddWithValue("$outputTokens", usage.OutputTokens);
+            command.Parameters.AddWithValue("$outputElapsedMs", usage.OutputElapsedMs);
+            command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+            command.Parameters.AddWithValue("$scope", scope);
+            command.Parameters.AddWithValue("$sessionId", sessionId);
+            if (command.ExecuteNonQuery() == 0)
+                throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
+            return ReadHeader(connection, scope, sessionId)!;
+        }
+    }
+
     public void Delete(WorkspaceInfo workspace, string sessionId)
     {
         ValidateSessionId(sessionId);
@@ -472,8 +513,12 @@ public sealed class SessionStore : ISessionStore
         command.Transaction = transaction;
         command.CommandText = $"""
             INSERT {(ignoreConflict ? "OR IGNORE" : "")} INTO sessions(
-                scope, id, workspace, title, archived, reasoning_level, network_enabled, created_at, updated_at)
-            VALUES($scope, $id, $workspace, $title, $archived, $reasoningLevel, $networkEnabled, $createdAt, $updatedAt);
+                scope, id, workspace, title, archived, reasoning_level, network_enabled,
+                llm_rounds, execution_steps, input_tokens, total_input_tokens,
+                cached_input_tokens, output_tokens, output_elapsed_ms, created_at, updated_at)
+            VALUES($scope, $id, $workspace, $title, $archived, $reasoningLevel, $networkEnabled,
+                   $llmRounds, $executionSteps, $inputTokens, $totalInputTokens,
+                   $cachedInputTokens, $outputTokens, $outputElapsedMs, $createdAt, $updatedAt);
             """;
         command.Parameters.AddWithValue("$scope", scope);
         command.Parameters.AddWithValue("$id", header.Id);
@@ -482,6 +527,13 @@ public sealed class SessionStore : ISessionStore
         command.Parameters.AddWithValue("$archived", header.Archived ? 1 : 0);
         command.Parameters.AddWithValue("$reasoningLevel", (int)header.ReasoningLevel);
         command.Parameters.AddWithValue("$networkEnabled", header.NetworkEnabled ? 1 : 0);
+        command.Parameters.AddWithValue("$llmRounds", header.LlmRounds);
+        command.Parameters.AddWithValue("$executionSteps", header.ExecutionSteps);
+        command.Parameters.AddWithValue("$inputTokens", header.InputTokens);
+        command.Parameters.AddWithValue("$totalInputTokens", header.TotalInputTokens);
+        command.Parameters.AddWithValue("$cachedInputTokens", header.CachedInputTokens);
+        command.Parameters.AddWithValue("$outputTokens", header.OutputTokens);
+        command.Parameters.AddWithValue("$outputElapsedMs", header.OutputElapsedMs);
         command.Parameters.AddWithValue("$createdAt", header.CreatedAt.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", header.UpdatedAt.ToString("O"));
         return command.ExecuteNonQuery() > 0;
@@ -491,7 +543,10 @@ public sealed class SessionStore : ISessionStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, title, workspace, archived, reasoning_level, network_enabled, created_at, updated_at
+            SELECT id, title, workspace, archived, reasoning_level, network_enabled,
+                   llm_rounds, execution_steps, input_tokens, total_input_tokens,
+                   cached_input_tokens, output_tokens, output_elapsed_ms,
+                   created_at, updated_at
             FROM sessions WHERE scope = $scope AND id = $sessionId;
             """;
         command.Parameters.AddWithValue("$scope", scope);
@@ -508,8 +563,15 @@ public sealed class SessionStore : ISessionStore
         Archived = reader.GetInt64(3) != 0,
         ReasoningLevel = (ReasoningLevel)reader.GetInt32(4),
         NetworkEnabled = reader.GetInt64(5) != 0,
-        CreatedAt = DateTimeOffset.Parse(reader.GetString(6)),
-        UpdatedAt = DateTimeOffset.Parse(reader.GetString(7)),
+        LlmRounds = reader.GetInt64(6),
+        ExecutionSteps = reader.GetInt64(7),
+        InputTokens = reader.GetInt64(8),
+        TotalInputTokens = reader.GetInt64(9),
+        CachedInputTokens = reader.GetInt64(10),
+        OutputTokens = reader.GetInt64(11),
+        OutputElapsedMs = reader.GetInt64(12),
+        CreatedAt = DateTimeOffset.Parse(reader.GetString(13)),
+        UpdatedAt = DateTimeOffset.Parse(reader.GetString(14)),
     };
 
     private static string TitleFrom(string text) =>

@@ -121,6 +121,13 @@ public sealed class SeekClawDatabase
                 archived INTEGER NOT NULL DEFAULT 0,
                 reasoning_level INTEGER NOT NULL,
                 network_enabled INTEGER NOT NULL DEFAULT 1,
+                llm_rounds INTEGER NOT NULL DEFAULT 0,
+                execution_steps INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                output_elapsed_ms INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (scope, id)
@@ -169,17 +176,28 @@ public sealed class SeekClawDatabase
             """;
         command.ExecuteNonQuery();
 
-        // Migration: databases created before the per-session network toggle
-        // existed get the column (existing sessions default to enabled).
-        using (var check = connection.CreateCommand())
-        {
-            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'network_enabled';";
-            if (Convert.ToInt64(check.ExecuteScalar()) == 0)
-            {
-                using var alter = connection.CreateCommand();
-                alter.CommandText = "ALTER TABLE sessions ADD COLUMN network_enabled INTEGER NOT NULL DEFAULT 1;";
-                alter.ExecuteNonQuery();
-            }
-        }
+        EnsureColumn(connection, "sessions", "network_enabled", "INTEGER NOT NULL DEFAULT 1");
+        EnsureColumn(connection, "sessions", "llm_rounds", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "sessions", "execution_steps", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "sessions", "input_tokens", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "sessions", "total_input_tokens", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "sessions", "cached_input_tokens", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "sessions", "output_tokens", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "sessions", "output_elapsed_ms", "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    private static void EnsureColumn(
+        SqliteConnection connection,
+        string table,
+        string column,
+        string definition)
+    {
+        using var check = connection.CreateCommand();
+        check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}';";
+        if (Convert.ToInt64(check.ExecuteScalar()) != 0) return;
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
+        alter.ExecuteNonQuery();
     }
 }

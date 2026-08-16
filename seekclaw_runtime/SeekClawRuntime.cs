@@ -135,10 +135,13 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
         // Main system prompt — key configurable, overridable per workspace.
         registry.Register(new PromptContribution("system", PromptSlot.System, (ctx, _) =>
         {
-            var key = ctx.Variables.TryGetValue("scope", out var scope) && scope == "global"
-                ? "system/global"
-                : ctx.WorkspaceConfig?.SystemPrompt ?? configStore.Config.Agent.SystemPrompt;
-            return ValueTask.FromResult(prompts.TryGet(key));
+            if (ctx.Variables.TryGetValue("scope", out var scope) && scope == "global")
+                return ValueTask.FromResult(prompts.TryGet("system/global"));
+
+            var defaultKey = ctx.WorkspaceConfig?.SystemPrompt ?? configStore.Config.Agent.SystemPrompt;
+            var mode = AgentModeExtensions.Parse(ctx.WorkspaceConfig?.Mode ?? configStore.Config.Agent.Mode);
+            var key = mode == AgentMode.Plan ? "system/planner" : defaultKey;
+            return ValueTask.FromResult(prompts.TryGet(key) ?? prompts.TryGet(defaultKey));
         }));
 
         // Model capabilities are part of the runtime contract, not an assumption the model

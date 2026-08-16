@@ -12,8 +12,27 @@ public sealed class SessionHeader
     public ReasoningLevel ReasoningLevel { get; set; } = ReasoningLevel.High;
     /// <summary>Per-session "联网" toggle; controls web_search + web_fetch together.</summary>
     public bool NetworkEnabled { get; set; } = true;
+    public long LlmRounds { get; set; }
+    public long ExecutionSteps { get; set; }
+    public long InputTokens { get; set; }
+    public long TotalInputTokens { get; set; }
+    public long CachedInputTokens { get; set; }
+    public long OutputTokens { get; set; }
+    public long OutputElapsedMs { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>Cumulative usage recorded for one agent turn.</summary>
+public sealed record SessionUsage
+{
+    public long LlmRounds { get; init; }
+    public long ExecutionSteps { get; init; }
+    public long InputTokens { get; init; }
+    public long TotalInputTokens { get; init; }
+    public long CachedInputTokens { get; init; }
+    public long OutputTokens { get; init; }
+    public long OutputElapsedMs { get; init; }
 }
 
 /// <summary>Provider-neutral conversation payload persisted as JSON inside SQLite.</summary>

@@ -41,7 +41,7 @@ import { finalizeAssistantBubbles } from './conversation-state'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
-import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ToolActivity, WorkflowKind } from './types'
+import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity, WorkflowKind } from './types'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
 const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v2'
@@ -83,6 +83,13 @@ interface RuntimeSessionHeader {
   updatedAt: string
   reasoningLevel?: string
   networkEnabled?: boolean
+  llmRounds?: number
+  executionSteps?: number
+  inputTokens?: number
+  totalInputTokens?: number
+  cachedInputTokens?: number
+  outputTokens?: number
+  outputElapsedMs?: number
 }
 
 interface RuntimeSession extends RuntimeSessionHeader {
@@ -751,6 +758,19 @@ function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
   return messages
 }
 
+function sessionStats(saved: RuntimeSession): ThreadStats {
+  const assistantCount = saved.messages.filter((item) => item.role === 'assistant').length
+  return {
+    llmRounds: saved.llmRounds || assistantCount,
+    executionSteps: saved.executionSteps || assistantCount,
+    inputTokens: saved.inputTokens ?? 0,
+    totalInputTokens: saved.totalInputTokens ?? 0,
+    cachedInputTokens: saved.cachedInputTokens ?? 0,
+    outputTokens: saved.outputTokens ?? 0,
+    outputElapsedMs: saved.outputElapsedMs ?? 0
+  }
+}
+
 function sessionScope(thread: ThreadItem, project?: ProjectItem): Record<string, unknown> {
   return thread.projectId && project ? { workspace: project.path } : { global: true }
 }
@@ -768,10 +788,7 @@ async function reloadThreadSession(thread: ThreadItem, project?: ProjectItem): P
     thread.title = saved.title || thread.title
     thread.archived = Boolean(saved.archived)
     thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
-    if (!thread.stats) {
-      const assistantCount = saved.messages.filter((item) => item.role === 'assistant').length
-      thread.stats = { llmRounds: assistantCount, executionSteps: assistantCount }
-    }
+    thread.stats = sessionStats(saved)
   } catch {
     thread.sessionLoaded = false
   }
@@ -805,10 +822,7 @@ async function selectThread(id: string): Promise<void> {
       thread.archived = Boolean(saved.archived)
       thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
       thread.networkEnabled = saved.networkEnabled ?? true
-      if (!thread.stats) {
-        const assistantCount = saved.messages.filter((item) => item.role === 'assistant').length
-        thread.stats = { llmRounds: assistantCount, executionSteps: assistantCount }
-      }
+      thread.stats = sessionStats(saved)
     }
   } catch {
     thread.sessionLoaded = false
@@ -1079,6 +1093,7 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
   thread.activeTurnToken = turnToken
   thread.assistantId = assistant.id
   thread.requestId = undefined
+  let terminalAssistant = assistant
   autoFollowConversation.value = true
   await scrollToBottom(true, true)
 
@@ -1111,18 +1126,23 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
       ...scope
     }, { timeoutMs: CHAT_FIRST_EVENT_TIMEOUT_MS })
     rememberFinishedRequest(thread, response.id)
-    if (assistant.state !== 'error') {
-      assistant.state = 'done'
+    const finalAssistant = thread.messages.findLast((item) => item.role === 'assistant') ?? assistant
+    terminalAssistant = finalAssistant
+    if (finalAssistant.state !== 'error') {
+      finalAssistant.state = 'done'
       // Streamed delta events can lose the IPC race to the request's terminal
       // response, leaving the bubble empty even though the daemon finished.
-      // Fall back to the final text carried by the terminal response.
-      if (!assistant.content && response.data) assistant.content = response.data
+      // Fall back to the latest assistant bubble: a mid-turn model step or steer
+      // may have superseded the original placeholder captured above.
+      if (!finalAssistant.content && response.data) finalAssistant.content = response.data
     }
   } catch (error) {
-    assistant.state = 'error'
-    if (!assistant.content) {
+    const failedAssistant = thread.messages.findLast((item) => item.role === 'assistant') ?? assistant
+    terminalAssistant = failedAssistant
+    failedAssistant.state = 'error'
+    if (!failedAssistant.content) {
       const detail = error instanceof Error ? error.message : String(error)
-      assistant.content = `无法连接 SeekClaw Daemon。\n\n\`\`\`text\n${detail}\n\`\`\``
+      failedAssistant.content = `无法连接 SeekClaw Daemon。\n\n\`\`\`text\n${detail}\n\`\`\``
     }
   } finally {
     // A terminal event may already have started the next queued turn. Do not let
@@ -1132,7 +1152,7 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
     // settles. The captured assistant can be a stale bubble (a mid-turn steer
     // created a fresh one) and the terminal event itself may have been dropped
     // by the finished-request guard, so walk all messages instead of one.
-    finalizeAssistantBubbles(thread.messages, assistant.state === 'error' ? 'error' : 'done')
+    finalizeAssistantBubbles(thread.messages, terminalAssistant.state === 'error' ? 'error' : 'done')
     thread.activeTurnToken = undefined
     thread.running = false
     thread.requestId = undefined
@@ -1567,6 +1587,23 @@ function handleDaemonEvent(event: DaemonMessage): void {
     case 'model_start': {
       thread.stats ??= {}
       thread.stats.llmRounds = (thread.stats.llmRounds ?? 0) + 1
+      const step = Number(event.details?.step) || 0
+      const previousHasOutput = Boolean(
+        message?.content || message?.thinking || (message?.tools?.length ?? 0))
+      if (message && step > 1 && previousHasOutput) {
+        message.state = 'done'
+        const nextAssistant: ChatMessage = {
+          id: makeId(),
+          role: 'assistant',
+          content: '',
+          thinking: '',
+          tools: [],
+          state: 'thinking',
+          createdAt: Date.now()
+        }
+        thread.messages.push(nextAssistant)
+        thread.assistantId = nextAssistant.id
+      }
       break
     }
     case 'usage': {

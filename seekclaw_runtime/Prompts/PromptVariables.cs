@@ -14,6 +14,9 @@ public static class PromptVariables
         string? memory = null)
     {
         var hasWorkspace = workspace is { IsGlobal: false };
+        var languageKinds = hasWorkspace
+            ? workspace!.ProjectKinds.Where(kind => !kind.Equals("git", StringComparison.OrdinalIgnoreCase)).ToList()
+            : new List<string>();
         var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["cwd"] = hasWorkspace ? workspace!.Root : Directory.GetCurrentDirectory(),
@@ -22,7 +25,11 @@ public static class PromptVariables
             ["platform"] = RuntimeInformation.RuntimeIdentifier,
             ["workspace"] = hasWorkspace ? workspace!.Root : "",
             ["project"] = hasWorkspace ? workspace!.Name : "",
-            ["language"] = hasWorkspace ? string.Join(", ", workspace!.ProjectKinds) : "",
+            // "git" is a repository marker, not a language; keep it out of the
+            // {{language}} variable so prompts read "Project: x (dotnet)" not "… (git)".
+            ["language"] = hasWorkspace
+                ? (languageKinds.Count > 0 ? string.Join(", ", languageKinds) : "general")
+                : "",
             ["scope"] = workspace?.IsGlobal == true ? "global" : "workspace",
             ["model"] = model?.Model.Id ?? "",
             ["provider"] = model?.Provider.Id ?? "",
