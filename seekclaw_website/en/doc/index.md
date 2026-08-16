@@ -27,7 +27,8 @@ Best for everyday graphical use. The release folder includes a self-contained Ru
 
 ### CLI
 
-Best for terminal workflows, scripted administration, and Runtime debugging. Running from source requires the .NET 10 SDK.
+Best for terminal workflows, scripted administration, and Runtime debugging. The published
+`seekclaw-cli` npm package can be installed with `npm install -g seekclaw-cli`; running from source requires the .NET 10 SDK.
 
 - [CLI command reference](/en/doc/cli)
 - [Configuration reference](/en/doc/configuration)

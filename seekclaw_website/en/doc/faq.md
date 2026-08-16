@@ -4,7 +4,7 @@
 
 ### Do Desktop users need .NET installed?
 
-No. The Windows x64 release folder includes a self-contained Runtime. Keep the complete `SeekClaw-win-x64` directory and launch the top-level `SeekClaw.exe`. Only developers building from source or running the CLI directly need the .NET 10 SDK.
+No. The Windows x64 release folder includes a self-contained Runtime. Keep the complete `SeekClaw-win-x64` directory and launch the top-level `SeekClaw.exe`. Only developers building Desktop from source or running the CLI from source need the .NET 10 SDK; the npm-installed `seekclaw-cli` does not.
 
 ### Why does Desktop report that the Runtime is offline?
 
@@ -23,6 +23,16 @@ Desktop connects and reconnects automatically; users do not start the Runtime ma
 - API keys are read only from the `apiKey` field in `~/.seekclaw/config.json`; environment-variable injection is not supported.
 
 If a directly stored key disappears after one turn, verify that Desktop and the Daemon run under the same user account and read the same `~/.seekclaw/config.json`. Check the active Profile and Provider in diagnostics, and avoid running an older Runtime that rewrites the same configuration simultaneously.
+
+### How do I install the CLI from npm?
+
+```powershell
+npm install -g seekclaw-cli
+seekclaw --version
+seekclaw doctor
+```
+
+You need Node.js 18 or later and Git for workspace detection. The package is a self-contained .NET binary; on Windows x64 no separate .NET SDK is required.
 
 ### How are projects and tasks related?
 
@@ -74,10 +84,16 @@ The build script configures mirrors for Electron and electron-builder and retrie
 
 ## Diagnostics
 
-Use “Settings → Diagnostics & Usage” in Desktop or run this from the CLI:
+Use “Settings → Diagnostics & Usage” in Desktop or run this from an npm-installed CLI:
 
 ```bash
 seekclaw doctor
+```
+
+When running the CLI from source, use:
+
+```bash
+dotnet run --project seekclaw_cli -- doctor
 ```
 
 Checks cover the workspace, metadata directory, Provider configuration, Memory, and Provider connectivity. Provider 401/404 results remain available in the details instead of being reduced to a generic failure.

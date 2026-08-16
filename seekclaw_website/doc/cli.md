@@ -2,7 +2,19 @@
 
 `seekclaw_cli` 是 SeekClaw 的终端前端，也是打包 Runtime 中 `seekclaw.exe daemon` 的入口。Desktop 用户通常不需要手动运行这些命令，但 CLI 与 Desktop 使用同一份全局配置和会话格式。
 
-从源码运行时，在以下示例的 `seekclaw` 前替换为 `dotnet run --project seekclaw_cli --` 即可。
+## 安装
+
+通过 npm 安装已发布的 `seekclaw-cli`：
+
+```powershell
+npm install -g seekclaw-cli
+seekclaw --version
+seekclaw doctor
+```
+
+该包是自包含 .NET 二进制包，当前 Windows x64 平台无需单独安装 .NET SDK；前置要求为 Node.js 18 或更高版本，以及用于工作区检测的 Git。
+
+安装后可直接使用 `seekclaw` 命令。从源码运行时，在以下示例的 `seekclaw` 前替换为 `dotnet run --project seekclaw_cli --` 即可。
 
 ## 对话
 

@@ -31,6 +31,7 @@ export default defineConfig({
             text: 'v1.0.0 (.NET 10.0)',
             items: [
               { text: 'GitHub 仓库', link: 'https://github.com/umr-xiaomai/SeekClaw' },
+              { text: 'npm: seekclaw-cli', link: 'https://www.npmjs.com/package/seekclaw-cli' },
               { text: '更新日志', link: '/doc/faq#release-notes' }
             ]
           }
@@ -110,6 +111,7 @@ export default defineConfig({
             text: 'v1.0.0 (.NET 10.0)',
             items: [
               { text: 'GitHub Repository', link: 'https://github.com/umr-xiaomai/SeekClaw' },
+              { text: 'npm: seekclaw-cli', link: 'https://www.npmjs.com/package/seekclaw-cli' },
               { text: 'Release Notes', link: '/en/doc/faq#release-notes' }
             ]
           }

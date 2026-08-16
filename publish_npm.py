@@ -250,6 +250,11 @@ def run(command: str, arguments: Sequence[str], cwd: Path, env: dict[str, str], 
         )
 
 
+def run_foreground(command: str, arguments: Sequence[str], cwd: Path, env: dict[str, str]) -> None:
+    console.print(f"[dim]> {subprocess.list2cmdline([command, *arguments])}[/dim]")
+    subprocess.run([command, *arguments], cwd=cwd, env=env, check=True)
+
+
 def capture(command: str, arguments: Sequence[str], cwd: Path, env: dict[str, str]) -> str:
     result = subprocess.run(
         [command, *arguments],
@@ -457,6 +462,7 @@ def publish_packages(
     env: dict[str, str],
     registry: str | None,
     otp: str | None,
+    interactive_auth: bool,
     verbose: bool,
 ) -> None:
     identity = capture(npm, ["whoami"], NPM_ROOT, env)
@@ -468,8 +474,12 @@ def publish_packages(
             arguments += ["--registry", registry]
         if otp:
             arguments += ["--otp", otp]
-        with console.status(f"[bold blue]正在发布 {package_dir.name}...[/bold blue]", spinner="dots"):
-            run(npm, arguments, package_dir, env, verbose=verbose)
+        if interactive_auth:
+            console.print(f"[bold blue]正在发布 {package_dir.name}，请在终端中完成浏览器认证...[/bold blue]")
+            run_foreground(npm, arguments, package_dir, env)
+        else:
+            with console.status(f"[bold blue]正在发布 {package_dir.name}...[/bold blue]", spinner="dots"):
+                run(npm, arguments, package_dir, env, verbose=verbose)
         console.print(f"[bold green]✓[/bold green] 已发布: [cyan]{package_dir.name}[/cyan]")
 
 
@@ -497,6 +507,11 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--registry", help="Override the npm registry used for publishing.")
     parser.add_argument("--otp", help="npm one-time password for publishing.")
+    parser.add_argument(
+        "--interactive-auth",
+        action="store_true",
+        help="Run npm publish with an attached terminal so npm can complete web/OTP authentication.",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Show full stdout from subcommands.")
     return parser.parse_args()
 
@@ -569,7 +584,15 @@ def main() -> int:
             tarballs = pack_packages(npm, package_dirs, env, args.verbose)
 
         if args.publish:
-            publish_packages(npm, package_dirs, env, args.registry, args.otp, args.verbose)
+            publish_packages(
+                npm,
+                package_dirs,
+                env,
+                args.registry,
+                args.otp,
+                args.interactive_auth,
+                args.verbose,
+            )
 
         elapsed = time.time() - start_time
         summary = Table(title="🎉 SeekClaw CLI npm 打包完成", border_style="green", header_style="bold green")

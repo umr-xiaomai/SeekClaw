@@ -1,8 +1,27 @@
 # Quick Start
 
-The fastest way to use SeekClaw is the packaged Windows Desktop client. Choose the CLI or a source build when you need a terminal workflow or want to develop SeekClaw itself.
+The fastest graphical path is the packaged Windows Desktop client; the fastest terminal path is installing `seekclaw-cli` from npm. Choose a source build when you want to develop SeekClaw itself.
 
-## Option 1: Desktop (recommended)
+## Option 1: Install the CLI from npm (terminal recommended)
+
+```powershell
+npm install -g seekclaw-cli
+seekclaw --version
+seekclaw
+```
+
+The published `seekclaw-cli` package is a self-contained .NET binary, so no separate .NET SDK is required. It only needs Node.js 18 or later and Git for workspace detection.
+
+You can also run one-shot tasks, resume sessions, or diagnose the Runtime:
+
+```powershell
+seekclaw "Analyze this project's architecture and dependencies"
+seekclaw --continue
+seekclaw --resume <session-id>
+seekclaw doctor
+```
+
+## Option 2: Desktop (recommended)
 
 ### 1. Launch
 
@@ -31,7 +50,7 @@ API keys must be stored directly in the configuration file's `apiKey` field; Des
 
 See the [Desktop guide](/en/doc/desktop) for the complete UI and release workflow.
 
-## Option 2: Build the Desktop release from source
+## Option 3: Build the Desktop release from source
 
 The build machine requires:
 
@@ -55,7 +74,7 @@ publish\SeekClaw-win-x64\SeekClaw.exe
 
 Distribute the complete `SeekClaw-win-x64` directory.
 
-## Option 3: Run the CLI
+## Option 4: Run the CLI from source
 
 Running the CLI from source requires the .NET 10 SDK. Git enables repository-aware project features.
 
@@ -89,6 +108,12 @@ dotnet run --project seekclaw_cli -- --model "anthropic/claude-sonnet-5" -- "Ins
 ## Diagnostics
 
 Desktop users can open “Settings → Diagnostics & Usage.” CLI users can run:
+
+```bash
+seekclaw doctor
+```
+
+When running the CLI from source, use:
 
 ```bash
 dotnet run --project seekclaw_cli -- doctor

@@ -2,7 +2,19 @@
 
 `seekclaw_cli` is SeekClaw's terminal client and also provides the `seekclaw.exe daemon` entry point used by the packaged Runtime. Desktop users normally do not run these commands manually, but CLI and Desktop use the same global configuration and session format.
 
-For a source checkout, replace `seekclaw` in the examples with `dotnet run --project seekclaw_cli --`.
+## Installation
+
+Install the published `seekclaw-cli` package from npm:
+
+```powershell
+npm install -g seekclaw-cli
+seekclaw --version
+seekclaw doctor
+```
+
+The package is a self-contained .NET binary. On Windows x64 no separate .NET SDK is required; the prerequisites are Node.js 18 or later and Git for workspace detection.
+
+After installation, use the `seekclaw` command directly. For a source checkout, replace `seekclaw` in the examples with `dotnet run --project seekclaw_cli --`.
 
 ## Conversation
 

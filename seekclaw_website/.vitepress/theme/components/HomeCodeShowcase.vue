@@ -4,12 +4,12 @@
       <div class="header-text">
         <h3>
           <Code2 class="header-icon" :size="22" />
-          {{ isEn ? 'Desktop release and developer workflows' : 'Desktop 发布与开发者工作流' }}
+          {{ isEn ? 'Desktop release and npm CLI workflows' : 'Desktop 发布与 npm CLI 工作流' }}
         </h3>
         <p>
           {{ isEn 
-            ? 'Build a portable Desktop folder with one command, or use the CLI, JSON configuration, and strongly typed extension points.'
-            : '一条命令构建可分发 Desktop 文件夹，也可继续使用 CLI、JSON 配置与强类型扩展接口。'
+            ? 'Build a portable Desktop folder with one command, or install the CLI from npm and use JSON configuration and strongly typed extension points.'
+            : '一条命令构建可分发 Desktop 文件夹，也可通过 npm 安装 CLI，并继续使用 JSON 配置与强类型扩展接口。'
           }}
         </p>
       </div>
@@ -71,7 +71,10 @@ publish\\SeekClaw-win-x64\\SeekClaw.exe`
   cli: {
     filename: 'terminal.sh',
     lang: 'bash',
-    code: `# 启动交互式 Agent 聊天循环
+    code: `# 通过 npm 安装 CLI（无需 .NET SDK）
+npm install -g seekclaw-cli
+
+# 启动交互式 Agent 聊天循环
 seekclaw chat
 
 # 执行单次重构任务并触发自动验证修复
@@ -150,7 +153,10 @@ publish\\SeekClaw-win-x64\\SeekClaw.exe`
   cli: {
     filename: 'terminal.sh',
     lang: 'bash',
-    code: `# Start the interactive Agent loop
+    code: `# Install the CLI from npm (no .NET SDK required)
+npm install -g seekclaw-cli
+
+# Start the interactive Agent loop
 seekclaw chat
 
 # Run a one-shot refactor with automatic verification

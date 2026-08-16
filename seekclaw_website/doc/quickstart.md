@@ -1,8 +1,27 @@
 # 快速开始
 
-最快的使用方式是运行已打包的 Windows Desktop。需要终端工作流或开发 SeekClaw 本身时，再选择 CLI 或源码构建。
+图形化使用最快的是已打包的 Windows Desktop；终端工作流最快的是通过 npm 安装 `seekclaw-cli`。需要开发 SeekClaw 本身时，再选择源码构建。
 
-## 方式一：使用 Desktop（推荐）
+## 方式一：通过 npm 安装 CLI（终端推荐）
+
+```powershell
+npm install -g seekclaw-cli
+seekclaw --version
+seekclaw
+```
+
+已发布的 `seekclaw-cli` 是自包含 .NET 二进制包，无需单独安装 .NET SDK。前置要求仅为 Node.js 18 或更高版本，以及用于工作区检测的 Git。
+
+也可执行单次任务、恢复会话或诊断：
+
+```powershell
+seekclaw "分析当前项目的架构与依赖关系"
+seekclaw --continue
+seekclaw --resume <session-id>
+seekclaw doctor
+```
+
+## 方式二：使用 Desktop（推荐）
 
 ### 1. 启动
 
@@ -31,7 +50,7 @@ API Key 需要直接保存到配置文件中的 `apiKey` 字段，Desktop 会显
 
 更多界面与发布说明见 [Desktop 指南](/doc/desktop)。
 
-## 方式二：从源码构建 Desktop 发布包
+## 方式三：从源码构建 Desktop 发布包
 
 构建机器需要：
 
@@ -55,7 +74,7 @@ publish\SeekClaw-win-x64\SeekClaw.exe
 
 分发时必须复制整个 `SeekClaw-win-x64` 文件夹。
 
-## 方式三：运行 CLI
+## 方式四：从源码运行 CLI
 
 CLI 源码运行需要 .NET 10 SDK；Git 用于仓库感知和项目工具。
 
@@ -89,6 +108,12 @@ dotnet run --project seekclaw_cli -- --model "anthropic/claude-sonnet-5" -- "检
 ## 诊断
 
 Desktop 用户可打开“设置 → 诊断与用量”。CLI 用户运行：
+
+```bash
+seekclaw doctor
+```
+
+源码运行 CLI 时使用：
 
 ```bash
 dotnet run --project seekclaw_cli -- doctor

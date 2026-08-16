@@ -8,6 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
+[![npm version](https://img.shields.io/npm/v/seekclaw-cli.svg)](https://www.npmjs.com/package/seekclaw-cli)
 [![GitHub Stars](https://img.shields.io/github/stars/umr-xiaomai/SeekClaw.svg)](https://github.com/umr-xiaomai/SeekClaw/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/umr-xiaomai/SeekClaw.svg)](https://github.com/umr-xiaomai/SeekClaw/network/members)
 [![GitHub Issues](https://img.shields.io/github/issues/umr-xiaomai/SeekClaw.svg)](https://github.com/umr-xiaomai/SeekClaw/issues)
@@ -98,12 +99,39 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 
 ## 📦 安装
 
-### 前置要求
+### 通过 npm 安装 CLI（推荐）
+
+已发布到 npm 的 `seekclaw-cli` 是自包含 .NET 二进制包，安装后可直接使用，无需单独安装 .NET SDK。当前 npm 包提供 Windows x64 平台二进制。
+
+前置要求：
+
+- Node.js 18 或更高版本
+- Git（用于工作区检测）
+
+```powershell
+npm install -g seekclaw-cli
+
+# 验证安装
+seekclaw --version
+
+# 进入交互式聊天
+seekclaw
+```
+
+也可以执行单次任务或管理命令：
+
+```powershell
+seekclaw "解释这个项目的架构"
+seekclaw --continue
+seekclaw doctor
+```
+
+### 从源码构建
+
+开发者从源码构建时需要：
 
 - .NET 10.0 SDK 或更高版本
 - Git（用于工作区检测）
-
-### 从源码构建
 
 ```bash
 git clone https://github.com/umr-xiaomai/SeekClaw.git
@@ -111,7 +139,7 @@ cd SeekClaw
 dotnet build
 ```
 
-### 运行
+### 从源码运行
 
 ```bash
 # 交互式聊天模式

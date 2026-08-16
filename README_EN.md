@@ -8,6 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
+[![npm version](https://img.shields.io/npm/v/seekclaw-cli.svg)](https://www.npmjs.com/package/seekclaw-cli)
 [![GitHub Stars](https://img.shields.io/github/stars/umr-xiaomai/SeekClaw.svg)](https://github.com/umr-xiaomai/SeekClaw/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/umr-xiaomai/SeekClaw.svg)](https://github.com/umr-xiaomai/SeekClaw/network/members)
 [![GitHub Issues](https://img.shields.io/github/issues/umr-xiaomai/SeekClaw.svg)](https://github.com/umr-xiaomai/SeekClaw/issues)
@@ -98,12 +99,39 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 
 ## 📦 Installation
 
-### Prerequisites
+### Install the CLI via npm (recommended)
+
+The published `seekclaw-cli` package is a self-contained .NET binary. It can be used immediately after installation without a separate .NET SDK. The npm package currently provides the Windows x64 platform binary.
+
+Prerequisites:
+
+- Node.js 18 or later
+- Git (for workspace detection)
+
+```powershell
+npm install -g seekclaw-cli
+
+# Verify the installation
+seekclaw --version
+
+# Start interactive chat
+seekclaw
+```
+
+You can also run one-shot tasks and administration commands:
+
+```powershell
+seekclaw "Explain the architecture of this project"
+seekclaw --continue
+seekclaw doctor
+```
+
+### Build from Source
+
+Building from source requires:
 
 - .NET 10.0 SDK or later
 - Git (for workspace detection)
-
-### Build from Source
 
 ```bash
 git clone https://github.com/umr-xiaomai/SeekClaw.git
@@ -111,7 +139,7 @@ cd SeekClaw
 dotnet build
 ```
 
-### Run
+### Run from Source
 
 ```bash
 # Interactive chat mode

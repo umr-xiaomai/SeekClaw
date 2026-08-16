@@ -4,7 +4,7 @@
 
 ### Desktop 用户需要安装 .NET 吗？
 
-不需要。Windows x64 发布文件夹包含自包含 Runtime。请保留整个 `SeekClaw-win-x64` 目录并运行顶层的 `SeekClaw.exe`。只有从源码构建或直接运行 CLI 的开发者需要 .NET 10 SDK。
+不需要。Windows x64 发布文件夹包含自包含 Runtime。请保留整个 `SeekClaw-win-x64` 目录并运行顶层的 `SeekClaw.exe`。只有从源码构建 Desktop 或从源码运行 CLI 的开发者需要 .NET 10 SDK；通过 npm 安装的 `seekclaw-cli` 不需要。
 
 ### 为什么 Desktop 显示 Runtime 离线？
 
@@ -23,6 +23,16 @@ Desktop 会自动尝试连接和重连，不需要手动运行 Runtime。从源�
 - API Key 只从 `~/.seekclaw/config.json` 的 `apiKey` 字段读取，不支持通过环境变量注入。
 
 如果显式保存的 Key 在一次对话后消失，请先确认启动的 Desktop 与 Daemon 使用同一用户账户和 `~/.seekclaw/config.json`，再打开诊断页查看活动 Profile 与 Provider。不要同时运行会改写同一配置的旧版本 Runtime。
+
+### 如何通过 npm 安装 CLI？
+
+```powershell
+npm install -g seekclaw-cli
+seekclaw --version
+seekclaw doctor
+```
+
+需要 Node.js 18 或更高版本，以及用于工作区检测的 Git。该包是自包含 .NET 二进制包，当前 Windows x64 平台无需单独安装 .NET SDK。
 
 ### 项目和任务是什么关系？
 
@@ -74,10 +84,16 @@ publish\SeekClaw-win-x64\SeekClaw.exe
 
 ## 诊断命令
 
-Desktop 使用“设置 → 诊断与用量”；CLI 使用：
+Desktop 使用“设置 → 诊断与用量”；npm 安装的 CLI 使用：
 
 ```bash
 seekclaw doctor
+```
+
+从源码运行 CLI 时使用：
+
+```bash
+dotnet run --project seekclaw_cli -- doctor
 ```
 
 诊断覆盖工作区、元数据目录、Provider 配置、Memory 和 Provider 连通性。Provider 的 401/404 检查结果会保留在详情中，不会被简单吞掉。

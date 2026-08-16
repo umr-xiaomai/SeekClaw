@@ -27,7 +27,8 @@ SeekClaw 是基于 **.NET 10**、本地优先且可扩展的通用 AI Agent Runt
 
 ### CLI
 
-适合终端工作流、自动化管理和调试 Runtime。源码运行需要 .NET 10 SDK。
+适合终端工作流、自动化管理和调试 Runtime。已发布 `seekclaw-cli` npm 包，可通过
+`npm install -g seekclaw-cli` 安装；源码运行需要 .NET 10 SDK。
 
 - [CLI 命令参考](/doc/cli)
 - [配置参考](/doc/configuration)
