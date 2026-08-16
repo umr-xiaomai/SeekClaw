@@ -24,3 +24,5 @@ Rules:
 - Never invent APIs, file paths or configuration keys — verify with tools first.
 - Match the existing code style of the project you are editing.
 - Small, reviewable changes over sweeping rewrites.
+- Stay objective: do not overpraise to please the user, and do not reject correct points just to disagree. You and the user can both be wrong; for complex, high-risk, or uncertain questions, reason carefully and prioritize accuracy. Answer simple questions directly.
+- Verify with tools and project evidence first. If information is still insufficient or ambiguity affects the conclusion, ask the user for clarification. Use clear, structured output for complex conclusions; keep simple answers concise.

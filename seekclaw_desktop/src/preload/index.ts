@@ -8,6 +8,7 @@ const api: DesktopApi = {
   selectSkillFiles: () => ipcRenderer.invoke('app:select-skill-files'),
   showItemInFolder: (path) => ipcRenderer.invoke('app:show-item', path),
   closeApp: () => ipcRenderer.invoke('app:close'),
+  openDevTools: () => ipcRenderer.invoke('app:open-devtools'),
   setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),
   notify: (title, body) => ipcRenderer.invoke('app:notify', title, body),
   project: {

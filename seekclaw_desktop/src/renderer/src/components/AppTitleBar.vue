@@ -14,6 +14,7 @@ type MenuAction =
   | 'openGitChanges'
   | 'openGitHistory'
   | 'openDiagnostics'
+  | 'openDevTools'
   | 'openAbout'
 
 interface MenuItem {
@@ -40,6 +41,7 @@ const emit = defineEmits<{
   openGitChanges: []
   openGitHistory: []
   openDiagnostics: []
+  openDevTools: []
   openAbout: []
 }>()
 
@@ -82,6 +84,7 @@ const menus: Array<{ id: MenuName; label: string; items: MenuItem[] }> = [
     items: [
       { label: '文档', href: 'https://seekclaw.hoilai.com/doc/' },
       { label: '故障排查', action: 'openDiagnostics' },
+      { label: '开发者工具', shortcut: 'F12', action: 'openDevTools' },
       { separator: true },
       { label: '关于 SeekClaw', action: 'openAbout' }
     ]
@@ -109,6 +112,7 @@ function runAction(action?: MenuAction): void {
     case 'openGitChanges': emit('openGitChanges'); break
     case 'openGitHistory': emit('openGitHistory'); break
     case 'openDiagnostics': emit('openDiagnostics'); break
+    case 'openDevTools': emit('openDevTools'); break
     case 'openAbout': emit('openAbout'); break
   }
 }
@@ -133,6 +137,11 @@ function handleKeydown(event: KeyboardEvent): void {
     return
   }
   if (document.querySelector('[aria-modal="true"]')) return
+  if (event.key === 'F12') {
+    event.preventDefault()
+    runAction('openDevTools')
+    return
+  }
   if (!(event.ctrlKey || event.metaKey) || event.altKey) return
 
   const shortcuts: Record<string, MenuAction> = {

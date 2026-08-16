@@ -772,7 +772,7 @@ select:focus-visible {
   background: var(--bg);
 }
 
-.app-shell > .embedded-page {
+.app-shell>.embedded-page {
   grid-column: 1;
   grid-row: 2;
   height: 100%;
@@ -849,8 +849,17 @@ select:focus-visible {
 }
 
 @keyframes phase-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: .35; transform: scale(.8); }
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: .35;
+    transform: scale(.8);
+  }
 }
 
 .conversation-search {
@@ -1237,7 +1246,7 @@ select:focus-visible {
   object-fit: cover;
 }
 
-.image-view-row > span:not(.image-view-thumbnail) {
+.image-view-row>span:not(.image-view-thumbnail) {
   flex: 0 0 auto;
   font-size: 12px;
 }
@@ -1263,20 +1272,20 @@ select:focus-visible {
   font-size: 12px;
 }
 
-.tool-row > svg {
+.tool-row>svg {
   flex: 0 0 auto;
   color: var(--text-muted);
 }
 
-.tool-row > svg.spin {
+.tool-row>svg.spin {
   color: var(--accent);
 }
 
-.tool-row > svg.tool-error {
+.tool-row>svg.tool-error {
   color: var(--danger);
 }
 
-.tool-row > span {
+.tool-row>span {
   flex: 0 0 auto;
   font-weight: 600;
   white-space: nowrap;
@@ -1310,7 +1319,7 @@ select:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
-.change-card-header > svg {
+.change-card-header>svg {
   flex: 0 0 auto;
   color: var(--accent);
 }
@@ -1403,6 +1412,7 @@ select:focus-visible {
 }
 
 .response-placeholder {
+  margin-top: 30px;
   display: flex;
   gap: 5px;
   padding: 5px 0;
@@ -1491,10 +1501,21 @@ select:focus-visible {
   box-shadow: 0 5px 14px rgb(20 24 21 / 8%);
 }
 
-.starter-prompt-card[data-tone="blue"] { --starter-accent: #258ff4; }
-.starter-prompt-card[data-tone="purple"] { --starter-accent: #9255ed; }
-.starter-prompt-card[data-tone="green"] { --starter-accent: #12a150; }
-.starter-prompt-card[data-tone="orange"] { --starter-accent: #ee5b24; }
+.starter-prompt-card[data-tone="blue"] {
+  --starter-accent: #258ff4;
+}
+
+.starter-prompt-card[data-tone="purple"] {
+  --starter-accent: #9255ed;
+}
+
+.starter-prompt-card[data-tone="green"] {
+  --starter-accent: #12a150;
+}
+
+.starter-prompt-card[data-tone="orange"] {
+  --starter-accent: #ee5b24;
+}
 
 .starter-prompt-card svg {
   color: var(--starter-accent);
@@ -1765,7 +1786,7 @@ select:focus-visible {
   gap: 8px;
 }
 
-.pending-message-main > svg {
+.pending-message-main>svg {
   flex: 0 0 auto;
   color: var(--text-muted);
 }
@@ -1779,7 +1800,7 @@ select:focus-visible {
   border-radius: 5px;
 }
 
-.pending-message-main > span {
+.pending-message-main>span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3896,6 +3917,7 @@ select:focus-visible {
 }
 
 @media (max-width: 900px) {
+
   .app-body,
   .app-body.sidebar-collapsed {
     grid-template-columns: minmax(0, 1fr);

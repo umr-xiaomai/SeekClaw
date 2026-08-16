@@ -293,6 +293,10 @@ function registerIpc(): void {
 
   ipcMain.handle('app:close', () => mainWindow?.close())
 
+  ipcMain.handle('app:open-devtools', () => {
+    mainWindow?.webContents.openDevTools({ mode: 'detach' })
+  })
+
   ipcMain.handle('app:notify', (_event, title: string, body: string) => {
     if (typeof title === 'string' && typeof body === 'string') showNativeNotification(title, body)
   })

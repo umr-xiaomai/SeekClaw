@@ -321,6 +321,10 @@ function openGitPanel(tab: 'diff' | 'history'): void {
   gitPanelOpen.value = true
 }
 
+function openDevTools(): void {
+  void window.seekclaw.openDevTools()
+}
+
 function openToolDiff(path: string, diff: string): void {
   toolDiff.value = { path, diff }
   gitPanelTab.value = 'diff'
@@ -1784,6 +1788,7 @@ watch(theme, applyTheme)
       @open-workspace="openWorkspace" @show-project="showActiveProject" @open-settings="openSettings('general')"
       @focus-composer="composer?.focus()" @open-terminal="openProjectTerminal" @open-git-changes="openGitPanel('diff')"
       @open-git-history="openGitPanel('history')" @open-diagnostics="openSettings('diagnostics')"
+      @open-dev-tools="openDevTools"
       @open-about="aboutOpen = true" />
 
     <div class="app-body" v-show="activePage === 'main'" :class="{ 'sidebar-collapsed': !sidebarOpen }">
