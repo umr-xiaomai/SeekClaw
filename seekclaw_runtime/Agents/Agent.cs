@@ -86,7 +86,8 @@ public sealed class Agent(
                           retryable: false)
                     : providerManager.ResolveActive(workspace.Config);
                 var tools = ActiveTools(workspace, session.Header.NetworkEnabled);
-                var systemPrompt = await ComposeSystemPromptAsync(workspace, model, tools, ct).ConfigureAwait(false);
+                var systemPrompt = await ComposeSystemPromptAsync(
+                    workspace, model, tools, session.Header.NetworkEnabled, ct).ConfigureAwait(false);
                 var source = requiresVision ? session.Messages : WithoutImages(session.Messages);
                 var history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
                 // Context compaction: when plain trimming would have to drop history, first
@@ -371,19 +372,12 @@ public sealed class Agent(
         ModelInfo model, WorkspaceInfo workspace, IReadOnlyList<ChatMessage> old, CancellationToken ct)
     {
         // Image payloads are not needed for the summary; dropping them keeps the call small.
-        var instruction = promptProvider.TryGet("builtin/summarize")
-            ?? """
-        You are the memory compaction engine of SeekClaw, a coding agent. The conversation
-        below is about to overflow the model's context window; write a concise progress
-        summary that can replace it. Cover:
-        - The user's goal and any hard constraints.
-        - Files read or written (keep concrete paths), commands run, and their outcomes.
-        - Decisions made and the current state of the work.
-        - What remains to be done next.
-        Stay factual; do not invent anything that is not in the conversation. The summary
-        will be sent to the model as the start of the history, so prefer compact bullet
-        points over prose.
-        """;
+        var instruction = promptProvider.TryGet("builtin/summarize");
+        if (instruction is null)
+        {
+            events.Publish(new WarningEvent("Compaction prompt 'builtin/summarize' is missing; falling back to plain history trimming."));
+            return null;
+        }
         var input = ContextPlanner.FitToWindow(WithoutImages(old), model.Model, instruction);
         var completion = await CollectCompletionAsync(
             candidate => new LlmRequest
@@ -607,8 +601,12 @@ public sealed class Agent(
         events.Publish(new VerificationCompletedEvent(result.Success, Firstline(result.Output), attempt));
         if (result.Success) return null;
 
-        var template = promptProvider.TryGet("builtin/repair")
-                       ?? "The verification command failed. Fix the errors.\nCommand: {{command}}\n\n{{error}}";
+        var template = promptProvider.TryGet("builtin/repair");
+        if (template is null)
+        {
+            events.Publish(new WarningEvent("Repair prompt 'builtin/repair' is missing; verification failure cannot be repaired automatically."));
+            return null;
+        }
         return promptProvider.Render(template, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["command"] = result.Command,
@@ -619,10 +617,33 @@ public sealed class Agent(
     // ---------------------------------------------------------------- prompt composition
 
     private async Task<string> ComposeSystemPromptAsync(
-        WorkspaceInfo workspace, ModelInfo model, IReadOnlyList<ITool> tools, CancellationToken ct)
+        WorkspaceInfo workspace, ModelInfo model, IReadOnlyList<ITool> tools, bool networkEnabled, CancellationToken ct)
     {
         var memory = workspaceManager.LoadMemory(workspace);
-        var variables = PromptVariables.Build(workspace, model, tools.Select(t => t.Name).ToList(), memory);
+        var agentsMd = workspaceManager.LoadAgentInstructions(workspace);
+        var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
+        var mode = AgentModeExtensions.Parse(rawMode);
+        var modeName = mode switch
+        {
+            AgentMode.Plan => "plan",
+            AgentMode.ReadOnly => "readonly",
+            AgentMode.Auto => "auto",
+            _ => "edit",
+        };
+        var personality = workspace.Config?.Personality ?? configStore.Config.Agent.Personality;
+        if (string.IsNullOrWhiteSpace(personality)) personality = "pragmatic";
+        var autoVerify = ShouldVerify(workspace, configStore.Config.Agent);
+        var variables = PromptVariables.Build(
+            workspace,
+            model,
+            tools.Select(t => t.Name).ToList(),
+            memory is null ? "" : ContextPlanner.FitInjectedText(memory),
+            modeName,
+            networkEnabled,
+            autoVerify,
+            personality);
+        if (!string.IsNullOrWhiteSpace(agentsMd))
+            variables["agents_md"] = ContextPlanner.FitInjectedText(agentsMd);
         var context = new PromptRenderContext
         {
             Variables = variables,
@@ -631,20 +652,7 @@ public sealed class Agent(
             WorkspaceConfig = workspace.Config,
         };
         var basePrompt = await promptComposer.ComposeAsync(context, ct).ConfigureAwait(false);
-
-        var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
-        var mode = AgentModeExtensions.Parse(rawMode);
-
-        var modeInstruction = mode switch
-        {
-            AgentMode.Plan when workspace.IsGlobal => "\n\n[MODE: PLAN]\nYou are in PLAN MODE. Focus on researching, analyzing code, and outputting structured step-by-step implementation plans. File modifications and write tools are disabled in this mode.",
-            AgentMode.Plan => "",
-            AgentMode.ReadOnly => "\n\n[MODE: READ-ONLY]\nYou are in READ-ONLY MODE. You can read, search, and analyze files, but you cannot modify files or execute mutating commands.",
-            AgentMode.Auto => "\n\n[MODE: AUTO]\nYou are in AUTO MODE. Take full initiative to perform edits, multi-step repairs, and automatic verification loops.",
-            _ => "",
-        };
-
-        return basePrompt + modeInstruction;
+        return basePrompt;
     }
 
     private IReadOnlyList<ITool> ActiveTools(WorkspaceInfo workspace, bool networkEnabled)

@@ -22,4 +22,8 @@
     <ProjectReference Include="..\seekclaw_runtime\seekclaw_runtime.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\seekclaw_cli\prompts\**\*" Link="prompts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

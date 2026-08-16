@@ -1,3 +1,5 @@
 This is a Go workspace.
 - When verification is needed after edits, or the user asks to run: validate with `go build ./...` and `go vet ./...`, and run tests with `go test ./...`.
 - Follow standard Go style: early returns, errors wrapped with %w, table-driven tests.
+- Prefer `go test ./...` on the affected package first; run `go test ./...` only when the change is broad.
+- Run `gofmt` or `go fmt` if the codebase uses it before finishing; do not mix unrelated formatting changes.

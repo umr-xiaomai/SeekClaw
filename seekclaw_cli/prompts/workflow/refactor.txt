@@ -1,6 +1,7 @@
 Refactor the requested code without changing behavior.
 1. Read the target code and every caller (grep for usages) before touching anything.
 2. Plan the refactor as small, independently verifiable steps.
-3. Apply one step at a time; the build verifier runs after each edit — keep it green.
+3. Apply one step at a time; the build verifier runs after each edit, so keep it green.
 4. Preserve public APIs unless the user explicitly allows breaking changes.
-5. Finish with a summary of what moved where and why.
+5. If a rename or move changes call sites, verify every caller was updated.
+6. Finish with a summary of what moved where and why.

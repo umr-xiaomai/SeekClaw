@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using SeekClaw.Runtime.Configuration;
 
 namespace SeekClaw.Runtime.Workspaces;
@@ -39,6 +40,9 @@ public interface IWorkspaceManager
     IReadOnlyList<string> Bootstrap(WorkspaceInfo workspace);
 
     string? LoadMemory(WorkspaceInfo workspace);
+
+    /// <summary>Loads hierarchical AGENTS.md instructions from the workspace root and the current directory chain.</summary>
+    string? LoadAgentInstructions(WorkspaceInfo workspace);
 }
 
 public sealed class WorkspaceManager : IWorkspaceManager
@@ -213,4 +217,60 @@ public sealed class WorkspaceManager : IWorkspaceManager
 
     public string? LoadMemory(WorkspaceInfo workspace) =>
         File.Exists(workspace.MemoryFile) ? File.ReadAllText(workspace.MemoryFile) : null;
+
+    public string? LoadAgentInstructions(WorkspaceInfo workspace)
+    {
+        if (workspace.IsGlobal) return null;
+
+        var rootPath = Path.GetFullPath(workspace.Root);
+        var rootInstructions = Path.Combine(rootPath, "AGENTS.md");
+        var files = new List<(string Path, string Text)>();
+
+        if (File.Exists(rootInstructions))
+        {
+            try
+            {
+                files.Add((Path.GetRelativePath(rootPath, rootInstructions), File.ReadAllText(rootInstructions)));
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        var cwd = Path.GetFullPath(Directory.GetCurrentDirectory());
+        if (cwd.StartsWith(rootPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            var current = cwd;
+            while (!string.Equals(current, rootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                var candidate = Path.Combine(current, "AGENTS.md");
+                if (File.Exists(candidate) && !string.Equals(candidate, rootInstructions, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var relativePath = Path.GetRelativePath(rootPath, candidate);
+                        // Deeper AGENTS.md files take precedence; order them closer to the working directory.
+                        files.Insert(0, (relativePath, File.ReadAllText(candidate)));
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+
+                var parent = Path.GetDirectoryName(current);
+                if (parent is null || string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+                    break;
+                current = parent;
+            }
+        }
+
+        if (files.Count == 0) return null;
+
+        var builder = new StringBuilder();
+        foreach (var (path, text) in files)
+        {
+            builder.Append("## ").Append(path).AppendLine();
+            builder.AppendLine(text.Trim());
+            builder.AppendLine();
+        }
+        return builder.ToString();
+    }
 }

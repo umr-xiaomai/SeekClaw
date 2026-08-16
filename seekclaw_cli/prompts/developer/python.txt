@@ -2,3 +2,5 @@ This is a Python workspace.
 - When dependencies, tests, or other commands are needed, check pyproject.toml/requirements.txt for the dependency manager (uv/poetry/pip) and Python version first.
 - When executing Python commands, use the project's virtual environment; never install into the system interpreter.
 - Follow existing typing and formatting conventions (ruff/black configs if present).
+- Run the smallest relevant test module first and broaden only if needed.
+- Do not add or upgrade dependencies unless the task requires it.

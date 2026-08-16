@@ -12,6 +12,16 @@ public static class ContextPlanner
     private const double CharsPerToken = 4.0;
     private const int PerMessageOverheadTokens = 8;
 
+    /// <summary>
+    /// Hard cap for any single repository fragment injected into model context
+    /// (AGENTS.md, MEMORY.md, skill prompts, MCP prompts). Mirrors Codex's rule that
+    /// every injected fragment must be bounded and never unbounded.
+    /// </summary>
+    public const int MaxInjectedFragmentTokens = 10_000;
+
+    /// <summary>Upper bound for the assembled system prompt before history budgeting starts.</summary>
+    public const int MaxSystemPromptTokens = 24_000;
+
     public static int EstimateTokens(string text) =>
         (int)Math.Ceiling(text.Length / CharsPerToken);
 
@@ -20,6 +30,25 @@ public static class ContextPlanner
         + (message.ToolCalls?.Sum(c => EstimateTokens(c.ArgumentsJson) + EstimateTokens(c.Name)) ?? 0)
         + (message.Images?.Count * 1_200 ?? 0)
         + PerMessageOverheadTokens;
+
+    /// <summary>
+    /// Truncates a single injected text fragment to <paramref name="maxTokens"/>, keeping
+    /// both the head and tail so file paths / constraints and final decisions stay visible.
+    /// </summary>
+    public static string FitInjectedText(string text, int maxTokens = MaxInjectedFragmentTokens)
+    {
+        if (string.IsNullOrWhiteSpace(text) || EstimateTokens(text) <= maxTokens)
+            return text;
+
+        var budgetChars = Math.Max(1, (int)(maxTokens * CharsPerToken));
+        var headChars = budgetChars / 2;
+        var tailChars = budgetChars - headChars;
+        var head = text[..headChars];
+        var tail = text[^tailChars..];
+        return head
+               + "\n\n… [middle section trimmed: injected context exceeded the token budget] …\n\n"
+               + tail;
+    }
 
     /// <summary>Character budget for a single tool result, scaled to the context window.</summary>
     public static int ToolOutputBudget(ModelConfig model, AgentConfig agent)

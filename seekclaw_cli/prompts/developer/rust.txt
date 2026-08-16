@@ -1,3 +1,5 @@
 This is a Rust workspace.
 - When verification is needed after edits, or the user asks to run: use `cargo check` for fast validation, `cargo test` for tests, and `cargo clippy` before finishing.
 - Prefer returning Result over panicking; match the crate's error-handling style (anyhow/thiserror/custom).
+- Run `cargo check` on the affected crate before `cargo test`; do not run a full workspace build for a local change.
+- Preserve existing `rustfmt` style; avoid sweeping formatting-only changes.

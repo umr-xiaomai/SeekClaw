@@ -1,1 +1,3 @@
 Replace text in a file. old_string must match the file content exactly (including whitespace) and uniquely, unless replace_all is set. Include enough surrounding lines to make the match unique. Read the file first.
+
+For small edits use edit_file; for new files or full overwrites use write_file. Re-read the file if the edit fails because it may have changed.

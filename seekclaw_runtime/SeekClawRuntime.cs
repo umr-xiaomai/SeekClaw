@@ -139,9 +139,16 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                 return ValueTask.FromResult(prompts.TryGet("system/global"));
 
             var defaultKey = ctx.WorkspaceConfig?.SystemPrompt ?? configStore.Config.Agent.SystemPrompt;
-            var mode = AgentModeExtensions.Parse(ctx.WorkspaceConfig?.Mode ?? configStore.Config.Agent.Mode);
-            var key = mode == AgentMode.Plan ? "system/planner" : defaultKey;
-            return ValueTask.FromResult(prompts.TryGet(key) ?? prompts.TryGet(defaultKey));
+            return ValueTask.FromResult(prompts.TryGet(defaultKey));
+        }));
+
+        // Personality is a small, swappable voice layer. It never changes tool authority.
+        registry.Register(new PromptContribution("personality", PromptSlot.System, (ctx, _) =>
+        {
+            var personality = ctx.Variables.TryGetValue("personality", out var value) && !string.IsNullOrWhiteSpace(value)
+                ? value
+                : "pragmatic";
+            return ValueTask.FromResult(prompts.TryGet($"personality/{personality}"));
         }));
 
         // Model capabilities are part of the runtime contract, not an assumption the model
@@ -158,6 +165,25 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
             return ValueTask.FromResult<string?>(PromptVariables.BuildCapabilityInstruction(vision, imageOutput));
         }));
 
+        // Collaboration mode supplies the behavioral contract for plan/readonly/auto runs.
+        registry.Register(new PromptContribution("collaboration-mode", PromptSlot.System, (ctx, _) =>
+        {
+            var mode = ctx.Variables.TryGetValue("mode", out var modeValue) ? modeValue : "edit";
+            var key = mode switch
+            {
+                "plan" => "system/planner",
+                "readonly" => "system/readonly",
+                "auto" => "system/auto",
+                _ => null,
+            };
+            return ValueTask.FromResult(key is null ? null : prompts.TryGet(key));
+        }));
+
+        // Permission context is runtime state, not a model assumption. It tells the model
+        // what authority it has before it can make a dangerous or disallowed tool call.
+        registry.Register(new PromptContribution("permissions", PromptSlot.System, (ctx, _) =>
+            ValueTask.FromResult(prompts.TryGet("system/permissions"))));
+
         // Developer prompts per detected project kind (dotnet, node, python, rust, unity, vue…).
         registry.Register(new PromptContribution("developer", PromptSlot.Developer, (ctx, _) =>
         {
@@ -167,6 +193,14 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                 .Select(text => text!.Trim())
                 .ToList();
             return ValueTask.FromResult<string?>(parts.Count == 0 ? null : string.Join("\n\n", parts));
+        }));
+
+        // Repository instructions (AGENTS.md) are injected as bounded, user-authored context.
+        registry.Register(new PromptContribution("agents-md", PromptSlot.Workspace, (ctx, _) =>
+        {
+            if (!ctx.Variables.TryGetValue("agents_md", out var agentsMd) || string.IsNullOrWhiteSpace(agentsMd))
+                return ValueTask.FromResult<string?>(null);
+            return ValueTask.FromResult(prompts.TryGet("builtin/agents_md"));
         }));
 
         // Workspace memory (MEMORY.md), injected through the builtin/memory template.

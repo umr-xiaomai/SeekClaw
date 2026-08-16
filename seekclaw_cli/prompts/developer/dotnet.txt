@@ -2,3 +2,5 @@ This is a .NET workspace.
 - When verification is needed after edits, or the user asks to run: build with `dotnet build` and test with `dotnet test`; add `--nologo -v q` to keep output small.
 - Respect the project's TargetFramework and nullable settings; don't add packages that already flow transitively.
 - Follow modern C# idioms already used in the codebase (file-scoped namespaces, records, pattern matching) — but match the existing style first.
+- Run the smallest relevant test or project first, not the entire solution, unless the change is solution-wide.
+- Do not commit or revert unrelated working-tree changes; inspect `git status` before staging.

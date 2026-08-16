@@ -5,4 +5,9 @@ Command: {{command}}
 Output:
 {{error}}
 
-Fix the reported errors. Read the affected files first, make the smallest correct change, and do not disable or skip the verification.
+Fix the reported errors:
+1. Read the affected files before editing.
+2. Group errors by root cause; one bad change can fan out into many messages, so fix causes rather than symptoms.
+3. Make the smallest correct change.
+4. Do not disable, skip, or weaken the verification.
+5. Re-run the verification and continue until it is green.

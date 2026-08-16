@@ -1,6 +1,7 @@
 The build is failing. Fix it.
 1. Run the project's build command and capture the full error output.
-2. Group errors by root cause — one bad change often fans out into many messages; fix causes, not symptoms.
+2. Group errors by root cause; one bad change often fans out into many messages, so fix causes, not symptoms.
 3. Read each affected file before editing. Make minimal corrections.
 4. Rebuild after each fix until the build is completely green.
-5. Summarize the root cause and the fixes applied.
+5. Do not disable, skip, or weaken the failing check to make it pass.
+6. Summarize the root cause, the fixes applied, and the verification result.

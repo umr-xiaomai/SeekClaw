@@ -11,7 +11,11 @@ public static class PromptVariables
         WorkspaceInfo? workspace,
         ModelInfo? model,
         IReadOnlyCollection<string>? toolNames = null,
-        string? memory = null)
+        string? memory = null,
+        string mode = "edit",
+        bool networkEnabled = true,
+        bool autoVerify = true,
+        string personality = "pragmatic")
     {
         var hasWorkspace = workspace is { IsGlobal: false };
         var languageKinds = hasWorkspace
@@ -37,6 +41,12 @@ public static class PromptVariables
             ["image"] = model?.Model.Capabilities.Image == true ? "true" : "false",
             ["tool"] = toolNames is null ? "" : string.Join(", ", toolNames),
             ["memory"] = memory ?? "",
+            ["mode"] = mode,
+            ["network"] = networkEnabled ? "enabled" : "disabled",
+            ["approval_policy"] = "never",
+            ["sandbox_mode"] = mode is "plan" or "readonly" ? "read_only" : "workspace_write",
+            ["auto_verify"] = autoVerify ? "true" : "false",
+            ["personality"] = personality,
         };
         return variables;
     }

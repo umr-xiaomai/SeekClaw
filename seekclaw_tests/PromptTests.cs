@@ -1,4 +1,5 @@
 using SeekClaw.Runtime.Prompts;
+using SeekClaw.Runtime.Agents;
 
 namespace SeekClaw.Tests;
 
@@ -109,5 +110,37 @@ public sealed class PromptTests : IDisposable
 
         var imageOutputPrompt = PromptVariables.BuildCapabilityInstruction(vision: true, imageOutput: true);
         Assert.Contains("may also expose image output", imageOutputPrompt);
+    }
+
+    [Fact]
+    public void PromptVariables_Build_IncludesRuntimePermissionContext()
+    {
+        var variables = PromptVariables.Build(
+            workspace: null,
+            model: null,
+            toolNames: ["read_file"],
+            memory: "memory",
+            mode: "plan",
+            networkEnabled: false,
+            autoVerify: false,
+            personality: "friendly");
+
+        Assert.Equal("plan", variables["mode"]);
+        Assert.Equal("disabled", variables["network"]);
+        Assert.Equal("read_only", variables["sandbox_mode"]);
+        Assert.Equal("never", variables["approval_policy"]);
+        Assert.Equal("false", variables["auto_verify"]);
+        Assert.Equal("friendly", variables["personality"]);
+    }
+
+    [Fact]
+    public void FitInjectedText_BoundsLongFragments()
+    {
+        var text = new string('a', 20_000);
+        var fit = ContextPlanner.FitInjectedText(text, maxTokens: 100);
+
+        Assert.True(ContextPlanner.EstimateTokens(fit) <= 120);
+        Assert.Contains("middle section trimmed", fit);
+        Assert.StartsWith(new string('a', 200), fit);
     }
 }

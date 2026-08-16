@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.IO.Compression;
+using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Workspaces;
@@ -61,7 +62,7 @@ public sealed class SkillManager : ISkillManager
 
             var parts = Discover(_workspace)
                 .Where(s => s.Enabled && File.Exists(s.PromptFile))
-                .Select(s => File.ReadAllText(s.PromptFile).Trim())
+                .Select(s => ContextPlanner.FitInjectedText(File.ReadAllText(s.PromptFile).Trim()))
                 .Where(text => text.Length > 0)
                 .ToList();
             return ValueTask.FromResult<string?>(parts.Count == 0 ? null : string.Join("\n\n", parts));

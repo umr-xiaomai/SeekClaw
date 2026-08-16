@@ -81,4 +81,20 @@ public sealed class WorkspaceManagerTests : IDisposable
         Assert.False(new WorkspaceManager(stateDir).IsOnlySeekClawHomeMarker(dir, [".seekclaw", ".git"]));
         Assert.False(new WorkspaceManager(stateDir).IsOnlySeekClawHomeMarker(dir, [".git"]));
     }
+
+    [Fact]
+    public void LoadAgentInstructions_ReadsRootAgentsMd_AndSkipsGlobal()
+    {
+        var project = CreateDir(Path.Combine(_dir, "instructions-project"));
+        File.WriteAllText(Path.Combine(project, "AGENTS.md"), "use cargo check");
+        var workspace = new WorkspaceManager().Detect(project);
+
+        var instructions = new WorkspaceManager().LoadAgentInstructions(workspace);
+        Assert.NotNull(instructions);
+        Assert.Contains("use cargo check", instructions);
+        Assert.Contains("AGENTS.md", instructions);
+
+        var global = new WorkspaceManager().CreateGlobal(Path.Combine(_dir, "global-state"));
+        Assert.Null(new WorkspaceManager().LoadAgentInstructions(global));
+    }
 }

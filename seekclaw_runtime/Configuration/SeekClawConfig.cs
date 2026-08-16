@@ -149,6 +149,8 @@ public sealed class AgentConfig
     public int MaxSteps { get; set; } = 40;
     public bool AutoVerify { get; set; } = true;
     public int MaxRepairAttempts { get; set; } = 3;
+    /// <summary>Personality prompt key: pragmatic | friendly. Defaults to the pragmatic engineering voice.</summary>
+    public string Personality { get; set; } = "pragmatic";
     /// <summary>Summarizes older history when the context window would overflow, so a single turn can keep going.</summary>
     public bool EnableContextCompaction { get; set; } = true;
     /// <summary>Consecutive output-cap truncations allowed before a turn gives up instead of ending silently.</summary>
@@ -191,6 +193,7 @@ public sealed class WorkspaceConfig
     public double? Temperature { get; set; }
     public string? Mode { get; set; }
     public string? SystemPrompt { get; set; }
+    public string? Personality { get; set; }
     public List<string>? DisabledSkills { get; set; }
     public List<string>? DisabledTools { get; set; }
     public McpConfig? Mcp { get; set; }
