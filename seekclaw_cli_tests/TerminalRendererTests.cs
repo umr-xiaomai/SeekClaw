@@ -7,6 +7,31 @@ namespace SeekClaw.Cli.Tests;
 public sealed class TerminalRendererTests
 {
     [Fact]
+    public void StreamingMarkdown_RendersFencedCodeWithoutRawFenceMarkers()
+    {
+        var renderer = new MarkdownStreamRenderer();
+
+        var lines = renderer.Render(
+            "```csharp\nConsole.WriteLine(\"hello\");\n```",
+            width: 80,
+            maxLines: 20);
+
+        Assert.Contains(lines, line => Ansi.StripStyles(line).Contains("Console.WriteLine"));
+        Assert.DoesNotContain(lines, line => Ansi.StripStyles(line).Contains("```"));
+    }
+
+    [Fact]
+    public void StreamingMarkdown_RendersHeadingBeforeTheBlockIsFinalized()
+    {
+        var renderer = new MarkdownStreamRenderer();
+
+        var lines = renderer.Render("# In progress\n\nstill writing", width: 80, maxLines: 20);
+
+        Assert.Contains(lines, line => Ansi.StripStyles(line).Contains("In progress"));
+        Assert.DoesNotContain(lines, line => Ansi.StripStyles(line).StartsWith("# "));
+    }
+
+    [Fact]
     public void StableTail_WrapsCjkAndKeepsLatestRows()
     {
         const string text = "这是较早的思考内容。这里是接近结尾的分析，需要稳定显示而不是每帧消失。";

@@ -1,8 +1,8 @@
-using System.Text;
 using Markdig;
 using Markdig.Extensions.Tables;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
+using System.Text;
 
 namespace SeekClaw.Cli.Ui;
 
@@ -11,13 +11,13 @@ public static class MarkdownAnsi
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().Build();
 
-    public static List<string> Render(string markdown, int width = 100)
+    public static List<string> Render (string markdown, int width = 100)
     {
         var lines = new List<string>();
         MarkdownDocument document;
         try
         {
-            document = Markdown.Parse(markdown, Pipeline);
+            document = Parse(markdown);
         }
         catch (Exception)
         {
@@ -30,7 +30,9 @@ public static class MarkdownAnsi
         return lines;
     }
 
-    private static void RenderBlocks(ContainerBlock container, List<string> lines, string indent, int width)
+    internal static MarkdownDocument Parse (string markdown) => Markdown.Parse(markdown, Pipeline);
+
+    private static void RenderBlocks (ContainerBlock container, List<string> lines, string indent, int width)
     {
         var first = true;
         foreach (var block in container)
@@ -101,7 +103,7 @@ public static class MarkdownAnsi
         }
     }
 
-    private static void RenderTable(Table table, List<string> lines, string indent, int width)
+    private static void RenderTable (Table table, List<string> lines, string indent, int width)
     {
         // Collect all cell contents
         var rows = new List<List<string>>();
@@ -163,7 +165,7 @@ public static class MarkdownAnsi
         }
     }
 
-    private static void RenderCode(LeafBlock code, List<string> lines, string indent)
+    private static void RenderCode (LeafBlock code, List<string> lines, string indent)
     {
         var language = (code as FencedCodeBlock)?.Info;
         var lineNumColor = Ansi.Rgb(100, 100, 100); // Dim gray for line numbers
@@ -187,7 +189,7 @@ public static class MarkdownAnsi
         lines.Add((indent + "└" + new string('─', Math.Max(20, Math.Min(40, (language?.Length ?? 0) + 4)))).Style(Ansi.Gray));
     }
 
-    private static string RenderInlines(ContainerInline? container)
+    private static string RenderInlines (ContainerInline? container)
     {
         if (container is null) return "";
         var sb = new StringBuilder();
@@ -196,7 +198,7 @@ public static class MarkdownAnsi
         return sb.ToString();
     }
 
-    private static string RenderInline(Inline inline) => inline switch
+    private static string RenderInline (Inline inline) => inline switch
     {
         LiteralInline literal => literal.Content.ToString(),
         CodeInline code => code.Content.Style(Ansi.Yellow),
@@ -211,7 +213,7 @@ public static class MarkdownAnsi
         _ => "",
     };
 
-    private static IEnumerable<string> Wrap(string text, int width)
+    private static IEnumerable<string> Wrap (string text, int width)
     {
         width = Math.Max(20, width);
         foreach (var rawLine in text.Split('\n'))

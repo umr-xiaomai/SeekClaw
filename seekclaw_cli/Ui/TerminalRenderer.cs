@@ -1,7 +1,7 @@
+using SeekClaw.Runtime.Events;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
-using SeekClaw.Runtime.Events;
 
 namespace SeekClaw.Cli.Ui;
 
@@ -21,6 +21,9 @@ public sealed class TerminalRenderer : IDisposable
     private readonly IEventSubscription _subscription;
     private readonly ConcurrentQueue<string> _externalLines = new();
     private readonly LiveRegion _live;
+    private readonly MarkdownStreamRenderer _streamMarkdown = new();
+    private readonly Func<string>? _getModeText;
+    private readonly Func<int?>? _getContextWindow;
     private LineEditorFrame? _inputFrame;
     private readonly bool _showTurnDividers;
     private readonly Thread _thread;
@@ -31,10 +34,12 @@ public sealed class TerminalRenderer : IDisposable
     private readonly StringBuilder _thinkingBuffer = new();
     private readonly StringBuilder _toolOutputBuffer = new();  // For ToolCallProgressEvent
     private readonly List<string> _thinkingPreview = [];
+    private IReadOnlyList<string> _streamRenderedLines = [];
     private readonly Dictionary<string, (string Name, string Args, long StartedAt)> _activeTools = [];
     private readonly Stopwatch _turnClock = new();
     private bool _turnActive;
     private bool _thinkingActive;
+    private bool _streamDirty;
     private string _status = "";
     private string _statusDetail = "";
     private string _modelRef = "";
@@ -45,25 +50,32 @@ public sealed class TerminalRenderer : IDisposable
     private long _thinkingStartedAt;
     private long _nextThinkingPreviewAt;
 
-    public TerminalRenderer(IEventBus bus, TextWriter? output = null, bool showTurnDividers = false)
+    public TerminalRenderer (
+        IEventBus bus,
+        TextWriter? output = null,
+        bool showTurnDividers = false,
+        Func<string>? getModeText = null,
+        Func<int?>? getContextWindow = null)
     {
         VirtualTerminal.Enable();
         _live = new LiveRegion(output ?? Console.Out);
         _showTurnDividers = showTurnDividers;
+        _getModeText = getModeText;
+        _getContextWindow = getContextWindow;
         _subscription = bus.Subscribe();
         _thread = new Thread(RenderLoop) { IsBackground = true, Name = "seekclaw-render" };
         _thread.Start();
     }
 
     /// <summary>Thread-safe: queue plain lines into scrollback (user prompt echo, REPL notices).</summary>
-    public void WriteLine(string line = "") => _externalLines.Enqueue(line);
+    public void WriteLine (string line = "") => _externalLines.Enqueue(line);
 
     /// <summary>Thread-safe: replaces the editable input area rendered below live agent output.</summary>
-    public void SetInputFrame(LineEditorFrame? frame) => Volatile.Write(ref _inputFrame, frame);
+    public void SetInputFrame (LineEditorFrame? frame) => Volatile.Write(ref _inputFrame, frame);
 
     // ---------------------------------------------------------------- render loop
 
-    private void RenderLoop()
+    private void RenderLoop ()
     {
         while (!_disposed)
         {
@@ -85,7 +97,7 @@ public sealed class TerminalRenderer : IDisposable
         }
     }
 
-    private void Apply(RuntimeEvent evt, List<string> scrollback)
+    private void Apply (RuntimeEvent evt, List<string> scrollback)
     {
         switch (evt)
         {
@@ -93,6 +105,9 @@ public sealed class TerminalRenderer : IDisposable
                 _turnActive = true;
                 _turnClock.Restart();
                 _streamBuffer.Clear();
+                _streamMarkdown.Reset();
+                _streamRenderedLines = [];
+                _streamDirty = false;
                 _thinkingBuffer.Clear();
                 _toolOutputBuffer.Clear();
                 _thinkingPreview.Clear();
@@ -142,11 +157,15 @@ public sealed class TerminalRenderer : IDisposable
 
             case AssistantTextDeltaEvent delta:
                 _streamBuffer.Append(delta.Delta);
+                _streamDirty = true;
                 break;
 
             case AssistantMessageCompletedEvent message:
                 // Replace the streamed tail with the fully rendered markdown in scrollback.
                 _streamBuffer.Clear();
+                _streamMarkdown.Reset();
+                _streamRenderedLines = [];
+                _streamDirty = false;
                 scrollback.Add("");
                 scrollback.AddRange(MarkdownAnsi.Render(message.Text, SafeWidth() - 2));
                 break;
@@ -231,6 +250,9 @@ public sealed class TerminalRenderer : IDisposable
                     scrollback.AddRange(MarkdownAnsi.Render(_streamBuffer.ToString(), SafeWidth() - 2));
                     _streamBuffer.Clear();
                 }
+                _streamMarkdown.Reset();
+                _streamRenderedLines = [];
+                _streamDirty = false;
                 if (completed.Cancelled)
                     scrollback.Add("— cancelled —".Style(Ansi.Yellow));
                 if (_showTurnDividers)
@@ -243,7 +265,7 @@ public sealed class TerminalRenderer : IDisposable
         }
     }
 
-    private List<string> BuildLiveLines()
+    private List<string> BuildLiveLines ()
     {
         if (!_turnActive) return [];
 
@@ -276,7 +298,7 @@ public sealed class TerminalRenderer : IDisposable
                 lines.Add(("  " + line).Style(Ansi.Gray + Ansi.Italic));
         }
 
-        foreach (var line in BuildStableTail(_streamBuffer.ToString(), Math.Max(20, SafeWidth() - 1), 6))
+        foreach (var line in BuildStreamPreview())
             lines.Add(line);
 
         // Show tool output if any tool is active
@@ -297,15 +319,49 @@ public sealed class TerminalRenderer : IDisposable
 
         var tokens = _sessionInputTokens + _sessionOutputTokens;
         var costText = _sessionCost > 0 ? $" · ${_sessionCost:0.####}" : "";
-        if (_modelRef.Length > 0 || tokens > 0 || costText.Length > 0)
-            lines.Add($"{_modelRef}{(tokens > 0 ? $" · {tokens:N0} tokens" : "")}{costText}".Style(Ansi.Gray));
+        var mode = _getModeText?.Invoke();
+        var contextWindow = _getContextWindow?.Invoke();
+        var contextText = contextWindow is > 0 && tokens > 0
+            ? $" · {(double)tokens / contextWindow.Value:P0} ctx"
+            : "";
+
+        if (_modelRef.Length > 0 || !string.IsNullOrWhiteSpace(mode) || tokens > 0 || costText.Length > 0)
+        {
+            var status = new StringBuilder(_modelRef);
+            if (!string.IsNullOrWhiteSpace(mode)) status.Append($" · {mode}");
+            if (tokens > 0) status.Append($" · {tokens:N0} tokens");
+            status.Append(costText).Append(contextText);
+            lines.Add(status.ToString().Style(Ansi.Gray));
+        }
 
         return lines;
     }
 
-    private string Spinner() => SpinnerFrames[_spinnerTick % SpinnerFrames.Length];
+    private string Spinner () => SpinnerFrames[_spinnerTick % SpinnerFrames.Length];
 
-    internal static IReadOnlyList<string> BuildStableTail(string text, int lineWidth, int maxLines)
+    private IReadOnlyList<string> BuildStreamPreview ()
+    {
+        if (_streamBuffer.Length == 0) return [];
+
+        if (_streamDirty || _streamRenderedLines.Count == 0)
+        {
+            _streamRenderedLines = _streamMarkdown.Render(
+                _streamBuffer.ToString(),
+                Math.Max(20, SafeWidth() - 2),
+                StreamPreviewRows());
+            _streamDirty = false;
+        }
+
+        return _streamRenderedLines;
+    }
+
+    private static int StreamPreviewRows ()
+    {
+        try { return Math.Clamp(Console.WindowHeight - 12, 6, 18); }
+        catch (IOException) { return 10; }
+    }
+
+    internal static IReadOnlyList<string> BuildStableTail (string text, int lineWidth, int maxLines)
     {
         if (string.IsNullOrWhiteSpace(text) || lineWidth <= 0 || maxLines <= 0) return [];
 
@@ -352,7 +408,7 @@ public sealed class TerminalRenderer : IDisposable
         return lines.TakeLast(maxLines).ToList();
     }
 
-    private static IEnumerable<string> RenderDiff(string unifiedDiff)
+    private static IEnumerable<string> RenderDiff (string unifiedDiff)
     {
         var lines = unifiedDiff.Split('\n');
         var shown = 0;
@@ -375,17 +431,17 @@ public sealed class TerminalRenderer : IDisposable
         }
     }
 
-    private static int SafeWidth()
+    private static int SafeWidth ()
     {
         try { return Math.Max(40, Console.WindowWidth); }
         catch (IOException) { return 100; }
     }
 
-    private static string TurnDivider() =>
+    private static string TurnDivider () =>
         new string('─', Math.Max(20, SafeWidth() - 1)).Style(Ansi.Gray);
 
     /// <summary>Blocks briefly so queued frames land before the prompt is shown again.</summary>
-    public void Flush()
+    public void Flush ()
     {
         var deadline = Environment.TickCount64 + 500;
         while (Environment.TickCount64 < deadline
@@ -394,7 +450,7 @@ public sealed class TerminalRenderer : IDisposable
         Thread.Sleep(FrameMs * 2);
     }
 
-    public void Dispose()
+    public void Dispose ()
     {
         if (_disposed) return;
         Flush();

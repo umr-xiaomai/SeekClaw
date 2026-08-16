@@ -5,11 +5,12 @@ using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
+using System.Text;
 
 namespace SeekClaw.Cli;
 
 /// <summary>Interactive REPL and one-shot chat entry points, wired to the live renderer.</summary>
-public sealed class ChatLoop(SeekClawRuntime runtime)
+public sealed class ChatLoop (SeekClawRuntime runtime)
 {
     private static readonly SlashCommand[] ReplCommands =
     [
@@ -22,6 +23,7 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
         new("/clear", "", "Start a new session", SubmitsOnSelect: true),
         new("/usage", "", "Token and cost statistics", SubmitsOnSelect: true),
         new("/session", "", "Current session info", SubmitsOnSelect: true),
+        new("/copy", "", "Copy the last assistant answer to clipboard", SubmitsOnSelect: true),
         new("/print", "config", "Print configuration", SubmitsOnSelect: true),
         new("/help", "", "Show available commands", SubmitsOnSelect: true),
         new("/exit", "", "Leave SeekClaw", SubmitsOnSelect: true),
@@ -34,7 +36,7 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
 
     private string HistoryFile => Path.Combine(runtime.Workspace.SeekClawDir, "history.txt");
 
-    private void LoadHistory()
+    private void LoadHistory ()
     {
         try
         {
@@ -44,7 +46,7 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
         catch (IOException) { }
     }
 
-    private void SaveHistory(string input)
+    private void SaveHistory (string input)
     {
         if (_history.Count == 0 || _history[^1] != input)
             _history.Add(input);
@@ -56,10 +58,13 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
         catch (IOException) { }
     }
 
-    public async Task<int> RunOneShotAsync(string prompt, bool continueLast)
+    public async Task<int> RunOneShotAsync (string prompt, bool continueLast)
     {
         var session = ResolveSession(continueLast, null);
-        using var renderer = new TerminalRenderer(runtime.Events);
+        using var renderer = new TerminalRenderer(
+            runtime.Events,
+            getModeText: GetModeDisplay,
+            getContextWindow: GetActiveContextWindow);
         InstallCancelHandler();
 
         await ConnectMcpQuietlyAsync(renderer);
@@ -70,10 +75,14 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
         return result.Error is null ? 0 : 1;
     }
 
-    public async Task<int> RunInteractiveAsync(bool continueLast, string? resumeId)
+    public async Task<int> RunInteractiveAsync (bool continueLast, string? resumeId)
     {
         var session = ResolveSession(continueLast, resumeId);
-        using var renderer = new TerminalRenderer(runtime.Events, showTurnDividers: true);
+        using var renderer = new TerminalRenderer(
+            runtime.Events,
+            showTurnDividers: true,
+            getModeText: GetModeDisplay,
+            getContextWindow: GetActiveContextWindow);
         InstallCancelHandler();
 
         PrintBanner(renderer, session, continueLast || resumeId is not null);
@@ -138,7 +147,7 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
 
     // ---------------------------------------------------------------- helpers
 
-    private AgentSession ResolveSession(bool continueLast, string? resumeId)
+    private AgentSession ResolveSession (bool continueLast, string? resumeId)
     {
         if (resumeId is not null)
             return runtime.Sessions.Load(runtime.Workspace, resumeId)
@@ -151,7 +160,17 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
         return runtime.Sessions.Create(runtime.Workspace);
     }
 
-    private void InstallCancelHandler()
+    private string GetModeDisplay () =>
+        AgentModeExtensions.Parse(runtime.Workspace.Config?.Mode ?? runtime.ConfigStore.Config.Agent.Mode)
+            .ToDisplayString();
+
+    private int? GetActiveContextWindow ()
+    {
+        try { return runtime.Providers.ResolveActive(runtime.Workspace.Config).Model.ContextWindow; }
+        catch (Exception) { return null; }
+    }
+
+    private void InstallCancelHandler ()
     {
         Console.CancelKeyPress += (_, e) =>
         {
@@ -172,7 +191,7 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
         };
     }
 
-    private void PrintBanner(TerminalRenderer renderer, AgentSession session, bool resumed)
+    private void PrintBanner (TerminalRenderer renderer, AgentSession session, bool resumed)
     {
         var workspace = runtime.Workspace;
         string activeModel;
@@ -195,7 +214,7 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
             renderer.WriteLine(line);
     }
 
-    private async Task ConnectMcpQuietlyAsync(TerminalRenderer renderer)
+    private async Task ConnectMcpQuietlyAsync (TerminalRenderer renderer)
     {
         if (runtime.Mcp.LoadServerConfigs(runtime.Workspace).Count == 0) return;
         try
@@ -213,13 +232,29 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
     }
 
     /// <summary>Returns true when the REPL should exit.</summary>
-    private bool HandleSlashCommand(string input, ref AgentSession session, TerminalRenderer renderer)
+    private bool HandleSlashCommand (string input, ref AgentSession session, TerminalRenderer renderer)
     {
         var parts = input.Split(' ', 2, StringSplitOptions.TrimEntries);
         switch (parts[0].ToLowerInvariant())
         {
             case "/exit" or "/quit" or "/q":
                 return true;
+
+            case "/copy":
+            {
+                var last = session.Messages.LastOrDefault(message =>
+                    message.Role == ChatRole.Assistant && !string.IsNullOrWhiteSpace(message.Text));
+                if (last is null)
+                {
+                    renderer.WriteLine("no assistant answer to copy.".Style(Ansi.Gray));
+                }
+                else
+                {
+                    CopyViaOsc52(last.Text);
+                    renderer.WriteLine("copied last answer to clipboard.".Style(Ansi.Gray));
+                }
+                return false;
+            }
 
             case "/clear" or "/new":
                 session = runtime.Sessions.Create(runtime.Workspace);
@@ -393,6 +428,7 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
                 renderer.WriteLine("/clear         start a new session".Style(Ansi.Dim));
                 renderer.WriteLine("/usage         token/cost statistics".Style(Ansi.Dim));
                 renderer.WriteLine("/session       current session info".Style(Ansi.Dim));
+                renderer.WriteLine("/copy          copy last assistant answer".Style(Ansi.Dim));
                 renderer.WriteLine("/print config  print configuration file path".Style(Ansi.Dim));
                 renderer.WriteLine("/exit          leave".Style(Ansi.Dim));
                 return false;
@@ -401,5 +437,12 @@ public sealed class ChatLoop(SeekClawRuntime runtime)
                 renderer.WriteLine($"unknown command {parts[0]} — /help".Style(Ansi.Yellow));
                 return false;
         }
+    }
+
+    private static void CopyViaOsc52 (string text)
+    {
+        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
+        Console.Out.Write($"\x1b]52;c;{payload}\x1b\\");
+        Console.Out.Flush();
     }
 }

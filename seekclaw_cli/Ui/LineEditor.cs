@@ -1,13 +1,13 @@
-using System.Text;
 using SeekClaw.Runtime.Agents;
+using System.Text;
 
 namespace SeekClaw.Cli.Ui;
 
 /// <summary>A REPL slash command surfaced in the completion menu.</summary>
-public sealed record SlashCommand(string Name, string ArgsHint, string Description, bool SubmitsOnSelect);
+public sealed record SlashCommand (string Name, string ArgsHint, string Description, bool SubmitsOnSelect);
 
 /// <summary>Immutable snapshot of the editable input area for the shared terminal renderer.</summary>
-public sealed record LineEditorFrame(IReadOnlyList<string> Lines, int CursorRowsBelow, int CursorColumn);
+public sealed record LineEditorFrame (IReadOnlyList<string> Lines, int CursorRowsBelow, int CursorColumn);
 
 /// <summary>
 /// Interactive line editor with a Claude-Code-style slash command menu:
@@ -15,7 +15,7 @@ public sealed record LineEditorFrame(IReadOnlyList<string> Lines, int CursorRows
 /// (↑/↓ select · tab complete · enter run · esc dismiss), plus input history.
 /// CJK-aware cursor math; long input scrolls horizontally within one row.
 /// </summary>
-public sealed class LineEditor(
+public sealed class LineEditor (
     IReadOnlyList<SlashCommand> commands,
     List<string> history,
     Func<string>? getModeText = null,
@@ -24,7 +24,8 @@ public sealed class LineEditor(
 {
     private const int MaxMenuRows = 8;
     private const string Prompt = "❯ ";
-    private const string Placeholder = "type a message · / for commands";
+    private const string Continuation = "  ";
+    private const string Placeholder = "type a message · / for commands · ctrl+j newline";
 
     private readonly StringBuilder _buffer = new();
     private int _cursor;               // char index into _buffer
@@ -33,9 +34,10 @@ public sealed class LineEditor(
     private string _lastFilter = "";
     private int _historyIndex;
     private string _draft = "";
+    private string _kill = "";
 
     /// <summary>Reads one line; returns null on Ctrl+C/Ctrl+D with an empty buffer (caller exits).</summary>
-    public string? ReadLine()
+    public string? ReadLine ()
     {
         if (Console.IsInputRedirected)
         {
@@ -76,7 +78,7 @@ public sealed class LineEditor(
 
     // ---------------------------------------------------------------- key handling
 
-    private bool HandleKey(ConsoleKeyInfo key, out string? result)
+    private bool HandleKey (ConsoleKeyInfo key, out string? result)
     {
         result = null;
         var menu = CurrentMenu();
@@ -105,6 +107,55 @@ public sealed class LineEditor(
                 SetBuffer(command.ArgsHint.Length > 0 ? command.Name + " " : command.Name);
                 return false;
             }
+
+            case ConsoleKey.A when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                _cursor = 0;
+                return false;
+
+            case ConsoleKey.E when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                _cursor = _buffer.Length;
+                return false;
+
+            case ConsoleKey.K when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                if (_cursor < _buffer.Length)
+                {
+                    _kill = _buffer.ToString(_cursor, _buffer.Length - _cursor);
+                    _buffer.Remove(_cursor, _buffer.Length - _cursor);
+                    OnBufferChanged();
+                }
+                return false;
+
+            case ConsoleKey.U when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                if (_cursor > 0)
+                {
+                    _kill = _buffer.ToString(0, _cursor);
+                    _buffer.Remove(0, _cursor);
+                    _cursor = 0;
+                    OnBufferChanged();
+                }
+                return false;
+
+            case ConsoleKey.W when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                DeleteWordBackward();
+                return false;
+
+            case ConsoleKey.Y when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                InsertKill();
+                return false;
+
+            case ConsoleKey.J when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                _buffer.Insert(_cursor, '\n');
+                _cursor++;
+                OnBufferChanged();
+                return false;
+
+            case ConsoleKey.LeftArrow when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                MoveWordBackward();
+                return false;
+
+            case ConsoleKey.RightArrow when key.Modifiers.HasFlag(ConsoleModifiers.Control):
+                MoveWordForward();
+                return false;
 
             case ConsoleKey.UpArrow:
                 if (menu.Count > 0)
@@ -185,7 +236,7 @@ public sealed class LineEditor(
         }
     }
 
-    private void SetBuffer(string text)
+    private void SetBuffer (string text)
     {
         _buffer.Clear();
         _buffer.Append(text);
@@ -193,9 +244,40 @@ public sealed class LineEditor(
         OnBufferChanged();
     }
 
-    private void OnBufferChanged() => _menuSuppressed = false;
+    private void OnBufferChanged () => _menuSuppressed = false;
 
-    private void HistoryUp()
+    private void DeleteWordBackward ()
+    {
+        if (_cursor == 0) return;
+        var end = _cursor;
+        while (_cursor > 0 && char.IsWhiteSpace(_buffer[_cursor - 1])) _cursor--;
+        while (_cursor > 0 && !char.IsWhiteSpace(_buffer[_cursor - 1])) _cursor--;
+        _kill = _buffer.ToString(_cursor, end - _cursor);
+        _buffer.Remove(_cursor, end - _cursor);
+        OnBufferChanged();
+    }
+
+    private void InsertKill ()
+    {
+        if (_kill.Length == 0) return;
+        _buffer.Insert(_cursor, _kill);
+        _cursor += _kill.Length;
+        OnBufferChanged();
+    }
+
+    private void MoveWordBackward ()
+    {
+        while (_cursor > 0 && char.IsWhiteSpace(_buffer[_cursor - 1])) _cursor = PrevIndex(_cursor);
+        while (_cursor > 0 && !char.IsWhiteSpace(_buffer[_cursor - 1])) _cursor = PrevIndex(_cursor);
+    }
+
+    private void MoveWordForward ()
+    {
+        while (_cursor < _buffer.Length && !char.IsWhiteSpace(_buffer[_cursor])) _cursor = NextIndex(_cursor);
+        while (_cursor < _buffer.Length && char.IsWhiteSpace(_buffer[_cursor])) _cursor = NextIndex(_cursor);
+    }
+
+    private void HistoryUp ()
     {
         if (_historyIndex == 0 || history.Count == 0) return;
         if (_historyIndex == history.Count) _draft = _buffer.ToString();
@@ -203,7 +285,7 @@ public sealed class LineEditor(
         SetBuffer(history[_historyIndex]);
     }
 
-    private void HistoryDown()
+    private void HistoryDown ()
     {
         if (_historyIndex >= history.Count) return;
         _historyIndex++;
@@ -212,7 +294,7 @@ public sealed class LineEditor(
 
     // ---------------------------------------------------------------- menu
 
-    private IReadOnlyList<SlashCommand> CurrentMenu()
+    private IReadOnlyList<SlashCommand> CurrentMenu ()
     {
         var text = _buffer.ToString();
         if (_menuSuppressed || text.Length == 0 || text[0] != '/' || text.Contains(' '))
@@ -239,7 +321,7 @@ public sealed class LineEditor(
 
     // ---------------------------------------------------------------- rendering
 
-    private void Render()
+    private void Render ()
     {
         var view = BuildFrame();
         if (setFrame is not null)
@@ -258,19 +340,14 @@ public sealed class LineEditor(
         Console.Out.Flush();
     }
 
-    private LineEditorFrame BuildFrame()
+    private LineEditorFrame BuildFrame ()
     {
         var width = SafeWidth();
         var lines = new List<string>();
 
-        // 1. Input line
-        var (visible, cursorColumn) = Viewport(width - TextWidth.Of(Prompt) - 1);
-        var inputLine = new StringBuilder(Prompt.Style(Ansi.Cyan + Ansi.Bold));
-        if (_buffer.Length == 0)
-            inputLine.Append(Placeholder.Style(Ansi.Gray));
-        else
-            inputLine.Append(visible);
-        lines.Add(inputLine.ToString());
+        // 1. Input lines (single-line horizontal scroll, multi-line soft wrap via explicit newlines).
+        var (inputLines, cursorLine, cursorColumn) = RenderInputLines(width);
+        lines.AddRange(inputLines);
 
         // 2. Status Bar
         var modeStr = getModeText?.Invoke() ?? "edit";
@@ -304,10 +381,60 @@ public sealed class LineEditor(
             menuRows++;
         }
 
-        return new LineEditorFrame(lines, 1 + menuRows, cursorColumn);
+        var rowsBelowCursor = inputLines.Count - cursorLine + menuRows;
+        return new LineEditorFrame(lines, rowsBelowCursor, cursorColumn);
     }
 
-    private void Finish()
+    private (List<string> Lines, int CursorLine, int CursorColumn) RenderInputLines (int width)
+    {
+        var raw = _buffer.ToString();
+        if (raw.Length == 0)
+        {
+            var empty = new List<string> { Prompt.Style(Ansi.Cyan + Ansi.Bold) + Placeholder.Style(Ansi.Gray) };
+            return (empty, 0, TextWidth.Of(Prompt));
+        }
+
+        var lines = new List<string>();
+        var logicalLines = raw.Replace("\r\n", "\n").Split('\n');
+        var cursorLine = 0;
+        var cursorColumn = TextWidth.Of(Prompt);
+
+        for (var index = 0; index < logicalLines.Length; index++)
+        {
+            var logical = logicalLines[index];
+            var prefix = index == 0 ? Prompt : Continuation;
+            var prefixWidth = TextWidth.Of(prefix);
+            var available = Math.Max(10, width - prefixWidth - 1);
+            var viewport = Viewport(logical, _cursorLineCursor(index, logicalLines), available);
+            var visible = viewport.Visible;
+            lines.Add((index == 0 ? prefix.Style(Ansi.Cyan + Ansi.Bold) : prefix) + visible);
+
+            if (_cursor >= LineStart(index, logicalLines) && _cursor <= LineStart(index, logicalLines) + logical.Length)
+            {
+                cursorLine = index;
+                cursorColumn = prefixWidth + viewport.CursorColumn;
+            }
+        }
+
+        return (lines, cursorLine, cursorColumn);
+    }
+
+    private int _cursorLineCursor (int lineIndex, string[] logicalLines)
+    {
+        if (lineIndex < 0 || lineIndex >= logicalLines.Length) return 0;
+        var start = LineStart(lineIndex, logicalLines);
+        return Math.Clamp(_cursor - start, 0, logicalLines[lineIndex].Length);
+    }
+
+    private int LineStart (int lineIndex, string[] logicalLines)
+    {
+        var start = 0;
+        for (var i = 0; i < lineIndex; i++)
+            start += logicalLines[i].Length + 1;
+        return start;
+    }
+
+    private void Finish ()
     {
         if (setFrame is not null)
         {
@@ -322,21 +449,18 @@ public sealed class LineEditor(
         Console.Out.Flush();
     }
 
-    /// <summary>Slice of the buffer that fits one row, plus the cursor's display column.</summary>
-    private (string Visible, int CursorColumn) Viewport(int available)
+    /// <summary>Slice of one logical input line that fits one row, plus the cursor's display column.</summary>
+    private (string Visible, int CursorColumn) Viewport (string text, int cursor, int available)
     {
-        var text = _buffer.ToString();
-        var promptWidth = TextWidth.Of(Prompt);
-
         if (TextWidth.Of(text) <= available)
-            return (text, promptWidth + TextWidth.Of(text[.._cursor]));
+            return (text, TextWidth.Of(text[..cursor]));
 
         // Walk back from the cursor to find the window start.
-        var start = _cursor;
+        var start = cursor;
         var used = 0;
         while (start > 0)
         {
-            var prev = PrevIndex(start);
+            var prev = PrevLogicalIndex(text, start);
             var w = TextWidth.Of(text[prev..start]);
             if (used + w > available - 8) break; // keep some right-hand context visible
             used += w;
@@ -347,7 +471,7 @@ public sealed class LineEditor(
         var total = 0;
         while (end < text.Length)
         {
-            var next = end + (char.IsSurrogatePair(text, end) ? 2 : 1);
+            var next = NextLogicalIndex(text, end);
             var w = TextWidth.Of(text[end..next]);
             if (total + w > available) break;
             total += w;
@@ -355,23 +479,35 @@ public sealed class LineEditor(
         }
 
         var visible = (start > 0 ? "…" : "") + text[start..Math.Max(start, end)];
-        var column = promptWidth + (start > 0 ? 1 : 0) + TextWidth.Of(text[start.._cursor]);
+        var column = (start > 0 ? 1 : 0) + TextWidth.Of(text[start..cursor]);
         return (visible, column);
     }
 
-    private int PrevIndex(int index)
+    private static int PrevLogicalIndex (string text, int index)
+    {
+        if (index >= 2 && char.IsSurrogatePair(text[index - 2], text[index - 1])) return index - 2;
+        return index - 1;
+    }
+
+    private static int NextLogicalIndex (string text, int index)
+    {
+        if (index + 1 < text.Length && char.IsSurrogatePair(text[index], text[index + 1])) return index + 2;
+        return index + 1;
+    }
+
+    private int PrevIndex (int index)
     {
         if (index >= 2 && char.IsSurrogatePair(_buffer[index - 2], _buffer[index - 1])) return index - 2;
         return index - 1;
     }
 
-    private int NextIndex(int index)
+    private int NextIndex (int index)
     {
         if (index + 1 < _buffer.Length && char.IsSurrogatePair(_buffer[index], _buffer[index + 1])) return index + 2;
         return index + 1;
     }
 
-    private static int SafeWidth()
+    private static int SafeWidth ()
     {
         try { return Math.Max(30, Console.WindowWidth); }
         catch (IOException) { return 100; }
@@ -381,7 +517,7 @@ public sealed class LineEditor(
 /// <summary>Terminal display width (CJK and emoji count as two columns).</summary>
 public static class TextWidth
 {
-    public static int Of(string text)
+    public static int Of (string text)
     {
         var width = 0;
         foreach (var rune in text.EnumerateRunes())
@@ -389,7 +525,7 @@ public static class TextWidth
         return width;
     }
 
-    private static int RuneWidth(int cp) => cp switch
+    private static int RuneWidth (int cp) => cp switch
     {
         < 0x20 => 0,
         >= 0x1100 and <= 0x115F => 2,   // Hangul Jamo
