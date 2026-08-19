@@ -42,6 +42,31 @@ import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
 import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity, WorkflowKind } from './types'
+import {
+  hydrateMessages,
+  makeId,
+  messageMatches,
+  normalizePath,
+  normalizeReasoningLevel,
+  pathName,
+  phaseLabel,
+  plainImages,
+  queuedImageUrl,
+  queuedMessagePreview,
+  samePath,
+  sessionScope,
+  sessionStats,
+  updateThreadTitle
+} from './app-helpers'
+import type { RuntimeModelCatalogItem, RuntimeProject, RuntimeSession, RuntimeWorkspace } from './app-helpers'
+import {
+  refreshAllProjectSessions as refreshAllProjectSessionsFromStore,
+  refreshGlobalSessions as refreshGlobalSessionsFromStore,
+  refreshProjectSessions as refreshProjectSessionsFromStore,
+  reloadThreadSession as reloadThreadSessionFromStore
+} from './session-sync'
+import { createThreadActions } from './thread-actions'
+import { createDaemonEventHandler } from './daemon-event-handler'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
 const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v2'
@@ -51,84 +76,12 @@ const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-docu
 // the task loading forever; once the first event arrives the turn is confirmed
 // running and may legitimately take minutes.
 const CHAT_FIRST_EVENT_TIMEOUT_MS = 30_000
-// Vue reactive proxies cannot be structured-cloned by Electron IPC; copy the
-// attachments into plain objects at the IPC boundary so requests reach the
-// daemon instead of failing with a DataCloneError.
-function plainImages(images?: ImageAttachment[]): ImageAttachment[] {
-  return (images ?? []).map((image) => ({
-    id: image.id,
-    name: image.name,
-    mediaType: image.mediaType,
-    data: image.data,
-    sizeBytes: image.sizeBytes
-  }))
-}
 const starterPrompts = [
   { label: '探索并理解代码', icon: Telescope, tone: 'blue' },
   { label: '构建新功能、应用或工具', icon: Hammer, tone: 'purple' },
   { label: '审查代码并提出修改建议', icon: RefreshCw, tone: 'green' },
   { label: '修复问题和失败', icon: Bug, tone: 'orange' }
 ] as const
-const makeId = (): string => crypto.randomUUID()
-const pathName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
-const normalizePath = (path: string): string => path.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase()
-const samePath = (left?: string, right?: string): boolean => Boolean(left && right && normalizePath(left) === normalizePath(right))
-
-interface RuntimeSessionHeader {
-  id: string
-  title?: string
-  workspace?: string
-  archived?: boolean
-  createdAt: string
-  updatedAt: string
-  reasoningLevel?: string
-  networkEnabled?: boolean
-  llmRounds?: number
-  executionSteps?: number
-  inputTokens?: number
-  totalInputTokens?: number
-  cachedInputTokens?: number
-  outputTokens?: number
-  outputElapsedMs?: number
-}
-
-interface RuntimeSession extends RuntimeSessionHeader {
-  messages: Array<{
-    role: 'user' | 'assistant' | 'tool'
-    text: string
-    images?: ImageAttachment[]
-    thinking?: string
-    modelRef?: string
-    viewedImages?: Array<{ id: string; name: string }>
-    toolCalls?: Array<{ id: string; name: string }>
-    toolCallId?: string
-    toolName?: string
-    toolSuccess?: boolean
-    toolDiff?: string
-    toolFilePath?: string
-  }>
-}
-
-interface RuntimeWorkspace {
-  path: string
-  name: string
-  mode: string
-}
-
-interface RuntimeProject {
-  id: string
-  path: string
-  name: string
-  createdAt: string
-  updatedAt: string
-}
-
-interface RuntimeModelCatalogItem {
-  ref: string
-  active: boolean
-  capabilities?: { vision?: boolean }
-}
-
 const appInfo = ref<AppInfo>({
   version: '0.1.0',
   platform: 'win32',
@@ -178,7 +131,7 @@ const conversationScrollTop = ref(0)
 const conversationViewportHeight = ref(600)
 /** Per-task composer drafts, kept across task switches. */
 const composerDrafts = new Map<string, string>()
-let conversationSelectionToken = 0
+const conversationSelectionToken = { value: 0 }
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
 const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? ReasoningLevel.High)
@@ -223,6 +176,8 @@ const runtimeConnectionLabel = computed(() => {
   if (reconnecting.value) return `正在重连 ${reconnectAttempt.value}/${RUNTIME_RECONNECT_ATTEMPTS}`
   return 'Runtime 离线'
 })
+
+const sessionSyncContext = { daemonState, threads }
 
 let unsubscribeEvent: (() => void) | undefined
 let unsubscribeState: (() => void) | undefined
@@ -387,97 +342,16 @@ async function handleScheduleUpdated(): Promise<void> {
   await refreshAllProjectSessions().catch(() => undefined)
 }
 
-function normalizeReasoningLevel(value?: string): ReasoningLevel {
-  const normalized = value?.toLocaleLowerCase()
-  return Object.values(ReasoningLevel).includes(normalized as ReasoningLevel)
-    ? normalized as ReasoningLevel
-    : ReasoningLevel.High
-}
-
 async function refreshProjectSessions(project: ProjectItem): Promise<void> {
-  if (!daemonState.value.connected) return
-  project.loaded = false
-  try {
-    const response = await window.seekclaw.daemon.request('session.list', {
-      workspace: project.path,
-      includeArchived: true
-    })
-    const savedSessions = JSON.parse(response.data) as RuntimeSessionHeader[]
-    const sessionIds = new Set(savedSessions.map((session) => session.id))
-    threads.value = threads.value.filter((thread) =>
-      thread.projectId !== project.id || !thread.sessionId || sessionIds.has(thread.sessionId))
-
-    for (const saved of savedSessions) {
-      const existing = threads.value.find((thread) =>
-        thread.projectId === project.id && thread.sessionId === saved.id)
-      const fallbackTitle = `任务 ${new Date(saved.createdAt).toLocaleString()}`
-      if (existing) {
-        existing.title = saved.title || existing.title || fallbackTitle
-        existing.updatedAt = new Date(saved.updatedAt).getTime()
-        existing.archived = Boolean(saved.archived)
-        existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
-        existing.networkEnabled = saved.networkEnabled ?? true
-      } else {
-        threads.value.push({
-          id: `${project.id}:session:${saved.id}`,
-          title: saved.title || fallbackTitle,
-          projectId: project.id,
-          updatedAt: new Date(saved.updatedAt).getTime(),
-          messages: [],
-          sessionId: saved.id,
-          sessionLoaded: false,
-          reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
-          networkEnabled: saved.networkEnabled ?? true,
-          archived: Boolean(saved.archived)
-        })
-      }
-    }
-  } finally {
-    project.loaded = true
-  }
+  await refreshProjectSessionsFromStore(sessionSyncContext, project)
 }
 
 async function refreshGlobalSessions(): Promise<void> {
-  if (!daemonState.value.connected) return
-  const response = await window.seekclaw.daemon.request('session.list', {
-    global: true,
-    includeArchived: true
-  })
-  const savedSessions = JSON.parse(response.data) as RuntimeSessionHeader[]
-  const sessionIds = new Set(savedSessions.map((session) => session.id))
-  threads.value = threads.value.filter((thread) =>
-    thread.projectId || !thread.sessionId || sessionIds.has(thread.sessionId))
-
-  for (const saved of savedSessions) {
-    const existing = threads.value.find((thread) => !thread.projectId && thread.sessionId === saved.id)
-    const fallbackTitle = `任务 ${new Date(saved.createdAt).toLocaleString()}`
-    if (existing) {
-      existing.title = saved.title || existing.title || fallbackTitle
-      existing.updatedAt = new Date(saved.updatedAt).getTime()
-      existing.archived = Boolean(saved.archived)
-      existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
-      existing.networkEnabled = saved.networkEnabled ?? true
-    } else {
-      threads.value.push({
-        id: `global:session:${saved.id}`,
-        title: saved.title || fallbackTitle,
-        updatedAt: new Date(saved.updatedAt).getTime(),
-        messages: [],
-        sessionId: saved.id,
-        sessionLoaded: false,
-        reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
-        networkEnabled: saved.networkEnabled ?? true,
-        archived: Boolean(saved.archived)
-      })
-    }
-  }
+  await refreshGlobalSessionsFromStore(sessionSyncContext)
 }
 
 async function refreshAllProjectSessions(): Promise<void> {
-  await Promise.all([
-    refreshGlobalSessions().catch(() => undefined),
-    ...projects.value.map((project) => refreshProjectSessions(project).catch(() => undefined))
-  ])
+  await refreshAllProjectSessionsFromStore(sessionSyncContext, projects.value)
 }
 
 async function migrateImplicitDocumentsProject(): Promise<void> {
@@ -634,7 +508,7 @@ async function openWorkspace(): Promise<void> {
   const project = await saveProject(ensureProject(path))
   selectedProjectId.value = project.id
   activeThreadId.value = ''
-  conversationSelectionToken++
+  conversationSelectionToken.value++
   conversationLoading.value = false
   conversationLoadError.value = ''
   await refreshProjectSessions(project).catch(() => undefined)
@@ -697,7 +571,7 @@ function newTask(projectId?: string): void {
   selectedProjectId.value = project?.id ?? ''
   activeThreadId.value = thread.id
   // Invalidate an in-flight session read for the previously selected task.
-  conversationSelectionToken++
+  conversationSelectionToken.value++
   conversationLoading.value = false
   conversationLoadError.value = ''
   void nextTick(() => composer.value?.focus())
@@ -714,84 +588,8 @@ async function ensureRuntimeProject(project: ProjectItem): Promise<void> {
   mode.value = opened.mode
 }
 
-function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
-  const messages: ChatMessage[] = []
-  saved.messages.forEach((item, index) => {
-    if (item.role === 'tool') {
-      const assistant = messages.findLast((message) => message.role === 'assistant')
-      if (assistant && item.toolName) {
-        assistant.tools ??= []
-        const tool = assistant.tools.find((activity) =>
-          Boolean(item.toolCallId) && (activity.callId === item.toolCallId || activity.id === item.toolCallId))
-        const hydrated: ToolActivity = tool ?? {
-          id: item.toolCallId ?? `${saved.id}:tool:${index}`,
-          callId: item.toolCallId,
-          name: item.toolName,
-          state: 'done'
-        }
-        hydrated.state = item.toolSuccess === false ? 'error' : 'done'
-        hydrated.detail = item.text
-        hydrated.filePath = item.toolFilePath
-        hydrated.diff = item.toolDiff
-        if (!tool) assistant.tools.push(hydrated)
-      }
-      return
-    }
-    messages.push({
-      id: `${saved.id}:${index}`,
-      role: item.role,
-      content: item.text,
-      images: item.images,
-      thinking: item.thinking,
-      modelRef: item.modelRef,
-      viewedImages: item.viewedImages,
-      tools: item.toolCalls?.map((call) => ({
-        id: call.id,
-        callId: call.id,
-        name: call.name,
-        state: 'done'
-      })),
-      state: item.role === 'assistant' ? 'done' : undefined,
-      createdAt: new Date(saved.createdAt).getTime() + index
-    })
-  })
-  return messages
-}
-
-function sessionStats(saved: RuntimeSession): ThreadStats {
-  const assistantCount = saved.messages.filter((item) => item.role === 'assistant').length
-  return {
-    llmRounds: saved.llmRounds || assistantCount,
-    executionSteps: saved.executionSteps || assistantCount,
-    inputTokens: saved.inputTokens ?? 0,
-    totalInputTokens: saved.totalInputTokens ?? 0,
-    cachedInputTokens: saved.cachedInputTokens ?? 0,
-    outputTokens: saved.outputTokens ?? 0,
-    outputElapsedMs: saved.outputElapsedMs ?? 0
-  }
-}
-
-function sessionScope(thread: ThreadItem, project?: ProjectItem): Record<string, unknown> {
-  return thread.projectId && project ? { workspace: project.path } : { global: true }
-}
-
 async function reloadThreadSession(thread: ThreadItem, project?: ProjectItem): Promise<void> {
-  if (!thread.sessionId || thread.running || !daemonState.value.connected) return
-  try {
-    const response = await window.seekclaw.daemon.request('session.get', {
-      id: thread.sessionId,
-      ...sessionScope(thread, project)
-    })
-    const saved = JSON.parse(response.data) as RuntimeSession
-    thread.messages = hydrateMessages(saved)
-    thread.sessionLoaded = true
-    thread.title = saved.title || thread.title
-    thread.archived = Boolean(saved.archived)
-    thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
-    thread.stats = sessionStats(saved)
-  } catch {
-    thread.sessionLoaded = false
-  }
+  await reloadThreadSessionFromStore(sessionSyncContext, thread, project)
 }
 
 async function selectThread(id: string): Promise<void> {
@@ -801,7 +599,7 @@ async function selectThread(id: string): Promise<void> {
     composerDrafts.set(activeThread.value.id, composer.value.getValue())
   const project = projects.value.find((item) => item.id === thread.projectId)
   if (thread.projectId && !project) return
-  const selectionToken = ++conversationSelectionToken
+  const selectionToken = ++conversationSelectionToken.value
   const needsLoad = Boolean(thread.sessionId && (!thread.sessionLoaded || !thread.running))
   activeThreadId.value = id
   selectedProjectId.value = project?.id ?? ''
@@ -826,21 +624,15 @@ async function selectThread(id: string): Promise<void> {
     }
   } catch {
     thread.sessionLoaded = false
-    if (selectionToken === conversationSelectionToken)
+    if (selectionToken === conversationSelectionToken.value)
       conversationLoadError.value = '无法读取此会话，请检查 Runtime 连接后重试。'
   }
-  if (selectionToken !== conversationSelectionToken) return
+  if (selectionToken !== conversationSelectionToken.value) return
   conversationLoading.value = false
   autoFollowConversation.value = true
   const draft = composerDrafts.get(thread.id)
   if (draft) composer.value?.setValue(draft)
   await scrollToBottom(false, true)
-}
-
-function updateThreadTitle(thread: ThreadItem, prompt: string): boolean {
-  if (thread.title !== '新任务') return false
-  thread.title = prompt.length > 42 ? `${prompt.slice(0, 42)}…` : prompt
-  return true
 }
 
 interface ConversationItem { message: ChatMessage; step?: number }
@@ -919,21 +711,6 @@ const vMeasure = {
   unmounted(el: HTMLElement & { __heightObserver?: ResizeObserver }): void {
     el.__heightObserver?.disconnect()
   }
-}
-
-function messageMatches(message: ChatMessage, query: string): boolean {
-  const normalized = query.trim().toLocaleLowerCase()
-  if (!normalized) return true
-  return message.content.toLocaleLowerCase().includes(normalized)
-}
-
-function phaseLabel(status: string): string {
-  const s = status.toLocaleLowerCase()
-  if (s.includes('compacting')) return '压缩记忆'
-  if (s.includes('verifying')) return '构建验证'
-  if (s.includes('truncated')) return '自动续写'
-  if (s.includes('thinking')) return '思考中'
-  return status
 }
 
 function continueAssistant(): void {
@@ -1018,16 +795,6 @@ async function drainQueuedMessages(thread: ThreadItem): Promise<void> {
 function removeQueuedMessage(thread: ThreadItem, id: string): void {
   if (!thread.queuedMessages) return
   thread.queuedMessages = thread.queuedMessages.filter((item) => item.id !== id)
-}
-
-function queuedMessagePreview(message: QueuedMessage): string {
-  const text = message.content.trim().replace(/\s+/g, ' ')
-  if (text) return text.length > 120 ? `${text.slice(0, 120)}…` : text
-  return message.images.length > 1 ? `发送 ${message.images.length} 张图片` : '发送图片'
-}
-
-function queuedImageUrl(image?: ImageAttachment): string {
-  return image ? `data:${image.mediaType};base64,${image.data}` : ''
 }
 
 async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Promise<void> {
@@ -1191,52 +958,31 @@ async function saveTaskTitle(title: string): Promise<void> {
   taskSettingsThreadId.value = ''
 }
 
-function chooseAfterRemoval(projectId?: string): void {
-  // The selected task is about to change; stale session reads must not update
-  // the loading state for the replacement task.
-  conversationSelectionToken++
-  conversationLoading.value = false
-  conversationLoadError.value = ''
-  const fallback = threads.value
-    .filter((thread) => thread.projectId === projectId && !thread.archived)
-    .sort((left, right) => right.updatedAt - left.updatedAt)[0]
-  if (fallback) {
-    void selectThread(fallback.id)
-    return
-  }
-  activeThreadId.value = ''
-  selectedProjectId.value = projectId ?? ''
-}
-
-async function archiveTask(thread: ThreadItem): Promise<void> {
-  const project = projects.value.find((item) => item.id === thread.projectId)
-  if ((thread.projectId && !project) || thread.running) return
-  if (thread.sessionId) {
-    await window.seekclaw.daemon.request('session.archive', {
-      id: thread.sessionId,
-      ...sessionScope(thread, project),
-      archived: true
-    })
-    thread.archived = true
-  } else {
-    threads.value = threads.value.filter((item) => item.id !== thread.id)
-  }
-  taskSettingsThreadId.value = ''
-  if (activeThreadId.value === thread.id) chooseAfterRemoval(project?.id)
-}
-
-async function restoreTask(thread: ThreadItem): Promise<void> {
-  const project = projects.value.find((item) => item.id === thread.projectId)
-  if ((thread.projectId && !project) || !thread.sessionId || thread.running) return
-  await window.seekclaw.daemon.request('session.archive', {
-    id: thread.sessionId,
-    ...sessionScope(thread, project),
-    archived: false
-  })
-  thread.archived = false
-  thread.updatedAt = Date.now()
-  taskSettingsThreadId.value = ''
-}
+const {
+  chooseAfterRemoval,
+  archiveTask,
+  restoreTask,
+  archiveProjectTasks,
+  archiveGlobalTasks,
+  deleteTask,
+  deleteGlobalTasks,
+  deleteProjectTasks,
+  deleteArchivedTasks,
+  deleteProject
+} = createThreadActions({
+  projects,
+  threads,
+  activeThreadId,
+  selectedProjectId,
+  taskSettingsThreadId,
+  daemonState,
+  conversationLoading,
+  conversationLoadError,
+  conversationSelectionToken,
+  selectThread,
+  refreshProjectSessions,
+  reconnectDaemon
+})
 
 async function initializeProjectWorkspace(project: ProjectItem): Promise<void> {
   if (!daemonState.value.connected) {
@@ -1256,473 +1002,18 @@ async function initializeProjectWorkspace(project: ProjectItem): Promise<void> {
   }
 }
 
-async function archiveProjectTasks(project: ProjectItem): Promise<void> {
-  if (!project.loaded) await refreshProjectSessions(project).catch(() => undefined)
-  const targets = threads.value.filter((thread) => thread.projectId === project.id && !thread.archived)
-  if (targets.length === 0 || targets.some((thread) => thread.running)) return
-  if (!await confirmAction({
-    title: '归档项目任务',
-    message: `归档项目“${project.name}”的全部 ${targets.length} 个任务？`,
-    confirmLabel: '全部归档'
-  })) return
-
-  const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  for (const thread of targets) {
-    if (thread.sessionId) {
-      await window.seekclaw.daemon.request('session.archive', {
-        id: thread.sessionId,
-        workspace: project.path,
-        archived: true
-      })
-      thread.archived = true
-    } else {
-      threads.value = threads.value.filter((item) => item.id !== thread.id)
-    }
-  }
-  if (activeAffected) chooseAfterRemoval(project.id)
-}
-
-async function archiveGlobalTasks(): Promise<void> {
-  const targets = threads.value.filter((thread) => !thread.projectId && !thread.archived)
-  if (targets.length === 0 || targets.some((thread) => thread.running)) return
-  if (!await confirmAction({
-    title: '归档任务',
-    message: `归档全部 ${targets.length} 个任务？`,
-    confirmLabel: '全部归档'
-  })) return
-
-  const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  for (const thread of targets) {
-    if (thread.sessionId) {
-      await window.seekclaw.daemon.request('session.archive', {
-        id: thread.sessionId,
-        global: true,
-        archived: true
-      })
-      thread.archived = true
-    } else {
-      threads.value = threads.value.filter((item) => item.id !== thread.id)
-    }
-  }
-  if (activeAffected) chooseAfterRemoval()
-}
-
-async function deleteTask(thread: ThreadItem): Promise<void> {
-  const project = projects.value.find((item) => item.id === thread.projectId)
-  if ((thread.projectId && !project) || thread.running) return
-  if (!await confirmAction({
-    title: '删除任务',
-    message: `永久删除任务“${thread.title}”？此操作无法撤销。`,
-    confirmLabel: '永久删除',
-    danger: true
-  })) return
-  if (thread.sessionId) {
-    await window.seekclaw.daemon.request('session.delete', {
-      id: thread.sessionId,
-      ...sessionScope(thread, project)
-    })
-  }
-  threads.value = threads.value.filter((item) => item.id !== thread.id)
-  taskSettingsThreadId.value = ''
-  if (activeThreadId.value === thread.id) chooseAfterRemoval(project?.id)
-}
-
-async function deleteGlobalTasks(): Promise<void> {
-  const targets = threads.value.filter((thread) => !thread.projectId)
-  if (targets.length === 0 || targets.some((thread) => thread.running)) return
-  if (!await confirmAction({
-    title: '删除全部任务',
-    message: `永久删除全部 ${targets.length} 个任务？此操作无法撤销。`,
-    confirmLabel: '全部删除',
-    danger: true
-  })) return
-
-  const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  for (const thread of targets) {
-    if (thread.sessionId) {
-      await window.seekclaw.daemon.request('session.delete', { id: thread.sessionId, global: true })
-    }
-    threads.value = threads.value.filter((item) => item.id !== thread.id)
-  }
-  taskSettingsThreadId.value = ''
-  if (activeAffected) chooseAfterRemoval()
-}
-
-async function deleteProjectTasks(project: ProjectItem): Promise<void> {
-  if (!project.loaded) await refreshProjectSessions(project).catch(() => undefined)
-  const targets = threads.value.filter((thread) => thread.projectId === project.id)
-  if (targets.length === 0 || targets.some((thread) => thread.running)) return
-  if (!await confirmAction({
-    title: '删除项目全部任务',
-    message: `永久删除项目“${project.name}”的全部 ${targets.length} 个任务？此操作无法撤销。`,
-    confirmLabel: '全部删除',
-    danger: true
-  })) return
-
-  const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  for (const thread of targets) {
-    if (thread.sessionId) {
-      await window.seekclaw.daemon.request('session.delete', {
-        id: thread.sessionId,
-        workspace: project.path
-      })
-    }
-    threads.value = threads.value.filter((item) => item.id !== thread.id)
-  }
-  taskSettingsThreadId.value = ''
-  if (activeAffected) chooseAfterRemoval(project.id)
-}
-
-async function deleteArchivedTasks(): Promise<void> {
-  const targets = threads.value.filter((thread) => thread.archived)
-  if (targets.length === 0 || targets.some((thread) => thread.running)) return
-  if (!await confirmAction({
-    title: '清空已归档任务',
-    message: `永久删除全部 ${targets.length} 个已归档任务？此操作无法撤销。`,
-    confirmLabel: '全部删除',
-    danger: true
-  })) return
-
-  const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  for (const thread of targets) {
-    const project = projects.value.find((item) => item.id === thread.projectId)
-    if (thread.sessionId && (project || !thread.projectId)) {
-      await window.seekclaw.daemon.request('session.delete', {
-        id: thread.sessionId,
-        ...sessionScope(thread, project)
-      })
-    }
-    threads.value = threads.value.filter((item) => item.id !== thread.id)
-  }
-  taskSettingsThreadId.value = ''
-  if (activeAffected) {
-    activeThreadId.value = ''
-    const project = projects.value.find((project) => project.id === selectedProjectId.value)
-    chooseAfterRemoval(project?.id)
-  }
-}
-
-async function deleteProject(project: ProjectItem): Promise<void> {
-  if (threads.value.some((thread) => thread.projectId === project.id && thread.running)) return
-  if (!daemonState.value.connected) {
-    await reconnectDaemon()
-    if (!daemonState.value.connected) return
-  }
-  try {
-    // Always refresh so sessions created or archived by another client are included.
-    await refreshProjectSessions(project)
-  } catch {
-    return
-  }
-  const targets = threads.value.filter((thread) => thread.projectId === project.id)
-  if (targets.some((thread) => thread.running)) return
-  if (!await confirmAction({
-    title: '删除项目',
-    message: `删除项目“${project.name}”并永久删除其下全部 ${targets.length} 个会话？本地项目文件不会删除，此操作无法撤销。`,
-    confirmLabel: '删除项目和会话',
-    danger: true
-  })) return
-
-  try {
-    await window.seekclaw.daemon.request('project.remove', { id: project.id })
-  } catch {
-    await refreshProjectSessions(project).catch(() => undefined)
-    return
-  }
-
-  const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-  projects.value = projects.value.filter((item) => item.id !== project.id)
-  threads.value = threads.value.filter((thread) => thread.projectId !== project.id)
-  if (targets.some((thread) => thread.id === taskSettingsThreadId.value)) taskSettingsThreadId.value = ''
-  if (activeAffected) activeThreadId.value = ''
-  if (selectedProjectId.value === project.id) selectedProjectId.value = projects.value[0]?.id ?? ''
-  if (!activeThread.value) {
-    activeThreadId.value = ''
-    chooseAfterRemoval(selectedProjectId.value || undefined)
-  }
-}
-
-function handleDaemonEvent(event: DaemonMessage): void {
-  if (event.event === 'schedule.upcoming') return
-  if (event.event === 'schedule.updated') {
-    void handleScheduleUpdated()
-    return
-  }
-  const isChatRequest = event.requestMethod === 'chat'
-    || event.requestMethod === 'agent.runTurn'
-    || event.requestMethod === 'agent/runTurn'
-  // The steer request only acknowledges enqueueing (or reports that the turn
-  // just finished). Its error/result must never be interpreted as the active
-  // chat turn's terminal state.
-  if (event.requestMethod === 'agent.steer') return
-  if (!isChatRequest && !event.sessionId) return
-  const thread = (event.sessionId
-    ? threads.value.find((item) => item.sessionId === event.sessionId)
-    : undefined)
-    ?? threads.value.find((item) => item.requestId === event.id)
-    ?? (!event.sessionId && activeThread.value?.running ? activeThread.value : undefined)
-  if (!thread) return
-
-  // Guidance is drained by the Agent and forwarded under the chat request id, so it
-  // can arrive after the turn's terminal response already resolved (IPC race). It
-  // must be applied before the stale-request guards below: the optimistic guidance
-  // message is already rendered, and its pending counter always needs releasing.
-  if (event.event === 'steer') {
-    thread.pendingGuidance = Math.max(0, (thread.pendingGuidance ?? 1) - 1)
-    const currentAssistant = thread.messages.find((item) => item.id === thread.assistantId)
-    // The guidance user message is rendered immediately after the current
-    // assistant placeholder. Always start a fresh assistant bubble so the next
-    // streamed answer cannot appear above the guidance message when the previous
-    // answer was still blank/thinking.
-    if (currentAssistant) {
-      currentAssistant.state = 'done'
-      const nextAssistant: ChatMessage = {
-        id: makeId(),
-        role: 'assistant',
-        content: '',
-        thinking: '',
-        tools: [],
-        state: 'thinking',
-        createdAt: Date.now()
-      }
-      thread.messages.push(nextAssistant)
-      thread.assistantId = nextAssistant.id
-      if (thread.id === activeThreadId.value) void scrollToBottom(true, true)
-    } else if (!thread.running && thread.sessionId) {
-      // The turn ended before the guidance bubble could be created (for example it
-      // was cancelled while a steer was still in flight). Reload the persisted
-      // session so the optimistic copy is replaced by the real guidance/reply pair.
-      void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
-    }
-    // A steer may be the very first event of a turn; keep its chat request id so
-    // cancellation still targets this task instead of every turn on the connection.
-    if (isChatRequest) thread.requestId ??= event.id
-    return
-  }
-
-  // A terminal response can reach the request continuation before its renderer
-  // event callback. If the next queued turn has already started, ignore all
-  // delayed events belonging to the completed request — but still finalize any
-  // leftover "..." placeholder bubbles, otherwise a dropped terminal event
-  // leaves them on screen forever.
-  if (isChatRequest && isFinishedRequest(thread, event.id)) {
-    if (event.event === 'done' || event.event === 'cancelled')
-      finalizeAssistantBubbles(thread.messages, 'done')
-    else if (event.event === 'error')
-      finalizeAssistantBubbles(thread.messages, 'error')
-    return
-  }
-  if (isChatRequest && thread.requestId !== undefined && thread.requestId !== event.id) return
-  // Steering acknowledgements have their own request id and must never replace
-  // the id of the active chat turn (used by cancellation and stale-event checks).
-  if (isChatRequest) thread.requestId ??= event.id
-  const message = thread.messages.find((item) => item.id === thread.assistantId)
-  const terminalEvent = event.event === 'done' || event.event === 'cancelled' || event.event === 'error'
-  if (!message && !terminalEvent) return
-  const isBackgroundThread = thread.id !== activeThreadId.value
-  const eventCallId = typeof event.details?.callId === 'string' ? event.details.callId : undefined
-  const findTool = () => eventCallId
-    ? message?.tools?.find((tool) => tool.callId === eventCallId || tool.id === eventCallId)
-    : message?.tools?.findLast((tool) => tool.state === 'running')
-
-  switch (event.event) {
-    case 'thinking':
-      if (!message) break
-      message.thinking = (message.thinking ?? '') + event.data
-      message.state = 'thinking'
-      break
-    case 'delta':
-      if (!message) break
-      message.content += event.data
-      message.state = 'streaming'
-      break
-    case 'status': {
-      if (message && event.data.toLocaleLowerCase().includes('thinking')) message.state = 'thinking'
-      thread.phase = phaseLabel(event.data)
-      break
-    }
-    case 'image_view': {
-      if (!message) break
-      const imageId = typeof event.details?.imageId === 'string' ? event.details.imageId : ''
-      if (!imageId) break
-      message.viewedImages ??= []
-      if (!message.viewedImages.some((image) => image.id === imageId))
-        message.viewedImages.push({ id: imageId, name: event.data || '图片' })
-      break
-    }
-    case 'tool_start': {
-      if (!message) break
-      thread.phase = '执行工具'
-      message.tools ??= []
-      message.tools.push({
-        id: eventCallId ?? `${event.id}-${message.tools.length}`,
-        callId: eventCallId,
-        name: event.data,
-        detail: typeof event.details?.summary === 'string' ? event.details.summary : undefined,
-        state: 'running'
-      })
-      break
-    }
-    case 'tool_done': {
-      if (!message) break
-      const running = findTool()
-      if (running) {
-        running.state = event.details?.success === false ? 'error' : 'done'
-        running.detail = event.data || running.detail
-      }
-      break
-    }
-    case 'file_diff': {
-      if (!message) break
-      const tool = findTool()
-      if (tool) {
-        const diff = typeof event.details?.diff === 'string' ? event.details.diff : ''
-        tool.filePath = event.data
-        tool.diff = diff
-        tool.addedLines = diff.split(/\r?\n/).filter((line) => line.startsWith('+') && !line.startsWith('+++')).length
-        tool.removedLines = diff.split(/\r?\n/).filter((line) => line.startsWith('-') && !line.startsWith('---')).length
-      }
-      break
-    }
-    case 'model_start': {
-      thread.stats ??= {}
-      thread.stats.llmRounds = (thread.stats.llmRounds ?? 0) + 1
-      const step = Number(event.details?.step) || 0
-      const previousHasOutput = Boolean(
-        message?.content || message?.thinking || (message?.tools?.length ?? 0))
-      if (message && step > 1 && previousHasOutput) {
-        message.state = 'done'
-        const nextAssistant: ChatMessage = {
-          id: makeId(),
-          role: 'assistant',
-          content: '',
-          thinking: '',
-          tools: [],
-          state: 'thinking',
-          createdAt: Date.now()
-        }
-        thread.messages.push(nextAssistant)
-        thread.assistantId = nextAssistant.id
-      }
-      break
-    }
-    case 'usage': {
-      thread.stats ??= {}
-      const inputTokens = Number(event.details?.inputTokens) || 0
-      const outputTokens = Number(event.details?.outputTokens) || 0
-      const totalInputTokens = Number(event.details?.totalInputTokens) || inputTokens
-      const cachedInputTokens = Number(event.details?.cachedInputTokens) || 0
-      const elapsedMs = Number(event.details?.elapsedMs) || 0
-      thread.stats.inputTokens = (thread.stats.inputTokens ?? 0) + inputTokens
-      thread.stats.outputTokens = (thread.stats.outputTokens ?? 0) + outputTokens
-      thread.stats.totalInputTokens = (thread.stats.totalInputTokens ?? 0) + totalInputTokens
-      thread.stats.cachedInputTokens = (thread.stats.cachedInputTokens ?? 0) + cachedInputTokens
-      thread.stats.outputElapsedMs = (thread.stats.outputElapsedMs ?? 0) + elapsedMs
-      break
-    }
-    case 'workflow': {
-      const kind = String(event.details?.kind ?? '')
-      const step = Number(event.details?.step) || 0
-      const label = event.data || String(event.details?.label ?? '')
-      const detail = typeof event.details?.detail === 'string' ? event.details.detail : undefined
-      if (kind === 'start') {
-        thread.workflow = { nodes: [], activeId: null }
-        thread.turnStepHighWater = 0
-      } else if (step > (thread.turnStepHighWater ?? 0)) {
-        thread.stats ??= {}
-        thread.stats.executionSteps = (thread.stats.executionSteps ?? 0)
-          + step - (thread.turnStepHighWater ?? 0)
-        thread.turnStepHighWater = step
-      }
-      thread.workflow ??= { nodes: [], activeId: null }
-      if (thread.workflow.activeId) {
-        const previous = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
-        if (previous && previous.state === 'running') previous.state = 'done'
-      }
-      const nodeKind = (['start', 'think', 'tool', 'verify', 'repair', 'compact', 'done', 'error'] as const)
-        .includes(kind as never) ? kind as WorkflowKind : 'think'
-      const node = {
-        id: `${event.id}:${thread.workflow.nodes.length}:${kind}`,
-        step,
-        kind: nodeKind,
-        label,
-        detail,
-        state: (kind === 'done' || kind === 'error' ? kind : 'running') as 'running' | 'done' | 'error'
-      }
-      thread.workflow.nodes.push(node)
-      thread.workflow.activeId = node.id
-      // Once the turn moves to build verification the visible answer is
-      // complete; stop showing the "..." placeholder until repair continues the bubble.
-      if (kind === 'verify'
-        && message?.content
-        && (message.state === 'thinking' || message.state === 'streaming')) {
-        message.state = 'done'
-      }
-      break
-    }
-    case 'done':
-    case 'cancelled':
-      if (message) {
-        message.state = 'done'
-        if (!message.content && event.data) message.content = event.data
-      }
-      // Safety net: the assistantId pointer can miss the real bubble (e.g. a steer
-      // created a fresh bubble or the message list was replaced mid-flight), which
-      // used to leave the "..." placeholder on screen forever after the turn ended.
-      finalizeAssistantBubbles(thread.messages, 'done')
-      if (isChatRequest) rememberFinishedRequest(thread, event.id)
-      thread.activeTurnToken = undefined
-      thread.pendingGuidance = 0
-      thread.running = false
-      thread.requestId = undefined
-      thread.assistantId = undefined
-      thread.phase = undefined
-      if (thread.workflow?.activeId) {
-        const last = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
-        if (last && last.state === 'running') last.state = 'done'
-      }
-      scheduleQueuedDrain(thread)
-      if (isBackgroundThread) {
-        void window.seekclaw.notify('后台任务完成', `「${thread.title}」已完成`)
-      }
-      if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
-      break
-    case 'error':
-      if (message) {
-        message.state = 'error'
-        appendModelError(message, event.data)
-      }
-      finalizeAssistantBubbles(thread.messages, 'error')
-      if (isChatRequest) rememberFinishedRequest(thread, event.id)
-      thread.activeTurnToken = undefined
-      thread.pendingGuidance = 0
-      thread.running = false
-      thread.requestId = undefined
-      thread.assistantId = undefined
-      thread.phase = undefined
-      if (thread.workflow?.activeId) {
-        const last = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
-        if (last && last.state === 'running') last.state = 'error'
-      }
-      scheduleQueuedDrain(thread)
-      if (isBackgroundThread) {
-        void window.seekclaw.notify('后台任务执行失败', `「${thread.title}」执行失败`)
-      }
-      if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
-      break
-  }
-  if (thread.id === activeThreadId.value) void scrollToBottom()
-}
-
-function appendModelError(message: ChatMessage, detail: string): void {
-  const normalized = detail.trim() || 'Unknown model error'
-  if (message.content.includes(normalized)) return
-  const indentedDetail = normalized.split(/\r?\n/).map((line) => `    ${line}`).join('\n')
-  const errorBlock = `**模型请求失败**\n\n${indentedDetail}`
-  message.content = message.content.trim()
-    ? `${message.content}\n\n---\n\n${errorBlock}`
-    : errorBlock
-}
+const handleDaemonEvent = createDaemonEventHandler({
+  threads,
+  activeThreadId,
+  projects,
+  handleScheduleUpdated,
+  scrollToBottom,
+  reloadThreadSession,
+  rememberFinishedRequest,
+  isFinishedRequest,
+  scheduleQueuedDrain,
+  reloadBackgroundThreadIfIdle
+})
 
 async function stopTurn(): Promise<void> {
   const thread = activeThread.value
