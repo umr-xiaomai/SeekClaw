@@ -49,7 +49,8 @@ public sealed class ChatMessage
         string text,
         bool success,
         string? diff = null,
-        string? filePath = null) =>
+        string? filePath = null,
+        IReadOnlyList<ChatImageAttachment>? images = null) =>
         new()
         {
             Role = ChatRole.Tool,
@@ -59,6 +60,7 @@ public sealed class ChatMessage
             ToolSuccess = success,
             ToolDiff = diff,
             ToolFilePath = filePath,
+            Images = images is { Count: > 0 } ? images : null,
         };
 }
 

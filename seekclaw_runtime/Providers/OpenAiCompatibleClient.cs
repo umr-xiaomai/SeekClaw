@@ -236,12 +236,44 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                     break;
 
                 case ChatRole.Tool:
-                    messages.Add((JsonNode)new JsonObject
+                    if (msg.Images is { Count: > 0 })
                     {
-                        ["role"] = "tool",
-                        ["tool_call_id"] = msg.ToolCallId,
-                        ["content"] = DeepSeekOptimizationPolicy.ToolResultContent(msg.Text, request),
-                    });
+                        var parts = new JsonArray
+                        {
+                            (JsonNode)new JsonObject
+                            {
+                                ["type"] = "text",
+                                ["text"] = DeepSeekOptimizationPolicy.ToolResultContent(msg.Text, request),
+                            }
+                        };
+                        foreach (var image in msg.Images)
+                        {
+                            parts.Add((JsonNode)new JsonObject
+                            {
+                                ["type"] = "image_url",
+                                ["image_url"] = new JsonObject
+                                {
+                                    ["url"] = $"data:{image.MediaType};base64,{image.Data}",
+                                    ["detail"] = "auto",
+                                },
+                            });
+                        }
+                        messages.Add((JsonNode)new JsonObject
+                        {
+                            ["role"] = "tool",
+                            ["tool_call_id"] = msg.ToolCallId,
+                            ["content"] = parts,
+                        });
+                    }
+                    else
+                    {
+                        messages.Add((JsonNode)new JsonObject
+                        {
+                            ["role"] = "tool",
+                            ["tool_call_id"] = msg.ToolCallId,
+                            ["content"] = DeepSeekOptimizationPolicy.ToolResultContent(msg.Text, request),
+                        });
+                    }
                     break;
             }
         }

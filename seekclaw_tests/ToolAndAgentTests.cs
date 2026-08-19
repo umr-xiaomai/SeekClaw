@@ -429,4 +429,51 @@ public sealed class ToolAndAgentTests
         Assert.Equal("https://www.baidu.com/link?url=abc", result.Url);
         Assert.Contains("A useful snippet from Baidu.", result.Snippet);
     }
+
+    [Fact]
+    public void CaptureScreenTool_HasVisionRequirementAndValidSchema()
+    {
+        var prompts = new FilePromptProvider();
+        var tool = new CaptureScreenTool(prompts);
+
+        Assert.Equal("capture_screen", tool.Name);
+        Assert.True(tool.RequiresVision);
+        Assert.False(tool.RequiresWorkspace);
+        Assert.False(tool.Mutating);
+        Assert.NotNull(tool.ParameterSchema);
+    }
+
+    [Fact]
+    public async Task CaptureScreenTool_ExecutesSuccessfullyOnWindows()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var prompts = new FilePromptProvider();
+        var tool = new CaptureScreenTool(prompts);
+        using var runtime = SeekClawRuntime.Create();
+
+        var context = new ToolContext
+        {
+            Workspace = runtime.Workspace,
+            Events = runtime.Events,
+            Agent = runtime.ConfigStore.Config.Agent,
+        };
+
+        var result = await tool.ExecuteAsync(new System.Text.Json.Nodes.JsonObject(), context, CancellationToken.None);
+        Assert.True(result.Success, result.Output);
+        Assert.NotNull(result.Images);
+        Assert.NotEmpty(result.Images);
+        Assert.Equal("image/png", result.Images[0].MediaType);
+        Assert.True(result.Images[0].SizeBytes > 0);
+        Assert.False(string.IsNullOrWhiteSpace(result.Images[0].Data));
+    }
+
+    [Fact]
+    public void ToolRegistry_ResolvesCaptureScreenTool()
+    {
+        using var runtime = SeekClawRuntime.Create();
+        var tool = runtime.Tools.Resolve("capture_screen");
+        Assert.NotNull(tool);
+        Assert.True(tool.RequiresVision);
+    }
 }

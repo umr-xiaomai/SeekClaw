@@ -1,43 +1,46 @@
 @page "/search"
+@page "/en/search"
 @rendermode InteractiveServer
 @inject DocService Docs
 @inject NavigationManager Navigation
 
-<PageTitle>文档搜索 — SeekClaw</PageTitle>
+<PageTitle>@(IsEnglish ? "Search Documentation — SeekClaw" : "文档搜索 — SeekClaw")</PageTitle>
 
-<section class="page-section">
-    <header class="page-header">
-        <p class="doc-kicker">Search</p>
-        <h1>文档搜索</h1>
-        <p>搜索 SeekClaw 中文与英文文档。</p>
+<section class="skills-shell" style="max-width: 860px;">
+    <header class="skills-header mb-4">
+        <p class="doc-kicker">Documentation Search</p>
+        <h1>@(IsEnglish ? "Full-Text Documentation Search" : "全文文档检索")</h1>
+        <p>@(IsEnglish ? "Search SeekClaw technical documentation, architecture specs, and core mechanisms." : "支持按关键词检索 SeekClaw 中英文技术文档、架构设计与核心机制。")</p>
     </header>
 
-    <form class="search-form" @onsubmit="SubmitSearch" @onsubmit:preventDefault>
-        <input class="form-control" @bind="_query" placeholder="输入关键词，例如：MCP、Provider、Daemon" />
-        <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> 搜索</button>
+    <form class="skills-search-bar mb-4" @onsubmit="SubmitSearch" @onsubmit:preventDefault>
+        <input class="form-control" @bind="_query" placeholder="输入关键词，例如：MCP、Provider、Daemon、Docker…" />
+        <button class="vp-btn-primary" type="submit"><i class="bi bi-search"></i> 搜索</button>
     </form>
 
-    @if (_hasSearched)
+    @if (_hasSearched && !string.IsNullOrWhiteSpace(_query))
     {
-        <p class="search-summary">
+        <div class="text-muted small mb-3">
             @if (_results.Count == 0)
             {
-                <text>没有找到与“@_query”相关的文档。</text>
+                <span>没有找到与“<strong>@_query</strong>”相关的文档。</span>
             }
             else
             {
-                <text>找到 @_results.Count 条结果。</text>
+                <span>检索到 <strong>@_results.Count</strong> 篇匹配文档：</span>
             }
-        </p>
+        </div>
     }
 
-    <div class="search-results">
+    <div class="d-flex flex-column gap-3">
         @foreach (var result in _results)
         {
-            <a class="search-result" href="@ResultUrl(result)">
-                <span class="search-result-title">@result.Title</span>
-                <span class="search-result-meta">@(result.Language == "en" ? "English" : "简体中文") · @result.Slug</span>
-                <span class="search-result-snippet">@result.Snippet</span>
+            <a class="skill-card text-decoration-none" href="@ResultUrl(result)" style="padding: 1.25rem;">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                    <h3 class="h5 fw-bold text-dark-emphasis m-0">@result.Title</h3>
+                    <span class="badge text-bg-light border">@(result.Language == "en" ? "EN" : "中") · @result.Slug</span>
+                </div>
+                <p class="text-secondary small m-0 line-clamp-2">@result.Snippet</p>
             </a>
         }
     </div>
@@ -51,16 +54,27 @@
     private IReadOnlyList<DocSearchResult> _results = Array.Empty<DocSearchResult>();
     private bool _hasSearched;
 
+    private bool IsEnglish => new Uri(Navigation.Uri).AbsolutePath.StartsWith("/en", StringComparison.OrdinalIgnoreCase);
+
     protected override void OnParametersSet()
     {
         _query = Query ?? string.Empty;
-        _results = Docs.Search(_query);
-        _hasSearched = true;
+        if (!string.IsNullOrWhiteSpace(_query))
+        {
+            _results = Docs.Search(_query);
+            _hasSearched = true;
+        }
+        else
+        {
+            _results = Array.Empty<DocSearchResult>();
+            _hasSearched = false;
+        }
     }
 
     private void SubmitSearch()
     {
-        Navigation.NavigateTo($"/search?q={Uri.EscapeDataString(_query)}");
+        var prefix = IsEnglish ? "/en" : "";
+        Navigation.NavigateTo($"{prefix}/search?q={Uri.EscapeDataString(_query)}");
     }
 
     private static string ResultUrl(DocSearchResult result) =>

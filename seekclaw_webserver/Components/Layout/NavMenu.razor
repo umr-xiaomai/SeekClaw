@@ -5,39 +5,98 @@
 
 <nav class="site-nav">
     <div class="nav-inner">
-        <a class="brand" href="/">
+        <!-- Brand / Logo -->
+        <a class="brand" href="@(_isEnglish ? "/en" : "/")">
             <img src="/logo.png" alt="SeekClaw" />
             <span>SeekClaw</span>
         </a>
 
-        <div class="nav-links">
-            <NavLink href="" Match="NavLinkMatch.All"><i class="bi bi-house-door"></i><span>@(_isEnglish ? "Home" : "首页")</span></NavLink>
-            <NavLink href="@(_isEnglish ? "/en/doc" : "/doc")"><i class="bi bi-journal-text"></i><span>@(_isEnglish ? "Docs" : "文档")</span></NavLink>
-            <NavLink href="@(_isEnglish ? "/en/skills" : "/skills")"><i class="bi bi-stars"></i><span>@(_isEnglish ? "Skills" : "技能市场")</span></NavLink>
-            <NavLink href="/search"><i class="bi bi-search"></i><span>@(_isEnglish ? "Search" : "搜索")</span></NavLink>
-            <AuthorizeView Roles="SuperAdmin">
-                <Authorized>
-                    <NavLink href="/admin"><i class="bi bi-speedometer2"></i><span>@(_isEnglish ? "Admin" : "后台")</span></NavLink>
-                </Authorized>
-            </AuthorizeView>
-        </div>
+        <!-- Right-aligned Navigation Bar -->
+        <div class="nav-content-right">
+            <!-- Nav links (Original site structure) -->
+            <div class="nav-links">
+                <NavLink class="vp-nav-link" href="@(_isEnglish ? "/en" : "")" Match="NavLinkMatch.All">
+                    <i class="bi bi-house-door me-1"></i><span>@(_isEnglish ? "Home" : "首页")</span>
+                </NavLink>
+                <NavLink class="vp-nav-link" href="@(_isEnglish ? "/en/doc" : "/doc")">
+                    <i class="bi bi-journal-text me-1"></i><span>@(_isEnglish ? "Docs" : "文档中心")</span>
+                </NavLink>
+                <NavLink class="vp-nav-link" href="@(_isEnglish ? "/en/doc/desktop" : "/doc/desktop")">
+                    <i class="bi bi-display me-1"></i><span>Desktop</span>
+                </NavLink>
+                <NavLink class="vp-nav-link" href="@(_isEnglish ? "/en/skills" : "/skills")">
+                    <i class="bi bi-stars me-1"></i><span>@(_isEnglish ? "Skills" : "技能市场")</span>
+                </NavLink>
+                <NavLink class="vp-nav-link" href="@(_isEnglish ? "/en/search" : "/search")">
+                    <i class="bi bi-search me-1"></i><span>@(_isEnglish ? "Search" : "搜索")</span>
+                </NavLink>
 
-        <div class="nav-actions">
-            <a class="lang-switch" href="@OtherLanguageUrl()" @onclick="SwitchLanguageAsync" @onclick:preventDefault>
-                <i class="bi bi-translate"></i><span>@(_isEnglish ? "简体中文" : "English")</span>
-            </a>
-            <button class="theme-button" type="button" @onclick="ToggleThemeAsync">
-                <i class="bi @(_theme == "light" ? "bi-moon-stars" : "bi-sun")"></i><span>@(_theme == "light" ? "浅色" : "深色")</span>
+                <AuthorizeView Roles="SuperAdmin">
+                    <Authorized>
+                        <NavLink class="vp-nav-link text-success fw-bold" href="/admin">
+                            <i class="bi bi-speedometer2 me-1"></i><span>@(_isEnglish ? "Admin" : "管理后台")</span>
+                        </NavLink>
+                    </Authorized>
+                </AuthorizeView>
+            </div>
+
+            <!-- Divider -->
+            <div class="vp-nav-divider"></div>
+
+            <!-- Language Flyout -->
+            <div class="vp-nav-item">
+                <button class="vp-nav-link vp-nav-dropdown-btn" type="button" title="@(_isEnglish ? "Select Language" : "选择语言")">
+                    <i class="bi bi-translate"></i>
+                    <i class="bi bi-chevron-down" style="font-size: 0.7em;"></i>
+                </button>
+                <div class="vp-nav-dropdown" style="min-width: 140px;">
+                    <a class="vp-dropdown-item d-flex align-items-center justify-content-between @(!_isEnglish ? "text-success fw-bold" : "")" href="@GetTargetLanguageUrl("zh")">
+                        <span>简体中文</span>
+                        @if (!_isEnglish)
+                        {
+                            <i class="bi bi-check2"></i>
+                        }
+                    </a>
+                    <a class="vp-dropdown-item d-flex align-items-center justify-content-between @(_isEnglish ? "text-success fw-bold" : "")" href="@GetTargetLanguageUrl("en")">
+                        <span>English</span>
+                        @if (_isEnglish)
+                        {
+                            <i class="bi bi-check2"></i>
+                        }
+                    </a>
+                </div>
+            </div>
+
+            <!-- Divider -->
+            <div class="vp-nav-divider"></div>
+
+            <!-- VitePress Pill Theme Switch -->
+            <button class="vp-switch-appearance" type="button" role="switch" aria-checked="@(_theme == "dark")" @onclick="ToggleThemeAsync" title="@(_theme == "light" ? "切换至深色模式" : "切换至浅色模式")">
+                <span class="vp-switch-check">
+                    <i class="bi @(_theme == "dark" ? "bi-moon-stars" : "bi-sun")"></i>
+                </span>
             </button>
 
+            <!-- Divider -->
+            <div class="vp-nav-divider"></div>
+
+            <!-- GitHub Social Link -->
+            <a class="vp-icon-btn" href="https://github.com/umr-xiaomai/SeekClaw" target="_blank" rel="noopener noreferrer" title="GitHub Repository">
+                <i class="bi bi-github" style="font-size: 1.15rem;"></i>
+            </a>
+
+            <!-- User Auth Profile -->
             <AuthorizeView>
                 <Authorized>
-                    <span class="auth-username"><i class="bi bi-person-circle"></i> @context.User.Identity?.Name</span>
-                    <button class="link-button" @onclick="LogoutAsync"><i class="bi bi-box-arrow-right"></i><span>@(_isEnglish ? "Sign out" : "退出")</span></button>
+                    <div class="vp-nav-divider"></div>
+                    <span class="auth-badge"><i class="bi bi-person-circle"></i> @context.User.Identity?.Name</span>
+                    <button class="btn-signout" @onclick="LogoutAsync" title="退出登录"><i class="bi bi-box-arrow-right"></i></button>
                 </Authorized>
                 <NotAuthorized>
-                    <NavLink href="login"><i class="bi bi-box-arrow-in-right"></i><span>@(_isEnglish ? "Sign in" : "登录")</span></NavLink>
-                    <NavLink href="register"><i class="bi bi-person-plus"></i><span>@(_isEnglish ? "Register" : "注册")</span></NavLink>
+                    <div class="vp-nav-divider"></div>
+                    <a class="vp-nav-link" href="/login">
+                        <span>@(_isEnglish ? "Sign In" : "登录")</span>
+                    </a>
                 </NotAuthorized>
             </AuthorizeView>
         </div>
@@ -81,39 +140,41 @@
         Navigation.LocationChanged -= OnLocationChanged;
     }
 
-    private string OtherLanguageUrl()
+    private string GetTargetLanguageUrl(string lang)
     {
-        var path = _currentPath;
+        var uri = new Uri(Navigation.Uri);
+        var path = uri.AbsolutePath;
+        var query = uri.Query;
 
-        if (path.Equals("/en", StringComparison.OrdinalIgnoreCase))
+        if (lang == "zh")
         {
-            return "/";
-        }
+            if (path.Equals("/en", StringComparison.OrdinalIgnoreCase) || path.Equals("/en/", StringComparison.OrdinalIgnoreCase))
+            {
+                return "/" + query;
+            }
 
-        if (path.StartsWith("/en/", StringComparison.OrdinalIgnoreCase))
+            if (path.StartsWith("/en/", StringComparison.OrdinalIgnoreCase))
+            {
+                var rest = path["/en".Length..];
+                return (string.IsNullOrEmpty(rest) ? "/" : rest) + query;
+            }
+
+            return path + query;
+        }
+        else // en
         {
-            var rest = path["/en".Length..];
-            return string.IsNullOrEmpty(rest) ? "/" : rest;
+            if (path.StartsWith("/en", StringComparison.OrdinalIgnoreCase))
+            {
+                return path + query;
+            }
+
+            if (path == "/" || string.IsNullOrEmpty(path))
+            {
+                return "/en" + query;
+            }
+
+            return "/en" + path + query;
         }
-
-        if (path == "/")
-        {
-            return "/en";
-        }
-
-        if (path.StartsWith("/doc", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWith("/skills", StringComparison.OrdinalIgnoreCase))
-        {
-            return "/en" + path;
-        }
-
-        return "/en/doc";
-    }
-
-    private Task SwitchLanguageAsync()
-    {
-        Navigation.NavigateTo(OtherLanguageUrl());
-        return Task.CompletedTask;
     }
 
     private async Task ToggleThemeAsync()
@@ -123,8 +184,6 @@
 
     private async Task LogoutAsync()
     {
-        using var client = new HttpClient { BaseAddress = new Uri(Navigation.BaseUri) };
-        await client.PostAsync("api/auth/logout", null);
-        Navigation.NavigateTo("/", forceLoad: true);
+        await JS.InvokeVoidAsync("SeekClaw.logout");
     }
 }

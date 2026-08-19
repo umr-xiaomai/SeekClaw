@@ -1,13 +1,30 @@
 @inherits LayoutComponentBase
+@inject AuthService Auth
+@inject NavigationManager Navigation
 
 <div class="site-shell">
+    @if (_isInitialized == false && !Navigation.Uri.Contains("/setup") && !Navigation.Uri.Contains("/init"))
+    {
+        <div class="setup-banner">
+            <span><i class="bi bi-info-circle-fill me-1"></i> 系统尚未初始化，请完成首次运行配置向导。</span>
+            <a href="/setup">立即前往配置向导 &rarr;</a>
+        </div>
+    }
+
     <NavMenu />
+
     <main class="site-main">
         @Body
     </main>
-    <footer class="site-footer">
-        <div>© 2022 - 2026 花濑HoiLai. 保留所有权利。</div>
-        <div><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">陕ICP备2025084176号-1</a></div>
+
+    <footer class="vp-footer">
+        <div class="vp-footer-slogan">Powered By .NET Blazor - 为 .NET 生态添砖加瓦 </div>
+        <div class="vp-footer-icp">
+            <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">陕ICP备2025084176号-1</a>
+        </div>
+        <div class="vp-footer-copyright">
+            © 2022 - 2026 花濑HoiLai. 保留所有权利。探索无限 TO EXPLORE INFINITY.
+        </div>
     </footer>
 </div>
 
@@ -16,3 +33,12 @@
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+@code {
+    private bool? _isInitialized;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isInitialized = await Auth.IsInitializedAsync();
+    }
+}

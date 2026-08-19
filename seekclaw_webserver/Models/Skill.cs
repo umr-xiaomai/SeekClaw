@@ -10,6 +10,9 @@ public sealed class Skill
     public string Author { get; set; } = string.Empty;
     public string Version { get; set; } = "1.0.0";
     public string? Homepage { get; set; }
+    public bool IsOfficial { get; set; } = false;
+    public int? AuthorUserId { get; set; }
+    public string? AuthorUsername { get; set; }
     public string? PackageFileName { get; set; }
     public string? PackageContentType { get; set; }
     public byte[]? PackageData { get; set; }

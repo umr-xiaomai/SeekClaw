@@ -1,57 +1,117 @@
 @page "/"
+@rendermode InteractiveServer
+@inject IJSRuntime JS
 
-<PageTitle>SeekClaw — AI Agent Runtime</PageTitle>
+<PageTitle>SeekClaw — 本地优先、开源、可扩展的通用 AI Agent Runtime</PageTitle>
 
-<section class="hero">
-    <div class="hero-copy">
-        <img class="hero-logo" src="/logo.png" alt="SeekClaw" />
-        <h1>SeekClaw</h1>
-        <p class="lead">本地优先、开源、可扩展的通用 AI Agent Runtime</p>
-        <p>以 .NET 10 为核心，用同一套 Runtime、配置、工具与会话数据驱动 Desktop、CLI 与技能生态。</p>
-        <div class="hero-actions">
-            <a class="btn btn-primary" href="/doc/quickstart"><i class="bi bi-rocket-takeoff"></i> 快速开始</a>
-            <a class="btn btn-outline-light" href="/skills"><i class="bi bi-stars"></i> 技能市场</a>
-        </div>
+<section class="vp-hero">
+    <div class="vp-hero-badge">
+        <i class="bi bi-stars"></i> 现代化 .NET 10.0 工业级 Agent 运行时
     </div>
-    <div class="hero-visual">
-        <img src="/screenshots/desktop/chat-and-projects.png" alt="SeekClaw Desktop 主界面" />
+
+    <h1 class="vp-hero-title">
+        <span class="brand-gradient">SeekClaw</span>
+    </h1>
+
+    <div class="vp-hero-tagline">
+        本地优先、开源、可扩展的通用 AI Agent Runtime
+    </div>
+
+    <p class="vp-hero-lead">
+        以 .NET 10 为核心，用统一的 Runtime、配置、工具体系与会话数据库驱动 Desktop、CLI 与开放技能生态。
+    </p>
+
+    <div class="vp-hero-actions">
+        <a class="vp-btn-primary" href="/doc/quickstart">
+            <i class="bi bi-rocket-takeoff"></i> 快速开始
+        </a>
+        <a class="vp-btn-secondary" href="/doc/desktop">
+            <i class="bi bi-display"></i> Desktop 客户端
+        </a>
+        <a class="vp-btn-secondary" href="/skills">
+            <i class="bi bi-stars"></i> 技能市场
+        </a>
+        <a class="vp-btn-secondary" href="https://github.com/umr-xiaomai/SeekClaw" target="_blank" rel="noopener noreferrer">
+            <i class="bi bi-github"></i> GitHub
+        </a>
+    </div>
+
+    <div class="cli-install-box">
+        <span>$ <code>npm install -g seekclaw-cli</code></span>
+        <button class="copy-icon-btn" type="button" @onclick='() => CopyInstallCommand("npm install -g seekclaw-cli")' title="复制安装命令">
+            <i class="bi @(_copied ? "bi-check2 text-success" : "bi-clipboard")"></i>
+        </button>
     </div>
 </section>
 
-<section class="section">
-    <div class="section-heading">
-        <h2>Runtime First</h2>
-        <p>业务逻辑、Provider 路由、工具执行、会话存储与构建验证内聚在 Runtime，前端只负责展示。</p>
+<section class="vp-features-section">
+    <div class="vp-section-header">
+        <h2>Runtime First 核心特性</h2>
+        <p>业务逻辑、Provider 路由、工具执行、会话存储与构建验证高度内聚，前端纯粹解耦。</p>
     </div>
-    <div class="feature-grid">
-        <div class="feature-card">
-            <h3>多提供商</h3>
-            <p>支持 Anthropic、OpenAI 兼容协议，以及 Google、OpenRouter、Ollama、LM Studio 等服务。</p>
+
+    <div class="vp-feature-grid">
+        <div class="vp-feature-card">
+            <div class="vp-feature-icon"><i class="bi bi-cpu"></i></div>
+            <h3>多提供商智能路由</h3>
+            <p>支持 OpenAI 兼容 API、Anthropic Claude、Google Gemini、DeepSeek 专项优化，以及 Ollama、LM Studio 本地模型。</p>
         </div>
-        <div class="feature-card">
-            <h3>工具与 MCP</h3>
-            <p>内置文件、搜索、Shell、网络工具，并支持 stdio / SSE MCP Server 扩展。</p>
+
+        <div class="vp-feature-card">
+            <div class="vp-feature-icon"><i class="bi bi-tools"></i></div>
+            <h3>工具生态与 MCP</h3>
+            <p>内置文件读写/编辑、Grep/Glob 搜索、Bash、WebFetch，并支持 stdio 与 SSE Model Context Protocol 扩展。</p>
         </div>
-        <div class="feature-card">
-            <h3>Skills 生态</h3>
-            <p>通过官方技能市场发布、下载和复用可移植技能。</p>
+
+        <div class="vp-feature-card">
+            <div class="vp-feature-icon"><i class="bi bi-stars"></i></div>
+            <h3>Skills 技能市场</h3>
+            <p>通过官方技能中心发布、下载和复用领域专业技能包，提示词热重载，即插即用。</p>
         </div>
-        <div class="feature-card">
-            <h3>自动验证与修复</h3>
-            <p>Agent 修改代码后可触发构建检查，并把错误反馈回模型持续自愈。</p>
+
+        <div class="vp-feature-card">
+            <div class="vp-feature-icon"><i class="bi bi-shield-check"></i></div>
+            <h3>自动验证与自愈</h3>
+            <p>Agent 修改工程文件后自动触发构建/测试检查，发现报错自动进入诊断修复闭环。</p>
         </div>
     </div>
 </section>
 
-<section class="section section-dark">
-    <div class="section-heading">
-        <h2>桌面端预览</h2>
-        <p>Desktop 自动连接或启动 Daemon，终端用户无需安装 .NET。</p>
-    </div>
-    <div class="screenshot-grid">
-        <img src="/screenshots/desktop/providers-and-models.png" alt="模型与 Provider 管理" />
-        <img src="/screenshots/desktop/diagnostics-and-usage.png" alt="Runtime 诊断与用量" />
-        <img src="/screenshots/desktop/mcp-servers.png" alt="MCP Server 配置" />
+<section class="vp-preview-section">
+    <div class="vp-preview-container">
+        <div class="vp-section-header">
+            <h2>Desktop 桌面端预览</h2>
+            <p>基于 Electron + Vue 3 构建的跨平台客户端，通过高性能命名管道与 Daemon 协同工作。</p>
+        </div>
+
+        <div class="screenshot-grid">
+            <div class="screenshot-item">
+                <img src="/screenshots/desktop/chat-and-projects.png" alt="AI 对话与项目管理" />
+                <div class="screenshot-item-label">AI 对话与项目管理</div>
+            </div>
+            <div class="screenshot-item">
+                <img src="/screenshots/desktop/providers-and-models.png" alt="模型与 Provider 管理" />
+                <div class="screenshot-item-label">模型与 Provider 管理</div>
+            </div>
+            <div class="screenshot-item">
+                <img src="/screenshots/desktop/mcp-servers.png" alt="MCP Server 配置" />
+                <div class="screenshot-item-label">MCP Server 动态扩展</div>
+            </div>
+        </div>
     </div>
 </section>
+
+@code {
+    private bool _copied;
+
+    private async Task CopyInstallCommand(string text)
+    {
+        await JS.InvokeVoidAsync("SeekClaw.copyText", text);
+        _copied = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        _copied = false;
+        StateHasChanged();
+    }
+}
 

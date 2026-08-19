@@ -40,6 +40,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(x => x.Author).HasMaxLength(128);
             entity.Property(x => x.Version).HasMaxLength(32);
             entity.Property(x => x.Homepage).HasMaxLength(512);
+            entity.Property(x => x.IsOfficial).HasDefaultValue(false);
+            entity.Property(x => x.AuthorUsername).HasMaxLength(64);
             entity.Property(x => x.PackageFileName).HasMaxLength(256);
             entity.Property(x => x.PackageContentType).HasMaxLength(128);
             entity.HasIndex(x => x.Slug).IsUnique();

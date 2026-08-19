@@ -1,53 +1,73 @@
 @page "/admin/settings"
 @attribute [Authorize(Roles = "SuperAdmin")]
+@layout AdminLayout
 @rendermode InteractiveServer
 @inject AuthService Auth
 
-<PageTitle>站点设置 — SeekClaw 后台</PageTitle>
+<PageTitle>全局设置 — SeekClaw 后台</PageTitle>
 
-<section class="page-section">
-    <header class="page-header">
-        <p class="doc-kicker">Settings</p>
-        <h1>站点设置</h1>
-        <p>控制普通用户注册入口。</p>
-    </header>
-
-    <div class="settings-card">
+<section class="admin-shell">
+    <div class="d-flex align-items-center justify-content-between mb-4">
         <div>
-            <h2>开放注册</h2>
-            <p>关闭后，新用户无法注册；第一个注册的用户永远是超级管理员。</p>
+            <p class="doc-kicker">Site Settings</p>
+            <h1 class="h2 fw-bold m-0">站点全局配置</h1>
         </div>
-        <label class="switch-row">
-            <input type="checkbox" @bind="_registrationEnabled" />
-            <span>@(_registrationEnabled ? "已开放注册" : "注册已关闭")</span>
-        </label>
-        <button class="btn btn-primary" disabled="@_saving" @onclick="SaveAsync">
-            @(_saving ? "保存中…" : "保存设置")
-        </button>
+        <a class="vp-btn-secondary" href="/admin"><i class="bi bi-arrow-left"></i> 返回控制台</a>
     </div>
 
-    @if (!string.IsNullOrWhiteSpace(_message))
-    {
-        <div class="alert alert-success mt-3">@_message</div>
-    }
+    <div class="setup-card" style="max-width: 680px; margin: 0;">
+        <div class="mb-4">
+            <h2 class="h5 fw-bold text-dark-emphasis mb-2"><i class="bi bi-gear-wide-connected me-1"></i> 基础信息</h2>
+            <div class="mb-3">
+                <label class="form-label">站点名称</label>
+                <input class="form-control" @bind="_siteName" placeholder="SeekClaw" />
+                <div class="form-text">显示在页面标题、导航栏与页脚的主名称。</div>
+            </div>
+        </div>
+
+        <div class="mb-4 pt-3 border-top">
+            <h2 class="h5 fw-bold text-dark-emphasis mb-2"><i class="bi bi-person-lock me-1"></i> 用户访问策略</h2>
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="regSwitch" @bind="_registrationEnabled" />
+                <label class="form-check-label ms-2" for="regSwitch">
+                    <strong>@(_registrationEnabled ? "已开放公开注册" : "已关闭公开注册")</strong>
+                </label>
+            </div>
+            <div class="form-text">
+                关闭后，前台用户注册入口将禁用，新用户只能由超级管理员在后台分配创建。
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_message))
+        {
+            <div class="alert alert-success mb-3"><i class="bi bi-check2-circle me-1"></i> @_message</div>
+        }
+
+        <button class="vp-btn-primary" disabled="@_saving" @onclick="SaveAsync">
+            <i class="bi bi-save"></i> @(_saving ? "正在保存…" : "保存全局设置")
+        </button>
+    </div>
 </section>
 
 @code {
+    private string _siteName = "SeekClaw";
     private bool _registrationEnabled;
     private bool _saving;
     private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
-        _registrationEnabled = await Auth.IsRegistrationEnabledAsync();
+        _registrationEnabled = await Auth.IsRegistrationAllowedAsync();
+        _siteName = await Auth.GetSettingAsync("site_name", "SeekClaw");
     }
 
     private async Task SaveAsync()
     {
         _saving = true;
         _message = null;
-        await Auth.SetRegistrationEnabledAsync(_registrationEnabled);
-        _message = "设置已保存。";
+        await Auth.SetSettingAsync("allow_registration", _registrationEnabled ? "true" : "false");
+        await Auth.SetSettingAsync("site_name", _siteName.Trim());
+        _message = "站点设置已成功保存并立即生效。";
         _saving = false;
     }
 }

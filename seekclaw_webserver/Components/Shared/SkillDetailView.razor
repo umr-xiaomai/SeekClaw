@@ -1,63 +1,141 @@
 @rendermode InteractiveServer
 @inject SkillService SkillCatalog
 @inject MarkdownService Markdown
+@inject IJSRuntime JS
 
 @if (_loading)
 {
-    <div class="page-section text-muted">@(Language == "en" ? "Loading skill..." : "正在加载技能…")</div>
+    <div class="skills-shell text-center text-muted py-5">
+        <div class="spinner-border text-success mb-2"></div>
+        <div>@(Language == "en" ? "Loading skill details..." : "正在加载技能详情…")</div>
+    </div>
 }
 else if (_skill is null)
 {
     <div class="empty-state">
-        <h1>@(Language == "en" ? "Skill not found" : "技能不存在")</h1>
-        <p>@(Language == "en" ? "This skill may have been unpublished or deleted." : "该技能可能已被管理员下线或删除。")</p>
-        <a class="btn btn-outline-primary" href="@(Language == "en" ? "/en/skills" : "/skills")">@(Language == "en" ? "Back to skills" : "返回技能市场")</a>
+        <h1>@(Language == "en" ? "Skill Not Found" : "技能不存在")</h1>
+        <p>@(Language == "en" ? "The requested skill may have been disabled or deleted." : "该技能可能已被管理员下线或删除。")</p>
+        <a class="vp-btn-primary mt-3" href="@(Language == "en" ? "/en/skills" : "/skills")">
+            @(Language == "en" ? "Back to Skills Marketplace" : "返回技能市场")
+        </a>
     </div>
 }
 else
 {
-    <article class="page-section skill-detail">
-        <header class="skill-detail-header">
-            <div>
-                <p class="doc-kicker">Skill</p>
-                <h1>@_skill.Name</h1>
-                <p class="lead">@_skill.Summary</p>
-            </div>
-            @if (_skill.HasPackage)
-            {
-                <a class="btn btn-primary" href="/api/skills/@_skill.Id/download"><i class="bi bi-download"></i> @(Language == "en" ? "Download" : "下载") @_skill.PackageFileName</a>
-            }
-        </header>
+    <div class="skill-detail-shell">
+        <div class="skill-detail-header">
+            <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
+                <div>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        @if (_skill.IsOfficial)
+                        {
+                            <span class="badge text-bg-success px-2 py-1" style="font-size: 0.82rem;">
+                                <i class="bi bi-shield-fill-check me-1"></i>@(Language == "en" ? "Official Certified" : "SeekClaw 官方认证")
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="badge text-bg-light border text-secondary px-2 py-1" style="font-size: 0.82rem;">
+                                <i class="bi bi-people me-1"></i>@(Language == "en" ? "Community Contributed" : "社区开发者贡献")
+                            </span>
+                        }
+                        <span class="skill-version-badge">v@_skill.Version</span>
+                    </div>
+                    <h1 class="h2 fw-bold text-dark-emphasis mb-1">@_skill.Name</h1>
+                    <div class="text-muted small font-monospace">@_skill.Slug</div>
+                </div>
 
-        <div class="skill-detail-meta">
-            <span><strong>@(Language == "en" ? "Author:" : "作者：")</strong>@_skill.Author</span>
-            <span><strong>@(Language == "en" ? "Version:" : "版本：")</strong>@_skill.Version</span>
-            @if (!string.IsNullOrWhiteSpace(_skill.Homepage))
-            {
-                <span><strong>@(Language == "en" ? "Homepage:" : "主页：")</strong><a href="@_skill.Homepage" target="_blank" rel="noopener noreferrer">@_skill.Homepage</a></span>
-            }
+                <div class="d-flex align-items-center gap-2">
+                    @if (_skill.HasPackage)
+                    {
+                        <a class="vp-btn-primary" href="/api/skills/@_skill.Id/download">
+                            <i class="bi bi-download"></i> @(Language == "en" ? "Download Zip Package" : "下载技能安装包")
+                        </a>
+                    }
+                    <a class="vp-btn-secondary" href="@(Language == "en" ? "/en/skills" : "/skills")">
+                        <i class="bi bi-arrow-left"></i> @(Language == "en" ? "Marketplace" : "返回市场")
+                    </a>
+                </div>
+            </div>
+
+            <p class="text-secondary mt-3 mb-0">@_skill.Summary</p>
+
+            <div class="skill-install-banner">
+                <span>$ <code>seekclaw skill install @_skill.Slug</code></span>
+                <button class="copy-icon-btn" type="button" @onclick='() => CopyCommand($"seekclaw skill install {_skill.Slug}")' title="复制安装命令">
+                    <i class="bi @(_copied ? "bi-check2 text-success" : "bi-clipboard")"></i>
+                </button>
+            </div>
+
+            <div class="skill-detail-meta">
+                <span><strong><i class="bi bi-person me-1"></i>@(Language == "en" ? "Author:" : "作者：")</strong> @_skill.Author</span>
+                @if (!string.IsNullOrWhiteSpace(_skill.AuthorUsername) && !_skill.IsOfficial)
+                {
+                    <span><strong><i class="bi bi-person-badge me-1"></i>@(Language == "en" ? "Published by:" : "发布用户：")</strong> @_skill.AuthorUsername</span>
+                }
+                <span><strong><i class="bi bi-tag me-1"></i>@(Language == "en" ? "Version:" : "版本：")</strong> v@_skill.Version</span>
+                @if (!string.IsNullOrWhiteSpace(_skill.Homepage))
+                {
+                    <span><strong><i class="bi bi-globe me-1"></i>@(Language == "en" ? "Homepage:" : "主页：")</strong> <a href="@_skill.Homepage" target="_blank" rel="noopener noreferrer">@_skill.Homepage</a></span>
+                }
+            </div>
         </div>
 
         <div class="markdown-body">
             @((MarkupString)Markdown.ToHtml(_skill.ReadmeMarkdown))
         </div>
-    </article>
+    </div>
 }
 
 @code {
     [Parameter]
-    public int Id { get; set; }
+    public int? Id { get; set; }
+
+    [Parameter]
+    public string? Slug { get; set; }
 
     [Parameter]
     public string Language { get; set; } = "zh";
 
     private SkillDetailModel? _skill;
     private bool _loading = true;
+    private bool _copied;
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnParametersSetAsync()
     {
-        _skill = await SkillCatalog.GetDetailAsync(Id);
+        _loading = true;
+        if (!string.IsNullOrWhiteSpace(Slug))
+        {
+            if (int.TryParse(Slug, out var parsedId))
+            {
+                _skill = await SkillCatalog.GetDetailAsync(parsedId);
+            }
+            else
+            {
+                _skill = await SkillCatalog.GetDetailBySlugAsync(Slug);
+            }
+        }
+        else if (Id.HasValue && Id.Value > 0)
+        {
+            _skill = await SkillCatalog.GetDetailAsync(Id.Value);
+        }
+
         _loading = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("SeekClaw.enhanceMarkdown");
+    }
+
+    private async Task CopyCommand(string text)
+    {
+        await JS.InvokeVoidAsync("SeekClaw.copyText", text);
+        _copied = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        _copied = false;
+        StateHasChanged();
     }
 }
 

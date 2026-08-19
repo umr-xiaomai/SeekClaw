@@ -1,0 +1,93 @@
+@inherits LayoutComponentBase
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<div class="admin-app-shell">
+    <header class="admin-topbar">
+        <div class="admin-topbar-inner">
+            <div class="d-flex align-items-center gap-3">
+                <a class="admin-brand" href="/admin">
+                    <img src="/logo.png" alt="SeekClaw Admin" />
+                    <span>SeekClaw <strong>Admin</strong></span>
+                </a>
+                <span class="badge text-bg-success" style="font-size: 0.75rem;">控制台</span>
+
+                <nav class="admin-nav-menu ms-3">
+                    <NavLink class="admin-nav-item" href="/admin" Match="NavLinkMatch.All">
+                        <i class="bi bi-speedometer2"></i> 概览
+                    </NavLink>
+                    <NavLink class="admin-nav-item" href="/admin/skills">
+                        <i class="bi bi-stars"></i> 技能管理
+                    </NavLink>
+                    <NavLink class="admin-nav-item" href="/admin/users">
+                        <i class="bi bi-people"></i> 用户与权限
+                    </NavLink>
+                    <NavLink class="admin-nav-item" href="/admin/settings">
+                        <i class="bi bi-sliders"></i> 站点配置
+                    </NavLink>
+                    <NavLink class="admin-nav-item" href="/setup">
+                        <i class="bi bi-wrench-adjustable"></i> 环境诊断
+                    </NavLink>
+                </nav>
+            </div>
+
+            <div class="d-flex align-items-center gap-2">
+                <a class="admin-return-btn" href="/" target="_blank" title="在新标签页中打开前台门户">
+                    <i class="bi bi-box-arrow-up-right"></i> 访问前台
+                </a>
+
+                <button class="vp-switch-appearance ms-2 me-2" type="button" role="switch" @onclick="ToggleThemeAsync" title="切换深浅主题">
+                    <span class="vp-switch-check">
+                        <i class="bi @(_theme == "dark" ? "bi-moon-stars" : "bi-sun")"></i>
+                    </span>
+                </button>
+
+                <AuthorizeView>
+                    <Authorized>
+                        <div class="admin-user-tag">
+                            <i class="bi bi-person-fill-gear"></i>
+                            <span>@context.User.Identity?.Name</span>
+                        </div>
+                        <button class="admin-logout-btn" @onclick="LogoutAsync" title="退出管理登录">
+                            <i class="bi bi-box-arrow-right"></i>
+                        </button>
+                    </Authorized>
+                </AuthorizeView>
+            </div>
+        </div>
+    </header>
+
+    <main class="admin-main-container">
+        @Body
+    </main>
+
+    <footer class="admin-footer">
+        <div class="admin-footer-inner">
+            <span>SeekClaw Administration System &bull; .NET 10 Runtime First</span>
+            <span>&copy; 2026 SeekClaw Team. All rights reserved.</span>
+        </div>
+    </footer>
+</div>
+
+@code {
+    private string _theme = "light";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _theme = await JS.InvokeAsync<string>("SeekClaw.getTheme");
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleThemeAsync()
+    {
+        _theme = await JS.InvokeAsync<string>("SeekClaw.toggleTheme");
+    }
+
+    private async Task LogoutAsync()
+    {
+        await JS.InvokeVoidAsync("SeekClaw.logout");
+    }
+}

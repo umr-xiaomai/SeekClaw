@@ -1,37 +1,57 @@
 @page "/admin/users"
 @attribute [Authorize(Roles = "SuperAdmin")]
+@layout AdminLayout
 @rendermode InteractiveServer
 @inject AuthService Auth
+@inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthStateProvider
 
-<PageTitle>用户管理 — SeekClaw 后台</PageTitle>
+<PageTitle>用户与权限 — SeekClaw 后台</PageTitle>
 
-<section class="page-section">
-    <header class="page-header">
-        <p class="doc-kicker">Users</p>
-        <h1>用户管理</h1>
-        <p>当前所有注册用户。</p>
-    </header>
+<section class="admin-shell">
+    <div class="d-flex align-items-center justify-content-between mb-4">
+        <div>
+            <p class="doc-kicker">User Management</p>
+            <h1 class="h2 fw-bold m-0">用户与权限管理</h1>
+        </div>
+        <a class="vp-btn-secondary" href="/admin"><i class="bi bi-arrow-left"></i> 返回控制台</a>
+    </div>
 
-    <div class="table-responsive">
-        <table class="table align-middle">
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert alert-danger mb-3"><i class="bi bi-exclamation-triangle"></i> @_error</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="alert alert-success mb-3"><i class="bi bi-check2-circle"></i> @_message</div>
+    }
+
+    <div class="admin-table">
+        <table class="table mb-0 align-middle">
             <thead>
                 <tr>
-                    <th>ID</th>
-                    <th>用户名</th>
-                    <th>角色</th>
+                    <th style="width: 80px;">ID</th>
+                    <th>注册邮箱</th>
+                    <th>角色权限</th>
                     <th>注册时间</th>
+                    <th class="text-end" style="width: 260px;">操作</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var user in _users)
                 {
+                    var isCurrentUser = string.Equals(user.Username, _currentUsername, StringComparison.OrdinalIgnoreCase);
                     <tr>
-                        <td>@user.Id</td>
-                        <td>@user.Username</td>
+                        <td><span class="badge text-bg-light border">#@user.Id</span></td>
+                        <td>
+                            <i class="bi bi-envelope me-1 text-muted"></i>
+                            <strong>@user.Username</strong>
+                            @(isCurrentUser ? " (当前登录)" : "")
+                        </td>
                         <td>
                             @if (user.IsSuperAdmin)
                             {
-                                <span class="badge text-bg-danger">超级管理员</span>
+                                <span class="badge text-bg-danger"><i class="bi bi-shield-fill-check me-1"></i>超级管理员</span>
                             }
                             else
                             {
@@ -39,6 +59,22 @@
                             }
                         </td>
                         <td>@DateTimeOffset.FromUnixTimeMilliseconds(user.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" @onclick="() => ResetPasswordPromptAsync(user)" title="重置密码">
+                                    <i class="bi bi-key"></i> 改密
+                                </button>
+                                @if (!isCurrentUser)
+                                {
+                                    <button class="btn btn-outline-warning" @onclick="() => ToggleSuperAdminAsync(user)" title="切换角色">
+                                        <i class="bi bi-shield-shaded"></i> @(user.IsSuperAdmin ? "取消超管" : "设为超管")
+                                    </button>
+                                    <button class="btn btn-outline-danger" @onclick="() => DeleteUserAsync(user)" title="删除用户">
+                                        <i class="bi bi-trash3"></i> 删除
+                                    </button>
+                                }
+                            </div>
+                        </td>
                     </tr>
                 }
             </tbody>
@@ -48,10 +84,86 @@
 
 @code {
     private List<User> _users = new();
+    private string? _currentUsername;
+    private string? _error;
+    private string? _message;
 
     protected override async Task OnInitializedAsync()
     {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        _currentUsername = authState.User.Identity?.Name;
+        await LoadUsersAsync();
+    }
+
+    private async Task LoadUsersAsync()
+    {
         _users = await Auth.ListUsersAsync();
+    }
+
+    private async Task ToggleSuperAdminAsync(User user)
+    {
+        _error = null;
+        _message = null;
+        var nextVal = !user.IsSuperAdmin;
+        var success = await Auth.SetSuperAdminAsync(user.Id, nextVal);
+        if (success)
+        {
+            _message = $"已将用户 {user.Username} 的权限变更为：{(nextVal ? "超级管理员" : "普通用户")}。";
+            await LoadUsersAsync();
+        }
+        else
+        {
+            _error = "无法更新用户权限。";
+        }
+    }
+
+    private async Task ResetPasswordPromptAsync(User user)
+    {
+        _error = null;
+        _message = null;
+        var newPassword = await JS.InvokeAsync<string?>("prompt", $"请输入用户 {user.Username} 的新密码（至少 6 位）：");
+        if (string.IsNullOrWhiteSpace(newPassword))
+        {
+            return;
+        }
+
+        if (newPassword.Length < 6)
+        {
+            _error = "密码长度至少需要 6 位。";
+            return;
+        }
+
+        var success = await Auth.ResetPasswordAsync(user.Id, newPassword);
+        if (success)
+        {
+            _message = $"用户 {user.Username} 的密码已成功重置。";
+        }
+        else
+        {
+            _error = "重置密码失败。";
+        }
+    }
+
+    private async Task DeleteUserAsync(User user)
+    {
+        _error = null;
+        _message = null;
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"确认删除用户“{user.Username}”吗？此操作不可逆。");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        var success = await Auth.DeleteUserAsync(user.Id);
+        if (success)
+        {
+            _message = $"用户 {user.Username} 已被删除。";
+            await LoadUsersAsync();
+        }
+        else
+        {
+            _error = "删除用户失败。";
+        }
     }
 }
 

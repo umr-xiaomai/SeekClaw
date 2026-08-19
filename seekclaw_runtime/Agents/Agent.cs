@@ -74,18 +74,20 @@ public sealed class Agent(
                 ct.ThrowIfCancellationRequested();
                 PublishSteering(AppendSteering(session, steering));
 
-                // Only the current user input decides whether this turn needs vision. A
-                // text-only follow-up must not be forced onto a vision model, and re-uploading
+                // Only the current user input or turn tool results decide whether this turn needs vision. A
+                // text-only turn must not be forced onto a vision model, and re-uploading
                 // every earlier image would make it slow and force the non-streaming provider path.
-                var requiresVision = userMessage.Images is { Count: > 0 };
-                var model = requiresVision
+                var hasTurnImages = userMessage.Images is { Count: > 0 }
+                    || session.Messages.Any(message => message.Images is { Count: > 0 });
+                var model = hasTurnImages
                     ? providerManager.BuildCandidates(workspace.Config)
                         .FirstOrDefault(candidate => candidate.Model.Capabilities.Vision)
                       ?? throw new LlmException(
                           "The current routing profile has no model that supports image understanding.",
                           retryable: false)
                     : providerManager.ResolveActive(workspace.Config);
-                var tools = ActiveTools(workspace, session.Header.NetworkEnabled);
+                var requiresVision = hasTurnImages && model.Model.Capabilities.Vision;
+                var tools = ActiveTools(workspace, model, session.Header.NetworkEnabled);
                 var systemPrompt = await ComposeSystemPromptAsync(
                     workspace, model, tools, session.Header.NetworkEnabled, ct).ConfigureAwait(false);
                 var source = requiresVision ? session.Messages : WithoutImages(session.Messages);
@@ -580,7 +582,7 @@ public sealed class Agent(
                 ? Path.GetRelativePath(workspace.Root, result.FilePath)
                 : result.FilePath;
         return new ToolExecution(
-            ChatMessage.ToolResult(call.Id, call.Name, result.Output, result.Success, result.Diff, filePath),
+            ChatMessage.ToolResult(call.Id, call.Name, result.Output, result.Success, result.Diff, filePath, result.Images),
             tool.Mutating && result.Success);
     }
 
@@ -655,7 +657,7 @@ public sealed class Agent(
         return basePrompt;
     }
 
-    private IReadOnlyList<ITool> ActiveTools(WorkspaceInfo workspace, bool networkEnabled)
+    private IReadOnlyList<ITool> ActiveTools(WorkspaceInfo workspace, ModelInfo model, bool networkEnabled)
     {
         var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
         var mode = AgentModeExtensions.Parse(rawMode);
@@ -669,6 +671,9 @@ public sealed class Agent(
         // (web_search + web_fetch); when off the model never sees them.
         if (!networkEnabled)
             available = available.Where(tool => !tool.RequiresNetwork).ToList();
+
+        if (!model.Model.Capabilities.Vision)
+            available = available.Where(tool => !tool.RequiresVision).ToList();
 
         if (mode.IsReadOnly())
         {

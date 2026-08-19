@@ -27,6 +27,9 @@ builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
+        options.Cookie.Name = ".SeekClaw.Auth";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
         options.LoginPath = "/login";
         options.AccessDeniedPath = "/login";
         options.ExpireTimeSpan = TimeSpan.FromDays(7);
@@ -89,6 +92,53 @@ app.UseAntiforgery();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Route Aliases for Docs
+app.MapGet("/docs", () => Results.Redirect("/doc", permanent: false));
+app.MapGet("/docs/{slug}", (string slug) => Results.Redirect($"/doc/{slug}", permanent: false));
+app.MapGet("/en/docs", () => Results.Redirect("/en/doc", permanent: false));
+app.MapGet("/en/docs/{slug}", (string slug) => Results.Redirect($"/en/doc/{slug}", permanent: false));
+
+// System Setup & Diagnosis APIs
+app.MapGet("/api/setup/status", async (AuthService auth) =>
+{
+    var isInitialized = await auth.IsInitializedAsync();
+    return Results.Json(new { isInitialized });
+});
+
+app.MapGet("/api/setup/test-db", async (AuthService auth) =>
+{
+    var status = await auth.TestDatabaseConnectionAsync();
+    return Results.Json(status);
+});
+
+app.MapPost("/api/setup/initialize", async (HttpContext context, SetupRequest request, AuthService auth, SkillService skills) =>
+{
+    if (await auth.IsInitializedAsync())
+    {
+        return Results.Json(new { success = false, error = "系统已完成初始化，无法重复配置。" });
+    }
+
+    var result = await auth.InitializeSystemAsync(request);
+    if (!result.Success)
+    {
+        return Results.Json(new { success = false, error = result.Error });
+    }
+
+    if (request.SeedSampleSkills)
+    {
+        await skills.SeedOfficialSkillsAsync();
+    }
+
+    var admin = await auth.ValidateAsync(request.AdminUsername, request.AdminPassword);
+    if (admin is not null)
+    {
+        await SignInAsync(context, admin);
+    }
+
+    return Results.Json(new { success = true });
+});
+
+// Authentication APIs
 app.MapGet("/api/auth/me", (HttpContext context) =>
 {
     var user = context.User;
@@ -108,13 +158,14 @@ app.MapGet("/api/auth/me", (HttpContext context) =>
 
 app.MapPost("/api/auth/register", async (HttpContext context, RegisterRequest request, AuthService auth) =>
 {
-    var result = await auth.RegisterAsync(request.Username, request.Password);
+    var email = !string.IsNullOrWhiteSpace(request.Email) ? request.Email : request.Username;
+    var result = await auth.RegisterAsync(email, request.Password);
     if (!result.Success)
     {
         return Results.Json(new { success = false, error = result.Error });
     }
 
-    var user = await auth.ValidateAsync(request.Username, request.Password);
+    var user = await auth.ValidateAsync(email, request.Password);
     if (user is null)
     {
         return Results.Json(new { success = false, error = "注册后自动登录失败。" });
@@ -126,10 +177,11 @@ app.MapPost("/api/auth/register", async (HttpContext context, RegisterRequest re
 
 app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AuthService auth) =>
 {
-    var user = await auth.ValidateAsync(request.Username, request.Password);
+    var email = !string.IsNullOrWhiteSpace(request.Email) ? request.Email : request.Username;
+    var user = await auth.ValidateAsync(email, request.Password);
     if (user is null)
     {
-        return Results.Json(new { success = false, error = "用户名或密码错误。" });
+        return Results.Json(new { success = false, error = "邮箱或密码错误。" });
     }
 
     await SignInAsync(context, user);
@@ -145,6 +197,7 @@ app.MapPost("/api/auth/logout", async (HttpContext context) =>
 app.MapGet("/api/auth/registration", async (AuthService auth) =>
     Results.Json(new { enabled = await auth.IsRegistrationEnabledAsync() }));
 
+// Skill Package Downloads
 app.MapGet("/api/skills/{id:int}/download", async (int id, SkillService skills) =>
 {
     var skill = await skills.GetPackageAsync(id);

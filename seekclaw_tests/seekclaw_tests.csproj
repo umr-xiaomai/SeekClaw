@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\seekclaw_runtime\seekclaw_runtime.csproj" />
+    <ProjectReference Include="..\seekclaw_webserver\seekclaw_webserver.csproj" />
   </ItemGroup>
 
   <ItemGroup>

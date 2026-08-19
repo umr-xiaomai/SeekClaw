@@ -1,0 +1,266 @@
+@page "/setup"
+@page "/init"
+@rendermode InteractiveServer
+@inject AuthService Auth
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>系统初始化向导 — SeekClaw</PageTitle>
+
+<section class="setup-page">
+    <div class="setup-card">
+        @if (_isAlreadyInitialized)
+        {
+            <div class="text-center py-4">
+                <div class="text-success fs-1 mb-3"><i class="bi bi-shield-check"></i></div>
+                <h1>系统已完成初始化</h1>
+                <p class="subtitle">数据库与超级管理员账号已就绪。为保证安全，初始化向导已自动锁定。</p>
+                <div class="d-flex justify-content-center gap-3">
+                    <a class="vp-btn-primary" href="/login"><i class="bi bi-box-arrow-in-right"></i> 前往登录</a>
+                    <a class="vp-btn-secondary" href="/doc"><i class="bi bi-journal-text"></i> 查看文档</a>
+                </div>
+            </div>
+        }
+        else
+        {
+            <h1>SeekClaw 初始化向导</h1>
+            <p class="subtitle">快速检测数据库连接、创建管理员账号并完成基础配置。</p>
+
+            <div class="setup-step-bar">
+                <div class="setup-step-item @(_step == 1 ? "active" : _step > 1 ? "completed" : "")">
+                    <div class="setup-step-num">@(_step > 1 ? "✓" : "1")</div>
+                    <span class="setup-step-label">环境诊断</span>
+                </div>
+                <div class="setup-step-item @(_step == 2 ? "active" : _step > 2 ? "completed" : "")">
+                    <div class="setup-step-num">@(_step > 2 ? "✓" : "2")</div>
+                    <span class="setup-step-label">管理账号</span>
+                </div>
+                <div class="setup-step-item @(_step == 3 ? "active" : _step > 3 ? "completed" : "")">
+                    <div class="setup-step-num">@(_step > 3 ? "✓" : "3")</div>
+                    <span class="setup-step-label">站点设置</span>
+                </div>
+                <div class="setup-step-item @(_step == 4 ? "active" : "")">
+                    <div class="setup-step-num">4</div>
+                    <span class="setup-step-label">完成配置</span>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="alert alert-danger mb-4"><i class="bi bi-exclamation-triangle"></i> @_error</div>
+            }
+
+            @if (_step == 1)
+            {
+                <div class="db-diag-card">
+                    <h3 class="fs-6 fw-bold mb-3"><i class="bi bi-database-check"></i> SQLite 数据库连通性诊断</h3>
+                    @if (_testingDb)
+                    {
+                        <p class="text-muted"><span class="spinner-border spinner-border-sm me-2"></span>正在测试数据库连接与存储文件…</p>
+                    }
+                    else if (_dbStatus is not null)
+                    {
+                        <div class="d-flex flex-column gap-2 small">
+                            <div class="d-flex justify-content-between">
+                                <span class="text-muted">连接状态：</span>
+                                @if (_dbStatus.Connected)
+                                {
+                                    <span class="badge text-bg-success"><i class="bi bi-check-circle"></i> 连接正常</span>
+                                }
+                                else
+                                {
+                                    <span class="badge text-bg-danger"><i class="bi bi-x-circle"></i> 连接失败</span>
+                                }
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span class="text-muted">数据库路径：</span>
+                                <code class="text-truncate" style="max-width: 320px;" title="@_dbStatus.DatabasePath">@_dbStatus.DatabasePath</code>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span class="text-muted">存储大小：</span>
+                                <span>@((_dbStatus.DatabaseSizeBytes / 1024.0).ToString("F1")) KB</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span class="text-muted">服务器时间：</span>
+                                <span>@_dbStatus.ServerTime</span>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(_dbStatus.ErrorMessage))
+                            {
+                                <div class="text-danger mt-2">错误详情：@_dbStatus.ErrorMessage</div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="d-flex justify-content-between">
+                    <button class="vp-btn-secondary" type="button" @onclick="RunDbTestAsync" disabled="@_testingDb">
+                        <i class="bi bi-arrow-repeat"></i> 重新测试
+                    </button>
+                    <button class="vp-btn-primary" type="button" @onclick="() => { _error = null; _step = 2; }" disabled="@(_dbStatus?.Connected != true)">
+                        下一步：创建管理员 <i class="bi bi-arrow-right"></i>
+                    </button>
+                </div>
+            }
+            else if (_step == 2)
+            {
+                <div class="mb-3">
+                    <label class="form-label">超级管理员邮箱 *</label>
+                    <input type="email" class="form-control" @bind="_setupModel.AdminEmail" placeholder="admin@seekclaw.org" autocomplete="email" />
+                    <div class="form-text">用于登录 SeekClaw 后台管理系统的核心管理员邮箱。</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">管理员密码 *</label>
+                    <input type="password" class="form-control" @bind="_setupModel.AdminPassword" placeholder="至少 6 位字符" autocomplete="new-password" />
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label">确认密码 *</label>
+                    <input type="password" class="form-control" @bind="_confirmPassword" placeholder="再次输入密码" autocomplete="new-password" />
+                </div>
+
+                <div class="d-flex justify-content-between">
+                    <button class="vp-btn-secondary" type="button" @onclick="() => { _error = null; _step = 1; }">
+                        <i class="bi bi-arrow-left"></i> 上一步
+                    </button>
+                    <button class="vp-btn-primary" type="button" @onclick="ValidateStep2">
+                        下一步：站点配置 <i class="bi bi-arrow-right"></i>
+                    </button>
+                </div>
+            }
+            else if (_step == 3)
+            {
+                <div class="mb-3">
+                    <label class="form-label">站点名称</label>
+                    <input class="form-control" @bind="_setupModel.SiteName" placeholder="SeekClaw" />
+                </div>
+
+                <div class="mb-3 form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="allowReg" @bind="_setupModel.AllowRegistration" />
+                    <label class="form-check-label ms-2" for="allowReg">开放公开注册（关闭后仅管理员可在后台分配账号）</label>
+                </div>
+
+                <div class="mb-4 form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="seedSkills" @bind="_setupModel.SeedSampleSkills" />
+                    <label class="form-check-label ms-2" for="seedSkills">导入官方精选技能包种子数据（.NET 开发、Git 助手、Web 调研等）</label>
+                </div>
+
+                <div class="d-flex justify-content-between">
+                    <button class="vp-btn-secondary" type="button" @onclick="() => { _error = null; _step = 2; }" disabled="@_busy">
+                        <i class="bi bi-arrow-left"></i> 上一步
+                    </button>
+                    <button class="vp-btn-primary" type="button" @onclick="SubmitInitializeAsync" disabled="@_busy">
+                        <i class="bi bi-check2-circle"></i> @(_busy ? "正在初始化…" : "完成并初始化系统")
+                    </button>
+                </div>
+            }
+            else if (_step == 4)
+            {
+                <div class="text-center py-4">
+                    <div class="text-success fs-1 mb-3"><i class="bi bi-patch-check-fill"></i></div>
+                    <h2>系统初始化完成！</h2>
+                    <p class="subtitle">超级管理员已就绪并已自动完成登录鉴权。现在可以开始探索 SeekClaw 文档与技能市场。</p>
+
+                    <div class="d-flex justify-content-center gap-3 mt-4">
+                        <a class="vp-btn-primary" href="/admin"><i class="bi bi-speedometer2"></i> 进入管理后台</a>
+                        <a class="vp-btn-secondary" href="/doc"><i class="bi bi-journal-text"></i> 文档中心</a>
+                        <a class="vp-btn-secondary" href="/skills"><i class="bi bi-stars"></i> 技能市场</a>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</section>
+
+@code {
+    private int _step = 1;
+    private bool _isAlreadyInitialized;
+    private bool _testingDb;
+    private bool _busy;
+    private string? _error;
+    private string _confirmPassword = string.Empty;
+    private DatabaseStatusResult? _dbStatus;
+    private SetupRequest _setupModel = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isAlreadyInitialized = await Auth.IsInitializedAsync();
+        if (!_isAlreadyInitialized)
+        {
+            await RunDbTestAsync();
+        }
+    }
+
+    private async Task RunDbTestAsync()
+    {
+        _testingDb = true;
+        _error = null;
+        try
+        {
+            _dbStatus = await JS.InvokeAsync<DatabaseStatusResult>("SeekClaw.testDatabase");
+            if (_dbStatus?.IsInitialized == true)
+            {
+                _isAlreadyInitialized = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = "无法完成数据库测试：" + ex.Message;
+        }
+        finally
+        {
+            _testingDb = false;
+        }
+    }
+
+    private void ValidateStep2()
+    {
+        _error = null;
+        var email = !string.IsNullOrWhiteSpace(_setupModel.AdminEmail) ? _setupModel.AdminEmail : _setupModel.AdminUsername;
+        if (string.IsNullOrWhiteSpace(email) || !AuthService.IsValidEmail(email))
+        {
+            _error = "请输入有效的管理员邮箱地址（例如：admin@seekclaw.org）。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_setupModel.AdminPassword) || _setupModel.AdminPassword.Length < 6)
+        {
+            _error = "密码长度至少需要 6 位。";
+            return;
+        }
+
+        if (_setupModel.AdminPassword != _confirmPassword)
+        {
+            _error = "两次输入的密码不一致，请重新输入。";
+            return;
+        }
+
+        _step = 3;
+    }
+
+    private async Task SubmitInitializeAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await JS.InvokeAsync<AuthResult>("SeekClaw.initializeSystem", _setupModel);
+            if (result.Success)
+            {
+                _step = 4;
+            }
+            else
+            {
+                _error = result.Error ?? "系统初始化失败，请稍后重试。";
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = "初始化请求失败：" + ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

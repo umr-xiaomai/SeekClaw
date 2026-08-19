@@ -1,0 +1,191 @@
+@page "/skills/submit"
+@page "/en/skills/submit"
+@rendermode InteractiveServer
+@inject SkillService Skills
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
+
+<PageTitle>@(IsEnglish ? "Submit Skill — SeekClaw Marketplace" : "发布技能插件 — SeekClaw 市场")</PageTitle>
+
+<section class="skills-shell" style="max-width: 860px;">
+    <div class="d-flex align-items-center justify-content-between mb-4">
+        <div>
+            <p class="doc-kicker">Skill Submission</p>
+            <h1 class="h2 fw-bold m-0">@(IsEnglish ? "Publish Skill" : "发布技能插件")</h1>
+        </div>
+        <a class="vp-btn-secondary" href="@(IsEnglish ? "/en/skills" : "/skills")">
+            <i class="bi bi-arrow-left"></i> @(IsEnglish ? "Back to Marketplace" : "返回技能市场")
+        </a>
+    </div>
+
+    <AuthorizeView>
+        <NotAuthorized>
+            <div class="setup-card text-center py-5">
+                <i class="bi bi-shield-lock text-muted" style="font-size: 3rem;"></i>
+                <h2 class="h4 fw-bold mt-3 mb-2">@(IsEnglish ? "Sign in Required" : "需要登录以发布技能")</h2>
+                <p class="text-secondary mb-4">@(IsEnglish ? "Please log in with your SeekClaw account before submitting a community skill." : "发布技能前请先登录您的 SeekClaw 账户。")</p>
+                <a class="vp-btn-primary" href="/login?returnUrl=/skills/submit">
+                    <i class="bi bi-box-arrow-in-right"></i> @(IsEnglish ? "Sign In Now" : "立即登录")
+                </a>
+            </div>
+        </NotAuthorized>
+        <Authorized>
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="alert alert-danger mb-3"><i class="bi bi-exclamation-triangle"></i> @_error</div>
+            }
+
+            <div class="setup-card" style="max-width: 100%; margin: 0;">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">@(IsEnglish ? "Skill Name *" : "技能名称 *")</label>
+                        <input class="form-control" @bind="_model.Name" placeholder="@(IsEnglish ? "e.g. Python FastAPI Expert" : "例如：Python FastAPI 专家")" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">@(IsEnglish ? "Slug (Unique Identifier)" : "Slug 标识（留空自动根据名称生成）")</label>
+                        <input class="form-control" @bind="_model.Slug" placeholder="@(IsEnglish ? "e.g. python-fastapi" : "例如：python-fastapi")" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">@(IsEnglish ? "Author Name" : "作者署名")</label>
+                        <input class="form-control" @bind="_model.Author" placeholder="@(context.User.Identity?.Name ?? "Community Developer")" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">@(IsEnglish ? "Version" : "版本号")</label>
+                        <input class="form-control" @bind="_model.Version" placeholder="1.0.0" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">@(IsEnglish ? "Homepage / Repo" : "主页或开源仓库")</label>
+                        <input class="form-control" @bind="_model.Homepage" placeholder="https://github.com/..." />
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">@(IsEnglish ? "Summary *" : "一句话简介 *")</label>
+                        <textarea class="form-control" rows="2" @bind="_model.Summary" placeholder="@(IsEnglish ? "Briefly explain what this skill does..." : "一句话概括此技能的主要功能与使用场景")"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">@(IsEnglish ? "README Markdown (Documentation & Prompts) *" : "README Markdown 使用说明与提示词规范 *")</label>
+                        <textarea class="form-control font-monospace" rows="12" @bind="_model.ReadmeMarkdown" placeholder="@(IsEnglish ? "# Skill Name\n\n## Features\n\n## Usage\n..." : "# 技能名称\n\n## ✨ 特性\n\n## 🚀 安装与使用\n...")"></textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">@(IsEnglish ? "Skill Package (.zip / .json / .md, max 10MB)" : "技能压缩包文件（.zip / .json / .md，最大 10MB）")</label>
+                        <InputFile class="form-control" OnChange="OnPackageSelected" accept=".zip,.md,.txt,.json" />
+                        @if (_packageData is not null)
+                        {
+                            <div class="form-text text-success"><i class="bi bi-check-circle"></i> @(IsEnglish ? "Selected:" : "已选择：") @_packageFileName (@((_packageData.Length / 1024.0).ToString("F1")) KB)</div>
+                        }
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end">
+                        <AuthorizeView Roles="SuperAdmin" Context="adminContext">
+                            <Authorized>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="isOfficialSwitch" @bind="_model.IsOfficial" />
+                                    <label class="form-check-label ms-2 fw-bold text-success" for="isOfficialSwitch">
+                                        <i class="bi bi-shield-check"></i> @(IsEnglish ? "Mark as Official Skill" : "设为官方认证技能")
+                                    </label>
+                                </div>
+                            </Authorized>
+                            <NotAuthorized>
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-people-fill text-primary me-1"></i> @(IsEnglish ? "You are publishing as a Community Contributor." : "您正在以社区贡献者身份发布技能插件。")
+                                </div>
+                            </NotAuthorized>
+                        </AuthorizeView>
+                    </div>
+                </div>
+
+                <div class="mt-4 pt-3 border-top d-flex gap-2">
+                    <button class="vp-btn-primary" disabled="@_saving" @onclick="() => SaveSkillAsync(context.User)">
+                        <i class="bi bi-cloud-arrow-up"></i> @(_saving ? (IsEnglish ? "Publishing..." : "正在发布…") : (IsEnglish ? "Publish Skill" : "发布技能"))
+                    </button>
+                    <a class="vp-btn-secondary" href="@(IsEnglish ? "/en/skills" : "/skills")">
+                        @(IsEnglish ? "Cancel" : "取消")
+                    </a>
+                </div>
+            </div>
+        </Authorized>
+    </AuthorizeView>
+</section>
+
+@code {
+    private SkillInput _model = new();
+    private byte[]? _packageData;
+    private string? _packageFileName;
+    private string? _packageContentType;
+    private bool _saving;
+    private string? _error;
+
+    private bool IsEnglish => new Uri(Navigation.Uri).AbsolutePath.StartsWith("/en", StringComparison.OrdinalIgnoreCase);
+
+    private async Task OnPackageSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null)
+        {
+            return;
+        }
+
+        if (file.Size > 10 * 1024 * 1024)
+        {
+            _error = IsEnglish ? "Package size cannot exceed 10MB." : "技能包文件大小不能超过 10MB。";
+            return;
+        }
+
+        _error = null;
+        _packageFileName = file.Name;
+        _packageContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+
+        using var memoryStream = new MemoryStream();
+        await file.OpenReadStream(10 * 1024 * 1024).CopyToAsync(memoryStream);
+        _packageData = memoryStream.ToArray();
+    }
+
+    private async Task SaveSkillAsync(System.Security.Claims.ClaimsPrincipal user)
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_model.Name))
+        {
+            _error = IsEnglish ? "Skill name is required." : "请输入技能名称。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_model.Summary))
+        {
+            _error = IsEnglish ? "Summary is required." : "请输入一句话简介。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_model.ReadmeMarkdown))
+        {
+            _error = IsEnglish ? "README Markdown is required." : "请输入 README 说明文档。";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var isSuperAdmin = user.IsInRole("SuperAdmin");
+            var username = user.Identity?.Name ?? "Community";
+            var isOfficial = isSuperAdmin && _model.IsOfficial;
+
+            var created = await Skills.CreateAsync(
+                _model,
+                _packageData,
+                _packageFileName,
+                _packageContentType,
+                isOfficial: isOfficial,
+                authorUserId: null,
+                authorUsername: username);
+
+            var targetUrl = IsEnglish ? $"/en/skills/{created.Slug}" : $"/skills/{created.Slug}";
+            Navigation.NavigateTo(targetUrl);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

@@ -1,45 +1,122 @@
 @rendermode InteractiveServer
 @inject SkillService SkillCatalog
 
-<section class="page-section">
-    <header class="page-header">
-        <p class="doc-kicker">Skills Marketplace</p>
-        <h1>@(Language == "en" ? "Skills Marketplace" : "官方技能市场")</h1>
-        <p>@(Language == "en" ? "Browse, download, and reuse official and community-maintained SeekClaw skills." : "浏览、下载和复用 SeekClaw 官方与社区维护的技能。")</p>
+<section class="skills-shell">
+    <header class="skills-header mb-4">
+        <p class="doc-kicker">Skills Hub</p>
+        <h1>@(Language == "en" ? "Skills Marketplace" : "技能生态市场")</h1>
+        <p>@(Language == "en" ? "Discover, install, and share domain-specific official & community skills for SeekClaw runtime." : "探索、安装与复用面向特定工程领域的 SeekClaw 官方精选与社区扩展技能。")</p>
+
+        <div class="d-flex flex-wrap align-items-center justify-content-center gap-3 mt-3">
+            <div class="skills-search-bar m-0" style="max-width: 480px; width: 100%;">
+                <input class="form-control" @bind="_query" @bind:event="oninput" placeholder="@(Language == "en" ? "Search skills by name, summary or slug..." : "搜索技能名称、简介或标识…")" />
+            </div>
+            <a class="vp-btn-primary" href="@($"{Prefix}/submit")">
+                <i class="bi bi-cloud-arrow-up"></i> @(Language == "en" ? "Submit Skill" : "发布技能")
+            </a>
+        </div>
+
+        <div class="d-flex justify-content-center gap-2 mt-4">
+            <button class="nav-action-btn @(_filterType == "all" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("all")'>
+                <i class="bi bi-grid-fill"></i> @(Language == "en" ? "All Skills" : "全部技能") (@_skills.Count)
+            </button>
+            <button class="nav-action-btn @(_filterType == "official" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("official")'>
+                <i class="bi bi-shield-fill-check text-success"></i> @(Language == "en" ? "Official" : "官方精选") (@_skills.Count(s => s.IsOfficial))
+            </button>
+            <button class="nav-action-btn @(_filterType == "community" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("community")'>
+                <i class="bi bi-people-fill text-primary"></i> @(Language == "en" ? "Community" : "社区生态") (@_skills.Count(s => !s.IsOfficial))
+            </button>
+        </div>
     </header>
 
     @if (_loading)
     {
-        <div class="text-muted">@(Language == "en" ? "Loading skills..." : "正在加载技能…")</div>
+        <div class="text-center text-muted py-5">
+            <div class="spinner-border text-success mb-2"></div>
+            <div>@(Language == "en" ? "Loading skills catalog..." : "正在加载技能列表…")</div>
+        </div>
     }
-    else if (_skills.Count == 0)
+    else if (FilteredSkills.Count == 0)
     {
         <div class="empty-state">
-            <h2>@(Language == "en" ? "No published skills" : "暂无已发布技能")</h2>
-            <p>@(Language == "en" ? "Skills published by the administrator will appear here." : "管理员在后台发布技能后会显示在这里。")</p>
+            <h2>@(Language == "en" ? "No matching skills" : "未找到匹配技能")</h2>
+            <p>@(Language == "en" ? "Try adjusting your filter or search query." : "请尝试更换筛选条件或搜索关键词。")</p>
         </div>
     }
     else
     {
-        <div class="skill-grid">
-            @foreach (var skill in _skills)
+        <div class="skills-grid">
+            @foreach (var skill in PagedSkills)
             {
-                <a class="skill-card" href="@($"{Prefix}/{skill.Id}")">
-                    <div class="skill-card-head">
-                        <span class="skill-name">@skill.Name</span>
-                        <span class="badge text-bg-primary">v@skill.Version</span>
+                <a class="skill-card" href="@($"{Prefix}/{skill.Slug}")">
+                    <div>
+                        <div class="skill-card-top">
+                            <div class="skill-icon">
+                                <i class="bi @(skill.IsOfficial ? "bi-shield-check" : "bi-stars")"></i>
+                            </div>
+                            <div class="skill-title-area flex-grow-1">
+                                <div class="d-flex align-items-center justify-content-between gap-2">
+                                    <h3 class="m-0">@skill.Name</h3>
+                                    @if (skill.IsOfficial)
+                                    {
+                                        <span class="badge text-bg-success flex-shrink-0" style="font-size: 0.75rem;">
+                                            <i class="bi bi-shield-fill-check me-1"></i>@(Language == "en" ? "Official" : "官方")
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-light border text-secondary flex-shrink-0" style="font-size: 0.75rem;">
+                                            <i class="bi bi-people me-1"></i>@(Language == "en" ? "Community" : "社区")
+                                        </span>
+                                    }
+                                </div>
+                                <div class="skill-slug">@skill.Slug</div>
+                            </div>
+                        </div>
+
+                        <p class="skill-summary">@skill.Summary</p>
                     </div>
-                    <p>@skill.Summary</p>
-                    <div class="skill-meta">
-                        <span>@skill.Author</span>
-                        @if (skill.HasPackage)
-                        {
-                            <span>@(Language == "en" ? "Downloadable" : "可下载")</span>
-                        }
+
+                    <div class="skill-card-footer">
+                        <span><i class="bi bi-person me-1"></i>@skill.Author</span>
+                        <div class="d-flex align-items-center gap-2">
+                            @if (skill.HasPackage)
+                            {
+                                <span class="badge text-bg-light border text-secondary"><i class="bi bi-box-seam me-1"></i>Zip</span>
+                            }
+                            <span class="skill-version-badge">v@skill.Version</span>
+                        </div>
                     </div>
                 </a>
             }
         </div>
+
+        @if (TotalPages > 1)
+        {
+            <div class="site-pagination mt-4 justify-content-center">
+                <div class="admin-page-nav">
+                    <button class="admin-page-btn" disabled="@(_currentPage <= 1)" @onclick="() => GoToPage(1)">
+                        <i class="bi bi-chevron-double-left"></i>
+                    </button>
+                    <button class="admin-page-btn" disabled="@(_currentPage <= 1)" @onclick="() => GoToPage(_currentPage - 1)">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
+                    @for (int p = StartPage; p <= EndPage; p++)
+                    {
+                        var pageNum = p;
+                        <button class="admin-page-btn @(pageNum == _currentPage ? "active" : "")" @onclick="() => GoToPage(pageNum)">
+                            @pageNum
+                        </button>
+                    }
+                    <button class="admin-page-btn" disabled="@(_currentPage >= TotalPages)" @onclick="() => GoToPage(_currentPage + 1)">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                    <button class="admin-page-btn" disabled="@(_currentPage >= TotalPages)" @onclick="() => GoToPage(TotalPages)">
+                        <i class="bi bi-chevron-double-right"></i>
+                    </button>
+                </div>
+            </div>
+        }
     }
 </section>
 
@@ -48,12 +125,64 @@
     public string Language { get; set; } = "zh";
 
     private List<SkillSummary> _skills = new();
+    private string _query = string.Empty;
+    private string _filterType = "all";
     private bool _loading = true;
+    private int _currentPage = 1;
+    private int _pageSize = 12;
     private string Prefix => Language == "en" ? "/en/skills" : "/skills";
+
+    private List<SkillSummary> FilteredSkills
+    {
+        get
+        {
+            var querySkills = _skills.AsEnumerable();
+            if (_filterType == "official")
+            {
+                querySkills = querySkills.Where(s => s.IsOfficial);
+            }
+            else if (_filterType == "community")
+            {
+                querySkills = querySkills.Where(s => !s.IsOfficial);
+            }
+
+            if (!string.IsNullOrWhiteSpace(_query))
+            {
+                querySkills = querySkills.Where(s =>
+                    s.Name.Contains(_query, StringComparison.OrdinalIgnoreCase) ||
+                    s.Slug.Contains(_query, StringComparison.OrdinalIgnoreCase) ||
+                    s.Summary.Contains(_query, StringComparison.OrdinalIgnoreCase) ||
+                    s.Author.Contains(_query, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return querySkills.ToList();
+        }
+    }
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(FilteredSkills.Count / (double)_pageSize));
+
+    private List<SkillSummary> PagedSkills =>
+        FilteredSkills.Skip((_currentPage - 1) * _pageSize).Take(_pageSize).ToList();
+
+    private int StartPage => Math.Max(1, _currentPage - 2);
+    private int EndPage => Math.Min(TotalPages, StartPage + 4);
 
     protected override async Task OnInitializedAsync()
     {
         _skills = await SkillCatalog.ListAsync(includeDisabled: false);
         _loading = false;
+    }
+
+    private void SetFilter(string type)
+    {
+        _filterType = type;
+        _currentPage = 1;
+    }
+
+    private void GoToPage(int page)
+    {
+        if (page < 1) page = 1;
+        if (page > TotalPages) page = TotalPages;
+        _currentPage = page;
     }
 }

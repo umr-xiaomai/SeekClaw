@@ -1,35 +1,36 @@
 @page "/login"
 @rendermode InteractiveServer
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>登录 — SeekClaw</PageTitle>
 
 <section class="auth-page">
     <form class="auth-card" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
-        <h1>登录</h1>
-        <p class="text-muted">使用 SeekClaw 后台账号登录。</p>
+        <h1>账号登录</h1>
+        <p class="subtitle">登录 SeekClaw 平台以访问后台管理或发布技能。</p>
 
         @if (!string.IsNullOrWhiteSpace(_error))
         {
-            <div class="alert alert-danger">@_error</div>
+            <div class="alert alert-danger mb-3"><i class="bi bi-exclamation-circle me-1"></i> @_error</div>
         }
 
         <div class="mb-3">
-            <label class="form-label">用户名</label>
-            <input class="form-control" @bind="_model.Username" autocomplete="username" />
+            <label class="form-label">电子邮箱 *</label>
+            <input type="email" class="form-control" @bind="_model.Email" autocomplete="email" placeholder="name@example.com" required />
         </div>
-        <div class="mb-3">
-            <label class="form-label">密码</label>
-            <input type="password" class="form-control" @bind="_model.Password" autocomplete="current-password" />
+        <div class="mb-4">
+            <label class="form-label">登录密码 *</label>
+            <input type="password" class="form-control" @bind="_model.Password" autocomplete="current-password" placeholder="请输入密码" required />
         </div>
 
-        <button class="btn btn-primary w-100" type="submit" disabled="@_busy">
-            <i class="bi bi-box-arrow-in-right"></i> @(_busy ? "登录中…" : "登录")
+        <button class="vp-btn-primary w-100 justify-content-center" type="submit" disabled="@_busy">
+            <i class="bi bi-box-arrow-in-right"></i> @(_busy ? "正在登录…" : "立即登录")
         </button>
 
-        <p class="auth-footer">
-            还没有账号？<a href="/register">注册</a>
-        </p>
+        <div class="text-center mt-4 small text-muted">
+            还没有账号？<a href="/register" class="fw-semibold">注册新账号</a>
+        </div>
     </form>
 </section>
 
@@ -44,20 +45,16 @@
         _error = null;
         try
         {
-            using var client = new HttpClient { BaseAddress = new Uri(Navigation.BaseUri) };
-            var response = await client.PostAsJsonAsync("api/auth/login", _model);
-            var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
-            if (result?.Success == true)
+            var returnUrl = ReadReturnUrl();
+            var result = await JS.InvokeAsync<AuthResult>("SeekClaw.login", _model, returnUrl);
+            if (result != null && !result.Success)
             {
-                Navigation.NavigateTo(ReadReturnUrl(), forceLoad: true);
-                return;
+                _error = result.Error ?? "登录失败，请检查用户名和密码。";
             }
-
-            _error = result?.Error ?? "登录失败，请稍后重试。";
         }
-        catch
+        catch (Exception ex)
         {
-            _error = "无法连接服务器，请稍后重试。";
+            _error = "登录请求发生异常：" + ex.Message;
         }
         finally
         {
@@ -78,7 +75,5 @@
             ? "/"
             : returnUrl;
     }
-
-    private sealed record AuthResponse(bool Success, string? Error, bool IsSuperAdmin);
 }
 

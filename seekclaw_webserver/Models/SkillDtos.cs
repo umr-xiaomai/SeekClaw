@@ -7,6 +7,9 @@ public sealed record SkillSummary(
     string Summary,
     string Author,
     string Version,
+    bool IsOfficial,
+    int? AuthorUserId,
+    string? AuthorUsername,
     bool Enabled,
     bool HasPackage,
     long UpdatedAt);
@@ -20,6 +23,9 @@ public sealed record SkillDetailModel(
     string Author,
     string Version,
     string? Homepage,
+    bool IsOfficial,
+    int? AuthorUserId,
+    string? AuthorUsername,
     bool Enabled,
     bool HasPackage,
     string? PackageFileName,
@@ -35,6 +41,7 @@ public sealed class SkillInput
     public string Author { get; set; } = string.Empty;
     public string Version { get; set; } = "1.0.0";
     public string? Homepage { get; set; }
+    public bool IsOfficial { get; set; } = false;
     public bool Enabled { get; set; } = true;
 }
 

@@ -1,7 +1,16 @@
 namespace seekclaw_webserver.Services;
 
 public sealed record DocSummary(string Slug, string Title, string RelativePath);
-public sealed record DocPage(string Slug, string Title, string Markdown, string Html, IReadOnlyList<HeadingOutline> Outline);
+public sealed record DocGroup(string Title, IReadOnlyList<DocSummary> Items);
+public sealed record DocNavSibling(string Slug, string Title, string Link);
+public sealed record DocPage(
+    string Slug,
+    string Title,
+    string Markdown,
+    string Html,
+    IReadOnlyList<HeadingOutline> Outline,
+    DocNavSibling? Prev = null,
+    DocNavSibling? Next = null);
 public sealed record DocSearchResult(string Language, string Slug, string Title, string Snippet);
 
 public sealed class DocService
@@ -9,10 +18,66 @@ public sealed class DocService
     private readonly string _docsRoot;
     private readonly MarkdownService _markdown;
 
+    // Define standard ordered manifest matching seekclaw_website
+    private static readonly (string GroupZh, string GroupEn, string[] Slugs)[] SidebarGroups =
+    [
+        ("起步与概览", "Getting Started", ["index", "quickstart", "desktop", "architecture"]),
+        ("核心功能模块", "Core Features", ["providers", "cli", "tools", "skills", "mcp"]),
+        ("运行时进阶机制", "Advanced Runtime", ["workspace", "verification", "configuration", "daemon", "faq"])
+    ];
+
     public DocService(IWebHostEnvironment environment, MarkdownService markdown)
     {
-        _docsRoot = Path.Combine(environment.ContentRootPath, "Content", "docs");
+        _docsRoot = ResolveDocsRoot(environment);
         _markdown = markdown;
+    }
+
+    private static string ResolveDocsRoot(IWebHostEnvironment environment)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(environment.ContentRootPath, "Content", "docs"),
+            Path.Combine(AppContext.BaseDirectory, "Content", "docs"),
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "seekclaw_webserver", "Content", "docs"),
+            Path.Combine(Directory.GetCurrentDirectory(), "seekclaw_webserver", "Content", "docs"),
+            Path.Combine(Directory.GetCurrentDirectory(), "Content", "docs")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            var full = Path.GetFullPath(candidate);
+            if (Directory.Exists(full))
+            {
+                return full;
+            }
+        }
+
+        return Path.Combine(environment.ContentRootPath, "Content", "docs");
+    }
+
+    public IReadOnlyList<DocGroup> GetGroups(string language)
+    {
+        var isEn = string.Equals(language, "en", StringComparison.OrdinalIgnoreCase);
+        var allDocs = List(language).ToDictionary(d => d.Slug, StringComparer.OrdinalIgnoreCase);
+        var groups = new List<DocGroup>();
+
+        foreach (var (groupZh, groupEn, slugs) in SidebarGroups)
+        {
+            var items = new List<DocSummary>();
+            foreach (var slug in slugs)
+            {
+                if (allDocs.TryGetValue(slug, out var doc))
+                {
+                    items.Add(doc);
+                }
+            }
+            if (items.Count > 0)
+            {
+                groups.Add(new DocGroup(isEn ? groupEn : groupZh, items));
+            }
+        }
+
+        return groups;
     }
 
     public IReadOnlyList<DocSummary> List(string language)
@@ -38,7 +103,8 @@ public sealed class DocService
     public DocPage? Get(string language, string slug)
     {
         var directory = LanguageDirectory(language);
-        var file = ResolveFile(directory, slug);
+        var resolvedSlug = string.IsNullOrWhiteSpace(slug) ? "index" : slug;
+        var file = ResolveFile(directory, resolvedSlug);
         if (file is null || !File.Exists(file))
         {
             return null;
@@ -46,7 +112,40 @@ public sealed class DocService
 
         var markdown = File.ReadAllText(file);
         var rendered = _markdown.Render(markdown);
-        return new DocPage(slug, ReadTitle(file) ?? Humanize(slug), markdown, rendered.Html, rendered.Outline);
+        var title = ReadTitle(file) ?? Humanize(resolvedSlug);
+
+        // Find Prev and Next docs based on standard manifest
+        var isEn = string.Equals(language, "en", StringComparison.OrdinalIgnoreCase);
+        var prefix = isEn ? "/en/doc" : "/doc";
+        var flatList = SidebarGroups
+            .SelectMany(g => g.Slugs)
+            .ToList();
+
+        var index = flatList.FindIndex(s => string.Equals(s, resolvedSlug, StringComparison.OrdinalIgnoreCase));
+        DocNavSibling? prev = null;
+        DocNavSibling? next = null;
+
+        var allDocs = List(language).ToDictionary(d => d.Slug, StringComparer.OrdinalIgnoreCase);
+
+        if (index > 0)
+        {
+            var prevSlug = flatList[index - 1];
+            if (allDocs.TryGetValue(prevSlug, out var prevDoc))
+            {
+                prev = new DocNavSibling(prevDoc.Slug, prevDoc.Title, $"{prefix}/{prevDoc.Slug}");
+            }
+        }
+
+        if (index >= 0 && index < flatList.Count - 1)
+        {
+            var nextSlug = flatList[index + 1];
+            if (allDocs.TryGetValue(nextSlug, out var nextDoc))
+            {
+                next = new DocNavSibling(nextDoc.Slug, nextDoc.Title, $"{prefix}/{nextDoc.Slug}");
+            }
+        }
+
+        return new DocPage(resolvedSlug, title, markdown, rendered.Html, rendered.Outline, prev, next);
     }
 
     public IReadOnlyList<DocSearchResult> Search(string query)

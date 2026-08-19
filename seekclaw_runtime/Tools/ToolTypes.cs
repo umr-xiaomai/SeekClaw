@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Tools;
@@ -41,9 +42,14 @@ public sealed record ToolResult
     public string? Summary { get; init; }
     public string? Diff { get; init; }
     public string? FilePath { get; init; }
+    /// <summary>Optional multi-modal image attachments produced by the tool (e.g. capture_screen).</summary>
+    public IReadOnlyList<ChatImageAttachment>? Images { get; init; }
 
     public static ToolResult Ok(string output, string? summary = null) =>
         new() { Success = true, Output = output, Summary = summary };
+
+    public static ToolResult Ok(string output, IReadOnlyList<ChatImageAttachment>? images, string? summary = null) =>
+        new() { Success = true, Output = output, Summary = summary, Images = images };
 
     public static ToolResult Fail(string error) =>
         new() { Success = false, Output = error, Summary = error.Split('\n')[0] };
@@ -61,6 +67,8 @@ public interface ITool
     bool RequiresWorkspace => true;
     /// <summary>True when the tool needs outbound network access (web search / web fetch).</summary>
     bool RequiresNetwork => false;
+    /// <summary>True when the tool requires a vision-capable multi-modal model (e.g. capture_screen).</summary>
+    bool RequiresVision => false;
     /// <summary>Status label for the renderer while the tool runs (Reading files, Searching…).</summary>
     string StatusLabel { get; }
 

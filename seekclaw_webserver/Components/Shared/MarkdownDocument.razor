@@ -6,32 +6,89 @@
 @if (_page is null)
 {
     <div class="empty-state">
-        <h1>文档不存在</h1>
-        <p>没有找到请求的 Markdown 文档。</p>
-        <a class="btn btn-outline-primary" href="/doc">返回文档中心</a>
+        <h1>@(Language == "en" ? "Document Not Found" : "文档不存在")</h1>
+        <p>@(Language == "en" ? "The requested documentation page could not be found." : "没有找到请求的 Markdown 文档。")</p>
+        <a class="vp-btn-primary mt-3" href="@(Language == "en" ? "/en/doc" : "/doc")">
+            @(Language == "en" ? "Back to Docs" : "返回文档中心")
+        </a>
     </div>
 }
 else
 {
-    <div class="doc-view">
-        @if (_page.Outline.Count > 0)
-        {
-            <aside class="doc-toc">
-                <p class="doc-toc-title">@(Language == "en" ? "On this page" : "页面导航")</p>
-                <ul>
-                    @foreach (var heading in _page.Outline)
-                    {
-                        <li class="toc-level-@heading.Level">
-                            <a href="#@Uri.EscapeDataString(heading.Id)">@heading.Title</a>
-                        </li>
-                    }
-                </ul>
+    <div class="doc-shell">
+        <div class="doc-layout">
+            <!-- Left Sidebar -->
+            <aside class="doc-sidebar">
+                @foreach (var group in _groups)
+                {
+                    <div class="doc-sidebar-group">
+                        <div class="doc-sidebar-group-title">@group.Title</div>
+                        <ul class="doc-sidebar-items">
+                            @foreach (var item in group.Items)
+                            {
+                                var isActive = string.Equals(item.Slug, _currentSlug, StringComparison.OrdinalIgnoreCase);
+                                var itemUrl = $"{_prefix}/{item.Slug}";
+                                <li>
+                                    <a class="doc-sidebar-link @(isActive ? "active" : "")" href="@itemUrl">
+                                        @item.Title
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
             </aside>
-        }
 
-        <article class="markdown-body">
-            @((MarkupString)_page.Html)
-        </article>
+            <!-- Center Article -->
+            <main class="doc-content">
+                <article class="markdown-body">
+                    @((MarkupString)_page.Html)
+                </article>
+
+                <!-- Prev / Next Pager -->
+                @if (_page.Prev is not null || _page.Next is not null)
+                {
+                    <div class="doc-pager">
+                        @if (_page.Prev is not null)
+                        {
+                            <a class="doc-pager-card prev" href="@_page.Prev.Link">
+                                <span class="doc-pager-desc">← @(Language == "en" ? "Previous" : "上一篇")</span>
+                                <span class="doc-pager-title">@_page.Prev.Title</span>
+                            </a>
+                        }
+                        else
+                        {
+                            <div></div>
+                        }
+
+                        @if (_page.Next is not null)
+                        {
+                            <a class="doc-pager-card next" href="@_page.Next.Link">
+                                <span class="doc-pager-desc">@(Language == "en" ? "Next" : "下一篇") →</span>
+                                <span class="doc-pager-title">@_page.Next.Title</span>
+                            </a>
+                        }
+                    </div>
+                }
+            </main>
+
+            <!-- Right TOC Outline -->
+            @if (_page.Outline.Count > 0)
+            {
+                <aside class="doc-toc">
+                    <div class="doc-toc-title">@(Language == "en" ? "On this page" : "页面导航")</div>
+                    <ul>
+                        @foreach (var heading in _page.Outline)
+                        {
+                            var headingUrl = $"{_prefix}/{_currentSlug}#{Uri.EscapeDataString(heading.Id)}";
+                            <li class="toc-level-@heading.Level">
+                                <a href="@headingUrl">@heading.Title</a>
+                            </li>
+                        }
+                    </ul>
+                </aside>
+            }
+        </div>
     </div>
 }
 
@@ -43,10 +100,15 @@ else
     public string? Slug { get; set; }
 
     private DocPage? _page;
+    private IReadOnlyList<DocGroup> _groups = Array.Empty<DocGroup>();
+    private string _currentSlug = "index";
+    private string _prefix => Language == "en" ? "/en/doc" : "/doc";
 
     protected override void OnParametersSet()
     {
-        _page = Docs.Get(Language, string.IsNullOrWhiteSpace(Slug) ? "index" : Slug);
+        _currentSlug = string.IsNullOrWhiteSpace(Slug) ? "index" : Slug;
+        _groups = Docs.GetGroups(Language);
+        _page = Docs.Get(Language, _currentSlug);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

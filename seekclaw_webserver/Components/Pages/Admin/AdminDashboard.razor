@@ -1,29 +1,94 @@
 @page "/admin"
 @attribute [Authorize(Roles = "SuperAdmin")]
+@layout AdminLayout
 @rendermode InteractiveServer
+@inject SkillService Skills
+@inject AuthService Auth
 
-<PageTitle>后台管理 — SeekClaw</PageTitle>
+<PageTitle>控制台 — SeekClaw 后台管理</PageTitle>
 
-<section class="page-section">
-    <header class="page-header">
-        <p class="doc-kicker">Administration</p>
-        <h1>后台管理</h1>
-        <p>管理技能市场、用户与站点开放策略。</p>
+<section class="admin-shell">
+    <header class="skills-header mb-4 text-start">
+        <p class="doc-kicker">Administration Dashboard</p>
+        <h1 class="text-start">平台管理控制台</h1>
+        <p class="text-start m-0">集中监控 SeekClaw 文档站、技能市场生态、用户权限与站点全局策略。</p>
     </header>
 
-    <div class="admin-grid">
-        <a class="admin-card" href="/admin/skills">
-            <h2><i class="bi bi-stars"></i> 技能管理</h2>
-            <p>上传、编辑、下线和删除官方技能。</p>
+    <div class="admin-stats-grid">
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon"><i class="bi bi-stars"></i></div>
+            <div>
+                <div class="admin-stat-number">@_skillsCount</div>
+                <div class="admin-stat-label">已收录技能插件</div>
+            </div>
+        </div>
+
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon"><i class="bi bi-people"></i></div>
+            <div>
+                <div class="admin-stat-number">@_usersCount</div>
+                <div class="admin-stat-label">已注册用户总数</div>
+            </div>
+        </div>
+
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon"><i class="bi bi-shield-check"></i></div>
+            <div>
+                <div class="admin-stat-number">@(_registrationAllowed ? "已开放" : "已关闭")</div>
+                <div class="admin-stat-label">公开注册状态</div>
+            </div>
+        </div>
+
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon"><i class="bi bi-database"></i></div>
+            <div>
+                <div class="admin-stat-number">SQLite</div>
+                <div class="admin-stat-label">本地数据存储</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="vp-feature-grid mb-4">
+        <a class="vp-feature-card text-decoration-none" href="/admin/skills">
+            <div class="vp-feature-icon"><i class="bi bi-stars"></i></div>
+            <h3>技能管理 &rarr;</h3>
+            <p>发布、在线编辑 Markdown 文档、上传 Zip 技能包、下线或删除技能。</p>
         </a>
-        <a class="admin-card" href="/admin/users">
-            <h2><i class="bi bi-people"></i> 用户管理</h2>
-            <p>查看已注册用户与角色。</p>
+
+        <a class="vp-feature-card text-decoration-none" href="/admin/users">
+            <div class="vp-feature-icon"><i class="bi bi-people"></i></div>
+            <h3>用户与权限 &rarr;</h3>
+            <p>查看注册用户列表、重置密码、切换超级管理员角色及清理用户。</p>
         </a>
-        <a class="admin-card" href="/admin/settings">
-            <h2><i class="bi bi-sliders"></i> 站点设置</h2>
-            <p>控制注册开放与关闭。</p>
+
+        <a class="vp-feature-card text-decoration-none" href="/admin/settings">
+            <div class="vp-feature-icon"><i class="bi bi-sliders"></i></div>
+            <h3>站点全局设置 &rarr;</h3>
+            <p>修改站点名称、配置是否允许公开注册与维护模式策略。</p>
+        </a>
+
+        <a class="vp-feature-card text-decoration-none" href="/setup">
+            <div class="vp-feature-icon"><i class="bi bi-wrench-adjustable"></i></div>
+            <h3>环境诊断与向导 &rarr;</h3>
+            <p>查看数据库文件大小、路径、SQLite 读写连通性诊断报告。</p>
         </a>
     </div>
 </section>
+
+@code {
+    private int _skillsCount;
+    private int _usersCount;
+    private bool _registrationAllowed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var skills = await Skills.ListAsync(includeDisabled: true);
+        _skillsCount = skills.Count;
+
+        var users = await Auth.ListUsersAsync();
+        _usersCount = users.Count;
+
+        _registrationAllowed = await Auth.IsRegistrationAllowedAsync();
+    }
+}
 

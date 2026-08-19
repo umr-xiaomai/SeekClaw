@@ -231,11 +231,38 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     while (index < request.Messages.Count && request.Messages[index].Role == ChatRole.Tool)
                     {
                         var result = request.Messages[index];
+                        JsonNode contentNode;
+                        if (result.Images is { Count: > 0 })
+                        {
+                            var contentBlocks = new JsonArray
+                            {
+                                (JsonNode)new JsonObject { ["type"] = "text", ["text"] = result.Text }
+                            };
+                            foreach (var image in result.Images)
+                            {
+                                contentBlocks.Add((JsonNode)new JsonObject
+                                {
+                                    ["type"] = "image",
+                                    ["source"] = new JsonObject
+                                    {
+                                        ["type"] = "base64",
+                                        ["media_type"] = image.MediaType,
+                                        ["data"] = image.Data,
+                                    },
+                                });
+                            }
+                            contentNode = contentBlocks;
+                        }
+                        else
+                        {
+                            contentNode = JsonValue.Create(result.Text)!;
+                        }
+
                         toolResults.Add((JsonNode)new JsonObject
                         {
                             ["type"] = "tool_result",
                             ["tool_use_id"] = result.ToolCallId,
-                            ["content"] = result.Text,
+                            ["content"] = contentNode,
                             ["is_error"] = !result.ToolSuccess,
                         });
                         index++;

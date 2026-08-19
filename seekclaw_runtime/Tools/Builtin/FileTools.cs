@@ -14,6 +14,7 @@ public abstract class BuiltinTool(IPromptProvider prompts) : ITool
     // class, so derived tools must override these to be visible to ITool callers.
     public virtual bool RequiresWorkspace => true;
     public virtual bool RequiresNetwork => false;
+    public virtual bool RequiresVision => false;
     public virtual string StatusLabel => "Working";
 
     /// <summary>Tool descriptions live in prompts/tool/&lt;name&gt;.txt (hot-reloadable).</summary>

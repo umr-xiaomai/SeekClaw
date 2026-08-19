@@ -1,57 +1,117 @@
 @page "/en"
+@rendermode InteractiveServer
+@inject IJSRuntime JS
 
-<PageTitle>SeekClaw — AI Agent Runtime</PageTitle>
+<PageTitle>SeekClaw — A local-first, open-source, extensible AI Agent Runtime</PageTitle>
 
-<section class="hero">
-    <div class="hero-copy">
-        <img class="hero-logo" src="/logo.png" alt="SeekClaw" />
-        <h1>SeekClaw</h1>
-        <p class="lead">A local-first, open-source, extensible general-purpose AI Agent Runtime</p>
-        <p>Built on .NET 10, SeekClaw drives Desktop, CLI, and the skills ecosystem with one Runtime, configuration, tools, and session data.</p>
-        <div class="hero-actions">
-            <a class="btn btn-primary" href="/en/doc/quickstart"><i class="bi bi-rocket-takeoff"></i> Quick Start</a>
-            <a class="btn btn-outline-light" href="/en/skills"><i class="bi bi-stars"></i> Skills Marketplace</a>
-        </div>
+<section class="vp-hero">
+    <div class="vp-hero-badge">
+        <i class="bi bi-stars"></i> Modern .NET 10.0 Industrial Agent Runtime
     </div>
-    <div class="hero-visual">
-        <img src="/screenshots/desktop/chat-and-projects.png" alt="SeekClaw Desktop main window" />
+
+    <h1 class="vp-hero-title">
+        <span class="brand-gradient">SeekClaw</span>
+    </h1>
+
+    <div class="vp-hero-tagline">
+        A local-first, open-source, extensible general-purpose AI Agent Runtime
+    </div>
+
+    <p class="vp-hero-lead">
+        Built on .NET 10, SeekClaw drives Desktop, CLI, and the skills ecosystem with one Runtime, configuration, tools, and session database.
+    </p>
+
+    <div class="vp-hero-actions">
+        <a class="vp-btn-primary" href="/en/doc/quickstart">
+            <i class="bi bi-rocket-takeoff"></i> Quick Start
+        </a>
+        <a class="vp-btn-secondary" href="/en/doc/desktop">
+            <i class="bi bi-display"></i> Desktop Client
+        </a>
+        <a class="vp-btn-secondary" href="/en/skills">
+            <i class="bi bi-stars"></i> Skills Marketplace
+        </a>
+        <a class="vp-btn-secondary" href="https://github.com/umr-xiaomai/SeekClaw" target="_blank" rel="noopener noreferrer">
+            <i class="bi bi-github"></i> GitHub
+        </a>
+    </div>
+
+    <div class="cli-install-box">
+        <span>$ <code>npm install -g seekclaw-cli</code></span>
+        <button class="copy-icon-btn" type="button" @onclick='() => CopyInstallCommand("npm install -g seekclaw-cli")' title="Copy install command">
+            <i class="bi @(_copied ? "bi-check2 text-success" : "bi-clipboard")"></i>
+        </button>
     </div>
 </section>
 
-<section class="section">
-    <div class="section-heading">
-        <h2>Runtime First</h2>
-        <p>Business logic, provider routing, tool execution, session storage, and verification live in the Runtime. Frontends focus on presentation.</p>
+<section class="vp-features-section">
+    <div class="vp-section-header">
+        <h2>Runtime First Architecture</h2>
+        <p>Business logic, provider routing, tool execution, session storage, and verification live in the Runtime.</p>
     </div>
-    <div class="feature-grid">
-        <div class="feature-card">
-            <h3>Providers</h3>
-            <p>Anthropic, OpenAI-compatible APIs, Google, OpenRouter, Ollama, LM Studio, and more.</p>
+
+    <div class="vp-feature-grid">
+        <div class="vp-feature-card">
+            <div class="vp-feature-icon"><i class="bi bi-cpu"></i></div>
+            <h3>Smart Multi-Provider Routing</h3>
+            <p>Support for OpenAI-compatible APIs, Anthropic Claude, Google Gemini, DeepSeek optimizations, plus Ollama and LM Studio.</p>
         </div>
-        <div class="feature-card">
-            <h3>Tools & MCP</h3>
-            <p>Built-in file, search, shell, and web tools with stdio / SSE MCP server extensions.</p>
+
+        <div class="vp-feature-card">
+            <div class="vp-feature-icon"><i class="bi bi-tools"></i></div>
+            <h3>Tools Ecosystem & MCP</h3>
+            <p>Built-in file operations, grep/glob search, Bash, and WebFetch with stdio and SSE Model Context Protocol support.</p>
         </div>
-        <div class="feature-card">
-            <h3>Skills ecosystem</h3>
-            <p>Publish, download, and reuse portable skills from the official marketplace.</p>
+
+        <div class="vp-feature-card">
+            <div class="vp-feature-icon"><i class="bi bi-stars"></i></div>
+            <h3>Skills Marketplace</h3>
+            <p>Publish, download, and reuse domain-specific skill bundles with prompt hot-reloading.</p>
         </div>
-        <div class="feature-card">
-            <h3>Verification & repair</h3>
-            <p>After file edits, build checks can feed errors back to the agent for self-healing.</p>
+
+        <div class="vp-feature-card">
+            <div class="vp-feature-icon"><i class="bi bi-shield-check"></i></div>
+            <h3>Verification & Self-Healing</h3>
+            <p>Automatic build verification after file modifications with closed-loop diagnostic feedback for agent repair.</p>
         </div>
     </div>
 </section>
 
-<section class="section section-dark">
-    <div class="section-heading">
-        <h2>Desktop Preview</h2>
-        <p>Desktop connects to or starts the Daemon automatically, so end users do not need .NET installed.</p>
-    </div>
-    <div class="screenshot-grid">
-        <img src="/screenshots/desktop/providers-and-models.png" alt="Models and Providers" />
-        <img src="/screenshots/desktop/diagnostics-and-usage.png" alt="Runtime diagnostics and usage" />
-        <img src="/screenshots/desktop/mcp-servers.png" alt="MCP Server configuration" />
+<section class="vp-preview-section">
+    <div class="vp-preview-container">
+        <div class="vp-section-header">
+            <h2>Desktop Preview</h2>
+            <p>Cross-platform client built on Electron + Vue 3, communicating with the background daemon over high-speed IPC.</p>
+        </div>
+
+        <div class="screenshot-grid">
+            <div class="screenshot-item">
+                <img src="/screenshots/desktop/chat-and-projects.png" alt="AI Chat and Workspace" />
+                <div class="screenshot-item-label">AI Chat & Workspace Management</div>
+            </div>
+            <div class="screenshot-item">
+                <img src="/screenshots/desktop/providers-and-models.png" alt="Model and Provider Management" />
+                <div class="screenshot-item-label">Models & Provider Management</div>
+            </div>
+            <div class="screenshot-item">
+                <img src="/screenshots/desktop/mcp-servers.png" alt="MCP Server Configuration" />
+                <div class="screenshot-item-label">MCP Server Dynamic Configuration</div>
+            </div>
+        </div>
     </div>
 </section>
+
+@code {
+    private bool _copied;
+
+    private async Task CopyInstallCommand(string text)
+    {
+        await JS.InvokeVoidAsync("SeekClaw.copyText", text);
+        _copied = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        _copied = false;
+        StateHasChanged();
+    }
+}
 

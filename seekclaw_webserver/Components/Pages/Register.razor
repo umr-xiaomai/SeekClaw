@@ -1,94 +1,77 @@
 @page "/register"
 @rendermode InteractiveServer
+@inject AuthService Auth
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>注册 — SeekClaw</PageTitle>
 
 <section class="auth-page">
     <form class="auth-card" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
-        <h1>注册</h1>
-        <p class="text-muted">@(_registrationEnabled ? "创建普通用户账号。" : "当前注册尚未开放，请联系超级管理员。")</p>
+        <h1>账号注册</h1>
+        <p class="subtitle">@(_registrationEnabled ? "创建 SeekClaw 平台用户账号。" : "当前注册已关闭，请联系超级管理员在后台分配。")</p>
 
         @if (!string.IsNullOrWhiteSpace(_error))
         {
-            <div class="alert alert-danger">@_error</div>
+            <div class="alert alert-danger mb-3"><i class="bi bi-exclamation-circle me-1"></i> @_error</div>
         }
 
         <div class="mb-3">
-            <label class="form-label">用户名</label>
-            <input class="form-control" @bind="_model.Username" autocomplete="username" />
+            <label class="form-label">电子邮箱 *</label>
+            <input type="email" class="form-control" @bind="_model.Email" autocomplete="email" placeholder="name@example.com" required disabled="@(!_registrationEnabled)" />
         </div>
-        <div class="mb-3">
-            <label class="form-label">密码</label>
-            <input type="password" class="form-control" @bind="_model.Password" autocomplete="new-password" />
+        <div class="mb-4">
+            <label class="form-label">设置密码 *</label>
+            <input type="password" class="form-control" @bind="_model.Password" autocomplete="new-password" placeholder="至少6位字符" required disabled="@(!_registrationEnabled)" />
         </div>
 
-        <button class="btn btn-primary w-100" type="submit" disabled="@_busy || !_registrationEnabled">
-            <i class="bi bi-person-plus"></i> @(_busy ? "注册中…" : "注册")
+        <button class="vp-btn-primary w-100 justify-content-center" type="submit" disabled="@(_busy || !_registrationEnabled)">
+            <i class="bi bi-person-plus"></i> @(_busy ? "正在注册…" : "立即注册")
         </button>
 
-        <p class="auth-footer">
-            已有账号？<a href="/login">登录</a>
-        </p>
+        <div class="text-center mt-4 small text-muted">
+            已有账号？<a href="/login" class="fw-semibold">直接登录</a>
+        </div>
     </form>
 </section>
 
 @code {
     private RegisterRequest _model = new();
     private string? _error;
-    private bool _busy = true;
-    private bool _registrationEnabled;
+    private bool _busy;
+    private bool _registrationEnabled = true;
 
     protected override async Task OnInitializedAsync()
     {
-        try
-        {
-            using var client = new HttpClient { BaseAddress = new Uri(Navigation.BaseUri) };
-            var response = await client.GetAsync("api/auth/registration");
-            if (response.IsSuccessStatusCode)
-            {
-                var result = await response.Content.ReadFromJsonAsync<RegistrationResponse>();
-                _registrationEnabled = result?.Enabled == true;
-            }
-        }
-        catch
-        {
-            _registrationEnabled = false;
-        }
-        finally
-        {
-            _busy = false;
-        }
+        _registrationEnabled = await Auth.IsRegistrationAllowedAsync();
     }
 
     private async Task SubmitAsync()
     {
+        if (!_registrationEnabled)
+        {
+            _error = "当前站点已关闭公开注册。";
+            return;
+        }
+
         _busy = true;
         _error = null;
         try
         {
-            using var client = new HttpClient { BaseAddress = new Uri(Navigation.BaseUri) };
-            var response = await client.PostAsJsonAsync("api/auth/register", _model);
-            var result = await response.Content.ReadFromJsonAsync<AuthResponse>();
-            if (result?.Success == true)
+            var result = await JS.InvokeAsync<AuthResult>("SeekClaw.register", _model, "/");
+            if (result != null && !result.Success)
             {
-                Navigation.NavigateTo(result.IsSuperAdmin ? "/admin" : "/", forceLoad: true);
-                return;
+                _error = result.Error ?? "注册失败，请稍后重试。";
             }
-
-            _error = result?.Error ?? "注册失败，请稍后重试。";
         }
-        catch
+        catch (Exception ex)
         {
-            _error = "无法连接服务器，请稍后重试。";
+            _error = "注册请求发生异常：" + ex.Message;
         }
         finally
         {
             _busy = false;
         }
     }
-
-    private sealed record AuthResponse(bool Success, string? Error, bool IsSuperAdmin);
-    private sealed record RegistrationResponse(bool Enabled);
 }
 
