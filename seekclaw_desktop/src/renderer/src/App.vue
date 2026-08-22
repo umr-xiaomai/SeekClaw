@@ -639,7 +639,9 @@ interface ConversationItem { message: ChatMessage; step?: number }
 
 /** Adds "步骤 N" markers before assistant messages that follow tool results. */
 const conversationItems = computed<ConversationItem[]>(() => {
-  const messages = activeThread.value?.messages ?? []
+  const messages = (activeThread.value?.messages ?? []).filter(
+    (message) => !message.content?.startsWith('>>> [output truncated]')
+  )
   const items: ConversationItem[] = []
   let step = 0
   let lastWasTool = false

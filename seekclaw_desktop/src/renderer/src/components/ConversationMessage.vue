@@ -39,11 +39,10 @@ const preview = ref<{ src: string; name: string } | null>(null)
 const regularTools = computed(() => (props.message.tools ?? []).filter((tool) => !tool.diff))
 const editedTools = computed(() => (props.message.tools ?? []).filter((tool) => tool.diff && tool.filePath))
 
-/** System-injected messages (compaction / truncation) get dedicated cards. */
-const systemKind = computed<'memory' | 'truncated' | null>(() => {
+/** System-injected messages (compaction) get dedicated cards. */
+const systemKind = computed<'memory' | null>(() => {
   const content = props.message.content
   if (content.startsWith('>>> [Context compaction]')) return 'memory'
-  if (content.startsWith('>>> [output truncated]')) return 'truncated'
   return null
 })
 
@@ -89,21 +88,17 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
 </script>
 
 <template>
-  <article class="message" :class="[`message-${message.role}`, { dimmed }]">
+  <article v-if="!message.content?.startsWith('>>> [output truncated]')" class="message" :class="[`message-${message.role}`, { dimmed }]">
     <!-- user: either a real message or a system-injected card -->
     <template v-if="message.role === 'user'">
-      <div v-if="systemKind" class="system-card" :class="`system-${systemKind}`">
+      <div v-if="systemKind === 'memory'" class="system-card system-memory">
         <button class="system-card-header" type="button" @click="systemOpen = !systemOpen">
           <span class="system-card-icon">
-            <Layers v-if="systemKind === 'memory'" :size="15" />
-            <CircleAlert v-else :size="15" />
+            <Layers :size="15" />
           </span>
           <div class="system-card-title">
-            <strong>
-              {{ systemKind === 'memory' ? '记忆压缩' : '输出截断' }}
-            </strong>
-            <small v-if="systemKind === 'memory'">较早的对话已被总结，以保持上下文可容纳</small>
-            <small v-else>上一轮输出达到长度上限，已要求模型继续</small>
+            <strong>记忆压缩</strong>
+            <small>较早的对话已被总结，以保持上下文可容纳</small>
           </div>
           <ChevronDown :size="15" :class="{ rotated: systemOpen }" />
         </button>
@@ -243,11 +238,6 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
 .system-memory .system-card-icon {
   color: var(--accent);
   background: var(--accent-soft);
-}
-
-.system-truncated .system-card-icon {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .system-card-title {
