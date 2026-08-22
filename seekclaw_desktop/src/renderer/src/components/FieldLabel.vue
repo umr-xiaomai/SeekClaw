@@ -70,13 +70,13 @@ defineProps<{
   width: max-content;
   max-width: min(280px, 70vw);
   padding: 8px 10px;
-  color: #f4f6f4;
+  color: #f0f3f6;
   font-size: 12px;
   font-weight: 400;
   line-height: 1.55;
   pointer-events: none;
   visibility: hidden;
-  background: #252a27;
+  background: #21262d;
   border: 1px solid rgb(255 255 255 / 9%);
   border-radius: 7px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 22%);

@@ -13,13 +13,13 @@
   --text-muted: #929292;
   --border: #dedede;
   --border-strong: #cecece;
-  --accent: #177653;
-  --accent-soft: #e2f0e9;
+  --accent: #007acc;
+  --accent-soft: #e8f2fc;
   --danger: #b6473f;
-  --shadow: 0 12px 38px rgb(27 32 27 / 9%);
-  --composer-shadow: 0 8px 28px rgb(25 29 25 / 10%);
-  --code-bg: #171a18;
-  --code-text: #e9ede9;
+  --shadow: 0 12px 38px rgb(0 0 0 / 8%);
+  --composer-shadow: 0 8px 28px rgb(0 0 0 / 8%);
+  --code-bg: #1e1e1e;
+  --code-text: #e6edf3;
 }
 
 :root[data-theme="dark"] {
@@ -35,13 +35,13 @@
   --text-muted: #858585;
   --border: #353535;
   --border-strong: #454545;
-  --accent: #4ab484;
-  --accent-soft: #23392e;
+  --accent: #388bfd;
+  --accent-soft: #16263d;
   --danger: #df786f;
   --shadow: 0 12px 38px rgb(0 0 0 / 28%);
   --composer-shadow: 0 8px 28px rgb(0 0 0 / 25%);
-  --code-bg: #111311;
-  --code-text: #eef1ed;
+  --code-bg: #14171d;
+  --code-text: #e6edf3;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -58,13 +58,13 @@
     --text-muted: #858585;
     --border: #353535;
     --border-strong: #454545;
-    --accent: #4ab484;
-    --accent-soft: #23392e;
+    --accent: #388bfd;
+    --accent-soft: #16263d;
     --danger: #df786f;
     --shadow: 0 12px 38px rgb(0 0 0 / 28%);
     --composer-shadow: 0 8px 28px rgb(0 0 0 / 25%);
-    --code-bg: #111311;
-    --code-text: #eef1ed;
+    --code-bg: #14171d;
+    --code-text: #e6edf3;
   }
 }
 
@@ -1504,13 +1504,13 @@ select:focus-visible {
   background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
   border: 1px solid var(--border);
   border-radius: 22px;
-  box-shadow: 0 2px 5px rgb(20 24 21 / 5%);
+  box-shadow: 0 2px 5px rgb(0 0 0 / 5%);
 }
 
 .starter-prompt-card:hover {
   background: var(--surface-raised);
   border-color: var(--border-strong);
-  box-shadow: 0 5px 14px rgb(20 24 21 / 8%);
+  box-shadow: 0 5px 14px rgb(0 0 0 / 8%);
 }
 
 .starter-prompt-card[data-tone="blue"] {
@@ -1689,22 +1689,22 @@ select:focus-visible {
   justify-content: space-between;
   min-height: 34px;
   padding: 0 11px 0 14px;
-  color: #aeb5ae;
+  color: #abb2bf;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 11px;
-  border-bottom: 1px solid #2b302c;
+  border-bottom: 1px solid #2d3139;
 }
 
 .copy-code {
   padding: 4px 6px;
-  color: #b9c0b9;
+  color: #b4bcc8;
   background: transparent;
   border-radius: 4px;
 }
 
 .copy-code:hover {
   color: white;
-  background: #2a2f2b;
+  background: #2c313c;
 }
 
 .code-block pre {
@@ -1908,7 +1908,7 @@ select:focus-visible {
   padding: 0;
   place-items: center;
   color: #fff;
-  background: rgb(31 34 31 / 88%);
+  background: rgb(30 32 36 / 88%);
   border: 1px solid rgb(255 255 255 / 38%);
   border-radius: 50%;
   box-shadow: 0 2px 6px rgb(0 0 0 / 24%);
@@ -1928,7 +1928,7 @@ select:focus-visible {
   display: grid;
   padding: 38px;
   place-items: center;
-  background: rgb(7 9 8 / 78%);
+  background: rgb(8 10 14 / 78%);
   backdrop-filter: blur(8px);
 }
 
@@ -1972,7 +1972,7 @@ select:focus-visible {
   padding: 0;
   place-items: center;
   color: #fff;
-  background: rgb(24 27 25 / 88%);
+  background: rgb(24 26 30 / 88%);
   border: 1px solid rgb(255 255 255 / 34%);
   border-radius: 50%;
   box-shadow: 0 4px 14px rgb(0 0 0 / 32%);
@@ -2141,7 +2141,7 @@ select:focus-visible {
   background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
   border: 1px solid var(--border-strong);
   border-radius: 13px;
-  box-shadow: 0 16px 40px rgb(12 16 13 / 18%);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
   backdrop-filter: blur(18px);
 }
 
@@ -2327,7 +2327,7 @@ select:focus-visible {
   inset: 0;
   padding: 22px;
   place-items: center;
-  background: rgb(14 17 14 / 32%);
+  background: rgb(0 0 0 / 35%);
 }
 
 .modal-fade-enter-active,
@@ -3181,7 +3181,7 @@ select:focus-visible {
 .provider-editor-backdrop {
   z-index: 160;
   padding: 20px;
-  background: rgb(12 15 13 / 48%);
+  background: rgb(0 0 0 / 48%);
   backdrop-filter: blur(3px);
 }
 
@@ -3194,7 +3194,7 @@ select:focus-visible {
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 24px 70px rgb(10 14 11 / 26%), 0 2px 10px rgb(10 14 11 / 10%);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 26%), 0 2px 10px rgb(0 0 0 / 10%);
 }
 
 .provider-editor-header {
@@ -3957,7 +3957,7 @@ select:focus-visible {
     width: auto;
     height: auto;
     padding: 0;
-    background: rgb(18 21 18 / 20%);
+    background: rgb(0 0 0 / 20%);
   }
 
   .connection-button {

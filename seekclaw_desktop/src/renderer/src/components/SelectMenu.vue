@@ -370,7 +370,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--surface-raised) 96%, transparent);
   border: 1px solid var(--border);
   border-radius: 9px;
-  box-shadow: 0 14px 36px rgb(15 19 16 / 18%), 0 2px 8px rgb(15 19 16 / 10%);
+  box-shadow: 0 14px 36px rgb(0 0 0 / 18%), 0 2px 8px rgb(0 0 0 / 10%);
   backdrop-filter: blur(20px) saturate(130%);
 }
 

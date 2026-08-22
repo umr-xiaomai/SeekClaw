@@ -184,7 +184,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .archived-backdrop {
   z-index: 120;
   padding: clamp(16px, 4vw, 54px);
-  background: rgb(14 17 14 / 38%);
+  background: rgb(0 0 0 / 38%);
   backdrop-filter: blur(3px);
 }
 
@@ -207,7 +207,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 18px;
-  box-shadow: 0 24px 70px rgb(15 19 16 / 24%);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 24%);
 }
 
 .archived-header,
