@@ -3,7 +3,6 @@
 @layout AdminLayout
 @rendermode InteractiveServer
 @inject SkillService Skills
-@inject IJSRuntime JS
 
 <PageTitle>技能管理 — SeekClaw 后台</PageTitle>
 
@@ -167,7 +166,7 @@
                                     <button class="btn btn-outline-warning" @onclick="() => ToggleEnabledAsync(skill)" title="切换上下线状态">
                                         <i class="bi @(skill.Enabled ? "bi-toggle-on" : "bi-toggle-off")"></i>
                                     </button>
-                                    <button class="btn btn-outline-danger" @onclick="() => DeleteAsync(skill)" title="删除技能">
+                                    <button class="btn btn-outline-danger" @onclick="() => _deleteTarget = skill" title="删除技能">
                                         <i class="bi bi-trash3"></i>
                                     </button>
                                 </div>
@@ -298,6 +297,28 @@
             </div>
         </div>
     }
+
+    @if (_deleteTarget is not null)
+    {
+        <div class="admin-modal-backdrop" @onclick="CancelDelete"></div>
+        <div class="admin-modal-dialog">
+            <div class="admin-modal-content">
+                <div class="admin-modal-header">
+                    <h3 class="h5 fw-bold m-0 text-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>确认删除技能</h3>
+                    <button type="button" class="btn-close" @onclick="CancelDelete" aria-label="Close"></button>
+                </div>
+                <div class="admin-modal-body">
+                    <p class="mb-0">确认删除技能“<strong>@_deleteTarget.Name</strong>”吗？此操作不可恢复。</p>
+                </div>
+                <div class="admin-modal-footer">
+                    <button class="vp-btn-secondary" type="button" @onclick="CancelDelete">取消</button>
+                    <button class="btn btn-danger" type="button" @onclick="ConfirmDeleteAsync">
+                        <i class="bi bi-trash3"></i> 确认删除
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
 </section>
 
 @code {
@@ -314,6 +335,7 @@
     private string? _error;
     private string? _message;
     private string? _modalError;
+    private SkillSummary? _deleteTarget;
 
     private string _searchQuery = string.Empty;
     private string _filterType = "all";
@@ -544,13 +566,33 @@
         await LoadAsync();
     }
 
-    private async Task DeleteAsync(SkillSummary skill)
+    private void CancelDelete()
     {
-        var confirmed = await JS.InvokeAsync<bool>("confirm", $"确认删除技能“{skill.Name}”吗？此操作不可恢复。");
-        if (!confirmed) return;
+        _deleteTarget = null;
+    }
 
-        await Skills.DeleteAsync(skill.Id, isSuperAdmin: true);
-        _message = $"技能“{skill.Name}”已被删除。";
+    private async Task ConfirmDeleteAsync()
+    {
+        var skill = _deleteTarget;
+        if (skill is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await Skills.DeleteAsync(skill.Id, isSuperAdmin: true);
+            _message = $"技能“{skill.Name}”已被删除。";
+        }
+        catch (Exception ex)
+        {
+            _error = $"删除失败：{ex.Message}";
+        }
+        finally
+        {
+            _deleteTarget = null;
+        }
+
         await LoadAsync();
     }
 }

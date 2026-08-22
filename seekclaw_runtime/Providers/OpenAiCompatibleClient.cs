@@ -28,18 +28,21 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         };
         ApplyHeaders(message, request.Provider);
 
-        using var responseCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        responseCts.CancelAfter(TimeSpan.FromSeconds(request.Provider.TimeoutSeconds));
+        using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        headerCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds)));
 
         HttpResponseMessage response;
         try
         {
-            response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, responseCts.Token)
+            response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, headerCts.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+            throw new LlmException(
+                $"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.",
+                statusCode: 408,
+                retryable: true);
         }
         catch (HttpRequestException ex)
         {
@@ -49,7 +52,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         using (response)
         {
             if (!response.IsSuccessStatusCode)
-                throw await ApiError(response, request.Provider.Id, responseCts.Token).ConfigureAwait(false);
+                throw await ApiError(response, request.Provider.Id, headerCts.Token).ConfigureAwait(false);
 
             // A few compatible gateways ignore stream=false and still return SSE. In that
             // case use the normal streaming parser instead of waiting for the event stream
@@ -61,10 +64,13 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             if (hasImages && !isEventStream)
             {
                 string body;
-                try { body = await response.Content.ReadAsStringAsync(responseCts.Token).ConfigureAwait(false); }
+                try { body = await response.Content.ReadAsStringAsync(headerCts.Token).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
-                    throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                    throw new LlmException(
+                        $"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.",
+                        statusCode: 408,
+                        retryable: true);
                 }
                 JsonNode? node;
                 try { node = JsonNode.Parse(body); }
@@ -74,7 +80,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 }
 
                 var completion = DeepSeekOptimizationPolicy.ValidateCompletion(
-                    ParseCompletion(node, request.Provider.Id), request);
+                    ParseCompletion(node, request.Provider.Id, request), request);
                 if (completion.Thinking.Length > 0) yield return new LlmThinkingDelta(completion.Thinking);
                 foreach (var call in completion.ToolCalls)
                     yield return new LlmToolCallStarted(call.Id, call.Name);
@@ -83,27 +89,42 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 yield break;
             }
 
+            var idleTimeout = DeepSeekOptimizationPolicy.Applies(request)
+                ? DeepSeekOptimizationPolicy.GetStreamIdleTimeout(request.Provider)
+                : TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds));
+
             var acc = new Accumulator();
-            // Keep the provider timeout active while reading the stream too. Without
-            // this, an accepted vision request that never emits its first SSE event can
-            // leave an Agent turn in "thinking" forever.
             Stream stream;
-            try { stream = await response.Content.ReadAsStreamAsync(responseCts.Token).ConfigureAwait(false); }
+            try { stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                throw new LlmException(
+                    $"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.",
+                    statusCode: 408,
+                    retryable: true);
             }
 
             await using (stream)
-            await using (var events = SseReader.ReadAsync(stream, responseCts.Token).GetAsyncEnumerator())
+            await using (var events = SseReader.ReadAsync(stream, idleTimeout, ct).GetAsyncEnumerator())
             {
                 while (true)
                 {
                     bool hasNext;
                     try { hasNext = await events.MoveNextAsync().ConfigureAwait(false); }
+                    catch (TimeoutException ex)
+                    {
+                        throw new LlmException(
+                            $"Request to {request.Provider.Id} timed out after {idleTimeout.TotalSeconds:0}s idle without activity.",
+                            statusCode: 408,
+                            retryable: true,
+                            inner: ex);
+                    }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
-                        throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                        throw new LlmException(
+                            $"Request to {request.Provider.Id} timed out after {idleTimeout.TotalSeconds:0}s idle without activity.",
+                            statusCode: 408,
+                            retryable: true);
                     }
                     if (!hasNext) break;
 
@@ -118,11 +139,11 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 }
             }
 
-            yield return new LlmCompleted(DeepSeekOptimizationPolicy.ValidateCompletion(acc.Build(), request));
+            yield return new LlmCompleted(DeepSeekOptimizationPolicy.ValidateCompletion(acc.Build(request), request));
         }
     }
 
-    internal static LlmCompletion ParseCompletion(JsonNode? root, string providerId)
+    internal static LlmCompletion ParseCompletion(JsonNode? root, string providerId, LlmRequest? request = null)
     {
         // Some gateways answer with a JSON array or scalar (e.g. a raw error body); the
         // indexer below would otherwise throw "The node must be of type 'JsonObject'.".
@@ -163,13 +184,17 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                            ?? usage?["cached_tokens"]?.GetValue<long>()
                            ?? (usage?["prompt_tokens_details"] as JsonObject)?["cached_tokens"]?.GetValue<long>()
                            ?? 0;
+        var disjointInputTokens = request is not null
+            ? DeepSeekOptimizationPolicy.DisjointInputTokens(inputTokens, cachedTokens, request)
+            : inputTokens;
+
         return new LlmCompletion
         {
             Text = text,
             Thinking = thinking,
             ToolCalls = calls,
             FinishReason = choice?["finish_reason"]?.GetValue<string>() ?? "",
-            Usage = new TokenUsage(inputTokens, outputTokens)
+            Usage = new TokenUsage(disjointInputTokens, outputTokens)
             {
                 TotalInputTokens = inputTokens,
                 CachedInputTokens = cachedTokens,
@@ -454,24 +479,31 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             }
         }
 
-        public LlmCompletion Build() => new()
+        public LlmCompletion Build(LlmRequest? request = null)
         {
-            Text = _text.ToString(),
-            Thinking = _thinking.ToString(),
-            ToolCalls = _toolCalls
-                .OrderBy(kv => kv.Key)
-                .Select(kv => new ToolCallRequest(
-                    string.IsNullOrEmpty(kv.Value.Id) ? $"call_{kv.Key}" : kv.Value.Id,
-                    kv.Value.Name,
-                    kv.Value.Args.Length == 0 ? "{}" : kv.Value.Args.ToString()))
-                .ToList(),
-            Usage = new TokenUsage(_inputTokens, _outputTokens)
+            var disjointInputTokens = request is not null
+                ? DeepSeekOptimizationPolicy.DisjointInputTokens(_inputTokens, _cachedInputTokens, request)
+                : _inputTokens;
+
+            return new LlmCompletion
             {
-                // OpenAI-compatible usage.prompt_tokens already includes cached tokens.
-                TotalInputTokens = _inputTokens,
-                CachedInputTokens = _cachedInputTokens,
-            },
-            FinishReason = _finishReason,
-        };
+                Text = _text.ToString(),
+                Thinking = _thinking.ToString(),
+                ToolCalls = _toolCalls
+                    .OrderBy(kv => kv.Key)
+                    .Select(kv => new ToolCallRequest(
+                        string.IsNullOrEmpty(kv.Value.Id) ? $"call_{kv.Key}" : kv.Value.Id,
+                        kv.Value.Name,
+                        kv.Value.Args.Length == 0 ? "{}" : kv.Value.Args.ToString()))
+                    .ToList(),
+                Usage = new TokenUsage(disjointInputTokens, _outputTokens)
+                {
+                    // OpenAI-compatible usage.prompt_tokens already includes cached tokens.
+                    TotalInputTokens = _inputTokens,
+                    CachedInputTokens = _cachedInputTokens,
+                },
+                FinishReason = _finishReason,
+            };
+        }
     }
 }

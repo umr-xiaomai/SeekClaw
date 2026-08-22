@@ -7,6 +7,11 @@ namespace seekclaw_webserver.Services;
 
 public sealed class SkillService(AppDbContext db)
 {
+    private static readonly HashSet<string> AllowedPackageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".zip", ".json", ".md", ".txt"
+    };
+
     public async Task<List<SkillSummary>> ListAsync(bool includeDisabled, string? typeFilter = null)
     {
         var query = db.Skills.AsNoTracking();
@@ -24,8 +29,7 @@ public sealed class SkillService(AppDbContext db)
             query = query.Where(skill => !skill.IsOfficial);
         }
 
-        var skills = await query.ToListAsync();
-        return skills
+        return await query
             .OrderByDescending(skill => skill.IsOfficial)
             .ThenByDescending(skill => skill.UpdatedAt)
             .Select(skill => new SkillSummary(
@@ -41,7 +45,7 @@ public sealed class SkillService(AppDbContext db)
                 skill.Enabled,
                 skill.PackageData != null && skill.PackageData.Length > 0,
                 skill.UpdatedAt))
-            .ToList();
+            .ToListAsync();
     }
 
     public async Task<SkillDetailModel?> GetDetailAsync(int id)
@@ -216,6 +220,7 @@ seekclaw skill install code-reviewer
         int? authorUserId = null,
         string? authorUsername = null)
     {
+        var resolvedContentType = ValidatePackage(packageData, packageFileName);
         var slug = await EnsureUniqueSlugAsync(Slugify(input.Slug, input.Name));
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var skill = new Skill
@@ -233,7 +238,7 @@ seekclaw skill install code-reviewer
             Enabled = input.Enabled,
             PackageData = packageData,
             PackageFileName = packageFileName,
-            PackageContentType = packageContentType,
+            PackageContentType = resolvedContentType,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -283,9 +288,10 @@ seekclaw skill install code-reviewer
 
         if (replacePackage)
         {
+            var resolvedContentType = ValidatePackage(packageData, packageFileName);
             skill.PackageData = packageData;
             skill.PackageFileName = packageFileName;
-            skill.PackageContentType = packageContentType;
+            skill.PackageContentType = resolvedContentType;
         }
 
         await db.SaveChangesAsync();
@@ -340,7 +346,7 @@ seekclaw skill install code-reviewer
 
     public async Task<Skill?> GetPackageAsync(int id)
     {
-        return await db.Skills.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id && x.PackageData != null);
+        return await db.Skills.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id && x.Enabled && x.PackageData != null);
     }
 
     private async Task<string> EnsureUniqueSlugAsync(string baseSlug, int? exceptId = null)
@@ -387,6 +393,34 @@ seekclaw skill install code-reviewer
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
     }
 
+    private static string ValidatePackage(byte[]? packageData, string? packageFileName)
+    {
+        if (packageData is null)
+        {
+            return string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(packageFileName))
+        {
+            throw new InvalidOperationException("技能包文件名不能为空。");
+        }
+
+        var extension = Path.GetExtension(packageFileName);
+        if (!AllowedPackageExtensions.Contains(extension))
+        {
+            throw new InvalidOperationException("技能包仅支持 .zip、.json、.md 或 .txt 文件。");
+        }
+
+        return extension.ToLowerInvariant() switch
+        {
+            ".zip" => "application/zip",
+            ".json" => "application/json",
+            ".md" => "text/markdown",
+            ".txt" => "text/plain",
+            _ => "application/octet-stream"
+        };
+    }
+
     private static SkillDetailModel ToDetail(Skill skill) =>
         new(
             skill.Id,
@@ -406,6 +440,4 @@ seekclaw skill install code-reviewer
             skill.CreatedAt,
             skill.UpdatedAt);
 }
-
-
 

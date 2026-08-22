@@ -197,7 +197,7 @@
         _error = null;
         try
         {
-            _dbStatus = await JS.InvokeAsync<DatabaseStatusResult>("SeekClaw.testDatabase");
+            _dbStatus = await Auth.TestDatabaseConnectionAsync();
             if (_dbStatus?.IsInitialized == true)
             {
                 _isAlreadyInitialized = true;

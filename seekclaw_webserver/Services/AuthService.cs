@@ -20,7 +20,10 @@ public sealed class AuthService(AppDbContext db)
 
     public async Task<bool> IsInitializedAsync()
     {
-        return await db.Users.AnyAsync(x => x.IsSuperAdmin);
+        var hasInitializedSetting = await db.SiteSettings
+            .AsNoTracking()
+            .AnyAsync(x => x.Key == InitializedKey && x.Value == "true");
+        return hasInitializedSetting || await db.Users.AnyAsync(x => x.IsSuperAdmin);
     }
 
     public async Task<DatabaseStatusResult> TestDatabaseConnectionAsync()
@@ -305,4 +308,3 @@ public sealed class AuthService(AppDbContext db)
         }
     }
 }
-

@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace seekclaw_webserver.Services;
 
 public sealed record DocSummary(string Slug, string Title, string RelativePath);
@@ -17,6 +19,8 @@ public sealed class DocService
 {
     private readonly string _docsRoot;
     private readonly MarkdownService _markdown;
+    private readonly ConcurrentDictionary<string, string> _markdownCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string?> _titleCache = new(StringComparer.OrdinalIgnoreCase);
 
     // Define standard ordered manifest matching seekclaw_website
     private static readonly (string GroupZh, string GroupEn, string[] Slugs)[] SidebarGroups =
@@ -92,7 +96,7 @@ public sealed class DocService
             .Select(file =>
             {
                 var slug = Path.GetFileNameWithoutExtension(file);
-                var title = ReadTitle(file) ?? Humanize(slug);
+                var title = ReadTitleCached(file) ?? Humanize(slug);
                 return new DocSummary(slug, title, $"{LanguageCode(language)}/{Path.GetFileName(file)}");
             })
             .OrderBy(doc => doc.Slug == "index" ? 0 : 1)
@@ -110,9 +114,9 @@ public sealed class DocService
             return null;
         }
 
-        var markdown = File.ReadAllText(file);
+        var markdown = ReadMarkdown(file);
         var rendered = _markdown.Render(markdown);
-        var title = ReadTitle(file) ?? Humanize(resolvedSlug);
+        var title = ReadTitleCached(file) ?? Humanize(resolvedSlug);
 
         // Find Prev and Next docs based on standard manifest
         var isEn = string.Equals(language, "en", StringComparison.OrdinalIgnoreCase);
@@ -167,7 +171,7 @@ public sealed class DocService
 
             foreach (var file in Directory.EnumerateFiles(directory, "*.md", SearchOption.TopDirectoryOnly))
             {
-                var markdown = File.ReadAllText(file);
+                var markdown = ReadMarkdown(file);
                 var lower = markdown.ToLowerInvariant();
                 var lowerNeedle = needle.ToLowerInvariant();
                 if (!lower.Contains(lowerNeedle, StringComparison.Ordinal))
@@ -179,7 +183,7 @@ public sealed class DocService
                 results.Add(new DocSearchResult(
                     language,
                     slug,
-                    ReadTitle(file) ?? Humanize(slug),
+                    ReadTitleCached(file) ?? Humanize(slug),
                     ExtractSnippet(markdown, needle)));
 
                 if (results.Count >= 40)
@@ -231,6 +235,16 @@ public sealed class DocService
         }
 
         return null;
+    }
+
+    private string ReadMarkdown(string file)
+    {
+        return _markdownCache.GetOrAdd(file, File.ReadAllText);
+    }
+
+    private string? ReadTitleCached(string file)
+    {
+        return _titleCache.GetOrAdd(file, path => ReadTitle(path));
     }
 
     private static string ExtractSnippet(string content, string query, int radius = 80)

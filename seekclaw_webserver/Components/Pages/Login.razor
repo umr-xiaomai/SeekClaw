@@ -46,10 +46,14 @@
         try
         {
             var returnUrl = ReadReturnUrl();
-            var result = await JS.InvokeAsync<AuthResult>("SeekClaw.login", _model, returnUrl);
+            var result = await JS.InvokeAsync<AuthResult>("SeekClaw.login", _model.Email, _model.Password);
             if (result != null && !result.Success)
             {
                 _error = result.Error ?? "登录失败，请检查用户名和密码。";
+            }
+            else if (result?.Success == true)
+            {
+                Navigation.NavigateTo(returnUrl, forceLoad: true);
             }
         }
         catch (Exception ex)

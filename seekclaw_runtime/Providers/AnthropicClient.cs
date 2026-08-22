@@ -25,18 +25,21 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         };
         ApplyHeaders(message, request.Provider);
 
-        using var responseCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        responseCts.CancelAfter(TimeSpan.FromSeconds(request.Provider.TimeoutSeconds));
+        using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        headerCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds)));
 
         HttpResponseMessage response;
         try
         {
-            response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, responseCts.Token)
+            response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, headerCts.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+            throw new LlmException(
+                $"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.",
+                statusCode: 408,
+                retryable: true);
         }
         catch (HttpRequestException ex)
         {
@@ -49,7 +52,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             {
                 var status = (int)response.StatusCode;
                 var body = "";
-                try { body = await response.Content.ReadAsStringAsync(responseCts.Token).ConfigureAwait(false); } catch { }
+                try { body = await response.Content.ReadAsStringAsync(headerCts.Token).ConfigureAwait(false); } catch { }
                 throw new LlmException(
                     $"{request.Provider.Id} returned HTTP {status}: {OpenAiCompatibleClient.ExtractErrorMessage(body)}",
                     status,
@@ -65,10 +68,13 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             if (hasImages && !isEventStream)
             {
                 string body;
-                try { body = await response.Content.ReadAsStringAsync(responseCts.Token).ConfigureAwait(false); }
+                try { body = await response.Content.ReadAsStringAsync(headerCts.Token).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
-                    throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                    throw new LlmException(
+                        $"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.",
+                        statusCode: 408,
+                        retryable: true);
                 }
                 JsonNode? node;
                 try { node = JsonNode.Parse(body); }
@@ -86,26 +92,39 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 yield break;
             }
 
+            var idleTimeout = TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds));
             var acc = new Accumulator();
-            // Apply the same timeout to SSE consumption as to response headers. Vision
-            // requests can otherwise wait indefinitely while the provider processes data.
             Stream stream;
-            try { stream = await response.Content.ReadAsStreamAsync(responseCts.Token).ConfigureAwait(false); }
+            try { stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                throw new LlmException(
+                    $"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.",
+                    statusCode: 408,
+                    retryable: true);
             }
 
             await using (stream)
-            await using (var events = SseReader.ReadAsync(stream, responseCts.Token).GetAsyncEnumerator())
+            await using (var events = SseReader.ReadAsync(stream, idleTimeout, ct).GetAsyncEnumerator())
             {
                 while (true)
                 {
                     bool hasNext;
                     try { hasNext = await events.MoveNextAsync().ConfigureAwait(false); }
+                    catch (TimeoutException ex)
+                    {
+                        throw new LlmException(
+                            $"Request to {request.Provider.Id} timed out after {idleTimeout.TotalSeconds:0}s idle without activity.",
+                            statusCode: 408,
+                            retryable: true,
+                            inner: ex);
+                    }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
-                        throw new LlmException($"Request to {request.Provider.Id} timed out after {request.Provider.TimeoutSeconds}s.");
+                        throw new LlmException(
+                            $"Request to {request.Provider.Id} timed out after {idleTimeout.TotalSeconds:0}s idle without activity.",
+                            statusCode: 408,
+                            retryable: true);
                     }
                     if (!hasNext) break;
 

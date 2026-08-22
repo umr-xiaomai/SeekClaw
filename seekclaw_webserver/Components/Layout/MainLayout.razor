@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@implements IDisposable
 @inject AuthService Auth
 @inject NavigationManager Navigation
 
@@ -39,6 +40,30 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Navigation.LocationChanged += OnLocationChanged;
+        await RefreshInitializationAsync();
+    }
+
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        try
+        {
+            await RefreshInitializationAsync();
+        }
+        catch
+        {
+            // 初始化状态刷新失败不应破坏页面导航。
+        }
+    }
+
+    private async Task RefreshInitializationAsync()
+    {
         _isInitialized = await Auth.IsInitializedAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
     }
 }

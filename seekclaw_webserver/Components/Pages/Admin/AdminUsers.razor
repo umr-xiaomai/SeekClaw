@@ -3,7 +3,6 @@
 @layout AdminLayout
 @rendermode InteractiveServer
 @inject AuthService Auth
-@inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>用户与权限 — SeekClaw 后台</PageTitle>
@@ -61,7 +60,7 @@
                         <td>@DateTimeOffset.FromUnixTimeMilliseconds(user.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-secondary" @onclick="() => ResetPasswordPromptAsync(user)" title="重置密码">
+                                <button class="btn btn-outline-secondary" @onclick="() => OpenResetPasswordModal(user)" title="重置密码">
                                     <i class="bi bi-key"></i> 改密
                                 </button>
                                 @if (!isCurrentUser)
@@ -69,7 +68,7 @@
                                     <button class="btn btn-outline-warning" @onclick="() => ToggleSuperAdminAsync(user)" title="切换角色">
                                         <i class="bi bi-shield-shaded"></i> @(user.IsSuperAdmin ? "取消超管" : "设为超管")
                                     </button>
-                                    <button class="btn btn-outline-danger" @onclick="() => DeleteUserAsync(user)" title="删除用户">
+                                    <button class="btn btn-outline-danger" @onclick="() => _deleteTarget = user" title="删除用户">
                                         <i class="bi bi-trash3"></i> 删除
                                     </button>
                                 }
@@ -80,6 +79,51 @@
             </tbody>
         </table>
     </div>
+
+    @if (_passwordTarget is not null)
+    {
+        <div class="admin-modal-backdrop" @onclick="CloseResetPasswordModal"></div>
+        <div class="admin-modal-dialog">
+            <div class="admin-modal-content">
+                <div class="admin-modal-header">
+                    <h3 class="h5 fw-bold m-0"><i class="bi bi-key me-2"></i>重置密码</h3>
+                    <button type="button" class="btn-close" @onclick="CloseResetPasswordModal" aria-label="Close"></button>
+                </div>
+                <div class="admin-modal-body">
+                    <p class="mb-2">为用户 <strong>@_passwordTarget.Username</strong> 设置新密码（至少 6 位）：</p>
+                    <input type="password" class="form-control" @bind="_newPassword" placeholder="请输入新密码" />
+                    @if (!string.IsNullOrWhiteSpace(_modalError))
+                    {
+                        <div class="alert alert-danger mt-2 mb-0 py-2">@_modalError</div>
+                    }
+                </div>
+                <div class="admin-modal-footer">
+                    <button class="vp-btn-secondary" type="button" @onclick="CloseResetPasswordModal">取消</button>
+                    <button class="btn btn-primary" type="button" @onclick="ConfirmResetPasswordAsync">确认重置</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_deleteTarget is not null)
+    {
+        <div class="admin-modal-backdrop" @onclick="() => _deleteTarget = null"></div>
+        <div class="admin-modal-dialog">
+            <div class="admin-modal-content">
+                <div class="admin-modal-header">
+                    <h3 class="h5 fw-bold m-0 text-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>确认删除用户</h3>
+                    <button type="button" class="btn-close" @onclick="() => _deleteTarget = null" aria-label="Close"></button>
+                </div>
+                <div class="admin-modal-body">
+                    <p class="mb-0">确认删除用户“<strong>@_deleteTarget.Username</strong>”吗？此操作不可逆。</p>
+                </div>
+                <div class="admin-modal-footer">
+                    <button class="vp-btn-secondary" type="button" @onclick="() => _deleteTarget = null">取消</button>
+                    <button class="btn btn-danger" type="button" @onclick="ConfirmDeleteUserAsync">确认删除</button>
+                </div>
+            </div>
+        </div>
+    }
 </section>
 
 @code {
@@ -87,6 +131,10 @@
     private string? _currentUsername;
     private string? _error;
     private string? _message;
+    private User? _passwordTarget;
+    private User? _deleteTarget;
+    private string _newPassword = string.Empty;
+    private string? _modalError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -117,53 +165,84 @@
         }
     }
 
-    private async Task ResetPasswordPromptAsync(User user)
+    private void OpenResetPasswordModal(User user)
     {
-        _error = null;
-        _message = null;
-        var newPassword = await JS.InvokeAsync<string?>("prompt", $"请输入用户 {user.Username} 的新密码（至少 6 位）：");
-        if (string.IsNullOrWhiteSpace(newPassword))
+        _passwordTarget = user;
+        _newPassword = string.Empty;
+        _modalError = null;
+    }
+
+    private void CloseResetPasswordModal()
+    {
+        _passwordTarget = null;
+        _newPassword = string.Empty;
+        _modalError = null;
+    }
+
+    private async Task ConfirmResetPasswordAsync()
+    {
+        var user = _passwordTarget;
+        if (user is null)
         {
             return;
         }
 
-        if (newPassword.Length < 6)
+        if (_newPassword.Length < 6)
         {
-            _error = "密码长度至少需要 6 位。";
+            _modalError = "密码长度至少需要 6 位。";
             return;
         }
 
-        var success = await Auth.ResetPasswordAsync(user.Id, newPassword);
-        if (success)
+        try
         {
-            _message = $"用户 {user.Username} 的密码已成功重置。";
+            var success = await Auth.ResetPasswordAsync(user.Id, _newPassword);
+            if (success)
+            {
+                _message = $"用户 {user.Username} 的密码已成功重置。";
+                CloseResetPasswordModal();
+            }
+            else
+            {
+                _modalError = "重置密码失败。";
+            }
         }
-        else
+        catch (Exception ex)
         {
-            _error = "重置密码失败。";
+            _modalError = $"重置密码失败：{ex.Message}";
         }
     }
 
-    private async Task DeleteUserAsync(User user)
+    private async Task ConfirmDeleteUserAsync()
     {
-        _error = null;
-        _message = null;
-        var confirmed = await JS.InvokeAsync<bool>("confirm", $"确认删除用户“{user.Username}”吗？此操作不可逆。");
-        if (!confirmed)
+        var user = _deleteTarget;
+        if (user is null)
         {
             return;
         }
 
-        var success = await Auth.DeleteUserAsync(user.Id);
-        if (success)
+        try
         {
-            _message = $"用户 {user.Username} 已被删除。";
-            await LoadUsersAsync();
+            var success = await Auth.DeleteUserAsync(user.Id);
+            if (success)
+            {
+                _message = $"用户 {user.Username} 已被删除。";
+            }
+            else
+            {
+                _error = "删除用户失败。";
+            }
         }
-        else
+        catch (Exception ex)
         {
-            _error = "删除用户失败。";
+            _error = $"删除用户失败：{ex.Message}";
         }
+        finally
+        {
+            _deleteTarget = null;
+        }
+
+        await LoadUsersAsync();
     }
+}
 }
 

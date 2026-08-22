@@ -1,5 +1,6 @@
 @page "/skills/submit"
 @page "/en/skills/submit"
+@using System.Security.Claims
 @rendermode InteractiveServer
 @inject SkillService Skills
 @inject NavigationManager Navigation
@@ -166,6 +167,7 @@
             var isSuperAdmin = user.IsInRole("SuperAdmin");
             var username = user.Identity?.Name ?? "Community";
             var isOfficial = isSuperAdmin && _model.IsOfficial;
+            var authorUserId = int.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId) ? userId : (int?)null;
 
             var created = await Skills.CreateAsync(
                 _model,
@@ -173,7 +175,7 @@
                 _packageFileName,
                 _packageContentType,
                 isOfficial: isOfficial,
-                authorUserId: null,
+                authorUserId: authorUserId,
                 authorUsername: username);
 
             var targetUrl = IsEnglish ? $"/en/skills/{created.Slug}" : $"/skills/{created.Slug}";

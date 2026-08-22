@@ -327,6 +327,158 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task SseReader_SlidingIdleWatchdog_AllowsLongStreamWithActivity()
+    {
+        var pipe = new System.IO.Pipelines.Pipe();
+        var stream = pipe.Reader.AsStream();
+
+        var producer = Task.Run(async () =>
+        {
+            for (var i = 1; i <= 3; i++)
+            {
+                await Task.Delay(100);
+                var bytes = System.Text.Encoding.UTF8.GetBytes($"data: chunk{i}\n\n");
+                await pipe.Writer.WriteAsync(bytes);
+            }
+            pipe.Writer.Complete();
+        });
+
+        var messages = new List<string>();
+        await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(250)))
+        {
+            messages.Add(msg.Data);
+        }
+
+        await producer;
+        Assert.Equal(["chunk1", "chunk2", "chunk3"], messages);
+    }
+
+    [Fact]
+    public async Task SseReader_SlidingIdleWatchdog_TimesOutWhenIdleExceedsThreshold()
+    {
+        var pipe = new System.IO.Pipelines.Pipe();
+        var stream = pipe.Reader.AsStream();
+
+        var producer = Task.Run(async () =>
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes("data: first\n\n");
+            await pipe.Writer.WriteAsync(bytes);
+            await Task.Delay(400);
+            pipe.Writer.Complete();
+        });
+
+        var messages = new List<string>();
+        await Assert.ThrowsAsync<TimeoutException>(async () =>
+        {
+            await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(100)))
+            {
+                messages.Add(msg.Data);
+            }
+        });
+
+        await producer;
+        Assert.Single(messages);
+        Assert.Equal("first", messages[0]);
+    }
+
+    [Fact]
+    public async Task SseReader_SlidingIdleWatchdog_CommentsResetIdleTimeout()
+    {
+        var pipe = new System.IO.Pipelines.Pipe();
+        var stream = pipe.Reader.AsStream();
+
+        var producer = Task.Run(async () =>
+        {
+            var bytes1 = System.Text.Encoding.UTF8.GetBytes("data: hello\n\n");
+            await pipe.Writer.WriteAsync(bytes1);
+            await Task.Delay(80);
+            var ping = System.Text.Encoding.UTF8.GetBytes(": keep-alive\n\n");
+            await pipe.Writer.WriteAsync(ping);
+            await Task.Delay(80);
+            var bytes2 = System.Text.Encoding.UTF8.GetBytes("data: world\n\n");
+            await pipe.Writer.WriteAsync(bytes2);
+            pipe.Writer.Complete();
+        });
+
+        var messages = new List<string>();
+        await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(120)))
+        {
+            messages.Add(msg.Data);
+        }
+
+        await producer;
+        Assert.Equal(["hello", "world"], messages);
+    }
+
+    [Fact]
+    public void DeepSeekOptimization_StreamIdleTimeout_IsAtLeast300Seconds()
+    {
+        var providerDefault = new ProviderConfig { Id = "deepseek", TimeoutSeconds = 60 };
+        var timeout = DeepSeekOptimizationPolicy.GetStreamIdleTimeout(providerDefault);
+        Assert.Equal(TimeSpan.FromSeconds(300), timeout);
+
+        var providerLong = new ProviderConfig { Id = "deepseek", TimeoutSeconds = 600 };
+        var timeoutLong = DeepSeekOptimizationPolicy.GetStreamIdleTimeout(providerLong);
+        Assert.Equal(TimeSpan.FromSeconds(600), timeoutLong);
+    }
+
+    [Fact]
+    public void DeepSeekOptimization_DisjointInputTokens_CalculatesAccurately()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig { Id = "deepseek-chat" },
+            OptimizeDeepSeek = true,
+            Messages = [ChatMessage.User("test")],
+        };
+
+        // prompt_tokens = 1000, cached_tokens = 800 -> disjoint input = 200
+        var disjoint = DeepSeekOptimizationPolicy.DisjointInputTokens(1000, 800, request);
+        Assert.Equal(200, disjoint);
+
+        // When optimization disabled, preserves prompt_tokens as-is
+        var requestDisabled = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig { Id = "deepseek-chat" },
+            OptimizeDeepSeek = false,
+            Messages = [ChatMessage.User("test")],
+        };
+        var disjointDisabled = DeepSeekOptimizationPolicy.DisjointInputTokens(1000, 800, requestDisabled);
+        Assert.Equal(1000, disjointDisabled);
+    }
+
+    [Fact]
+    public void OpenAiCompletion_DeepSeekOptimization_SetsDisjointInputTokens()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" },
+            Model = new ModelConfig { Id = "deepseek-chat" },
+            OptimizeDeepSeek = true,
+            Messages = [ChatMessage.User("test")],
+        };
+
+        var responseJson = JsonNode.Parse("""
+            {
+                "choices": [{ "message": { "role": "assistant", "content": "hello" }, "finish_reason": "stop" }],
+                "usage": {
+                    "prompt_tokens": 1200,
+                    "completion_tokens": 50,
+                    "prompt_cache_hit_tokens": 1000
+                }
+            }
+            """);
+
+        var completion = OpenAiCompatibleClient.ParseCompletion(responseJson, "deepseek", request);
+        Assert.Equal(200, completion.Usage.InputTokens);
+        Assert.Equal(1200, completion.Usage.TotalInputTokens);
+        Assert.Equal(1000, completion.Usage.CachedInputTokens);
+        Assert.Equal(50, completion.Usage.OutputTokens);
+    }
+
+    [Fact]
     public void AnthropicBody_MapsMultipleImagesToBase64ContentParts()
     {
         var request = new LlmRequest

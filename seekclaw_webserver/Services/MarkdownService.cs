@@ -23,6 +23,7 @@ public sealed class MarkdownService
     {
         _pipeline = new MarkdownPipelineBuilder()
             .UseAdvancedExtensions()
+            .DisableHtml()
             .Build();
     }
 

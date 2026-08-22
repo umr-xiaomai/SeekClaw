@@ -1,7 +1,7 @@
 (function () {
   var STORAGE_KEY = 'seekclaw-theme';
-  var LIGHT_HLJS = 'https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css';
-  var DARK_HLJS = 'https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css';
+  var LIGHT_HLJS = '/lib/highlight.js/styles/github.min.css';
+  var DARK_HLJS = '/lib/highlight.js/styles/github-dark.min.css';
 
   function applyTheme(theme) {
     if (theme !== 'light' && theme !== 'dark') theme = 'light';

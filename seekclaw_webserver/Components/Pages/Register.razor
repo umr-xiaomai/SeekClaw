@@ -58,10 +58,15 @@
         _error = null;
         try
         {
-            var result = await JS.InvokeAsync<AuthResult>("SeekClaw.register", _model, "/");
+            var returnUrl = ReadReturnUrl();
+            var result = await JS.InvokeAsync<AuthResult>("SeekClaw.register", _model.Email, _model.Password);
             if (result != null && !result.Success)
             {
                 _error = result.Error ?? "注册失败，请稍后重试。";
+            }
+            else if (result?.Success == true)
+            {
+                Navigation.NavigateTo(returnUrl, forceLoad: true);
             }
         }
         catch (Exception ex)
@@ -72,6 +77,20 @@
         {
             _busy = false;
         }
+    }
+
+    private string ReadReturnUrl()
+    {
+        var query = new Uri(Navigation.Uri).Query.TrimStart('?');
+        var returnUrl = query
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .FirstOrDefault(pair => pair.Length == 2 && pair[0] == "returnUrl")?[1];
+
+        returnUrl = returnUrl is null ? null : Uri.UnescapeDataString(returnUrl);
+        return string.IsNullOrWhiteSpace(returnUrl) || !returnUrl.StartsWith('/')
+            ? "/"
+            : returnUrl;
     }
 }
 

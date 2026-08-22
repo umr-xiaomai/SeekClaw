@@ -91,10 +91,25 @@ public static class ReasoningLevelAdapter
             !request.Model.Capabilities.Thinking && !request.Model.Capabilities.Reasoning)
             return null;
 
+        if (effective == ReasoningLevel.None)
+            return null;
+
         var key = effective.ToWireValue();
         var mapped = request.Provider.ReasoningEffortMap?
             .FirstOrDefault(item => item.Key.Equals(key, StringComparison.OrdinalIgnoreCase)).Value;
         if (!string.IsNullOrWhiteSpace(mapped)) return mapped;
+
+        // DeepSeek wire protocol accepts only low/high/max when thinking is enabled, and omits reasoning_effort when disabled.
+        if (IsDeepSeek(request.Provider, request.Model))
+        {
+            return effective switch
+            {
+                ReasoningLevel.Low => "low",
+                ReasoningLevel.Medium or ReasoningLevel.High => "high",
+                ReasoningLevel.Max or ReasoningLevel.XHigh or ReasoningLevel.Ultra => "max",
+                _ => "high",
+            };
+        }
 
         return key;
     }

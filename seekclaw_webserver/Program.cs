@@ -1,7 +1,9 @@
 using System.Security.Claims;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using seekclaw_webserver.Auth;
 using seekclaw_webserver.Components;
@@ -65,11 +67,29 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("SuperAdminOnly", policy => policy.RequireRole("SuperAdmin"));
+});
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<SkillService>();
 builder.Services.AddSingleton<MarkdownService>();
 builder.Services.AddSingleton<DocService>();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(10),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            }));
+});
 
 var app = builder.Build();
 
@@ -87,6 +107,7 @@ if (!app.Environment.IsDevelopment())
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
+app.UseRateLimiter();
 app.UseAntiforgery();
 
 app.UseAuthentication();
@@ -109,7 +130,7 @@ app.MapGet("/api/setup/test-db", async (AuthService auth) =>
 {
     var status = await auth.TestDatabaseConnectionAsync();
     return Results.Json(status);
-});
+}).RequireAuthorization("SuperAdminOnly");
 
 app.MapPost("/api/setup/initialize", async (HttpContext context, SetupRequest request, AuthService auth, SkillService skills) =>
 {
@@ -173,7 +194,7 @@ app.MapPost("/api/auth/register", async (HttpContext context, RegisterRequest re
 
     await SignInAsync(context, user);
     return Results.Json(new { success = true, isSuperAdmin = user.IsSuperAdmin });
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AuthService auth) =>
 {
@@ -186,7 +207,7 @@ app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request,
 
     await SignInAsync(context, user);
     return Results.Json(new { success = true, isSuperAdmin = user.IsSuperAdmin });
-});
+}).RequireRateLimiting("auth");
 
 app.MapPost("/api/auth/logout", async (HttpContext context) =>
 {

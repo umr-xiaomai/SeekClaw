@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Runtime.CompilerServices;
+using System.Text;
 using SeekClaw.Runtime.Configuration;
 
 namespace SeekClaw.Runtime.Providers;
@@ -51,15 +52,44 @@ public readonly record struct SseMessage(string? Event, string Data);
 public static class SseReader
 {
     /// <summary>Parses a text/event-stream response body into discrete messages.</summary>
+    public static IAsyncEnumerable<SseMessage> ReadAsync(
+        Stream stream, CancellationToken ct) =>
+        ReadAsync(stream, Timeout.InfiniteTimeSpan, ct);
+
+    /// <summary>
+    /// Parses a text/event-stream response body into discrete messages with a sliding idle timeout watchdog.
+    /// As long as transport activity (data, events, or SSE comments/keep-alives) continues within the idle window,
+    /// the watchdog timer is reset and the stream continues indefinitely.
+    /// </summary>
     public static async IAsyncEnumerable<SseMessage> ReadAsync(
-        Stream stream, [EnumeratorCancellation] CancellationToken ct)
+        Stream stream, TimeSpan idleTimeout, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        using var reader = new StreamReader(stream);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
         string? eventName = null;
         var data = new List<string>();
+        var hasTimeout = idleTimeout > TimeSpan.Zero && idleTimeout != Timeout.InfiniteTimeSpan;
 
-        while (await reader.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
+        using var idleCts = hasTimeout ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
+
+        while (true)
         {
+            idleCts?.CancelAfter(idleTimeout);
+            string? line;
+            try
+            {
+                var readToken = idleCts?.Token ?? ct;
+                line = await reader.ReadLineAsync(readToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && (idleCts?.IsCancellationRequested ?? false))
+            {
+                throw new TimeoutException($"Stream idle timeout after {idleTimeout.TotalSeconds:0}s without activity.");
+            }
+
+            if (line is null) break;
+
+            // Activity occurred (including comments/keep-alives) - reset idle timer
+            idleCts?.CancelAfter(idleTimeout);
+
             if (line.Length == 0)
             {
                 if (data.Count > 0)
@@ -75,7 +105,7 @@ public static class SseReader
                 eventName = line[6..].Trim();
             else if (line.StartsWith("data:", StringComparison.Ordinal))
                 data.Add(line[5..].TrimStart());
-            // comments (":") and other fields are ignored
+            // comments (":") and other fields are recognized as transport activity
         }
 
         if (data.Count > 0)
