@@ -137,7 +137,7 @@ public sealed class ToolAndAgentTests
     }
 
     [Fact]
-    public void ContextPlanner_ShrinksOldToolOutputsFirst()
+    public void ContextPlanner_TrimsOldestMessagesFromHead_PreservingPrefixAlignment()
     {
         var model = new ModelConfig { ContextWindow = 12_000, MaxOutput = 2_000 };
         var messages = new List<ChatMessage>
@@ -153,9 +153,8 @@ public sealed class ToolAndAgentTests
         for (var i = 0; i < 8; i++) messages.Add(ChatMessage.User($"follow-up {i}"));
 
         var fitted = ContextPlanner.FitToWindow(messages, model, "sys");
-        var tool = fitted.Single(m => m.Role == ChatRole.Tool);
-        Assert.Contains("trimmed to fit", tool.Text);
-        Assert.True(tool.Text.Length < 1_000);
+        Assert.True(fitted.Count < messages.Count);
+        Assert.Contains(fitted, m => m.Text.Contains("trimmed to fit the model's context window"));
     }
 
     [Fact]

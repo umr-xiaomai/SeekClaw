@@ -269,7 +269,7 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
-    public void OpenAiBody_DeepSeekOptimization_PureTextTurnDropsReasoningContent()
+    public void OpenAiBody_DeepSeekOptimization_PreservesReasoningContentAcrossTurns()
     {
         var request = new LlmRequest
         {
@@ -284,7 +284,7 @@ public sealed class ProviderTests : IDisposable
         };
 
         var body = OpenAiCompatibleClient.BuildBody(request);
-        Assert.Null(body["messages"]![1]!["reasoning_content"]);
+        Assert.Equal("previous thinking", body["messages"]![1]!["reasoning_content"]!.GetValue<string>());
     }
 
     [Fact]

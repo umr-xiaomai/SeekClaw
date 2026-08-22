@@ -17,16 +17,14 @@ internal static class DeepSeekOptimizationPolicy
         request.OptimizeDeepSeek && IsDeepSeek(request.Provider, request.Model);
 
     /// <summary>
-    /// DeepSeek requires reasoning_content to be passed back only for tool-calling turns;
-    /// passing it on plain text turns costs tokens without changing the next completion.
-    /// When the opt-in is off, preserve the historical safe behavior and pass it back.
+    /// DeepSeek reasoners (DeepSeek-R1 / Reasoner) utilize prefix caching over full historical
+    /// reasoning tokens in multi-turn conversations. Passing back reasoning_content across all
+    /// assistant turns ensures the prompt prefix matches DeepSeek's server KV cache.
     /// </summary>
     public static bool ShouldPassBackReasoning(LlmRequest request, ChatMessage message)
     {
         if (!IsDeepSeek(request.Provider, request.Model)) return false;
-        if (string.IsNullOrEmpty(message.Thinking)) return false;
-        if (!Applies(request)) return true;
-        return message.ToolCalls is { Count: > 0 };
+        return !string.IsNullOrEmpty(message.Thinking);
     }
 
     public static string ToolResultContent(string text, LlmRequest request) =>

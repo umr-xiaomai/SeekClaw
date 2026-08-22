@@ -24,7 +24,7 @@ public static class PromptVariables
         var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["cwd"] = hasWorkspace ? workspace!.Root : Directory.GetCurrentDirectory(),
-            ["datetime"] = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"),
+            ["datetime"] = DateTimeOffset.Now.ToString("yyyy-MM-dd zzz"),
             ["os"] = RuntimeInformation.OSDescription,
             ["platform"] = RuntimeInformation.RuntimeIdentifier,
             ["workspace"] = hasWorkspace ? workspace!.Root : "",

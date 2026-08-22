@@ -108,21 +108,6 @@ public static class ContextPlanner
         if (total <= budget) return messages;
 
         var result = new List<ChatMessage>(messages);
-
-        // Pass 1: truncate old tool outputs down to a stub.
-        for (var i = 0; i < result.Count - 6 && total > budget; i++)
-        {
-            var msg = result[i];
-            if (msg.Role != ChatRole.Tool || msg.Text.Length <= 400) continue;
-            var before = EstimateTokens(msg);
-            result[i] = ChatMessage.ToolResult(
-                msg.ToolCallId ?? "", msg.ToolName ?? "",
-                msg.Text[..400] + "\n… [older tool output trimmed to fit the context window]",
-                msg.ToolSuccess);
-            total += EstimateTokens(result[i]) - before;
-        }
-
-        // Pass 2: drop oldest messages, keeping tool-call pairs intact and the recent tail.
         while (total > budget && result.Count > 6)
         {
             var victim = result[0];
