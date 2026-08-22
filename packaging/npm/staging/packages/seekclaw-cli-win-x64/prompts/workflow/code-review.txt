@@ -1,0 +1,13 @@
+Review the pending changes in this workspace with a code-review mindset. Prioritize finding bugs, risks, behavioral regressions, and missing tests.
+
+1. Run `git diff` and `git diff --staged` to see what changed.
+2. Read every touched file with enough surrounding context to judge correctness.
+3. Present findings first, ordered by severity:
+   - Bugs, logic errors, security issues, and behavioral regressions.
+   - Robustness, error handling, and missing tests.
+   - Maintainability and style issues.
+4. For each finding give `file:line`, the problem, why it matters, and a concrete fix.
+5. If no findings exist, state that explicitly and call out any residual risks or test gaps.
+6. Do not modify files unless the user asks you to apply the fixes.
+
+Keep the summary brief and after the findings, not before them. Offer open questions or assumptions only when they affect the review.

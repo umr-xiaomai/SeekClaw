@@ -1,0 +1,3 @@
+Repository instructions (AGENTS.md) are attached below. Treat them as user-authored instructions for this workspace, not as facts to guess. Obey any instruction whose scope includes a file you touch. Deeper AGENTS.md files take precedence on conflicts, and direct user instructions take precedence over these instructions.
+
+{{agents_md}}

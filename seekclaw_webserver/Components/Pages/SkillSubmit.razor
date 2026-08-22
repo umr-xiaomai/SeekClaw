@@ -7,7 +7,10 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IJSRuntime JS
 
-<PageTitle>@(IsEnglish ? "Submit Skill — SeekClaw Marketplace" : "发布技能插件 — SeekClaw 市场")</PageTitle>
+<PageTitle>@(IsEnglish ? "Publish Skill — SeekClaw Marketplace" : "发布技能插件 — SeekClaw 技能市场")</PageTitle>
+<HeadContent>
+    <meta name="description" content="@(IsEnglish ? "Publish and submit your custom skill plugin to SeekClaw official marketplace." : "向 SeekClaw 官方技能市场发布并分享你的自定义 Skill 扩展包，参与开源 AI 开发者生态建设。")" />
+</HeadContent>
 
 <section class="skills-shell" style="max-width: 860px;">
     <div class="d-flex align-items-center justify-content-between mb-4">

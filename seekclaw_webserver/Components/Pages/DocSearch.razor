@@ -4,7 +4,10 @@
 @inject DocService Docs
 @inject NavigationManager Navigation
 
-<PageTitle>@(IsEnglish ? "Search Documentation — SeekClaw" : "文档搜索 — SeekClaw")</PageTitle>
+<PageTitle>@(string.IsNullOrWhiteSpace(_query) ? (IsEnglish ? "Search Documentation — SeekClaw Docs" : "文档搜索 — SeekClaw 官方文档") : $"{_query} — {(IsEnglish ? "Search Documentation — SeekClaw Docs" : "文档搜索 — SeekClaw 官方文档")}")</PageTitle>
+<HeadContent>
+    <meta name="description" content="@(IsEnglish ? "Search SeekClaw technical documentation, architecture specs, and core mechanisms." : "支持按关键词检索 SeekClaw 中英文技术文档、架构设计与核心机制。")" />
+</HeadContent>
 
 <section class="skills-shell" style="max-width: 860px;">
     <header class="skills-header mb-4">

@@ -1,0 +1,1 @@
+Fetch the readable text content from a specific HTTP or HTTPS URL. Use this after web_search when a result page needs to be read directly, or when the user provides an exact URL. It strips scripts, styles, and HTML tags and returns concise page text.

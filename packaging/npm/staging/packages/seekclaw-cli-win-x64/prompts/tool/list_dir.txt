@@ -1,0 +1,1 @@
+List a directory tree (build output, VCS and cache folders are skipped). Use depth to control recursion. Good for orienting in an unfamiliar project.

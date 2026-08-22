@@ -5,6 +5,7 @@
 
 @if (_loading)
 {
+    <PageTitle>@(Language == "en" ? "Loading Skill — SeekClaw" : "正在加载技能 — SeekClaw")</PageTitle>
     <div class="skills-shell text-center text-muted py-5">
         <div class="spinner-border text-success mb-2"></div>
         <div>@(Language == "en" ? "Loading skill details..." : "正在加载技能详情…")</div>
@@ -12,6 +13,7 @@
 }
 else if (_skill is null)
 {
+    <PageTitle>@(Language == "en" ? "Skill Not Found — SeekClaw" : "技能不存在 — SeekClaw 技能市场")</PageTitle>
     <div class="empty-state">
         <h1>@(Language == "en" ? "Skill Not Found" : "技能不存在")</h1>
         <p>@(Language == "en" ? "The requested skill may have been disabled or deleted." : "该技能可能已被管理员下线或删除。")</p>
@@ -22,6 +24,13 @@ else if (_skill is null)
 }
 else
 {
+    <PageTitle>@($"{_skill.Name} (v{_skill.Version}) — {(Language == "en" ? "SeekClaw Skills Marketplace" : "SeekClaw 技能市场")}")</PageTitle>
+    <HeadContent>
+        <meta name="description" content="@(string.IsNullOrWhiteSpace(_skill.Summary) ? $"{_skill.Name} skill for SeekClaw AI Agent Runtime" : _skill.Summary)" />
+        <meta property="og:title" content="@($"{_skill.Name} (v{_skill.Version}) — {(Language == "en" ? "SeekClaw Skills" : "SeekClaw 技能市场")}")" />
+        <meta property="og:description" content="@_skill.Summary" />
+        <meta property="og:type" content="article" />
+    </HeadContent>
     <div class="skill-detail-shell">
         <div class="skill-detail-header">
             <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">

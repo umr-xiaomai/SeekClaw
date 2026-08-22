@@ -1,0 +1,1 @@
+Capture a screenshot of the current screen/display. Use this tool when you need to inspect the current desktop screen, verify application UI, examine rendering results, check error dialogs, or see what the user is seeing. The captured image is attached to the conversation context for your direct visual inspection.

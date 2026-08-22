@@ -5,6 +5,7 @@
 
 @if (_page is null)
 {
+    <PageTitle>@(Language == "en" ? "Document Not Found — SeekClaw Docs" : "文档不存在 — SeekClaw 官方文档")</PageTitle>
     <div class="empty-state">
         <h1>@(Language == "en" ? "Document Not Found" : "文档不存在")</h1>
         <p>@(Language == "en" ? "The requested documentation page could not be found." : "没有找到请求的 Markdown 文档。")</p>
@@ -15,6 +16,12 @@
 }
 else
 {
+    <PageTitle>@($"{_page.Title} — {(Language == "en" ? "SeekClaw Docs" : "SeekClaw 官方文档")}")</PageTitle>
+    <HeadContent>
+        <meta name="description" content="@($"{_page.Title} - SeekClaw {(Language == "en" ? "Official Documentation" : "官方文档中心")}")" />
+        <meta property="og:title" content="@($"{_page.Title} — {(Language == "en" ? "SeekClaw Docs" : "SeekClaw 官方文档")}")" />
+        <meta property="og:type" content="article" />
+    </HeadContent>
     <div class="doc-shell">
         <div class="doc-layout">
             <!-- Left Sidebar -->

@@ -1,0 +1,28 @@
+{
+  "name": "seekclaw-cli",
+  "version": "1.1.0",
+  "description": "SeekClaw AI coding agent CLI, distributed as a self-contained .NET binary.",
+  "license": "SEE LICENSE IN LICENSE",
+  "bin": {
+    "seekclaw": "bin/seekclaw.js"
+  },
+  "files": [
+    "bin/seekclaw.js",
+    "LICENSE",
+    "README.md"
+  ],
+  "optionalDependencies": {
+    "seekclaw-cli-win-x64": "1.1.0"
+  },
+  "preferGlobal": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "seekclaw",
+    "cli",
+    "ai",
+    "coding-agent",
+    "dotnet"
+  ]
+}

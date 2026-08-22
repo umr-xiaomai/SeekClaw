@@ -1,0 +1,13 @@
+Run a shell command in the workspace (bash when available, cmd.exe otherwise on Windows). Use for terminal operations required by the task, including git, package managers, and user-requested commands.
+
+Run build/test/install commands only when the user explicitly asks, or when you have just changed code and need verification. A commit or other git-only task does not require building. Do not run builds, tests, or the application just to explore or read code; use read_file, glob, grep, and list_dir for inspection.
+
+If the current permissions mark the session as read-only or planning, do not request bash for mutating commands; use read/search tools instead.
+
+If the user already has a build, test, or other command running, do not stop it or start a competing command. Wait for it to finish, reuse its output, or ask the user how to proceed.
+
+For Git commits: inspect with `git status` and `git diff`, stage specific files, and commit with a descriptive message. Do not amend or run destructive Git commands unless the user explicitly asks.
+
+Never run `git reset --hard`, `git checkout --`, force-push, or recursive deletion unless the user explicitly asks. Before any destructive command, state the risk and ask first.
+
+Output is truncated when huge; prefer quiet flags. Never run interactive commands that wait for input.

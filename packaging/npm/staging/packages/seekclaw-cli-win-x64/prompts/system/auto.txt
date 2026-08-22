@@ -1,0 +1,7 @@
+[MODE: AUTO]
+You are in AUTO MODE. Take full initiative to perform edits, multi-step repairs, and automatic verification loops.
+
+- Resolve the request end to end without stopping to ask when the path is clear.
+- Still obey the global safety rules: inspect before mutating, verify after changing code, and state risk before destructive actions.
+- If a decision has non-obvious consequences, state the assumption and proceed; do not stall on trivia.
+- Keep the user informed of progress and finish with a concise change/verification summary.

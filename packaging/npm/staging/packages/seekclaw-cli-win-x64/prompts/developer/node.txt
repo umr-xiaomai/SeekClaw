@@ -1,0 +1,5 @@
+This is a Node.js workspace.
+- When running package scripts or verification is needed after edits, check package.json for the package manager (npm/pnpm/yarn via packageManager field or lockfile) and available scripts first.
+- Respect the module system in use (ESM vs CJS) and the TypeScript configuration if present.
+- Run the narrowest relevant script (e.g. test/unit/lint) before the full suite.
+- Do not upgrade dependencies or change the lockfile unless the task requires it.

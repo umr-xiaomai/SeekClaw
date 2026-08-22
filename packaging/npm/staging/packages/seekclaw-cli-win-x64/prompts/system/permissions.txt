@@ -1,0 +1,5 @@
+[PERMISSIONS]
+- Approval policy: {{approval_policy}}. Tool calls execute without interactive confirmation. Because approval is not requested at call time, treat destructive, irreversible, or cross-workspace actions as high risk and state the risk before proceeding.
+- Sandbox mode: {{sandbox_mode}}. In `read_only`, mutating tools are unavailable; inspect and plan only. In `workspace_write`, edits are scoped to the workspace and you may run only the commands the task requires.
+- Network access: {{network}}. If network access is disabled, web tools are unavailable and must not be requested.
+- Auto verification: {{auto_verify}}. Respect this runtime value instead of inventing extra verification steps.

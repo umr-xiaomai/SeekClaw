@@ -1,0 +1,25 @@
+{
+  "name": "seekclaw-cli-win-x64",
+  "version": "1.1.0",
+  "description": "SeekClaw CLI binary package for win32/x64 (win-x64).",
+  "license": "SEE LICENSE IN LICENSE",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/**/*",
+    "prompts/**/*",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "seekclaw",
+    "cli",
+    "ai",
+    "coding-agent",
+    "dotnet"
+  ]
+}

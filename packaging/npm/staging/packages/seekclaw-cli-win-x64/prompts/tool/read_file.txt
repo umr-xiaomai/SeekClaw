@@ -1,0 +1,1 @@
+Read a file from the workspace. Returns numbered lines (line<TAB>content). Use offset/limit for large files. Always read a file before editing it.

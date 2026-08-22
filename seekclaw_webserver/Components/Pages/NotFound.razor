@@ -1,5 +1,14 @@
-﻿@page "/not-found"
+@page "/not-found"
 @layout MainLayout
 
-<h3>页面未找到</h3>
-<p>抱歉，你访问的内容不存在或已被移动。</p>
+<PageTitle>404 页面未找到 — SeekClaw</PageTitle>
+<HeadContent>
+    <meta name="robots" content="noindex, follow" />
+</HeadContent>
+
+<div class="empty-state py-5 text-center">
+    <h1 class="display-4 fw-bold text-secondary mb-3">404</h1>
+    <h2 class="h4 mb-3">页面未找到 / Page Not Found</h2>
+    <p class="text-muted mb-4">抱歉，你访问的内容不存在或已被移动。</p>
+    <a class="vp-btn-primary" href="/">返回首页 / Back to Home</a>
+</div>

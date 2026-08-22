@@ -185,10 +185,11 @@ public sealed class WebServerTests
         var docService = new DocService(env, markdownService);
 
         var zhGroups = docService.GetGroups("zh");
-        Assert.Equal(3, zhGroups.Count);
+        Assert.Equal(4, zhGroups.Count);
         Assert.Equal("起步与概览", zhGroups[0].Title);
-        Assert.Equal("核心功能模块", zhGroups[1].Title);
-        Assert.Equal("运行时进阶机制", zhGroups[2].Title);
+        Assert.Equal("核心功能与交互", zhGroups[1].Title);
+        Assert.Equal("实战与最佳实践", zhGroups[2].Title);
+        Assert.Equal("运行时进阶机制", zhGroups[3].Title);
 
         var quickstart = docService.Get("zh", "quickstart");
         Assert.NotNull(quickstart);
