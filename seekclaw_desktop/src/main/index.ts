@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, extname, join, resolve } from 'node:path'
 import { release } from 'node:os'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, shell, Tray } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
 import type { DaemonMessage, DaemonRequestOptions } from '../shared/ipc.js'
@@ -12,6 +12,8 @@ import { getGitHistory, getGitOverview, openProjectTerminal } from './project-to
 
 const daemon = new DaemonClient()
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
 let managedDaemon: ChildProcess | null = null
 let runtimeShutdownStarted = false
 const activeNotifications = new Set<Notification>()
@@ -130,15 +132,53 @@ function notificationText(message: DaemonMessage, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
+function showMainWindow(): void {
+  if (!mainWindow) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  if (!mainWindow.isVisible()) mainWindow.show()
+  mainWindow.focus()
+}
+
+function createTray(): void {
+  if (tray) return
+  tray = new Tray(icon)
+  tray.setToolTip('SeekClaw')
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: '显示',
+      click: () => showMainWindow()
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        isQuitting = true
+        app.quit()
+      }
+    }
+  ])
+
+  tray.setContextMenu(contextMenu)
+
+  tray.on('click', () => {
+    showMainWindow()
+  })
+
+  tray.on('double-click', () => {
+    showMainWindow()
+  })
+}
+
 function showNativeNotification(title: string, body: string): void {
   if (!Notification.isSupported()) return
   const notification = new Notification({ title, body })
   activeNotifications.add(notification)
   notification.once('click', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
+    showMainWindow()
   })
   notification.once('close', () => activeNotifications.delete(notification))
   notification.show()
@@ -198,6 +238,12 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      mainWindow?.hide()
+    }
+  })
   mainWindow.on('closed', () => { mainWindow = null })
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
@@ -331,27 +377,30 @@ if (!hasSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
+    showMainWindow()
   })
 
   app.whenReady().then(async () => {
     electronApp.setAppUserModelId('com.hoilai.seekclaw')
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
+    createTray()
     registerIpc()
     await ensureDaemonRunning().catch((error) => console.error('Unable to start SeekClaw Runtime:', error))
     createWindow()
     nativeTheme.on('updated', syncNativeWindowTheme)
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      showMainWindow()
     })
   })
 }
 
 app.on('before-quit', (event) => {
+  isQuitting = true
+  if (tray) {
+    tray.destroy()
+    tray = null
+  }
   if (!managedDaemon || runtimeShutdownStarted) {
     daemon.disconnect()
     return
@@ -362,5 +411,5 @@ app.on('before-quit', (event) => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (isQuitting) app.quit()
 })
