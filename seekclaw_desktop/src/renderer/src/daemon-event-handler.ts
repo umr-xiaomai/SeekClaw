@@ -111,9 +111,19 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
     if (!message && !terminalEvent) return
     const isBackgroundThread = thread.id !== activeThreadId.value
     const eventCallId = typeof event.details?.callId === 'string' ? event.details.callId : undefined
-    const findTool = () => eventCallId
-      ? message?.tools?.find((tool) => tool.callId === eventCallId || tool.id === eventCallId)
-      : message?.tools?.findLast((tool) => tool.state === 'running')
+    const findTool = () => {
+      if (eventCallId) {
+        for (let i = thread.messages.length - 1; i >= 0; i--) {
+          const m = thread.messages[i]
+          if (m?.role === 'assistant' && m.tools) {
+            const found = m.tools.find((tool) => tool.callId === eventCallId || tool.id === eventCallId)
+            if (found) return found
+          }
+        }
+      }
+      return message?.tools?.findLast((tool) => tool.state === 'running')
+        ?? thread.messages.findLast((m) => m.role === 'assistant')?.tools?.findLast((tool) => tool.state === 'running')
+    }
 
     switch (event.event) {
       case 'thinking':
@@ -178,6 +188,8 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         thread.stats ??= {}
         thread.stats.llmRounds = (thread.stats.llmRounds ?? 0) + 1
         const step = Number(event.details?.step) || 0
+        const modelRef = event.data || (event.details?.provider && event.details?.model ? `${event.details.provider}/${event.details.model}` : undefined)
+        if (message && modelRef && !message.modelRef) message.modelRef = modelRef
         const previousHasOutput = Boolean(
           message?.content || message?.thinking || (message?.tools?.length ?? 0))
         if (message && step > 1 && previousHasOutput) {
@@ -188,6 +200,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
             content: '',
             thinking: '',
             tools: [],
+            modelRef,
             state: 'thinking',
             createdAt: Date.now()
           }
@@ -269,8 +282,10 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         scheduleQueuedDrain(thread)
         if (isBackgroundThread) {
           void window.seekclaw.notify('后台任务完成', `「${thread.title}」已完成`)
+          reloadBackgroundThreadIfIdle(thread)
+        } else if (thread.sessionId) {
+          void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
         }
-        if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
         break
       case 'error':
         if (message) {

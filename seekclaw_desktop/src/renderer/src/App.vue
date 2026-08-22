@@ -926,6 +926,9 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
     thread.running = false
     thread.requestId = undefined
     thread.assistantId = undefined
+    if (thread.sessionId && terminalAssistant.state !== 'error') {
+      await reloadThreadSession(thread, project).catch(() => undefined)
+    }
     if (thread.id === activeThreadId.value) await scrollToBottom(true)
     scheduleQueuedDrain(thread)
   }
