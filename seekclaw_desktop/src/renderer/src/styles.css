@@ -827,29 +827,39 @@ select:focus-visible {
   align-items: center;
   justify-content: space-between;
   min-width: 0;
+  gap: 12px;
   overflow: hidden;
-  padding: 0 20px;
+  padding: 0 16px 0 20px;
   background: var(--surface);
   border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   border-top-left-radius: 14px;
 }
 
 .conversation-title {
+  display: flex;
+  align-items: center;
   min-width: 0;
+  flex: 1 1 auto;
   gap: 10px;
+  overflow: hidden;
+}
+
+.conversation-title>svg {
+  flex: 0 0 auto;
 }
 
 .task-phase-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex: none;
+  flex: 0 0 auto;
   padding: 3px 10px;
   color: var(--accent);
   font-size: 11px;
   font-weight: 600;
   background: var(--accent-soft);
   border-radius: 999px;
+  white-space: nowrap;
 }
 
 .phase-dot {
@@ -875,41 +885,74 @@ select:focus-visible {
 }
 
 .conversation-search {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   height: 34px;
+  width: 34px;
   min-width: 34px;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 7px;
-  padding: 0 10px;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
   color: var(--text-muted);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 9px;
-  transition: min-width 180ms ease, border-color 180ms ease;
+  border-radius: 7px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: width 180ms ease, min-width 180ms ease, border-color 180ms ease, padding 180ms ease, color 140ms ease;
+}
+
+.conversation-search:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 
 .conversation-search:focus-within,
 .conversation-search.active {
-  min-width: 210px;
+  width: 190px;
+  min-width: 190px;
+  padding: 0 8px 0 10px;
+  justify-content: flex-start;
+  gap: 7px;
+  cursor: text;
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 
+.conversation-search svg {
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
 .conversation-search input {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 0;
-  flex: 1;
-  color: var(--text);
-  font-size: 12px;
-  background: transparent;
+  height: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
   border: 0;
   outline: 0;
   opacity: 0;
-  transition: opacity 140ms ease;
+  pointer-events: none;
+  color: var(--text);
+  font-size: 12px;
+  background: transparent;
 }
 
 .conversation-search:focus-within input,
 .conversation-search.active input {
-  width: auto;
+  position: static;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-width: 0;
   opacity: 1;
+  pointer-events: auto;
+  margin: 0;
 }
 
 .conversation-search input::placeholder {
@@ -951,7 +994,9 @@ select:focus-visible {
 }
 
 .conversation-title strong {
-  max-width: min(48vw, 520px);
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
   overflow: hidden;
   font-size: 15px;
   font-weight: 650;
@@ -960,7 +1005,8 @@ select:focus-visible {
 }
 
 .conversation-title small {
-  max-width: 220px;
+  flex: 0 0 auto;
+  max-width: 180px;
   overflow: hidden;
   color: var(--text-muted);
   font-size: 11px;
@@ -969,15 +1015,20 @@ select:focus-visible {
 }
 
 .conversation-actions {
+  display: flex;
+  align-items: center;
   min-width: 0;
-  flex: 0 1 auto;
-  gap: 7px;
-  overflow: hidden;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .connection-button,
 .open-location-button,
 .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  flex: 0 0 auto;
   min-height: 34px;
   gap: 7px;
   padding: 0 11px;
@@ -985,6 +1036,10 @@ select:focus-visible {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 7px;
+}
+
+.open-location-button span {
+  white-space: nowrap;
 }
 
 .connection-button:hover,
@@ -4006,10 +4061,6 @@ select:focus-visible {
 
   .conversation-header {
     padding: 0 10px 0 14px;
-  }
-
-  .conversation-title strong {
-    max-width: 42vw;
   }
 
   .conversation-content {

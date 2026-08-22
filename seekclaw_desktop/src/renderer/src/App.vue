@@ -1270,7 +1270,7 @@ watch(theme, applyTheme)
                 {{ runtimeConnectionLabel }}
                 <RefreshCw :class="{ spin: reconnecting }" :size="14" />
               </button>
-              <button v-if="activeProject" class="open-location-button" @click="showActiveProject">
+              <button v-if="activeProject" class="open-location-button" title="打开项目所在文件夹" @click="showActiveProject">
                 <FolderOpen :size="17" />
                 <span>打开位置</span>
               </button>
