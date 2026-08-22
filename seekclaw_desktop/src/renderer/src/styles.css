@@ -91,13 +91,15 @@ body {
 
 :root[data-material="mica"] body,
 :root[data-material="mica"] #app,
-:root[data-material="mica"] .app-shell {
+:root[data-material="mica"] .app-shell,
+:root[data-material="mica"] .app-body,
+:root[data-material="mica"] .workspace-content {
   background: transparent;
 }
 
 :root[data-material="mica"] .titlebar,
 :root[data-material="mica"] .sidebar {
-  background: color-mix(in srgb, var(--sidebar) 82%, transparent);
+  background: color-mix(in srgb, var(--sidebar) 75%, transparent);
   backdrop-filter: blur(34px) saturate(110%);
 }
 
@@ -140,7 +142,7 @@ select:focus-visible {
   grid-template-rows: 42px minmax(0, 1fr);
   width: 100%;
   height: 100%;
-  background: var(--bg);
+  background: var(--sidebar);
 }
 
 .titlebar {
@@ -151,7 +153,7 @@ select:focus-visible {
   height: 42px;
   padding-left: 12px;
   background: var(--sidebar);
-  border-bottom: 1px solid var(--border);
+  border-bottom: none;
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -282,6 +284,7 @@ select:focus-visible {
   grid-template-columns: 276px minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
+  background: var(--sidebar);
   transition: grid-template-columns 220ms cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -335,7 +338,7 @@ select:focus-visible {
   padding: 17px 12px 0;
   overflow: hidden;
   background: var(--sidebar);
-  border-right: 1px solid var(--border);
+  border-right: none;
 }
 
 .sidebar-slide-enter-active,
@@ -756,10 +759,15 @@ select:focus-visible {
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 58px minmax(0, 1fr) auto;
+  grid-template-rows: 54px minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  background: var(--bg);
+  background: var(--surface);
+  border-top-left-radius: 14px;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  box-shadow: -1px -1px 8px rgb(0 0 0 / 2%);
+  overflow: hidden;
 }
 
 .embedded-page {
@@ -769,7 +777,10 @@ select:focus-visible {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--surface);
+  border-top-left-radius: 14px;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
 }
 
 .app-shell>.embedded-page {
@@ -818,8 +829,9 @@ select:focus-visible {
   min-width: 0;
   overflow: hidden;
   padding: 0 20px;
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
-  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-top-left-radius: 14px;
 }
 
 .conversation-title {
