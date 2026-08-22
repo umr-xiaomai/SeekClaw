@@ -35,6 +35,7 @@ import RuntimeReconnectDialog from './components/RuntimeReconnectDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
+import TaskStepList, { type TaskStep } from './components/TaskStepList.vue'
 import WorkflowPanel from './components/WorkflowPanel.vue'
 import { confirmAction } from './confirmation'
 import { finalizeAssistantBubbles } from './conversation-state'
@@ -635,31 +636,132 @@ async function selectThread(id: string): Promise<void> {
   await scrollToBottom(false, true)
 }
 
-interface ConversationItem { message: ChatMessage; step?: number }
+interface ConversationItem { message: ChatMessage }
 
-/** Adds "步骤 N" markers before assistant messages that follow tool results. */
 const conversationItems = computed<ConversationItem[]>(() => {
   const messages = (activeThread.value?.messages ?? []).filter(
     (message) => !message.content?.startsWith('>>> [output truncated]')
   )
-  const items: ConversationItem[] = []
-  let step = 0
-  let lastWasTool = false
-  for (const message of messages) {
-    if (message.role === 'user') {
-      step = 0
-      lastWasTool = false
-    } else {
-      // Tool results are folded into assistant.tools, so an assistant message that
-      // carries tools followed by another assistant message begins a new step.
-      if (lastWasTool) step++
-      lastWasTool = (message.tools?.length ?? 0) > 0
-      items.push({ message, step: step > 1 ? step : undefined })
-      continue
-    }
-    items.push({ message })
+  return messages.map((message) => ({ message }))
+})
+
+/** Computes the active turn's high-level major tasks (大项任务) for TaskStepList above Composer. */
+const activeThreadTurnSteps = computed<TaskStep[]>(() => {
+  const thread = activeThread.value
+  if (!thread) return []
+
+  const workflowNodes = thread.workflow?.nodes?.filter((n) => n.kind !== 'start') ?? []
+  if (workflowNodes.length > 0) {
+    return workflowNodes.map((node, index) => ({
+      id: node.id,
+      step: index + 1,
+      title: node.label || `阶段 ${index + 1}`,
+      detail: node.detail,
+      state: node.state
+    }))
   }
-  return items
+
+  const messages = thread.messages ?? []
+  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
+  const turnAssistants = (lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : messages)
+    .filter((m) => m.role === 'assistant')
+
+  if (turnAssistants.length === 0) return []
+
+  const allTools = turnAssistants.flatMap((a) => a.tools ?? [])
+  const lastAssistant = turnAssistants[turnAssistants.length - 1]
+  const isTurnRunning = thread.running === true
+
+  const readSearchTools = allTools.filter((t) => {
+    const name = (t.name || '').toLowerCase()
+    return name.includes('read') || name.includes('view') || name.includes('search') || name.includes('grep') || name.includes('find') || name.includes('fetch') || name.includes('web')
+  })
+
+  const editTools = allTools.filter((t) => {
+    const name = (t.name || '').toLowerCase()
+    return name.includes('edit') || name.includes('patch') || Boolean(t.diff)
+  })
+
+  const cmdTools = allTools.filter((t) => {
+    const name = (t.name || '').toLowerCase()
+    return name.includes('bash') || name.includes('command') || name.includes('exec')
+  })
+
+  const editedFiles = Array.from(new Set(
+    editTools.map((t) => t.filePath ? t.filePath.split(/[\\/]/).pop() : undefined).filter(Boolean)
+  )) as string[]
+
+  const majorTasks: TaskStep[] = []
+  let stepNumber = 1
+
+  // 1. 大项任务一：理解需求与分析规划
+  const hasAnalysis = readSearchTools.length > 0 || turnAssistants.some((a) => a.thinking)
+  if (hasAnalysis || (allTools.length === 0 && isTurnRunning)) {
+    const isAnalysisRunning = isTurnRunning && editTools.length === 0 && cmdTools.length === 0 && !lastAssistant?.content
+    const isAnalysisError = readSearchTools.some((t) => t.state === 'error')
+    const detail = readSearchTools.length > 0
+      ? `已检索并分析 ${readSearchTools.length} 项代码与上下文`
+      : '分析任务意图与规划执行方案'
+
+    majorTasks.push({
+      id: 'major-plan',
+      step: stepNumber++,
+      title: '理解需求与分析规划',
+      detail,
+      state: isAnalysisRunning ? 'running' : (isAnalysisError ? 'error' : 'done')
+    })
+  }
+
+  // 2. 大项任务二：代码与配置修改
+  if (editTools.length > 0) {
+    const isEditRunning = isTurnRunning && editTools.some((t) => t.state === 'running' || (t.state !== 'done' && t.state !== 'error'))
+    const isEditError = editTools.some((t) => t.state === 'error')
+    const detail = editedFiles.length > 0
+      ? `修改 ${editedFiles.slice(0, 3).join(', ')}${editedFiles.length > 3 ? ` 等 ${editedFiles.length} 个文件` : ''}`
+      : `已执行 ${editTools.length} 处代码修改`
+
+    majorTasks.push({
+      id: 'major-edit',
+      step: stepNumber++,
+      title: '代码实现与文件修改',
+      detail,
+      state: isEditRunning ? 'running' : (isEditError ? 'error' : 'done')
+    })
+  }
+
+  // 3. 大项任务三：命令执行与构建验证
+  if (cmdTools.length > 0) {
+    const isCmdRunning = isTurnRunning && cmdTools.some((t) => t.state === 'running' || (t.state !== 'done' && t.state !== 'error'))
+    const isCmdError = cmdTools.some((t) => t.state === 'error')
+
+    majorTasks.push({
+      id: 'major-verify',
+      step: stepNumber++,
+      title: '命令执行与构建验证',
+      detail: `已执行 ${cmdTools.length} 条终端验证命令`,
+      state: isCmdRunning ? 'running' : (isCmdError ? 'error' : 'done')
+    })
+  }
+
+  // 4. 大项任务四：生成总结与答复
+  if (lastAssistant?.content || (isTurnRunning && (editTools.length > 0 || cmdTools.length > 0 || readSearchTools.length > 0))) {
+    const isOutputRunning = isTurnRunning && (lastAssistant?.state === 'streaming' || (majorTasks.every((t) => t.state === 'done') && isTurnRunning))
+    const isOutputError = lastAssistant?.state === 'error'
+
+    majorTasks.push({
+      id: 'major-output',
+      step: stepNumber++,
+      title: '总结与解答输出',
+      detail: lastAssistant?.content ? '已生成完整改动报告与解答' : '整理最终成果与说明',
+      state: isOutputRunning ? 'running' : (isOutputError ? 'error' : 'done')
+    })
+  }
+
+  if (majorTasks.length <= 1 && !isTurnRunning && allTools.length === 0) {
+    return []
+  }
+
+  return majorTasks
 })
 
 const VIRTUAL_THRESHOLD = 60
@@ -1211,7 +1313,6 @@ watch(theme, applyTheme)
               <template v-if="virtualWindow.active">
                 <div class="virtual-pad" :style="{ height: `${virtualWindow.topPad}px` }" />
                 <template v-for="item in virtualWindow.items" :key="item.message.id">
-                  <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
                   <div v-measure="item.message.id" class="virtual-message">
                     <ConversationMessage :message="item.message" :image-sources="activeImageSources"
                       :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
@@ -1223,7 +1324,6 @@ watch(theme, applyTheme)
               </template>
               <template v-else>
                 <template v-for="item in conversationItems" :key="item.message.id">
-                  <div v-if="item.step" class="step-divider"><span>步骤 {{ item.step }}</span></div>
                   <ConversationMessage :message="item.message" :image-sources="activeImageSources"
                     :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
                     :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
@@ -1274,6 +1374,11 @@ watch(theme, applyTheme)
               </div>
             </div>
 
+            <TaskStepList
+              :steps="activeThreadTurnSteps"
+              :running="activeThread?.running"
+              :phase="activeThread?.phase"
+            />
             <WorkflowPanel :workflow="activeThread?.workflow" :open="workflowOpen" @close="workflowOpen = false" />
             <Composer ref="composer" :busy="busy"
               :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"

@@ -1764,7 +1764,6 @@ select:focus-visible {
   z-index: 5;
   min-width: 0;
   padding: 0 28px 12px;
-  background: var(--bg);
 }
 
 .pending-message-stack {
@@ -1856,7 +1855,7 @@ select:focus-visible {
   width: min(100%, 940px);
   margin: 0 auto;
   padding: 13px 13px 10px;
-  background: var(--surface-raised);
+  background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 18px;
   box-shadow: var(--composer-shadow);
@@ -1864,8 +1863,8 @@ select:focus-visible {
 }
 
 .composer-shell:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), var(--composer-shadow);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent), var(--composer-shadow);
 }
 
 .composer-image-strip {
@@ -2295,13 +2294,14 @@ select:focus-visible {
   height: 33px;
   padding: 0;
   place-items: center;
-  color: var(--surface-raised);
-  background: var(--text);
+  color: #ffffff;
+  background: var(--accent);
   border-radius: 50%;
+  transition: background-color 140ms ease, transform 120ms ease;
 }
 
 .send-button:not(:disabled):hover {
-  background: color-mix(in srgb, var(--text) 86%, var(--accent));
+  background: color-mix(in srgb, var(--accent) 86%, #000);
 }
 
 .send-button:not(:disabled):active {
