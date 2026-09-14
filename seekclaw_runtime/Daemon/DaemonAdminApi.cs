@@ -19,8 +19,14 @@ internal sealed class DaemonAdminApi(
     SeekClawRuntime runtime,
     WorkspaceInfo globalWorkspace,
     IFileLockCoordinator fileLocks,
-    IScheduleService? scheduler = null)
+    IScheduleService? scheduler = null,
+    CancellationToken lifetime = default)
 {
+    /// <summary>
+    /// Raised after a background MCP reconnect finishes so clients can refresh the
+    /// server list without polling.
+    /// </summary>
+    public event Action? McpStatusChanged;
 
     public string ListLocks()
     {
@@ -556,8 +562,9 @@ internal sealed class DaemonAdminApi(
         return servers.ToJsonString();
     }
 
-    public async Task<string> UpsertMcpServerAsync(JsonObject parameters, CancellationToken ct)
+    public Task<string> UpsertMcpServerAsync(JsonObject parameters, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         var name = RequiredString(parameters, "name");
         var scope = OptionalString(parameters, "scope") ?? "workspace";
         if (scope is not ("workspace" or "global"))
@@ -581,15 +588,28 @@ internal sealed class DaemonAdminApi(
         if (input["env"] is JsonObject env)
             server.Env = env.ToDictionary(item => item.Key, item => item.Value?.GetValue<string>() ?? "");
 
+        // Keep the stored entry consistent with the selected connection method so a
+        // converted server never keeps a command for a remote transport or vice versa.
+        if (server.Transport.Equals("stdio", StringComparison.OrdinalIgnoreCase))
+        {
+            server.Url = null;
+        }
+        else
+        {
+            server.Command = null;
+            server.Args = null;
+        }
+
         ValidateMcpServer(name, server);
         target.Servers[name] = server;
         SaveMcpConfig(scope, target, useInlineWorkspaceConfig);
-        await runtime.ConnectMcpAsync(ct).ConfigureAwait(false);
-        return ListMcpServers();
+        ReconnectMcpInBackground();
+        return Task.FromResult(ListMcpServers());
     }
 
-    public async Task<string> RemoveMcpServerAsync(JsonObject parameters, CancellationToken ct)
+    public Task<string> RemoveMcpServerAsync(JsonObject parameters, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         var name = RequiredString(parameters, "name");
         var scope = OptionalString(parameters, "scope") ?? "workspace";
         var useInlineWorkspaceConfig = scope == "workspace"
@@ -600,14 +620,47 @@ internal sealed class DaemonAdminApi(
         if (!target.Servers.Remove(name))
             throw new DaemonRequestException($"MCP server not found in {scope} scope: {name}");
         SaveMcpConfig(scope, target, useInlineWorkspaceConfig);
-        await runtime.ConnectMcpAsync(ct).ConfigureAwait(false);
-        return ListMcpServers();
+        ReconnectMcpInBackground();
+        return Task.FromResult(ListMcpServers());
     }
 
-    public async Task<string> ReloadMcpAsync(CancellationToken ct)
+    public Task<string> ReloadMcpAsync(CancellationToken ct)
     {
-        await runtime.ConnectMcpAsync(ct).ConfigureAwait(false);
-        return ListMcpServers();
+        ct.ThrowIfCancellationRequested();
+        ReconnectMcpInBackground();
+        return Task.FromResult(ListMcpServers());
+    }
+
+    /// <summary>
+    /// Reconnects every MCP server on a background task. Callers return immediately
+    /// with servers marked as connecting; <see cref="McpStatusChanged"/> fires once the
+    /// real status is available, so the UI never has to wait on a slow or dead server.
+    /// </summary>
+    private void ReconnectMcpInBackground()
+    {
+        // Only enabled servers produce connection results worth announcing; with every
+        // server disabled the immediate response already carries the final state.
+        var announce = runtime.Mcp.LoadServerConfigs(runtime.Workspace).Values.Any(server => server.Enabled);
+        runtime.Mcp.MarkConnecting(runtime.Workspace);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await runtime.ConnectMcpAsync(lifetime).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Daemon is shutting down.
+            }
+            catch (Exception)
+            {
+                // Individual server failures are recorded in the status list.
+            }
+            finally
+            {
+                if (announce) McpStatusChanged?.Invoke();
+            }
+        }, CancellationToken.None);
     }
 
     public string ListSkills()
@@ -957,6 +1010,7 @@ internal sealed class DaemonAdminApi(
         ["envKeys"] = Strings(server.Env is null ? Enumerable.Empty<string>() : server.Env.Keys),
         ["enabled"] = server.Enabled,
         ["connected"] = status?.Connected ?? false,
+        ["connecting"] = status?.Connecting ?? false,
         ["toolCount"] = status?.ToolCount ?? 0,
         ["error"] = status?.Error,
     };
@@ -999,16 +1053,28 @@ internal sealed class DaemonAdminApi(
             JsonSerializer.Serialize(config, SeekClawJsonContext.Default.McpConfig));
     }
 
-    private static void ValidateMcpServer(string name, McpServerConfig server)
+    internal static void ValidateMcpServer(string name, McpServerConfig server)
     {
-        var valid = server.Transport.ToLowerInvariant() switch
+        var transport = server.Transport.ToLowerInvariant();
+        switch (transport)
         {
-            "stdio" => !string.IsNullOrWhiteSpace(server.Command),
-            "sse" => Uri.TryCreate(server.Url, UriKind.Absolute, out _),
-            _ => false,
-        };
-        if (!valid)
-            throw new DaemonRequestException($"MCP server '{name}' has an invalid transport/command/url combination");
+            case "stdio":
+                if (!string.IsNullOrWhiteSpace(server.Command)) return;
+                throw new DaemonRequestException($"MCP 服务器 '{name}' 使用 stdio 连接，需要填写启动命令");
+
+            case "sse":
+            case "http":
+            case "streamable-http":
+            case "streamable_http":
+                if (Uri.TryCreate(server.Url, UriKind.Absolute, out _)) return;
+                throw new DaemonRequestException($"MCP 服务器 '{name}' 需要填写完整的 URL（以 http:// 或 https:// 开头）");
+
+            case "websocket":
+                throw new DaemonRequestException($"MCP 服务器 '{name}' 使用 WebSocket 连接，但该连接方式尚未实现");
+
+            default:
+                throw new DaemonRequestException($"MCP 服务器 '{name}' 的连接方式无法识别：{server.Transport}");
+        }
     }
 
     private static string RequiredString(JsonObject parameters, string name) =>

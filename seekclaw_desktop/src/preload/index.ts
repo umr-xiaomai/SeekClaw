@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { toIpcPayload } from '../shared/ipc.js'
 import type { DaemonMessage, DaemonState, DesktopApi } from '../shared/ipc.js'
 
 const api: DesktopApi = {
@@ -19,7 +20,12 @@ const api: DesktopApi = {
   daemon: {
     connect: () => ipcRenderer.invoke('daemon:connect'),
     disconnect: () => ipcRenderer.invoke('daemon:disconnect'),
-    request: (method, params, options) => ipcRenderer.invoke('daemon:request', method, params, options),
+    request: (method, params, options) => ipcRenderer.invoke(
+      'daemon:request',
+      method,
+      params === undefined ? undefined : toIpcPayload(params),
+      options === undefined ? undefined : toIpcPayload(options)
+    ),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, message: DaemonMessage): void => listener(message)
       ipcRenderer.on('daemon:event', handler)

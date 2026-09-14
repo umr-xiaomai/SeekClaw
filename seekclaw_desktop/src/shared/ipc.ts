@@ -19,6 +19,7 @@ export type DaemonEventName =
   | 'bye'
   | 'schedule.updated'
   | 'schedule.upcoming'
+  | 'mcp.updated'
 
 export interface DaemonMessage {
   id: number
@@ -121,4 +122,16 @@ export interface DesktopApi {
     onEvent(listener: (message: DaemonMessage) => void): () => void
     onState(listener: (state: DaemonState) => void): () => void
   }
+}
+
+/**
+ * Normalizes a renderer payload into cloneable JSON before it crosses the
+ * Electron IPC boundary. Vue `reactive()` values are Proxy objects, and the
+ * structured clone algorithm rejects them with
+ * "An object could not be cloned." — daemon requests are JSON on the wire, so
+ * round-tripping through JSON both fixes that and drops `undefined` fields.
+ */
+export function toIpcPayload<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value
+  return JSON.parse(JSON.stringify(value)) as T
 }

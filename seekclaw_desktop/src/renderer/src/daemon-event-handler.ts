@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
 import type { DaemonMessage } from '../../shared/ipc'
-import type { ChatMessage, ProjectItem, ThreadItem, WorkflowKind } from './types'
+import type { ChatMessage, ProjectItem, ThreadItem } from './types'
 import { finalizeAssistantBubbles } from './conversation-state'
 import { makeId, phaseLabel } from './app-helpers'
 
@@ -226,10 +226,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
       case 'workflow': {
         const kind = String(event.details?.kind ?? '')
         const step = Number(event.details?.step) || 0
-        const label = event.data || String(event.details?.label ?? '')
-        const detail = typeof event.details?.detail === 'string' ? event.details.detail : undefined
         if (kind === 'start') {
-          thread.workflow = { nodes: [], activeId: null }
           thread.customPlan = undefined
           thread.turnStepHighWater = 0
         } else if (step > (thread.turnStepHighWater ?? 0)) {
@@ -238,23 +235,6 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
             + step - (thread.turnStepHighWater ?? 0)
           thread.turnStepHighWater = step
         }
-        thread.workflow ??= { nodes: [], activeId: null }
-        if (thread.workflow.activeId) {
-          const previous = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
-          if (previous && previous.state === 'running') previous.state = 'done'
-        }
-        const nodeKind = (['start', 'think', 'tool', 'verify', 'repair', 'compact', 'done', 'error'] as const)
-          .includes(kind as never) ? kind as WorkflowKind : 'think'
-        const node = {
-          id: `${event.id}:${thread.workflow.nodes.length}:${kind}`,
-          step,
-          kind: nodeKind,
-          label,
-          detail,
-          state: (kind === 'done' || kind === 'error' ? kind : 'running') as 'running' | 'done' | 'error'
-        }
-        thread.workflow.nodes.push(node)
-        thread.workflow.activeId = node.id
         if (kind === 'verify'
           && message?.content
           && (message.state === 'thinking' || message.state === 'streaming')) {
@@ -297,10 +277,6 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         thread.requestId = undefined
         thread.assistantId = undefined
         thread.phase = undefined
-        if (thread.workflow?.activeId) {
-          const last = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
-          if (last && last.state === 'running') last.state = 'done'
-        }
         scheduleQueuedDrain(thread)
         if (isBackgroundThread) {
           void window.seekclaw.notify('后台任务完成', `「${thread.title}」已完成`)
@@ -322,10 +298,6 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         thread.requestId = undefined
         thread.assistantId = undefined
         thread.phase = undefined
-        if (thread.workflow?.activeId) {
-          const last = thread.workflow.nodes.find((node) => node.id === thread.workflow?.activeId)
-          if (last && last.state === 'running') last.state = 'error'
-        }
         scheduleQueuedDrain(thread)
         if (isBackgroundThread) {
           void window.seekclaw.notify('后台任务执行失败', `「${thread.title}」执行失败`)

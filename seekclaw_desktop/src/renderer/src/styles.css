@@ -2407,7 +2407,9 @@ select:focus-visible {
 .modal-fade-enter-active .project-properties-dialog,
 .modal-fade-leave-active .project-properties-dialog,
 .modal-fade-enter-active .model-editor-dialog,
-.modal-fade-leave-active .model-editor-dialog {
+.modal-fade-leave-active .model-editor-dialog,
+.modal-fade-enter-active .mcp-editor-dialog,
+.modal-fade-leave-active .mcp-editor-dialog {
   transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -2435,7 +2437,9 @@ select:focus-visible {
 .modal-fade-enter-from .project-properties-dialog,
 .modal-fade-leave-to .project-properties-dialog,
 .modal-fade-enter-from .model-editor-dialog,
-.modal-fade-leave-to .model-editor-dialog {
+.modal-fade-leave-to .model-editor-dialog,
+.modal-fade-enter-from .mcp-editor-dialog,
+.modal-fade-leave-to .mcp-editor-dialog {
   opacity: 0;
   transform: translateY(10px) scale(.985);
 }
@@ -3913,6 +3917,19 @@ select:focus-visible {
 
 .switch-control.active span {
   transform: translateX(16px);
+}
+
+/* The switch doubles as an inline progress indicator while a background
+   reconnect for that server is still running. */
+.switch-control.pending {
+  background: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+}
+
+.switch-control > svg {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  color: white;
 }
 
 .empty-settings {

@@ -24,9 +24,17 @@ import {
   Wrench,
   X
 } from '@lucide/vue'
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { confirmAction } from '../confirmation'
+import {
+  buildMcpTogglePayload,
+  mcpStatusText,
+  transportLabel,
+  type McpScope,
+  type McpServerSummary
+} from '../mcp-form'
 import ModelEditorDialog from './ModelEditorDialog.vue'
+import McpEditorDialog from './McpEditorDialog.vue'
 import ProviderEditorDialog from './ProviderEditorDialog.vue'
 import SelectMenu from './SelectMenu.vue'
 
@@ -96,19 +104,7 @@ interface ModelFormValue {
   vision: boolean
 }
 
-interface McpServerInfo {
-  name: string
-  scope: 'workspace' | 'global'
-  transport: 'stdio' | 'sse'
-  command?: string
-  args: string[]
-  url?: string
-  envKeys: string[]
-  enabled: boolean
-  connected: boolean
-  toolCount: number
-  error?: string
-}
+type McpServerInfo = McpServerSummary
 
 interface SkillInfo {
   name: string
@@ -179,8 +175,9 @@ const modelEditorOpen = ref(false)
 const providerEditorOpen = ref(false)
 const profileEditorOpen = ref(false)
 const mcpEditorOpen = ref(false)
+const editingMcpServer = ref<McpServerSummary | null>(null)
+const mcpDialogError = ref('')
 const editingProviderId = ref<string | null>(null)
-const editingMcpName = ref<string | null>(null)
 
 const providerForm = reactive({
   id: '', name: '', kind: 'openai' as 'openai' | 'anthropic', baseUrl: '',
@@ -192,10 +189,6 @@ const modelForm = reactive<ModelFormValue>({
 })
 const profileForm = reactive({
   name: '', provider: '', model: '', strategy: 'balanced', temperature: ''
-})
-const mcpForm = reactive({
-  name: '', scope: 'workspace' as 'workspace' | 'global', transport: 'stdio' as 'stdio' | 'sse' | 'http',
-  command: '', args: '', url: '', env: '', enabled: true
 })
 
 const strategyLabelMap: Record<string, string> = {
@@ -233,15 +226,6 @@ const strategyOptions = [
   { value: 'quality', label: '高质量', description: '优先选择能力更强的模型' },
   { value: 'cheap', label: '低成本', description: '优先降低调用成本' },
   { value: 'offline', label: '离线', description: '仅使用离线模型' }
-]
-const mcpScopeOptions = [
-  { value: 'workspace', label: '当前工作区', description: '仅在此工作区生效' },
-  { value: 'global', label: '全局', description: '在所有工作区中生效' }
-]
-const mcpTransportOptions = [
-  { value: 'stdio', label: 'stdio', description: '通过本地子进程通信' },
-  { value: 'sse', label: 'SSE', description: '连接远程 SSE 服务' },
-  { value: 'http', label: 'HTTP', description: '连接 Streamable HTTP / HTTP 服务' }
 ]
 const filteredModels = computed(() => {
   const query = modelQuery.value.trim().toLocaleLowerCase()
@@ -281,8 +265,12 @@ const visibleSections = computed(() =>
     ? sections.filter((item) => item.id === 'mcp' || item.id === 'skills')
     : sections)
 
-async function requestJson<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const response = await window.seekclaw.daemon.request(method, params)
+async function requestJson<T>(
+  method: string,
+  params: Record<string, unknown> = {},
+  timeoutMs?: number
+): Promise<T> {
+  const response = await window.seekclaw.daemon.request(method, params, timeoutMs ? { timeoutMs } : undefined)
   return JSON.parse(response.data) as T
 }
 
@@ -584,14 +572,6 @@ async function saveModel(value?: ModelFormValue): Promise<void> {
   }
 }
 
-function updateMcpScope(value: string): void {
-  if (value === 'workspace' || value === 'global') mcpForm.scope = value
-}
-
-function updateMcpTransport(value: string): void {
-  if (value === 'stdio' || value === 'sse' || value === 'http') mcpForm.transport = value
-}
-
 async function useProvider(provider: ProviderInfo): Promise<void> {
   beginAction(`provider.use:${provider.id}`)
   try {
@@ -676,82 +656,67 @@ async function testModelReference(reference: string): Promise<void> {
   await testModel()
 }
 
+// Saving or toggling an MCP server reconnects every enabled server, so allow
+// headroom for slow servers while still guaranteeing the UI never waits forever.
+const MCP_ADMIN_TIMEOUT_MS = 120_000
+
+/** Rows whose toggle request is still in flight; the switch shows progress at once. */
+const pendingMcpToggles = ref<string[]>([])
+
+function mcpServerKey(server: { scope: string; name: string }): string {
+  return `${server.scope}:${server.name}`
+}
+
+function mcpServerPending(server: { scope: string; name: string; connecting?: boolean }): boolean {
+  return server.connecting === true || pendingMcpToggles.value.includes(mcpServerKey(server))
+}
+
 function newMcpServer(): void {
-  editingMcpName.value = null
-  Object.assign(mcpForm, {
-    name: '', scope: 'workspace', transport: 'stdio', command: '', args: '', url: '', env: '', enabled: true
-  })
+  editingMcpServer.value = null
+  mcpDialogError.value = ''
   mcpEditorOpen.value = true
 }
 
 function editMcpServer(server: McpServerInfo): void {
-  editingMcpName.value = server.name
-  Object.assign(mcpForm, {
-    name: server.name,
-    scope: server.scope,
-    transport: server.transport,
-    command: server.command ?? '',
-    args: server.args.join('\n'),
-    url: server.url ?? '',
-    env: '',
-    enabled: server.enabled
-  })
+  editingMcpServer.value = server
+  mcpDialogError.value = ''
   mcpEditorOpen.value = true
 }
 
-function parseEnv(value: string): Record<string, string> | undefined {
-  const entries = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-  if (entries.length === 0) return undefined
-  return Object.fromEntries(entries.map((line) => {
-    const index = line.indexOf('=')
-    return index < 0 ? [line, ''] : [line.slice(0, index).trim(), line.slice(index + 1)]
-  }))
+function closeMcpEditor(): void {
+  mcpEditorOpen.value = false
+  editingMcpServer.value = null
+  mcpDialogError.value = ''
 }
 
-async function saveMcpServer(): Promise<void> {
+async function saveMcpServer(payload: { name: string; scope: McpScope; server: Record<string, unknown> }): Promise<void> {
   beginAction('mcp.save')
+  mcpDialogError.value = ''
   try {
-    const server: Record<string, unknown> = {
-      transport: mcpForm.transport,
-      command: mcpForm.command,
-      args: mcpForm.args.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
-      url: mcpForm.url,
-      enabled: mcpForm.enabled
-    }
-    const env = parseEnv(mcpForm.env)
-    if (env) server.env = env
-    const response = await requestJson<McpServerInfo[]>('mcp.upsert', {
-      name: mcpForm.name,
-      scope: mcpForm.scope,
-      server
-    })
-    mcpServers.value = response
-    mcpEditorOpen.value = false
+    mcpServers.value = await requestJson<McpServerInfo[]>('mcp.upsert', payload, MCP_ADMIN_TIMEOUT_MS)
+    closeMcpEditor()
     notice.value = 'MCP 配置已保存并重载'
   } catch (reason) {
-    fail(reason)
+    mcpDialogError.value = reason instanceof Error ? reason.message : String(reason)
   } finally {
     endAction()
   }
 }
 
 async function toggleMcp(server: McpServerInfo): Promise<void> {
+  const key = mcpServerKey(server)
   beginAction(`mcp.toggle:${server.name}`)
+  pendingMcpToggles.value = [...pendingMcpToggles.value, key]
   try {
     mcpServers.value = await requestJson<McpServerInfo[]>('mcp.upsert', {
       name: server.name,
       scope: server.scope,
-      server: {
-        transport: server.transport,
-        command: server.command,
-        args: server.args,
-        url: server.url,
-        enabled: !server.enabled
-      }
-    })
+      server: buildMcpTogglePayload(server)
+    }, MCP_ADMIN_TIMEOUT_MS)
   } catch (reason) {
     fail(reason)
   } finally {
+    pendingMcpToggles.value = pendingMcpToggles.value.filter((entry) => entry !== key)
     endAction()
   }
 }
@@ -762,7 +727,8 @@ async function removeMcp(server: McpServerInfo): Promise<void> {
   })) return
   beginAction('mcp.remove')
   try {
-    mcpServers.value = await requestJson<McpServerInfo[]>('mcp.remove', { name: server.name, scope: server.scope })
+    mcpServers.value = await requestJson<McpServerInfo[]>(
+      'mcp.remove', { name: server.name, scope: server.scope }, MCP_ADMIN_TIMEOUT_MS)
   } catch (reason) {
     fail(reason)
   } finally {
@@ -773,8 +739,8 @@ async function removeMcp(server: McpServerInfo): Promise<void> {
 async function reloadMcp(): Promise<void> {
   beginAction('mcp.reload')
   try {
-    mcpServers.value = await requestJson<McpServerInfo[]>('mcp.reload')
-    notice.value = 'MCP 已重新加载'
+    mcpServers.value = await requestJson<McpServerInfo[]>('mcp.reload', {}, MCP_ADMIN_TIMEOUT_MS)
+    notice.value = mcpServers.value.some((server) => server.connecting) ? 'MCP 正在重新加载…' : 'MCP 已重新加载'
   } catch (reason) {
     fail(reason)
   } finally {
@@ -831,6 +797,37 @@ watch(() => props.page, () => {
   void loadCurrentSection()
 })
 watch(section, () => { void loadCurrentSection() })
+
+/**
+ * Enabling a server returns immediately and connects in the background, so the
+ * runtime broadcasts `mcp.updated` once the real status is known.
+ */
+async function refreshMcpServers(): Promise<void> {
+  if (!props.open || section.value !== 'mcp') return
+  if (action.value.startsWith('mcp.')) return // never clobber an in-flight mutation
+  try {
+    mcpServers.value = await requestJson<McpServerInfo[]>('mcp.list')
+    if (notice.value === 'MCP 正在重新加载…' && !mcpServers.value.some((server) => server.connecting)) {
+      notice.value = 'MCP 已重新加载'
+    }
+  } catch {
+    // Transient failure: the list keeps its previous content.
+  }
+}
+
+let unsubscribeMcpEvents: (() => void) | null = null
+
+onMounted(() => {
+  unsubscribeMcpEvents = window.seekclaw.daemon.onEvent((message) => {
+    if (message.event !== 'mcp.updated') return
+    void refreshMcpServers()
+  })
+})
+
+onBeforeUnmount(() => {
+  unsubscribeMcpEvents?.()
+  unsubscribeMcpEvents = null
+})
 </script>
 
 <template>
@@ -1025,27 +1022,12 @@ watch(section, () => { void loadCurrentSection() })
 
           <template v-else-if="section === 'mcp'">
             <div class="settings-section-heading">
-              <div><h3>MCP 服务器</h3><p>{{ mcpServers.filter((server) => server.connected).length }} 已连接 · {{ mcpServers.reduce((sum, server) => sum + server.toolCount, 0) }} 个工具</p></div>
+              <div><h3>MCP 服务器</h3><p>{{ mcpServers.filter((server) => server.connected).length }} / {{ mcpServers.length }} 已连接 · {{ mcpServers.reduce((sum, server) => sum + server.toolCount, 0) }} 个工具</p></div>
               <div class="row-actions">
                 <button class="icon-button" title="重新加载" :disabled="action === 'mcp.reload'" @click="reloadMcp"><RefreshCw :class="{ spin: action === 'mcp.reload' }" :size="17" /></button>
                 <button class="secondary-button" @click="newMcpServer"><Plus :size="15" /> 服务器</button>
               </div>
             </div>
-
-            <section v-if="mcpEditorOpen" class="settings-editor">
-              <div class="editor-heading"><strong>{{ editingMcpName ? '编辑 MCP 服务器' : '新增 MCP 服务器' }}</strong><button class="icon-button compact" @click="mcpEditorOpen = false"><X :size="15" /></button></div>
-              <div class="form-grid">
-                <label><span>名称</span><input v-model="mcpForm.name" :disabled="!!editingMcpName" placeholder="filesystem" /></label>
-                <label><span>范围</span><SelectMenu :model-value="mcpForm.scope" :options="mcpScopeOptions" label="MCP 范围" @update:model-value="updateMcpScope" /></label>
-                <label><span>传输方式</span><SelectMenu :model-value="mcpForm.transport" :options="mcpTransportOptions" label="MCP 传输方式" @update:model-value="updateMcpTransport" /></label>
-                <label v-if="mcpForm.transport === 'stdio'" class="span-2"><span>命令</span><input v-model="mcpForm.command" placeholder="npx" /></label>
-                <label v-if="mcpForm.transport === 'stdio'" class="span-2"><span>参数</span><textarea v-model="mcpForm.args" rows="3" placeholder="-y\n@modelcontextprotocol/server-filesystem" /></label>
-                <label v-else class="span-2"><span>URL</span><input v-model="mcpForm.url" placeholder="https://example.com/sse" /></label>
-                <label class="span-2"><span>环境变量</span><textarea v-model="mcpForm.env" rows="2" placeholder="TOKEN=..." /></label>
-                <label class="check-label"><input v-model="mcpForm.enabled" type="checkbox" /><span>启用</span></label>
-              </div>
-              <div class="editor-actions"><span class="toolbar-spacer" /><button class="secondary-button" @click="mcpEditorOpen = false">取消</button><button class="secondary-button primary-action" @click="saveMcpServer"><Save :size="15" /> 保存并重载</button></div>
-            </section>
 
             <section class="settings-list">
               <div v-if="mcpServers.length === 0" class="empty-settings">尚未配置 MCP 服务器</div>
@@ -1053,13 +1035,28 @@ watch(section, () => { void loadCurrentSection() })
                 <span class="status-dot" :class="{ online: server.connected }" />
                 <div class="list-main">
                   <div><strong>{{ server.name }}</strong><span class="inline-badge">{{ server.scope === 'workspace' ? '工作区' : '全局' }}</span></div>
-                  <small :title="server.error">{{ server.connected ? `${server.toolCount} 个工具` : server.error || (server.enabled ? '未连接' : '已禁用') }} · {{ server.transport }}</small>
+                  <small :title="server.error">{{ mcpStatusText(server) }} · {{ transportLabel(server.transport) }}</small>
                 </div>
-                <button class="switch-control" :class="{ active: server.enabled }" :aria-label="server.enabled ? '禁用' : '启用'" @click="toggleMcp(server)"><span /></button>
+                <button
+                  class="switch-control"
+                  :class="{ active: server.enabled, pending: mcpServerPending(server) }"
+                  :disabled="mcpServerPending(server)"
+                  :aria-label="mcpServerPending(server) ? '正在连接' : (server.enabled ? '禁用' : '启用')"
+                  @click="toggleMcp(server)"
+                ><LoaderCircle v-if="mcpServerPending(server)" class="spin" :size="12" /><span v-else /></button>
                 <button class="icon-button compact" title="编辑" @click="editMcpServer(server)"><Settings2 :size="15" /></button>
                 <button class="icon-button compact danger-icon" title="删除" @click="removeMcp(server)"><Trash2 :size="15" /></button>
               </div>
             </section>
+
+            <McpEditorDialog
+              :open="mcpEditorOpen"
+              :server="editingMcpServer"
+              :saving="action === 'mcp.save'"
+              :error="mcpDialogError"
+              @close="closeMcpEditor"
+              @save="saveMcpServer"
+            />
           </template>
 
           <template v-else-if="section === 'skills'">

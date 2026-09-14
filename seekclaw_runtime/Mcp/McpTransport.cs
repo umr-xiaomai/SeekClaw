@@ -121,8 +121,24 @@ public class HttpMcpTransport : IMcpTransport
     public HttpMcpTransport(string url, HttpClient? httpClient = null)
     {
         _url = url;
-        _http = httpClient ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         _ownsHttpClient = httpClient is null;
+        _http = httpClient ?? CreateDefaultClient();
+    }
+
+    /// <summary>
+    /// SSE streams stay open for the whole session, so the overall timeout must
+    /// remain infinite. The connect timeout is what stops an unreachable host from
+    /// stalling the whole MCP reload, since a black-holed address otherwise hangs
+    /// until the OS gives up.
+    /// </summary>
+    private static HttpClient CreateDefaultClient()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        };
+        return new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
     }
 
     public ChannelReader<JsonObject> Incoming => _incoming.Reader;

@@ -1,1 +1,5 @@
-Update the task plan steps and their status. Use this to outline 2-5 concrete, file-specific milestone steps for the current task (e.g. "检查 preview.py 的代码与逻辑", "在 ConversationMessage.vue 中删除节点") and update their status (pending, in_progress, completed) as you progress. Never use vague boilerplate like "分析核心逻辑" or "执行数据处理".
+Update the task plan steps and their status.
+
+Only call this tool when the task genuinely needs planning: multi-step work that spans several files, tools, or verification rounds. Simple questions, explanations, single-file reads, and small one-step edits need no plan — the client only shows the plan panel when you create one, so a plan there is pure noise.
+
+When you do plan, outline 2-5 concrete, file-specific milestone steps (e.g. "检查 preview.py 的代码与逻辑", "在 ConversationMessage.vue 中删除节点") and keep their status (pending, in_progress, completed) up to date as you progress. Never use vague boilerplate like "分析核心逻辑" or "执行数据处理".

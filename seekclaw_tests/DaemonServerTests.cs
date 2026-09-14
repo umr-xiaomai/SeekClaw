@@ -150,6 +150,50 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task McpUpsert_ReturnsBeforeTheServerConnects_ThenBroadcastsTheResult()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+
+        await connection.SendAsync(1, "mcp.upsert", new JsonObject
+        {
+            ["name"] = "background",
+            ["scope"] = "global",
+            ["server"] = new JsonObject
+            {
+                ["transport"] = "sse",
+                ["url"] = "http://127.0.0.1:9/mcp",
+                ["enabled"] = true,
+            },
+        });
+
+        // Enabling a server must not block on the connection, and the follow-up
+        // broadcast can arrive before or after the response, so collect both.
+        JsonObject? response = null;
+        JsonObject? broadcast = null;
+        while (response is null || broadcast is null)
+        {
+            var message = await connection.ReadAsync();
+            var eventName = message["event"]?.GetValue<string>();
+            if (eventName == "result" && message["id"]?.GetValue<long>() == 1) response = message;
+            else if (eventName == "mcp.updated") broadcast = message;
+        }
+
+        var servers = JsonNode.Parse(response!["data"]!.GetValue<string>())!.AsArray();
+        Assert.Contains(servers, server => server!["name"]!.GetValue<string>() == "background");
+        Assert.Equal(0, broadcast!["id"]!.GetValue<long>());
+
+        // The background connect finished and recorded why the server is offline.
+        await connection.SendAsync(2, "mcp.list");
+        var listed = JsonNode.Parse((await connection.ReadUntilAsync(item => item["id"]?.GetValue<long>() == 2))
+            ["data"]!.GetValue<string>())!.AsArray();
+        var entry = listed.OfType<JsonObject>().Single(server => server["name"]!.GetValue<string>() == "background");
+        Assert.False(entry["connected"]!.GetValue<bool>());
+        Assert.False(entry["connecting"]!.GetValue<bool>());
+        Assert.False(string.IsNullOrWhiteSpace(entry["error"]!.GetValue<string>()));
+    }
+
+    [Fact]
     public async Task Schedule_Upcoming_BroadcastsNotice()
     {
         var connection = await StartServerAsync(

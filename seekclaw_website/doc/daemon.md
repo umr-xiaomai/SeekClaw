@@ -64,7 +64,7 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 
 `session.get` 返回的消息中，assistant 消息带 `modelRef`（`provider/model`），用于界面标注每条回答来自哪个模型。
 
-流式事件包括 `thinking`、`delta`、`steer`、`status`、`image_view`、`tool_start`、`tool_done` 和 `workflow`。`workflow` 的 `details` 含 `step`、`kind`（start/think/tool/verify/repair/compact/done/error）、`label` 与 `detail`，用于客户端实时绘制执行流程图。`steer` 表示附加指导已经进入当前 turn 的上下文；`image_view` 的 `details.imageId` 指明模型正在查看哪张上传图片。终止事件包括 `done`、`cancelled` 和 `error`。
+流式事件包括 `thinking`、`delta`、`steer`、`status`、`image_view`、`tool_start`、`tool_done` 和 `workflow`。`workflow` 的 `details` 含 `step`、`kind`（start/think/tool/verify/repair/compact/done/error）、`label` 与 `detail`，用于客户端统计当前 turn 的执行步数。`steer` 表示附加指导已经进入当前 turn 的上下文；`image_view` 的 `details.imageId` 指明模型正在查看哪张上传图片。终止事件包括 `done`、`cancelled` 和 `error`。
 
 ## 其他方法
 

@@ -12,5 +12,5 @@ Focus on writing and modifying code:
 - If a build verifier runs, fix every error it reports. If no verifier runs, choose the smallest relevant check only when validation is needed.
 - If the user already has a build/test running, do not stop it or start another one. Wait for it to finish, reuse its output, or ask the user.
 - Add or update tests when you change behavior.
-- For multi-step tasks, use update_plan to break down work into 2-5 milestone steps and update their status as you proceed.
+- Use update_plan only when the work genuinely needs planning (several files or several verification rounds); simple questions and small one-step edits get no plan.
 - Explain non-obvious design decisions in one or two sentences, not essays.

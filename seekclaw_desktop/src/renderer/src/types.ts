@@ -71,22 +71,6 @@ export interface ScheduledTaskInfo {
   updatedAt: string
 }
 
-export type WorkflowKind = 'start' | 'think' | 'tool' | 'verify' | 'repair' | 'compact' | 'done' | 'error'
-
-export interface WorkflowNode {
-  id: string
-  step: number
-  kind: WorkflowKind
-  label: string
-  detail?: string
-  state: 'running' | 'done' | 'error'
-}
-
-export interface WorkflowState {
-  nodes: WorkflowNode[]
-  activeId: string | null
-}
-
 export interface QueuedMessage {
   id: string
   content: string
@@ -125,8 +109,6 @@ export interface ThreadItem {
   activeTurnToken?: string
   /** Current work phase shown in the header (thinking/tool/verify…). */
   phase?: string
-  /** Live execution flowchart fed by daemon workflow events. */
-  workflow?: WorkflowState
   /** Custom high-level plan steps emitted explicitly by update_plan. */
   customPlan?: Array<{ id: string; step: number; title: string; detail?: string; state: 'running' | 'done' | 'error' | 'pending' }>
   /** Assistant placeholder receiving streamed output for the active turn. */
@@ -143,6 +125,6 @@ export interface ThreadItem {
   pendingGuidance?: number
   /** Live per-session model/token statistics, populated from daemon events. */
   stats?: ThreadStats
-  /** Tracks the highest workflow step seen in the current turn. */
+  /** Tracks the highest execution step seen in the current turn (workflow events). */
   turnStepHighWater?: number
 }

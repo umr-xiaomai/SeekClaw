@@ -18,21 +18,16 @@ const props = defineProps<{
   phase?: string
 }>()
 
-// Default to expanded so users can see the plan checklist live as it progresses
-const collapsed = ref(false)
+// Collapsed by default: the plan is background context, the header already shows
+// which step is running, and users can expand it when they want the full list.
+const collapsed = ref(true)
 const dismissed = ref(false)
 
-// Un-dismiss and expand when a new turn starts running
-watch(() => props.running, (isRunning) => {
-  if (isRunning) {
-    dismissed.value = false
-    collapsed.value = false
-  }
-})
-
-// Auto un-dismiss if steps change during running
-watch(() => props.steps.length, () => {
-  if (props.running) dismissed.value = false
+// A brand-new plan (the Agent called update_plan again in a later turn) brings the
+// card back, while a dismissed card stays dismissed as the same plan progresses.
+const planSignature = computed(() => props.steps.map((step) => `${step.id}:${step.title}`).join('|'))
+watch(planSignature, (signature, previous) => {
+  if (signature && signature !== previous) dismissed.value = false
 })
 
 const completedCount = computed(() => props.steps.filter((s) => s.state === 'done').length)

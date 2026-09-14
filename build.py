@@ -117,6 +117,9 @@ PLATFORM_WINDOWS = "windows"
 PLATFORM_LINUX = "linux"
 PLATFORM_BOTH = "both"
 
+# Linux 软件包标识符（deb 的 Package 字段 / rpm 的 Name 标签），与 Electron appId 保持一致。
+LINUX_PACKAGE_NAME = "com.hoilai.seekclaw"
+
 TARGET_PORTABLE = "portable"
 TARGET_INSTALLER = "installer"
 TARGET_BOTH = "both"
@@ -291,7 +294,7 @@ def create_deb_package(
     source_dir: Path,
     output_deb_path: Path,
     version: str,
-    package_name: str = "seekclaw",
+    package_name: str = LINUX_PACKAGE_NAME,
     maintainer: str = "SeekClaw <support@seekclaw.local>",
     description: str = "SeekClaw desktop client",
     icon_path: Path | None = None,
@@ -483,7 +486,7 @@ def create_rpm_package(
     source_dir: Path,
     output_rpm_path: Path,
     version: str,
-    package_name: str = "seekclaw",
+    package_name: str = LINUX_PACKAGE_NAME,
     release: str = "1",
     maintainer: str = "SeekClaw <support@seekclaw.local>",
     description: str = "SeekClaw desktop client",
@@ -962,6 +965,252 @@ def create_portable_zip(source_dir: Path, output_zip_path: Path) -> Path:
     return output_zip_path
 
 
+# ==============================================================================
+# 发布产物签名 (GnuPG 分离签名 + SHA256 校验和)
+# ==============================================================================
+
+# SeekClaw 发布签名密钥指纹；可用环境变量 SEEKCLAW_GPG_KEY_ID 覆盖（例如 CI 使用另一把密钥）。
+DEFAULT_SIGNING_KEY_ID = "1BC91E2EF845559EF11A57310EB78EEE44D45714"
+SIGNING_PUBLIC_KEY_NAME = "seekclaw-signing-key.asc"
+SHA256SUMS_NAME = "SHA256SUMS"
+GPG_TIMEOUT_SECONDS = 300
+
+
+def persisted_path_directories() -> list[Path]:
+    """读取注册表中持久化的 PATH 目录（Windows），用于弥补进程持有旧环境变量快照的情况。"""
+    if os.name != "nt":
+        return []
+
+    try:
+        import winreg
+    except ImportError:  # pragma: no cover - 仅在非 Windows 上出现
+        return []
+
+    directories: list[Path] = []
+    locations = (
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (winreg.HKEY_CURRENT_USER, "Environment"),
+    )
+    for hive, subkey in locations:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                value, _ = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            continue
+        if not isinstance(value, str):
+            continue
+        for entry in value.split(";"):
+            expanded = os.path.expandvars(entry.strip())
+            if expanded:
+                directories.append(Path(expanded))
+    return directories
+
+
+def find_gpg_executable() -> str | None:
+    """定位 gpg：优先 SEEKCLAW_GPG，其次 PATH，最后常见的安装目录。"""
+    override = os.environ.get("SEEKCLAW_GPG", "").strip()
+    if override:
+        if Path(override).is_file():
+            return override
+        located = shutil.which(override)
+        if located:
+            return located
+        raise BuildError(f"SEEKCLAW_GPG 指向的 gpg 不存在：{override}")
+
+    located = shutil.which("gpg") or shutil.which("gpg2")
+    if located:
+        return located
+
+    candidates: list[Path] = []
+    if os.name == "nt":
+        # 安装 GnuPG 会改写注册表里的 PATH，但已经启动的终端仍持有旧环境变量快照；
+        # 这里补一层回退，避免必须重开终端才能签名。
+        for directory in persisted_path_directories():
+            candidates.append(directory / "gpg.exe")
+        for root in (
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        ):
+            if root:
+                candidates.append(Path(root) / "GnuPG" / "bin" / "gpg.exe")
+                candidates.append(Path(root) / "Gpg4win" / "bin" / "gpg.exe")
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            candidates.append(Path(local_app_data) / "Programs" / "GnuPG" / "bin" / "gpg.exe")
+    else:
+        candidates += [
+            Path("/usr/bin/gpg"),
+            Path("/usr/local/bin/gpg"),
+            Path("/opt/homebrew/bin/gpg"),
+        ]
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def resolve_signing_key_id() -> str:
+    return os.environ.get("SEEKCLAW_GPG_KEY_ID", "").strip() or DEFAULT_SIGNING_KEY_ID
+
+
+def resolve_signing_passphrase() -> str | None:
+    return os.environ.get("SEEKCLAW_GPG_PASSPHRASE", "") or None
+
+
+def sha256_of_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def write_sha256sums(artifacts: Sequence[Path], output_path: Path) -> Path:
+    """按 GNU coreutils 格式写出 SHA256SUMS，便于 sha256sum -c 直接校验。"""
+    lines = [
+        f"{sha256_of_file(artifact)}  {artifact.name}"
+        for artifact in sorted(artifacts, key=lambda item: item.name)
+    ]
+    output_path.write_text("\n".join(lines) + "\n", encoding="ascii", newline="\n")
+    return output_path
+
+
+def run_gpg(gpg: str, arguments: Sequence[str], passphrase: str | None, verbose: bool = False) -> None:
+    """调用 gpg。提供口令时走 loopback 模式从 stdin 读取，保证 CI 免交互签名。"""
+    command = [gpg, "--batch", "--yes"]
+    if passphrase is not None:
+        command += ["--pinentry-mode", "loopback", "--passphrase-fd", "0"]
+    command += list(arguments)
+
+    if verbose:
+        console.print(f"[dim]> {subprocess.list2cmdline(command)}[/dim]")
+
+    try:
+        result = subprocess.run(
+            command,
+            input=f"{passphrase}\n" if passphrase is not None else None,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=GPG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise BuildError(
+            f"gpg 超过 {GPG_TIMEOUT_SECONDS} 秒未返回，多半是卡在 pinentry 口令提示上。"
+            "请在 CI 或无人值守构建中设置 SEEKCLAW_GPG_PASSPHRASE 环境变量。"
+        ) from error
+    if result.returncode != 0:
+        console.print(
+            f"\n[bold red]❌ gpg 执行失败 (退出码 {result.returncode}):[/bold red] "
+            f"[dim]{subprocess.list2cmdline(command)}[/dim]"
+        )
+        _print_failure_output(result.stderr, "gpg stderr")
+        _print_failure_output(result.stdout, "gpg stdout")
+        raise BuildError(
+            "GnuPG 签名失败；请检查签名私钥是否存在、口令 (SEEKCLAW_GPG_PASSPHRASE) 是否正确。"
+        )
+
+
+def assert_signing_key_available(gpg: str, key_id: str) -> None:
+    """确认钥匙串中存在签名私钥，避免只落到 gpg 的晦涩报错上。"""
+    result = subprocess.run(
+        [gpg, "--batch", "--list-secret-keys", "--with-colons", key_id],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=GPG_TIMEOUT_SECONDS,
+    )
+    if result.returncode != 0 or "sec:" not in result.stdout:
+        raise BuildError(
+            f"钥匙串中找不到签名私钥 {key_id}。请先导入私钥备份（gpg --import <私钥文件>），"
+            "或用 SEEKCLAW_GPG_KEY_ID 指定其他密钥。"
+        )
+
+
+def sign_linux_release(
+    artifacts: Sequence[Path],
+    output_dir: Path,
+    verbose: bool = False,
+) -> list[Path]:
+    """为 Linux 发布产物生成 SHA256SUMS、逐文件分离签名 (.asc) 与签名公钥。
+
+    返回本次生成或更新的签名相关文件。
+    """
+    existing = [artifact for artifact in artifacts if artifact.is_file()]
+    if not existing:
+        raise BuildError("没有可供签名的 Linux 产物。")
+
+    gpg = find_gpg_executable()
+    if gpg is None:
+        raise BuildError(
+            "未找到 gpg 可执行文件，无法为 Linux 产物签名。请安装 GnuPG"
+            "（Windows 可执行 winget install GnuPG.GnuPG），或用 SEEKCLAW_GPG 指定 gpg 路径。"
+        )
+
+    key_id = resolve_signing_key_id()
+    passphrase = resolve_signing_passphrase()
+    assert_signing_key_available(gpg, key_id)
+    if passphrase is None:
+        console.print(
+            "[yellow]提示: 未设置 SEEKCLAW_GPG_PASSPHRASE，将交由 GnuPG pinentry 询问口令；"
+            "无人值守场景请改用环境变量。[/yellow]"
+        )
+
+    produced: list[Path] = []
+
+    checksum_path = write_sha256sums(existing, output_dir / SHA256SUMS_NAME)
+    produced.append(checksum_path)
+
+    for artifact in existing:
+        signature_path = artifact.with_name(f"{artifact.name}.asc")
+        run_gpg(
+            gpg,
+            [
+                "--armor",
+                "--detach-sign",
+                "--local-user",
+                key_id,
+                "--output",
+                str(signature_path),
+                str(artifact),
+            ],
+            passphrase,
+            verbose,
+        )
+        produced.append(signature_path)
+
+    checksum_signature_path = checksum_path.with_name(f"{checksum_path.name}.asc")
+    run_gpg(
+        gpg,
+        [
+            "--armor",
+            "--detach-sign",
+            "--local-user",
+            key_id,
+            "--output",
+            str(checksum_signature_path),
+            str(checksum_path),
+        ],
+        passphrase,
+        verbose,
+    )
+    produced.append(checksum_signature_path)
+
+    public_key_path = output_dir / SIGNING_PUBLIC_KEY_NAME
+    run_gpg(
+        gpg,
+        ["--armor", "--export", "--output", str(public_key_path), key_id],
+        passphrase,
+        verbose,
+    )
+    produced.append(public_key_path)
+
+    return produced
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build the latest self-contained Runtime and Desktop release for Windows & Linux."
@@ -985,6 +1234,11 @@ def parse_arguments() -> argparse.Namespace:
         "--keep-output",
         action="store_true",
         help="构建结束后保留 staging / electron-builder 输出目录（默认清理）。",
+    )
+    parser.add_argument(
+        "--sign",
+        action="store_true",
+        help="为 Linux 产物额外生成 SHA256SUMS 与 GPG 分离签名（默认关闭）。",
     )
     return parser.parse_args()
 
@@ -1364,6 +1618,7 @@ def main() -> int:
                 portable_tar_output = PUBLISH_DIR / f"SeekClaw-portable-{release_version}-linux-x64.tar.gz"
                 deb_output = PUBLISH_DIR / f"SeekClaw-{release_version}_amd64.deb"
                 rpm_output = PUBLISH_DIR / f"SeekClaw-{release_version}.x86_64.rpm"
+                linux_artifacts: list[Path] = []
 
                 if cur_target in (TARGET_PORTABLE, TARGET_ALL):
                     with console.status("[bold blue]正在生成 Linux 便携版 (.tar.gz)...[/bold blue]", spinner="dots"):
@@ -1372,6 +1627,7 @@ def main() -> int:
                     console.print("[bold green]✓[/bold green] Linux 便携版打包完成")
                     release_outputs.append(portable_output)
                     release_outputs.append(portable_tar_output)
+                    linux_artifacts.append(portable_tar_output)
                     launch_entries.append(portable_output / "seekclaw-desktop")
 
                 if cur_target in (TARGET_DEB, TARGET_ALL):
@@ -1384,6 +1640,7 @@ def main() -> int:
                         )
                     console.print("[bold green]✓[/bold green] Linux DEB 安装包生成完成")
                     release_outputs.append(deb_output)
+                    linux_artifacts.append(deb_output)
 
                 if cur_target in (TARGET_RPM, TARGET_ALL):
                     with console.status("[bold blue]正在生成 RedHat / Fedora / CentOS 安装包 (.rpm)...[/bold blue]", spinner="dots"):
@@ -1395,6 +1652,7 @@ def main() -> int:
                         )
                     console.print("[bold green]✓[/bold green] Linux RPM 安装包生成完成")
                     release_outputs.append(rpm_output)
+                    linux_artifacts.append(rpm_output)
 
                 if cur_target == TARGET_ALL:
                     target_labels.append("Linux: 全量包 (便携版 + DEB + RPM)")
@@ -1404,6 +1662,18 @@ def main() -> int:
                     target_labels.append("Linux: RedHat / Fedora / CentOS 安装包 (.rpm)")
                 else:
                     target_labels.append("Linux: 免安装便携版 (.tar.gz)")
+
+                if linux_artifacts and args.sign:
+                    with console.status(
+                        "[bold blue]正在为 Linux 产物生成校验和与 GPG 签名...[/bold blue]", spinner="dots"
+                    ):
+                        release_outputs.extend(
+                            sign_linux_release(linux_artifacts, PUBLISH_DIR, verbose=args.verbose)
+                        )
+                    console.print(
+                        f"[bold green]✓[/bold green] Linux 产物签名完成 "
+                        f"[dim](密钥 {resolve_signing_key_id()} / gpg {find_gpg_executable()})[/dim]"
+                    )
 
             console.print(f"[bold green]✓[/bold green] {cur_platform.upper()} 应用打包与产物组装完成")
 
@@ -1427,6 +1697,8 @@ def main() -> int:
         table.add_row("发布版本", f"[bold yellow]{release_version}[/bold yellow]")
         for output in release_outputs:
             table.add_row("输出文件/路径", f"[underline cyan]{output}[/underline cyan]")
+        if any(output.name.endswith(".asc") for output in release_outputs):
+            table.add_row("签名密钥", f"[bold yellow]{resolve_signing_key_id()}[/bold yellow]")
         for launch_entry in launch_entries:
             table.add_row("便携启动入口", str(launch_entry))
         table.add_row("总计耗时", f"{elapsed:.1f} 秒")

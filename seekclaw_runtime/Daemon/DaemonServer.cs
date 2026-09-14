@@ -123,7 +123,8 @@ public sealed class DaemonServer : IAsyncDisposable
             runTurn is null ? null : (workspace, session, prompt, ct) => runTurn(session, workspace, prompt, ct));
         _runtimeEvents = _runtime.Events.Subscribe();
         _scheduleEventsTask = BroadcastScheduleEventsAsync(_runtimeEvents.Reader, _shutdown.Token);
-        _admin = new DaemonAdminApi(runtime, globalWorkspace, _fileLocks, _scheduler);
+        _admin = new DaemonAdminApi(runtime, globalWorkspace, _fileLocks, _scheduler, _shutdown.Token);
+        _admin.McpStatusChanged += OnMcpStatusChanged;
     }
 
     /// <summary>Releases the scheduler and shared HTTP clients when the daemon host shuts down.</summary>
@@ -874,6 +875,24 @@ public sealed class DaemonServer : IAsyncDisposable
                 if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
             foreach (var turn in activeTurns.Values) turn.Cancellation.Dispose();
             activeTurns.Clear();
+        }
+    }
+
+    private void OnMcpStatusChanged() => _ = BroadcastMcpStatusAsync();
+
+    /// <summary>
+    /// Tells every connected client that a background MCP reconnect finished, so the
+    /// server list can show real connection results without the client polling.
+    /// </summary>
+    private async Task BroadcastMcpStatusAsync()
+    {
+        try
+        {
+            await BroadcastAsync(0, "mcp.updated", "", _shutdown.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+        {
+            // The daemon is shutting down or a client vanished mid-broadcast.
         }
     }
 

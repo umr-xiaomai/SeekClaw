@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -8,12 +9,22 @@ using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Mcp;
 
-public sealed record McpServerStatus(string Name, string Transport, bool Connected, int ToolCount, string? Error);
+public sealed record McpServerStatus(string Name, string Transport, bool Connected, int ToolCount, string? Error)
+{
+    /// <summary>True while a background reconnect for this server is still running.</summary>
+    public bool Connecting { get; init; }
+}
 
 public interface IMcpManager : IAsyncDisposable
 {
     /// <summary>Connects every enabled MCP server and registers discovered tools and prompts.</summary>
     Task<IReadOnlyList<McpServerStatus>> ConnectAllAsync(WorkspaceInfo workspace, CancellationToken ct);
+
+    /// <summary>
+    /// Marks every configured server as connecting and clears the previous error text,
+    /// so clients can render a pending state while a background reconnect runs.
+    /// </summary>
+    void MarkConnecting(WorkspaceInfo workspace);
 
     IReadOnlyDictionary<string, McpServerConfig> LoadServerConfigs(WorkspaceInfo workspace);
 
@@ -64,6 +75,23 @@ public sealed class McpManager(
         return servers;
     }
 
+    public void MarkConnecting(WorkspaceInfo workspace)
+    {
+        var configs = LoadServerConfigs(workspace);
+        lock (_statusGate)
+        {
+            _status.Clear();
+            foreach (var (name, server) in configs)
+            {
+                _status.Add(new McpServerStatus(
+                    name, server.Transport, Connected: false, ToolCount: 0, server.Enabled ? null : "disabled")
+                {
+                    Connecting = server.Enabled,
+                });
+            }
+        }
+    }
+
     public async Task<IReadOnlyList<McpServerStatus>> ConnectAllAsync(WorkspaceInfo workspace, CancellationToken ct)
     {
         await _connectionGate.WaitAsync(ct).ConfigureAwait(false);
@@ -86,10 +114,16 @@ public sealed class McpManager(
                     var status = await ConnectOneAsync(name, server, ct).ConfigureAwait(false);
                     lock (_statusGate) _status.Add(status);
                 }
-                catch (Exception ex) when (ex is McpException or InvalidOperationException or IOException or HttpRequestException)
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
+                    throw; // the caller cancelled the whole reload
+                }
+                catch (Exception ex)
+                {
+                    // One unreachable server must not abort the reload of the others;
+                    // record the reason so the UI can show why this row is offline.
                     lock (_statusGate)
-                        _status.Add(new McpServerStatus(name, server.Transport, false, 0, ex.Message));
+                        _status.Add(new McpServerStatus(name, server.Transport, false, 0, DescribeConnectionError(ex)));
                 }
             }
 
@@ -157,6 +191,15 @@ public sealed class McpManager(
 
         return new McpServerStatus(name, server.Transport, true, tools.Count, null);
     }
+
+    private static string DescribeConnectionError(Exception error) => error switch
+    {
+        Win32Exception win32 => $"无法启动 MCP 服务器进程：{win32.Message}",
+        OperationCanceledException or TimeoutException => "连接超时",
+        HttpRequestException http => $"连接失败：{http.Message}",
+        McpException mcp => mcp.Message,
+        _ => error.Message,
+    };
 
     public async ValueTask DisposeAsync()
     {

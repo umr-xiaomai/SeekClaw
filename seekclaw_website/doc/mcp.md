@@ -5,15 +5,16 @@ SeekClaw 作为 MCP Client 连接外部 Server，并把发现的工具和 Prompt
 ## 支持范围
 
 - **stdio**：启动本地子进程，通过 stdin / stdout 交换 JSON-RPC 2.0 消息；
-- **SSE**：连接 Server-Sent Events 地址，并使用 Server 声明的 POST 端点发送请求；
+- **HTTP SSE**：以 Server-Sent Events 长连接接收消息，并按 Server 声明的 POST 端点发送请求；
+- **Streamable HTTP**：直接向 `POST /mcp` 发送请求，响应可以是 JSON，也可以是流式 SSE；
 - 自动调用 `tools/list` 并把工具注册到 `IToolRegistry`；
 - 自动调用 `prompts/list`，支持的 Server 可通过 `prompts/get` 提供 Prompt；
 - Client 能列出资源，但当前 `McpManager` 不会把资源自动注入 Agent 上下文；
-- `http` 与 `websocket` transport 名称已保留，但尚未实现。
+- `websocket` 连接方式已保留，但尚未实现。
 
 ## 在 Desktop 中配置
 
-打开“设置 → MCP”，可以添加全局或当前工作区 Server，设置 transport、命令 / URL、参数、环境变量和启用状态，然后“保存并重载”。
+打开“设置 → MCP”，可以添加全局或当前工作区 Server，选择连接方式（stdio / HTTP SSE / Streamable HTTP）、填写命令或 URL、参数、环境变量和启用状态，然后“保存并重载”。
 
 ![Desktop MCP Server 配置](/screenshots/desktop/mcp-servers.png)
 
@@ -44,11 +45,13 @@ Desktop 查询现有配置时只返回环境变量键名，不返回敏感值。
 }
 ```
 
-当前 `McpServerConfig` 不包含 `autoConnect` 或自定义 HTTP `headers` 字段。
+当前 `McpServerConfig` 不包含 `autoConnect` 或自定义 HTTP `headers` 字段：远程 Server 的鉴权信息需要写进 URL，或由 Server 端放行。
 
 ## 连接与重载
 
-Daemon 会先建立 IPC 监听，再在后台串行初始化 MCP。工作区切换、配置保存和 `mcp.reload` 会先注销旧工具与 Prompt、关闭旧连接，再加载新配置，避免残留重复注册。
+Daemon 会先建立 IPC 监听，再在后台串行初始化 MCP。工作区切换、配置保存和 `mcp.reload` 会先注销旧工具与 Prompt、关闭旧连接，再加载新配置，避免残留重复注册。单个 Server 连接失败只会把该行标记为未连接并附上原因，不会中断其余 Server 的加载。远程连接使用 10 秒连接超时，初始化最长等待 30 秒。
+
+保存配置或切换启用状态会立即返回，连接在后台进行：受影响的 Server 先标记为「连接中」，连接结束后 Daemon 向所有已连接客户端广播 `mcp.updated` 事件，Desktop 据此刷新状态，因此启用一个无法访问的 Server 也不会让界面卡住。
 
 CLI 可用于检查：
 

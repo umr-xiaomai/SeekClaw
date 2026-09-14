@@ -17,7 +17,6 @@ import {
   Telescope,
   TerminalSquare,
   Trash2,
-  Workflow,
   X
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -38,13 +37,12 @@ import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import TaskStepList from './components/TaskStepList.vue'
 import { computeTurnTaskSteps, type TaskStep } from './task-planner'
-import WorkflowPanel from './components/WorkflowPanel.vue'
 import { confirmAction } from './confirmation'
 import { finalizeAssistantBubbles } from './conversation-state'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
-import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity, WorkflowKind } from './types'
+import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity } from './types'
 import {
   hydrateMessages,
   makeId,
@@ -98,7 +96,6 @@ type AppPage = 'main' | 'settings' | 'extensions' | 'archived' | 'scheduled' | '
 const sidebarOpen = ref(true)
 const activePage = ref<AppPage>('main')
 const aboutOpen = ref(false)
-const workflowOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 const gitPanelWidth = ref(560)
@@ -658,24 +655,22 @@ const conversationItems = computed<ConversationItem[]>(() => {
   return messages.map((message) => ({ message }))
 })
 
-/** Computes the active turn's high-level task plan (Codex-style) for TaskStepList above Composer. */
+/**
+ * The plan shown above the composer, straight from the Agent's own `update_plan`
+ * calls. Turns where the Agent did not create a plan render nothing.
+ */
 const activeThreadTurnSteps = computed<TaskStep[]>(() => {
   const thread = activeThread.value
   if (!thread) return []
 
   const messages = thread.messages ?? []
   const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
-  const userPrompt = lastUserIndex >= 0 ? messages[lastUserIndex]?.content ?? '' : ''
   const turnAssistants = (lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : messages)
     .filter((m) => m.role === 'assistant')
 
-  if (turnAssistants.length === 0 && !thread.running) return []
-
   return computeTurnTaskSteps({
-    userPrompt,
     turnAssistants,
     isTurnRunning: thread.running === true,
-    currentPhase: thread.phase,
     customPlan: thread.customPlan
   })
 })
@@ -1207,10 +1202,6 @@ watch(theme, applyTheme)
                 @click="openGitPanel('history')">
                 <History :size="18" />
               </button>
-              <button class="icon-button project-tool-button" :class="{ active: workflowOpen }" title="实时执行流程图"
-                @click="workflowOpen = !workflowOpen">
-                <Workflow :size="18" />
-              </button>
               <button class="icon-button" title="任务设置" :disabled="!activeThread" @click="openTaskSettings()">
                 <MoreHorizontal :size="18" />
               </button>
@@ -1300,7 +1291,6 @@ watch(theme, applyTheme)
               :running="activeThread?.running"
               :phase="activeThread?.phase"
             />
-            <WorkflowPanel :workflow="activeThread?.workflow" :open="workflowOpen" @close="workflowOpen = false" />
             <Composer ref="composer" :busy="busy"
               :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
               :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
