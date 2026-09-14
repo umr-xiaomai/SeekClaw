@@ -73,6 +73,198 @@ public sealed class ToolAndAgentTests
     }
 
     [Fact]
+    public async Task TextOnlyTurn_DoesNotForceVision_WhenEarlierTurnHadImages()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "seekclaw-vision-test", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Clear();
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "openai",
+                Kind = "openai",
+                BaseUrl = "https://test.local/v1",
+                Models = [new ModelConfig { Id = "text-only", ContextWindow = 8_000, MaxOutput = 256 }],
+            });
+            store.Config.Profiles["default"].Strategy = "fast";
+            store.Config.Routing.Strategies["fast"] = ["openai/text-only"];
+            store.Config.Routing.Fallback = ["openai/text-only"];
+
+            var capture = new CapturingClientFactory();
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            // An earlier turn already attached an image to this session.
+            var session = runtime.Sessions.Create(globalWorkspace);
+            runtime.Sessions.Append(session, ChatMessage.User(
+                "look at this screenshot",
+                [new ChatImageAttachment("img-1", "screen.png", "image/png", "AQID", 3)]));
+            runtime.Sessions.Append(session, ChatMessage.Assistant("I can see it."));
+
+            // The follow-up is text only, so it must run on the active (non-vision) model
+            // instead of failing to resolve a vision candidate from stale history.
+            var result = await runtime.Agent.RunTurnAsync(
+                session, globalWorkspace, "now answer in text", CancellationToken.None);
+
+            Assert.Null(result.Error);
+            Assert.Equal("done", result.Text);
+            Assert.NotNull(capture.LastRequest);
+            // Earlier attachments are dropped instead of being re-uploaded on every follow-up.
+            Assert.DoesNotContain(capture.LastRequest!.Messages, message => message.Images is { Count: > 0 });
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
+    public async Task TurnWithImages_StillResolvesVisionModel()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "seekclaw-vision-test", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Clear();
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "openai",
+                Kind = "openai",
+                BaseUrl = "https://test.local/v1",
+                Models = [new ModelConfig { Id = "text-only", ContextWindow = 8_000, MaxOutput = 256 }],
+            });
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "visionp",
+                Kind = "openai",
+                BaseUrl = "https://test.local/v1",
+                Models =
+                [
+                    new ModelConfig
+                    {
+                        Id = "v1",
+                        ContextWindow = 8_000,
+                        MaxOutput = 256,
+                        Capabilities = new ModelCapabilities { Vision = true },
+                    },
+                ],
+            });
+            store.Config.Profiles["default"].Strategy = "fast";
+            store.Config.Routing.Strategies["fast"] = ["openai/text-only"];
+            store.Config.Routing.Fallback = ["visionp/v1"];
+
+            var capture = new CapturingClientFactory();
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            // This turn carries an image, so routing must pick the vision-capable candidate
+            // even though it is not the active model.
+            var session = runtime.Sessions.Create(globalWorkspace);
+            var result = await runtime.Agent.RunTurnAsync(
+                session, globalWorkspace, "what is in this image?", CancellationToken.None,
+                images: [new ChatImageAttachment("img-1", "screen.png", "image/png", "AQID", 3)]);
+
+            Assert.Null(result.Error);
+            Assert.NotNull(capture.LastRequest);
+            Assert.Equal("visionp", capture.LastRequest!.Provider.Id);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
+    public async Task SteeredImage_SwitchesTheRunningTurnOntoVision()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "seekclaw-vision-test", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Clear();
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "openai",
+                Kind = "openai",
+                BaseUrl = "https://test.local/v1",
+                Models = [new ModelConfig { Id = "text-only", ContextWindow = 8_000, MaxOutput = 256 }],
+            });
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "visionp",
+                Kind = "openai",
+                BaseUrl = "https://test.local/v1",
+                Models =
+                [
+                    new ModelConfig
+                    {
+                        Id = "v1",
+                        ContextWindow = 8_000,
+                        MaxOutput = 256,
+                        Capabilities = new ModelCapabilities { Vision = true },
+                    },
+                ],
+            });
+            store.Config.Profiles["default"].Strategy = "fast";
+            store.Config.Routing.Strategies["fast"] = ["openai/text-only"];
+            store.Config.Routing.Fallback = ["visionp/v1"];
+
+            var steering = new AgentSteeringQueue();
+            var capture = new SteeringClientFactory(steering);
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            // The turn starts text-only; a screenshot arrives mid-turn as steering guidance
+            // while the first model step is still in flight.
+            var session = runtime.Sessions.Create(globalWorkspace);
+            var result = await runtime.Agent.RunTurnAsync(
+                session, globalWorkspace, "answer this text question", CancellationToken.None,
+                steering: steering);
+
+            Assert.Null(result.Error);
+            Assert.Equal("done", result.Text);
+            Assert.Equal(2, capture.Requests.Count);
+            Assert.Equal("openai", capture.Requests[0].Provider.Id);
+            // The steered image must switch the next step onto vision and ship the attachment;
+            // WithoutImages() would otherwise strip it and the model would never see it.
+            Assert.Equal("visionp", capture.Requests[1].Provider.Id);
+            Assert.Contains(capture.Requests[1].Messages, message => message.Images is { Count: > 0 });
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public void ContextPlanner_KeepsHistoryWithinBudget()
     {
         var model = new ModelConfig { ContextWindow = 4000, MaxOutput = 1000 };
@@ -351,6 +543,52 @@ public sealed class ToolAndAgentTests
             {
                 owner.LastRequest = request;
                 await Task.Yield();
+                yield return new LlmCompleted(new LlmCompletion { Text = "done" });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Answers the first model step with a tool call, steers the running turn with a
+    /// screenshot, then finishes. Records every request so tests can assert routing.
+    /// </summary>
+    private sealed class SteeringClientFactory : ILlmClientFactory
+    {
+        private readonly AgentSteeringQueue _steering;
+
+        public SteeringClientFactory(AgentSteeringQueue steering) => _steering = steering;
+
+        public List<LlmRequest> Requests { get; } = [];
+
+        public ILlmClient GetClient(string kind) => new SteeringClient(this);
+
+        private sealed class SteeringClient(SteeringClientFactory owner) : ILlmClient
+        {
+            public string Kind => "openai";
+
+            public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
+                LlmRequest request, [EnumeratorCancellation] CancellationToken ct)
+            {
+                owner.Requests.Add(request);
+                await Task.Yield();
+
+                if (owner.Requests.Count == 1)
+                {
+                    owner._steering.TryEnqueue(ChatMessage.User(
+                        "also look at this screenshot",
+                        [new ChatImageAttachment("steer-img", "steer.png", "image/png", "AQID", 3)]));
+                    yield return new LlmCompleted(new LlmCompletion
+                    {
+                        ToolCalls =
+                        [
+                            new ToolCallRequest(
+                                "c1", "update_plan",
+                                """{"steps":[{"title":"检查配置","status":"in_progress"}]}"""),
+                        ],
+                    });
+                    yield break;
+                }
+
                 yield return new LlmCompleted(new LlmCompletion { Text = "done" });
             }
         }

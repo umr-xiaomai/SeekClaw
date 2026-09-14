@@ -47,6 +47,8 @@ public sealed partial class Agent(
         var agentConfig = configStore.Config.Agent;
         events.Publish(new TurnStartedEvent(session.Header.Id, userInput));
         var userMessage = ChatMessage.User(userInput, images);
+        // Everything appended from here on belongs to this turn; earlier entries are history.
+        var turnMessageIndex = session.Messages.Count;
         sessionStore.Append(session, userMessage);
 
         var mutated = false;
@@ -74,19 +76,21 @@ public sealed partial class Agent(
                 ct.ThrowIfCancellationRequested();
                 PublishSteering(AppendSteering(session, steering));
 
-                // Only the current user input or turn tool results decide whether this turn needs vision. A
-                // text-only turn must not be forced onto a vision model, and re-uploading
-                // every earlier image would make it slow and force the non-streaming provider path.
-                var hasTurnImages = userMessage.Images is { Count: > 0 }
-                    || session.Messages.Any(message => message.Images is { Count: > 0 });
-                var model = hasTurnImages
+                // Only messages appended by this turn decide whether vision is needed: the current
+                // input, steering guidance that arrives mid-turn (possibly with a screenshot), and
+                // tool results such as capture_screen. Attachments from earlier turns must not drag
+                // a text-only turn onto a vision model or re-upload images on every follow-up.
+                var turnHasImages = session.Messages
+                    .Skip(turnMessageIndex)
+                    .Any(message => message.Images is { Count: > 0 });
+                var model = turnHasImages
                     ? providerManager.BuildCandidates(workspace.Config)
                         .FirstOrDefault(candidate => candidate.Model.Capabilities.Vision)
                       ?? throw new LlmException(
                           "The current routing profile has no model that supports image understanding.",
                           retryable: false)
                     : providerManager.ResolveActive(workspace.Config);
-                var requiresVision = hasTurnImages && model.Model.Capabilities.Vision;
+                var requiresVision = turnHasImages && model.Model.Capabilities.Vision;
                 var tools = ActiveTools(workspace, model, session.Header.NetworkEnabled);
                 var systemPrompt = await ComposeSystemPromptAsync(
                     workspace, model, tools, session.Header.NetworkEnabled, ct).ConfigureAwait(false);
