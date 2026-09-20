@@ -1,19 +1,14 @@
 <script setup lang="ts">
 import {
   Blocks,
-  Check,
-  Copy,
   ExternalLink,
   Folder,
   FolderCog,
-  FolderOpen,
   GitBranch,
   Info,
   LoaderCircle,
   Power,
   RefreshCw,
-  SlidersHorizontal,
-  Terminal,
   Wrench,
   X
 } from '@lucide/vue'
@@ -63,7 +58,6 @@ const mcpServers = ref<McpServerInfo[]>([])
 const skills = ref<SkillInfo[]>([])
 const loadingData = ref(false)
 const error = ref('')
-const copied = ref(false)
 
 async function requestJson<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   const response = await window.seekclaw.daemon.request(method, params)
@@ -121,25 +115,6 @@ const archivedTasksCount = computed(() =>
   (props.threads ?? []).filter((t) => t.projectId === props.project?.id && t.archived).length
 )
 
-async function copyPath(): Promise<void> {
-  if (!props.project?.path) return
-  await navigator.clipboard.writeText(props.project.path)
-  copied.value = true
-  setTimeout(() => { copied.value = false }, 1800)
-}
-
-function openFolder(): void {
-  if (props.project?.path) {
-    void window.seekclaw.showItemInFolder(props.project.path)
-  }
-}
-
-function openTerminal(): void {
-  if (props.project?.path) {
-    void window.seekclaw.project.openTerminal(props.project.path)
-  }
-}
-
 async function toggleMcp(server: McpServerInfo): Promise<void> {
   try {
     mcpServers.value = await requestJson<McpServerInfo[]>('mcp.upsert', {
@@ -172,45 +147,42 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 <template>
   <Transition name="modal-fade">
     <div v-if="open && project" class="modal-backdrop project-properties-backdrop" @mousedown.self="emit('close')">
-      <section class="project-properties-dialog" role="dialog" aria-modal="true" aria-labelledby="project-properties-title">
-        <!-- Header -->
+      <section class="project-properties-dialog" role="dialog" aria-modal="true"
+        aria-labelledby="project-properties-title">
+        <!-- Minimal Header -->
         <header class="properties-header">
-          <div class="header-left">
-            <span class="project-icon-badge">
+          <div class="header-title">
+            <span class="project-icon">
               <Folder :size="20" />
             </span>
-            <div class="header-text">
-              <div class="header-title-row">
-                <h2 id="project-properties-title">{{ project.name }}</h2>
-                <span class="project-tag">项目属性</span>
-              </div>
-              <p class="header-path" :title="project.path">{{ project.path }}</p>
-            </div>
+            <h2 id="project-properties-title">{{ project.name }}</h2>
           </div>
           <div class="header-actions">
             <button type="button" class="icon-button" title="刷新数据" :disabled="loadingData" @click="loadProjectData">
-              <RefreshCw :size="15" :class="{ spin: loadingData }" />
+              <RefreshCw :size="14" :class="{ spin: loadingData }" />
             </button>
             <button type="button" class="icon-button" title="关闭" @click="emit('close')">
-              <X :size="18" />
+              <X :size="16" />
             </button>
           </div>
         </header>
 
-        <!-- Navigation Tabs -->
+        <!-- Clean Underline Tabs -->
         <nav class="properties-tabs">
-          <button type="button" class="tab-item" :class="{ active: activeTab === 'general' }" @click="activeTab = 'general'">
-            <Info :size="15" />
+          <button type="button" class="tab-item" :class="{ active: activeTab === 'general' }"
+            @click="activeTab = 'general'">
+            <Info :size="14" />
             <span>概览属性</span>
           </button>
           <button type="button" class="tab-item" :class="{ active: activeTab === 'mcp' }" @click="activeTab = 'mcp'">
-            <Blocks :size="15" />
-            <span>专属 MCP</span>
+            <Blocks :size="14" />
+            <span>项目MCP</span>
             <span v-if="projectMcpServers.length > 0" class="tab-badge">{{ projectMcpServers.length }}</span>
           </button>
-          <button type="button" class="tab-item" :class="{ active: activeTab === 'skills' }" @click="activeTab = 'skills'">
-            <Wrench :size="15" />
-            <span>专属技能</span>
+          <button type="button" class="tab-item" :class="{ active: activeTab === 'skills' }"
+            @click="activeTab = 'skills'">
+            <Wrench :size="14" />
+            <span>项目Skills</span>
             <span v-if="projectSkills.length > 0" class="tab-badge">{{ projectSkills.length }}</span>
           </button>
         </nav>
@@ -221,107 +193,71 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 
         <!-- Body Content -->
         <div class="properties-body">
-          <!-- 1. Overview Tab -->
-          <template v-if="activeTab === 'general'">
-            <div class="property-block">
-              <div class="block-label">物理路径与快捷操作</div>
-              <div class="path-box">
+          <!-- 1. Minimal Property List -->
+          <div v-if="activeTab === 'general'" class="property-list">
+            <!-- Row: Path -->
+            <div class="property-row">
+              <span class="row-label">项目路径</span>
+              <div class="row-value">
                 <span class="path-text" :title="project.path">{{ project.path }}</span>
-                <div class="path-actions">
-                  <button type="button" class="icon-button compact" :title="copied ? '已复制' : '复制路径'" @click="copyPath">
-                    <Check v-if="copied" :size="14" class="success-icon" />
-                    <Copy v-else :size="14" />
-                  </button>
-                  <button type="button" class="icon-button compact" title="在文件资源管理器中打开" @click="openFolder">
-                    <FolderOpen :size="14" />
-                  </button>
-                  <button type="button" class="icon-button compact" title="在终端中打开" @click="openTerminal">
-                    <Terminal :size="14" />
-                  </button>
-                </div>
               </div>
             </div>
 
-            <div class="property-grid">
-              <!-- Git Status Card -->
-              <div class="property-card">
-                <div class="card-header">
-                  <GitBranch :size="16" class="accent-icon" />
-                  <h4>Git 版本控制</h4>
+            <!-- Row: Git -->
+            <div class="property-row">
+              <span class="row-label">Git 状态</span>
+              <div class="row-value">
+                <div v-if="gitLoading" class="inline-loading">
+                  <LoaderCircle :size="13" class="spin" /> 检查中…
                 </div>
-                <div v-if="gitLoading" class="card-loading">
-                  <LoaderCircle :size="14" class="spin" /> 正在检查 Git 仓库…
+                <div v-else-if="gitOverview?.isRepository" class="git-status-inline">
+                  <span class="branch-pill">
+                    <GitBranch :size="12" />
+                    {{ gitOverview.branch }}
+                  </span>
+                  <span :class="gitOverview.status.length > 0 ? 'status-text warning' : 'status-text clean'">
+                    {{ gitOverview.status.length > 0 ? `${gitOverview.status.length} 个未提交更改` : '工作区整洁' }}
+                  </span>
                 </div>
-                <div v-else-if="gitOverview?.isRepository" class="card-content">
-                  <div class="info-row">
-                    <span class="label">当前分支</span>
-                    <span class="badge branch-badge">{{ gitOverview.branch }}</span>
-                  </div>
-                  <div class="info-row">
-                    <span class="label">工作区状态</span>
-                    <span :class="gitOverview.status.length > 0 ? 'badge warning-badge' : 'badge clean-badge'">
-                      {{ gitOverview.status.length > 0 ? `${gitOverview.status.length} 个未提交更改` : '工作区整洁' }}
-                    </span>
-                  </div>
-                </div>
-                <div v-else class="card-content text-muted">
-                  未检测到 Git 仓库
-                </div>
-              </div>
-
-              <!-- Workspace Stats Card -->
-              <div class="property-card">
-                <div class="card-header">
-                  <SlidersHorizontal :size="16" class="accent-icon" />
-                  <h4>任务统计</h4>
-                </div>
-                <div class="card-content">
-                  <div class="info-row">
-                    <span class="label">活跃任务</span>
-                    <span class="badge">{{ activeTasksCount }} 个</span>
-                  </div>
-                  <div class="info-row">
-                    <span class="label">已归档任务</span>
-                    <span class="badge text-muted">{{ archivedTasksCount }} 个</span>
-                  </div>
-                </div>
+                <span v-else class="text-muted">未检测到 Git 仓库</span>
               </div>
             </div>
 
-            <!-- Workspace Metadata Quick Action -->
-            <div class="property-block">
-              <div class="block-label">工作区元数据配置</div>
-              <div class="metadata-card">
-                <div class="metadata-desc">
-                  <strong>.seekclaw 工作区配置</strong>
-                  <p>在项目根目录生成专属 <code>.seekclaw/</code> 目录、提示词与技能存储路径。</p>
-                </div>
-                <button type="button" class="secondary-button" @click="emit('initializeWorkspace', project)">
-                  <FolderCog :size="15" /> 初始化元数据
+            <!-- Row: Tasks -->
+            <div class="property-row">
+              <span class="row-label">关联任务</span>
+              <div class="row-value">
+                <span class="tasks-inline">
+                  <strong>{{ activeTasksCount }}</strong> 个活跃
+                  <span class="dot-sep">·</span>
+                  <span class="text-muted">{{ archivedTasksCount }} 个已归档</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Row: Environment -->
+            <div class="property-row">
+              <span class="row-label">工作区环境</span>
+              <div class="row-value row-actions-between">
+                <span class="text-muted">.seekclaw/ 专属配置目录</span>
+                <button type="button" class="secondary-button compact" @click="emit('initializeWorkspace', project)">
+                  <FolderCog :size="13" /> 初始化环境
                 </button>
               </div>
             </div>
-          </template>
+          </div>
 
           <!-- 2. Project MCP Tab -->
-          <template v-else-if="activeTab === 'mcp'">
-            <div class="tab-header-row">
-              <div>
-                <h3 class="tab-section-title">项目专属 MCP 服务</h3>
-                <p class="tab-section-desc">仅对当前项目生效的 Model Context Protocol 扩展（由 <code>mcp/servers.json</code> 或项目配置提供）。</p>
-              </div>
+          <div v-else-if="activeTab === 'mcp'" class="tab-content">
+            <div class="tab-toolbar">
+              <span class="tab-desc">仅对当前项目生效的 Model Context Protocol 扩展。</span>
               <button type="button" class="secondary-button compact" @click="navigateToExtensions('mcp')">
-                <ExternalLink :size="13" /> 打开 MCP 管理
+                <ExternalLink :size="12" /> MCP 管理
               </button>
             </div>
 
-            <div v-if="projectMcpServers.length === 0" class="empty-state">
-              <Blocks :size="32" class="empty-icon" />
-              <h4>暂无项目专属 MCP 服务</h4>
-              <p>可在项目根目录创建 <code>mcp/servers.json</code> 或 <code>.seekclaw/config.json</code> 定义项目专用的 MCP 扩展。</p>
-              <button type="button" class="secondary-button" @click="navigateToExtensions('mcp')">
-                配置 MCP 服务
-              </button>
+            <div v-if="projectMcpServers.length === 0" class="empty-hint">
+              暂无项目专属 MCP 服务，可在项目根目录配置 <code>mcp/servers.json</code>。
             </div>
 
             <div v-else class="settings-list">
@@ -330,7 +266,6 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
                   <div class="row-title">
                     <span class="name">{{ server.name }}</span>
                     <span class="transport-tag">{{ server.transport.toUpperCase() }}</span>
-                    <span class="scope-tag workspace">项目专属</span>
                     <span class="status-indicator" :class="{
                       'is-connected': server.connected,
                       'is-error': Boolean(server.error),
@@ -341,43 +276,32 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
                     </span>
                   </div>
                   <div class="row-subtitle">
-                    <span v-if="server.command">命令: <code>{{ server.command }} {{ server.args.join(' ') }}</code></span>
-                    <span v-else-if="server.url">URL: <code>{{ server.url }}</code></span>
-                    <span v-if="server.toolCount > 0" class="tool-count">· 包含 {{ server.toolCount }} 个工具</span>
+                    <span v-if="server.command"><code>{{ server.command }} {{ server.args.join(' ') }}</code></span>
+                    <span v-else-if="server.url"><code>{{ server.url }}</code></span>
+                    <span v-if="server.toolCount > 0" class="text-muted">· {{ server.toolCount }} 个工具</span>
                   </div>
-                  <div v-if="server.error" class="row-error">
-                    {{ server.error }}
-                  </div>
+                  <div v-if="server.error" class="row-error">{{ server.error }}</div>
                 </div>
 
-                <div class="row-actions">
-                  <button type="button" class="icon-button" :class="{ 'is-active': server.enabled }" :title="server.enabled ? '禁用服务' : '启用服务'" @click="toggleMcp(server)">
-                    <Power :size="16" />
-                  </button>
-                </div>
+                <button type="button" class="icon-button" :class="{ 'is-active': server.enabled }"
+                  :title="server.enabled ? '禁用服务' : '启用服务'" @click="toggleMcp(server)">
+                  <Power :size="15" />
+                </button>
               </div>
             </div>
-          </template>
+          </div>
 
           <!-- 3. Project Skills Tab -->
-          <template v-else-if="activeTab === 'skills'">
-            <div class="tab-header-row">
-              <div>
-                <h3 class="tab-section-title">项目专属技能</h3>
-                <p class="tab-section-desc">仅对当前项目生效的提示词技能（位于 <code>&lt;project&gt;/skills/</code> 或 <code>.seekclaw/skills/</code> 目录下）。</p>
-              </div>
+          <div v-else-if="activeTab === 'skills'" class="tab-content">
+            <div class="tab-toolbar">
+              <span class="tab-desc">仅对当前项目生效的提示词技能。</span>
               <button type="button" class="secondary-button compact" @click="navigateToExtensions('skills')">
-                <ExternalLink :size="13" /> 打开技能管理
+                <ExternalLink :size="12" /> 技能管理
               </button>
             </div>
 
-            <div v-if="projectSkills.length === 0" class="empty-state">
-              <Wrench :size="32" class="empty-icon" />
-              <h4>暂无项目专属技能</h4>
-              <p>可在项目根目录创建 <code>skills/&lt;技能名&gt;/prompt.txt</code> 来为当前项目注入专属指令与知识库。</p>
-              <button type="button" class="secondary-button" @click="navigateToExtensions('skills')">
-                管理全部技能
-              </button>
+            <div v-if="projectSkills.length === 0" class="empty-hint">
+              暂无项目专属技能，可在项目根目录创建 <code>skills/&lt;技能名&gt;/prompt.txt</code>。
             </div>
 
             <div v-else class="settings-list">
@@ -386,31 +310,25 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
                   <div class="row-title">
                     <span class="name">{{ skill.name }}</span>
                     <span v-if="skill.version" class="version-tag">v{{ skill.version }}</span>
-                    <span class="scope-tag workspace">项目专属</span>
                   </div>
                   <p v-if="skill.description" class="row-desc">{{ skill.description }}</p>
-                  <div class="row-meta">
-                    <span class="directory-path" :title="skill.directory">{{ skill.directory }}</span>
-                  </div>
+                  <span class="row-meta" :title="skill.directory">{{ skill.directory }}</span>
                 </div>
 
-                <div class="row-actions">
-                  <button type="button" class="icon-button" :class="{ 'is-active': skill.enabled }" :title="skill.enabled ? '禁用技能' : '启用技能'" @click="toggleSkill(skill)">
-                    <Power :size="16" />
-                  </button>
-                </div>
+                <button type="button" class="icon-button" :class="{ 'is-active': skill.enabled }"
+                  :title="skill.enabled ? '禁用技能' : '启用技能'" @click="toggleSkill(skill)">
+                  <Power :size="15" />
+                </button>
               </div>
             </div>
-          </template>
+          </div>
         </div>
 
         <!-- Footer -->
         <footer class="properties-footer">
-          <div class="footer-actions">
-            <button type="button" class="secondary-button primary-action" @click="emit('close')">
-              关闭
-            </button>
-          </div>
+          <button type="button" class="secondary-button primary-action" @click="emit('close')">
+            关闭
+          </button>
         </footer>
       </section>
     </div>
@@ -430,83 +348,45 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 }
 
 .project-properties-dialog {
-  width: min(100%, 680px);
-  max-height: 85vh;
+  width: min(100%, 580px);
+  max-height: 80vh;
   display: flex;
   flex-direction: column;
   background: var(--surface-raised, #ffffff);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22), 0 2px 10px rgba(0, 0, 0, 0.08);
   overflow: hidden;
 }
 
+/* ================= Header ================= */
 .properties-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   padding: 16px 20px 14px;
   background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
 }
 
-.header-left {
+.header-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
-.project-icon-badge {
+.project-icon {
   display: grid;
   place-items: center;
-  flex: none;
-  width: 40px;
-  height: 40px;
-  background: var(--accent-soft);
   color: var(--accent);
-  border-radius: 10px;
 }
 
-.header-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.header-title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.header-title-row h2 {
+.header-title h2 {
   margin: 0;
   font-size: 16px;
-  font-weight: 650;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-tag {
-  font-size: 11px;
   font-weight: 600;
-  padding: 1px 7px;
-  border-radius: 4px;
-  background: var(--surface-hover);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-
-.header-path {
-  margin: 0;
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -515,93 +395,125 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex: none;
 }
 
+/* ================= Tabs ================= */
 .properties-tabs {
   display: flex;
-  gap: 6px;
-  padding: 8px 18px;
-  background: var(--sidebar, var(--surface-hover));
+  gap: 18px;
+  padding: 0 20px;
+  background: var(--surface-raised);
   border-bottom: 1px solid var(--border);
 }
 
 .tab-item {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
+  padding: 8px 2px 10px;
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 500;
   color: var(--text-secondary);
   background: transparent;
   border: none;
-  border-radius: 8px;
   cursor: pointer;
-  transition: all 140ms ease;
+  transition: color 140ms ease;
 }
 
 .tab-item:hover {
   color: var(--text);
-  background: var(--surface-hover);
 }
 
 .tab-item.active {
   color: var(--accent);
-  background: var(--surface-raised);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+}
+
+.tab-item.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
 }
 
 .tab-badge {
   display: inline-block;
-  padding: 1px 6px;
-  font-size: 11px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
   background: var(--accent-soft);
   color: var(--accent);
   border-radius: 999px;
+  line-height: 1.4;
+}
+
+/* ================= Body ================= */
+.properties-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--surface-raised);
 }
 
 .properties-error {
-  margin: 12px 20px 0;
+  margin: 10px 20px 0;
   padding: 8px 12px;
   font-size: 12px;
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
-.properties-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 18px 20px;
+/* ================= Minimal Property Rows ================= */
+.property-list {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  background: var(--surface-raised);
 }
 
-.property-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.block-label {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.path-box {
+.property-row {
   display: flex;
   align-items: center;
+  min-height: 48px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.property-row:last-child {
+  border-bottom: none;
+}
+
+.row-label {
+  width: 96px;
+  flex: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.row-value {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.row-actions-between {
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 12px;
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: 9px;
+}
+
+.path-value {
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .path-text {
@@ -613,197 +525,99 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   white-space: nowrap;
 }
 
-.path-actions {
+/* Git inline */
+.git-status-inline {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex: none;
-}
-
-.success-icon {
-  color: #10b981;
-}
-
-.property-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.property-card {
-  padding: 14px;
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
   gap: 10px;
 }
 
-.card-header {
-  display: flex;
+.branch-pill {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-}
-
-.card-header h4 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.accent-icon {
+  gap: 4px;
+  padding: 1px 7px;
+  font-size: 11.5px;
+  font-weight: 550;
+  border-radius: 4px;
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
-.card-content {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.status-text {
   font-size: 12.5px;
 }
 
-.card-loading {
+.status-text.clean {
+  color: #10b981;
+}
+
+.status-text.warning {
+  color: #f59e0b;
+}
+
+.inline-loading {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-muted);
   font-size: 12px;
-}
-
-.info-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.info-row .label {
   color: var(--text-muted);
 }
 
-.badge {
-  padding: 2px 8px;
-  font-size: 11.5px;
-  font-weight: 550;
-  border-radius: 6px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
+.text-muted {
+  color: var(--text-muted);
+  font-size: 12.5px;
 }
 
-.branch-badge {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.clean-badge {
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.12);
-  border-color: rgba(16, 185, 129, 0.25);
-}
-
-.warning-badge {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.25);
-}
-
-.metadata-card {
+/* Tasks inline */
+.tasks-inline {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 14px;
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  gap: 4px;
+  font-size: 13px;
 }
 
-.metadata-desc strong {
-  font-size: 13px;
+.tasks-inline strong {
+  font-weight: 600;
   color: var(--text);
 }
 
-.metadata-desc p {
-  margin: 4px 0 0;
-  font-size: 12px;
+.dot-sep {
+  margin: 0 4px;
   color: var(--text-muted);
 }
 
-.metadata-desc code {
-  font-family: var(--font-mono, monospace);
-  font-size: 11.5px;
-  background: var(--surface-raised);
-  padding: 1px 4px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
+/* ================= Tab Content (MCP / Skills) ================= */
+.tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.tab-header-row {
+.tab-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 4px;
 }
 
-.tab-section-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.tab-section-desc {
-  margin: 2px 0 0;
+.tab-desc {
   font-size: 12px;
   color: var(--text-muted);
 }
 
-.tab-section-desc code {
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  background: var(--surface-hover);
-  padding: 1px 4px;
-  border-radius: 4px;
-}
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+.empty-hint {
+  padding: 24px 12px;
   text-align: center;
-  padding: 32px 16px;
-  gap: 10px;
-  border: 1px dashed var(--border);
-  border-radius: 12px;
+  font-size: 12.5px;
+  color: var(--text-muted);
   background: var(--surface-hover);
+  border-radius: 8px;
 }
 
-.empty-icon {
-  color: var(--text-muted);
-  opacity: 0.6;
-}
-
-.empty-state h4 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.empty-state p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-muted);
-  max-width: 420px;
-}
-
-.empty-state p code {
+.empty-hint code {
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: 11.5px;
   background: var(--surface-raised);
   padding: 1px 4px;
   border-radius: 4px;
@@ -812,7 +626,7 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 .settings-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .settings-list-row {
@@ -820,16 +634,15 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 
 .row-main {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   flex: 1;
 }
@@ -838,45 +651,35 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .row-title .name {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
 
-.transport-tag, .version-tag {
-  font-size: 10.5px;
+.transport-tag,
+.version-tag {
+  font-size: 10px;
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: 1px 5px;
+  border-radius: 3px;
   background: var(--surface-raised);
   color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-
-.scope-tag.workspace {
-  font-size: 10.5px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 
 .status-indicator {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   font-size: 11px;
   color: var(--text-muted);
 }
 
 .status-indicator .dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--text-muted);
 }
@@ -884,6 +687,7 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 .status-indicator.is-connected {
   color: #10b981;
 }
+
 .status-indicator.is-connected .dot {
   background: #10b981;
 }
@@ -891,12 +695,13 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 .status-indicator.is-error {
   color: var(--danger);
 }
+
 .status-indicator.is-error .dot {
   background: var(--danger);
 }
 
 .row-subtitle {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -905,14 +710,11 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 
 .row-subtitle code {
   font-family: var(--font-mono, monospace);
-  font-size: 11.5px;
-  background: var(--surface-raised);
-  padding: 1px 4px;
-  border-radius: 4px;
+  font-size: 11px;
 }
 
 .row-desc {
-  margin: 2px 0 0;
+  margin: 0;
   font-size: 12px;
   color: var(--text-secondary);
 }
@@ -927,28 +729,17 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 }
 
 .row-error {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--danger);
-  margin-top: 2px;
 }
 
-.row-actions button.is-active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
+/* ================= Footer ================= */
 .properties-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 12px 20px;
-  background: var(--sidebar, var(--surface-hover));
+  padding: 10px 20px;
+  background: var(--surface-raised);
   border-top: 1px solid var(--border);
-}
-
-.footer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 </style>
