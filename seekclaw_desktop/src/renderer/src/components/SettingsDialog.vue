@@ -8,6 +8,7 @@ import {
   Circle,
   FolderOpen,
   Gauge,
+  GripVertical,
   KeyRound,
   LoaderCircle,
   Moon,
@@ -33,8 +34,8 @@ import {
   type McpScope,
   type McpServerSummary
 } from '../mcp-form'
-import ModelEditorDialog from './ModelEditorDialog.vue'
 import McpEditorDialog from './McpEditorDialog.vue'
+import type { ModelDetailConfig } from './ModelConfigModal.vue'
 import ProviderEditorDialog from './ProviderEditorDialog.vue'
 import SelectMenu from './SelectMenu.vue'
 
@@ -49,6 +50,7 @@ interface ProviderInfo {
   apiKey?: string
   apiKeyConfigured: boolean
   models: string[]
+  modelDetails?: ModelDetailConfig[]
   enabled: boolean
   priority: number
   timeoutSeconds: number
@@ -65,6 +67,7 @@ interface ProviderFormValue {
   modelListUrl: string
   apiKey: string
   models: string
+  modelDetails?: ModelDetailConfig[]
   enabled: boolean
   priority: number
   timeoutSeconds: number
@@ -83,15 +86,6 @@ interface ModelInfo {
   maxOutput: number
   tags: string[]
   capabilities: Record<string, boolean | string>
-}
-
-interface ModelFormValue {
-  provider: string
-  id: string
-  alias: string
-  contextWindow: number
-  maxOutput: number
-  vision: boolean
 }
 
 type McpServerInfo = McpServerSummary
@@ -159,21 +153,16 @@ const skills = ref<SkillInfo[]>([])
 const checks = ref<HealthCheck[]>([])
 const usage = ref<UsageInfo[]>([])
 const selectedModel = ref('')
-const modelQuery = ref('')
-const modelEditorOpen = ref(false)
 const providerEditorOpen = ref(false)
 const mcpEditorOpen = ref(false)
 const editingMcpServer = ref<McpServerSummary | null>(null)
 const mcpDialogError = ref('')
 const editingProviderId = ref<string | null>(null)
 
-const providerForm = reactive({
-  id: '', name: '', kind: 'openai' as 'openai' | 'anthropic', baseUrl: '',
-  apiKey: '', models: '', enabled: true, priority: 0,
+const providerForm = reactive<ProviderFormValue>({
+  id: '', name: '', kind: 'openai', baseUrl: '',
+  apiKey: '', models: '', modelDetails: [], enabled: true, priority: 0,
   modelListUrl: '', timeoutSeconds: 120, proxy: '', promptCaching: true
-})
-const modelForm = reactive<ModelFormValue>({
-  provider: '', id: '', alias: '', contextWindow: 128000, maxOutput: 8192, vision: false
 })
 
 const activeModel = computed(() => models.value.find((model) => model.active))
@@ -183,14 +172,6 @@ const modelOptions = computed(() => models.value.map((model) => ({
   description: `${model.contextWindow.toLocaleString()} 上下文 · ${model.provider}`,
   disabled: !model.providerEnabled
 })))
-const filteredModels = computed(() => {
-  const query = modelQuery.value.trim().toLocaleLowerCase()
-  if (!query) return models.value
-  return models.value.filter((model) =>
-    model.ref.toLocaleLowerCase().includes(query)
-    || model.alias?.toLocaleLowerCase().includes(query)
-    || model.tags.some((tag) => tag.toLocaleLowerCase().includes(query)))
-})
 const totalUsage = computed(() => usage.value.reduce((total, item) => ({
   calls: total.calls + item.calls,
   tokens: total.tokens + promptInputTokens(item) + item.outputTokens,
@@ -369,7 +350,7 @@ function newProvider(): void {
   editingProviderId.value = null
   Object.assign(providerForm, {
     id: '', name: '', kind: 'openai', baseUrl: '', apiKey: '',
-    models: '', enabled: true, priority: 0, modelListUrl: '', timeoutSeconds: 120, proxy: '', promptCaching: true
+    models: '', modelDetails: [], enabled: true, priority: 0, modelListUrl: '', timeoutSeconds: 120, proxy: '', promptCaching: true
   })
   providerEditorOpen.value = true
 }
@@ -385,6 +366,7 @@ function editProvider(provider: ProviderInfo): void {
     modelListUrl: provider.modelListUrl ?? '',
     apiKey: provider.apiKey ?? '',
     models: provider.models.join('\n'),
+    modelDetails: provider.modelDetails ? provider.modelDetails.map((m) => ({ ...m })) : [],
     enabled: provider.enabled,
     priority: provider.priority,
     timeoutSeconds: provider.timeoutSeconds,
@@ -400,7 +382,8 @@ async function saveProvider(value: ProviderFormValue): Promise<void> {
     const { apiKey, ...provider } = value
     const parameters: Record<string, unknown> = {
       ...provider,
-      models: value.models.split(/\r?\n|,/).map((model) => model.trim()).filter(Boolean)
+      models: value.models.split(/\r?\n|,/).map((model) => model.trim()).filter(Boolean),
+      modelDetails: value.modelDetails ?? []
     }
     if (apiKey.trim()) parameters.apiKey = apiKey.trim()
     else if (editingProviderId.value) parameters.clearApiKey = true
@@ -421,41 +404,6 @@ async function fetchProviderModels(provider: ProviderInfo): Promise<void> {
     const ids = await requestJson<string[]>('provider.models.fetch', { id: provider.id })
     notice.value = `${provider.id} 已获取 ${ids.length} 个模型`
     await loadModels()
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    endAction()
-  }
-}
-
-function editModel(model: ModelInfo): void {
-  error.value = ''
-  Object.assign(modelForm, {
-    provider: model.provider,
-    id: model.id,
-    alias: model.alias ?? '',
-    contextWindow: model.contextWindow,
-    maxOutput: model.maxOutput,
-    vision: model.capabilities.vision === true
-  })
-  modelEditorOpen.value = true
-}
-
-async function saveModel(value?: ModelFormValue): Promise<void> {
-  const payload = value ?? modelForm
-  beginAction('model.update')
-  try {
-    await window.seekclaw.daemon.request('model.update', {
-      provider: payload.provider,
-      id: payload.id,
-      alias: payload.alias.trim() || null,
-      contextWindow: Number(payload.contextWindow),
-      maxOutput: Number(payload.maxOutput),
-      vision: payload.vision
-    })
-    modelEditorOpen.value = false
-    await loadModels()
-    emit('runtimeChanged')
   } catch (reason) {
     fail(reason)
   } finally {
@@ -535,16 +483,6 @@ async function testModel(): Promise<void> {
   } finally {
     endAction()
   }
-}
-
-async function useModelReference(reference: string): Promise<void> {
-  selectedModel.value = reference
-  await switchModel()
-}
-
-async function testModelReference(reference: string): Promise<void> {
-  selectedModel.value = reference
-  await testModel()
 }
 
 // Saving or toggling an MCP server reconnects every enabled server, so allow
@@ -840,41 +778,48 @@ onBeforeUnmount(() => {
               </div>
             </section>
 
-            <section class="settings-list" aria-label="提供商列表">
+            <section class="provider-switch-list" aria-label="提供商列表">
               <div v-if="providers.length === 0" class="empty-settings">尚未配置提供商</div>
-              <div v-for="provider in providers" :key="provider.id" class="settings-list-row">
-                <span class="status-dot" :class="{ online: provider.enabled }" />
-                <div class="list-main">
-                  <div><strong>{{ provider.name }}</strong><span v-if="provider.active" class="inline-badge">活动</span></div>
-                  <small>{{ provider.kind }} · {{ provider.models.length }} 个模型 · {{ provider.baseUrl }}</small>
+              <div
+                v-for="provider in providers"
+                :key="provider.id"
+                class="provider-switch-card"
+                :class="{ active: provider.active, disabled: !provider.enabled }"
+                @click="!provider.active && useProvider(provider)"
+              >
+                <div class="provider-card-left">
+                  <GripVertical class="provider-drag-handle" :size="15" />
+                  <div class="provider-card-content">
+                    <div class="provider-card-header">
+                      <strong class="provider-card-title">{{ provider.name }}</strong>
+                      <span v-if="provider.active" class="inline-badge active-provider-badge">活动</span>
+                      <span v-if="!provider.enabled" class="inline-badge disabled-provider-badge">已禁用</span>
+                    </div>
+                    <div class="provider-card-sub">
+                      <span class="provider-url" :title="provider.baseUrl">{{ provider.baseUrl }}</span>
+                      <span class="provider-bullet">·</span>
+                      <span class="provider-meta-tag">{{ provider.models.length }} 个模型</span>
+                      <span class="provider-bullet">·</span>
+                      <span class="provider-meta-tag">{{ provider.kind === 'anthropic' ? 'Anthropic' : 'OpenAI' }}</span>
+                    </div>
+                  </div>
                 </div>
-                <KeyRound :size="15" :class="provider.apiKeyConfigured ? 'key-set' : 'key-missing'" />
-                <button class="secondary-button compact-button" :disabled="action === `provider.test:${provider.id}`" @click="testProvider(provider)">测试</button>
-                <button class="secondary-button compact-button" :disabled="action === `provider.models.fetch:${provider.id}`" @click="fetchProviderModels(provider)">
-                  <RefreshCw :size="13" :class="{ spin: action === `provider.models.fetch:${provider.id}` }" /> 获取模型
-                </button>
-                <button v-if="!provider.active" class="secondary-button compact-button" @click="useProvider(provider)">使用</button>
-                <button class="icon-button compact" title="编辑" @click="editProvider(provider)"><Settings2 :size="15" /></button>
-                <button class="icon-button compact danger-icon" title="删除" @click="removeProvider(provider)"><Trash2 :size="15" /></button>
-              </div>
-            </section>
 
-            <div class="catalog-heading">
-              <div><strong>模型目录</strong><small>{{ filteredModels.length }} / {{ models.length }}</small></div>
-              <label class="settings-search"><Search :size="15" /><input v-model="modelQuery" placeholder="搜索模型、别名或标签" /></label>
-            </div>
-
-            <section class="settings-list model-catalog" aria-label="模型目录">
-              <div v-if="filteredModels.length === 0" class="empty-settings">没有匹配的模型</div>
-              <div v-for="model in filteredModels" :key="model.ref" class="settings-list-row">
-                <span class="status-dot" :class="{ online: model.providerEnabled }" />
-                <div class="list-main">
-                  <div><strong>{{ model.ref }}</strong><span v-if="model.active" class="inline-badge">活动</span><span v-if="model.alias" class="version-text">{{ model.alias }}</span></div>
-                  <small>{{ model.contextWindow.toLocaleString() }} Tokens 上下文 · {{ model.maxOutput.toLocaleString() }} Tokens 输出 · {{ Object.entries(model.capabilities).filter(([, enabled]) => enabled).map(([name]) => name).join(', ') }}</small>
+                <div class="provider-card-actions" @click.stop>
+                  <span class="key-indicator" :title="provider.apiKeyConfigured ? '已配置 API Key' : '未配置 API Key'">
+                    <KeyRound :size="15" :class="provider.apiKeyConfigured ? 'key-set' : 'key-missing'" />
+                  </span>
+                  <button class="secondary-button compact-button" :disabled="action === `provider.test:${provider.id}`" @click="testProvider(provider)">
+                    <LoaderCircle v-if="action === `provider.test:${provider.id}`" class="spin" :size="13" />
+                    <template v-else>测试</template>
+                  </button>
+                  <button class="secondary-button compact-button" :disabled="action === `provider.models.fetch:${provider.id}`" @click="fetchProviderModels(provider)">
+                    <RefreshCw :size="13" :class="{ spin: action === `provider.models.fetch:${provider.id}` }" /> 获取模型
+                  </button>
+                  <button v-if="!provider.active" class="secondary-button compact-button primary-action" @click="useProvider(provider)">使用</button>
+                  <button class="icon-button compact" title="编辑提供商与模型" @click="editProvider(provider)"><Settings2 :size="15" /></button>
+                  <button class="icon-button compact danger-icon" title="删除提供商" @click="removeProvider(provider)"><Trash2 :size="15" /></button>
                 </div>
-                <button class="secondary-button compact-button" @click="testModelReference(model.ref)">测试</button>
-                <button class="icon-button compact" title="编辑模型能力与上下文" @click="editModel(model)"><Settings2 :size="15" /></button>
-                <button v-if="!model.active && model.providerEnabled" class="secondary-button compact-button" @click="useModelReference(model.ref)">使用</button>
               </div>
             </section>
           </template>
@@ -997,13 +942,5 @@ onBeforeUnmount(() => {
     :error="providerEditorOpen ? error : ''"
     @close="providerEditorOpen = false"
     @save="saveProvider"
-  />
-  <ModelEditorDialog
-    :open="modelEditorOpen"
-    :value="modelForm"
-    :saving="action === 'model.update'"
-    :error="modelEditorOpen ? error : ''"
-    @close="modelEditorOpen = false"
-    @save="saveModel"
   />
 </template>

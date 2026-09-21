@@ -2409,7 +2409,11 @@ select:focus-visible {
 .modal-fade-enter-active .model-editor-dialog,
 .modal-fade-leave-active .model-editor-dialog,
 .modal-fade-enter-active .mcp-editor-dialog,
-.modal-fade-leave-active .mcp-editor-dialog {
+.modal-fade-leave-active .mcp-editor-dialog,
+.modal-fade-enter-active .config-anomaly-dialog,
+.modal-fade-leave-active .config-anomaly-dialog,
+.modal-fade-enter-active .model-config-dialog,
+.modal-fade-leave-active .model-config-dialog {
   transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
 }
 
@@ -2439,13 +2443,21 @@ select:focus-visible {
 .modal-fade-enter-from .model-editor-dialog,
 .modal-fade-leave-to .model-editor-dialog,
 .modal-fade-enter-from .mcp-editor-dialog,
-.modal-fade-leave-to .mcp-editor-dialog {
+.modal-fade-leave-to .mcp-editor-dialog,
+.modal-fade-enter-from .config-anomaly-dialog,
+.modal-fade-leave-to .config-anomaly-dialog,
+.modal-fade-enter-from .model-config-dialog,
+.modal-fade-leave-to .model-config-dialog {
   opacity: 0;
   transform: translateY(10px) scale(.985);
 }
 
+.model-config-backdrop {
+  z-index: 210;
+}
+
 .confirmation-backdrop {
-  z-index: 180;
+  z-index: 250;
 }
 
 .confirmation-dialog {
@@ -3350,7 +3362,8 @@ select:focus-visible {
   font-size: 12px;
 }
 
-.provider-form-grid>label.span-2 {
+.provider-form-grid>label.span-2,
+.provider-form-grid>.span-2 {
   grid-column: 1 / -1;
 }
 
@@ -4447,7 +4460,8 @@ select:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .provider-form-grid>label.span-2 {
+  .provider-form-grid>label.span-2,
+  .provider-form-grid>.span-2 {
     grid-column: auto;
   }
 
@@ -4579,3 +4593,409 @@ select:focus-visible {
   color: var(--text-muted);
   font-size: 11px;
 }
+
+/* ==========================================================================
+   CC Switch Provider Cards
+   ========================================================================== */
+
+.provider-switch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.provider-switch-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 180ms ease;
+  user-select: none;
+}
+
+.provider-switch-card:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.provider-switch-card.active {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-raised));
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.provider-switch-card.disabled {
+  opacity: 0.65;
+}
+
+.provider-card-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.provider-drag-handle {
+  color: var(--text-muted);
+  opacity: 0.4;
+  cursor: grab;
+  flex-shrink: 0;
+  transition: opacity 150ms ease;
+}
+
+.provider-switch-card:hover .provider-drag-handle {
+  opacity: 0.8;
+}
+
+.provider-card-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.provider-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-provider-badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.disabled-provider-badge {
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.provider-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.provider-bullet {
+  opacity: 0.5;
+}
+
+.provider-meta-tag {
+  flex-shrink: 0;
+}
+
+.provider-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.key-indicator {
+  display: grid;
+  place-items: center;
+  margin-right: 2px;
+}
+
+/* ==========================================================================
+   Provider Editor Models List / Table
+   ========================================================================== */
+
+.provider-models-block {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.provider-models-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.models-count-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+.model-add-bar {
+  display: flex;
+  gap: 8px;
+}
+
+.model-add-input {
+  flex: 1;
+}
+
+.add-model-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.models-empty-tip {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.provider-models-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 4px;
+}
+
+.model-table-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--surface-raised);
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition: all 120ms ease;
+}
+
+.model-table-row:hover {
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+
+.model-row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.model-row-id {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.vision-badge {
+  background: color-mix(in srgb, #0ea5e9 15%, transparent);
+  color: #0284c7;
+  font-weight: 500;
+}
+
+.alias-badge {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.context-badge {
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.model-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Config Anomaly Dialog
+   ========================================================================== */
+
+.config-anomaly-backdrop {
+  z-index: 260;
+}
+
+.config-anomaly-dialog {
+  width: min(520px, 94vw);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.config-anomaly-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.config-anomaly-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: #ea580c;
+  background: color-mix(in srgb, #ea580c 12%, transparent);
+  flex-shrink: 0;
+}
+
+.config-anomaly-title-area h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.config-anomaly-title-area p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.config-anomaly-body {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.anomaly-notice-box {
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.anomaly-notice-box p {
+  margin: 0;
+}
+
+.anomaly-error-detail {
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.anomaly-error-detail .detail-label {
+  color: var(--text-muted);
+  margin-right: 6px;
+}
+
+.anomaly-error-detail code {
+  color: var(--danger);
+  word-break: break-all;
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.anomaly-file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.file-row .file-label {
+  flex-shrink: 0;
+}
+
+.file-row .file-path {
+  font-family: "Cascadia Code", Consolas, monospace;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-row {
+  color: var(--accent);
+}
+
+.backup-row .file-path {
+  color: var(--accent);
+}
+
+.config-anomaly-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+

@@ -26,6 +26,7 @@ import AboutDialog from './components/AboutDialog.vue'
 import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
 import ScheduledTasksDialog from './components/ScheduledTasksDialog.vue'
 import Composer from './components/Composer.vue'
+import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
@@ -111,6 +112,13 @@ const daemonState = ref<DaemonState>({ connected: false, endpoint: '' })
 const reconnecting = ref(false)
 const reconnectAttempt = ref(0)
 const reconnectPrompt = ref<{ startup: boolean; error?: string } | null>(null)
+const configAnomaly = ref<{
+  hasAnomaly: boolean
+  detail?: string
+  configFile?: string
+  backupFile?: string
+} | null>(null)
+const rebuildingConfig = ref(false)
 const projects = ref<ProjectItem[]>([])
 const threads = ref<ThreadItem[]>([])
 const activeThreadId = ref('')
@@ -385,13 +393,29 @@ async function migrateImplicitDocumentsProject(): Promise<void> {
 async function loadRuntimeState(): Promise<void> {
   try {
     await migrateStoredProjects()
-    const [projectResponse, modelResponse, workspaceResponse, modeResponse, catalogResponse] = await Promise.all([
+    const [projectResponse, modelResponse, workspaceResponse, modeResponse, catalogResponse, configStatusResponse] = await Promise.all([
       window.seekclaw.daemon.request('project.list'),
       window.seekclaw.daemon.request('model.list'),
       window.seekclaw.daemon.request('workspace.get'),
       window.seekclaw.daemon.request('agent.mode.get'),
-      window.seekclaw.daemon.request('model.catalog')
+      window.seekclaw.daemon.request('model.catalog'),
+      window.seekclaw.daemon.request('config.status').catch(() => null)
     ])
+    if (configStatusResponse) {
+      try {
+        const status = JSON.parse(configStatusResponse.data) as {
+          hasAnomaly: boolean
+          detail?: string
+          configFile?: string
+          backupFile?: string
+        }
+        if (status.hasAnomaly) {
+          configAnomaly.value = status
+        } else {
+          configAnomaly.value = null
+        }
+      } catch { /* ignore parse error */ }
+    }
     projects.value = (JSON.parse(projectResponse.data) as RuntimeProject[]).map((project) => ({
       id: project.id,
       name: project.name || pathName(project.path),
@@ -430,6 +454,19 @@ async function loadRuntimeState(): Promise<void> {
   } catch {
     models.value = []
     modelCatalog.value = []
+  }
+}
+
+async function handleRebuildConfig(): Promise<void> {
+  rebuildingConfig.value = true
+  try {
+    await window.seekclaw.daemon.request('config.rebuild')
+    configAnomaly.value = null
+    await loadRuntimeState()
+  } catch (err) {
+    console.error('Failed to rebuild config:', err)
+  } finally {
+    rebuildingConfig.value = false
   }
 }
 
@@ -1138,8 +1175,7 @@ watch(theme, applyTheme)
       @open-workspace="openWorkspace" @show-project="showActiveProject" @open-settings="openSettings('general')"
       @focus-composer="composer?.focus()" @open-terminal="openProjectTerminal" @open-git-changes="openGitPanel('diff')"
       @open-git-history="openGitPanel('history')" @open-diagnostics="openSettings('diagnostics')"
-      @open-dev-tools="openDevTools"
-      @open-about="aboutOpen = true" />
+      @open-dev-tools="openDevTools" @open-about="aboutOpen = true" />
 
     <div class="app-body" v-show="activePage === 'main'" :class="{ 'sidebar-collapsed': !sidebarOpen }">
       <Transition name="sidebar-slide">
@@ -1148,8 +1184,7 @@ watch(theme, applyTheme)
           @open-workspace="openWorkspace" @select-thread="selectThread" @task-settings="openTaskSettings"
           @archive-task="archiveTask" @restore-task="restoreTask" @delete-task="deleteTask"
           @delete-project="deleteProject" @archive-project-tasks="archiveProjectTasks"
-          @initialize-project-workspace="initializeProjectWorkspace"
-          @open-project-properties="openProjectProperties"
+          @initialize-project-workspace="initializeProjectWorkspace" @open-project-properties="openProjectProperties"
           @delete-project-tasks="deleteProjectTasks" @archive-global-tasks="archiveGlobalTasks"
           @delete-global-tasks="deleteGlobalTasks" @open-archived="openArchivedTasks"
           @open-scheduled-tasks="openScheduledTasks" @open-extensions="openExtensions('mcp')"
@@ -1163,8 +1198,6 @@ watch(theme, applyTheme)
         <main class="workspace-main" v-show="activePage === 'main'">
           <header class="conversation-header">
             <div class="conversation-title">
-              <Globe2 v-if="globalTaskActive" :size="20" />
-              <Folder v-else :size="20" />
               <strong>{{ conversationTitle }}</strong>
               <!--  <small v-if="activeThread">{{ activeProject?.name || '任务' }}</small>-->
               <span v-if="activeThread?.running && activeThread?.phase" class="task-phase-chip">
@@ -1286,18 +1319,15 @@ watch(theme, applyTheme)
               </div>
             </div>
 
-            <TaskStepList
-              :steps="activeThreadTurnSteps"
-              :running="activeThread?.running"
-              :phase="activeThread?.phase"
-            />
+            <TaskStepList :steps="activeThreadTurnSteps" :running="activeThread?.running"
+              :phase="activeThread?.phase" />
             <Composer ref="composer" :busy="busy"
               :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
               :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
               :reasoning-level="activeReasoningLevel" :network-enabled="activeThread?.networkEnabled ?? true"
-              :optimize-prompt="optimizePrompt"
-              @send="sendMessage" @stop="stopTurn" @change-model="changeModel" @change-mode="changeMode"
-              @change-reasoning-level="changeReasoningLevel" @change-network="changeNetwork" />
+              :optimize-prompt="optimizePrompt" @send="sendMessage" @stop="stopTurn" @change-model="changeModel"
+              @change-mode="changeMode" @change-reasoning-level="changeReasoningLevel"
+              @change-network="changeNetwork" />
             <p class="composer-caption">{{ composerCaption }}</p>
           </footer>
         </main>
@@ -1332,13 +1362,16 @@ watch(theme, applyTheme)
       @delete="settingsThread && deleteTask(settingsThread)" />
 
     <ProjectPropertiesDialog :open="Boolean(activePropertiesProject)" :project="activePropertiesProject ?? undefined"
-      :threads="threads" @close="activePropertiesProject = null"
-      @initialize-workspace="initializeProjectWorkspace"
+      :threads="threads" @close="activePropertiesProject = null" @initialize-workspace="initializeProjectWorkspace"
       @open-extensions="openExtensions" />
 
     <RuntimeReconnectDialog :open="Boolean(reconnectPrompt)" :startup="reconnectPrompt?.startup ?? false"
       :endpoint="daemonState.endpoint" :error="reconnectPrompt?.error" @retry="continueRuntimeReconnect"
       @cancel="cancelRuntimeReconnect" />
+
+    <ConfigAnomalyDialog v-if="configAnomaly && configAnomaly.hasAnomaly" :open="true" :detail="configAnomaly.detail"
+      :config-file="configAnomaly.configFile" :backup-file="configAnomaly.backupFile" :rebuilding="rebuildingConfig"
+      @close="configAnomaly = null" @rebuild="handleRebuildConfig" />
 
     <ConfirmDialog />
   </div>

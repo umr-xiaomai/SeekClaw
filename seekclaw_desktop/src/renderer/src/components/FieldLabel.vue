@@ -64,7 +64,7 @@ defineProps<{
 
 .field-tooltip-bubble {
   position: absolute;
-  z-index: 260;
+  z-index: 280;
   top: calc(100% + 7px);
   left: -8px;
   width: max-content;

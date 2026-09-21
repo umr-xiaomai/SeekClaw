@@ -6,6 +6,9 @@ public interface IConfigStore
 {
     SeekClawConfig Config { get; }
     RuntimeState State { get; }
+    bool HasAnomaly { get; }
+    string? AnomalyDetail { get; }
+    string? BackupConfigFile { get; }
 
     void Save();
     void SaveState();
@@ -27,6 +30,9 @@ public sealed class ConfigStore : IConfigStore
 
     public SeekClawConfig Config { get; private set; }
     public RuntimeState State { get; private set; }
+    public bool HasAnomaly { get; private set; }
+    public string? AnomalyDetail { get; private set; }
+    public string? BackupConfigFile { get; private set; }
 
     public ConfigStore(string? configFile = null, string? stateFile = null)
     {
@@ -69,6 +75,9 @@ public sealed class ConfigStore : IConfigStore
     {
         lock (_gate)
         {
+            HasAnomaly = false;
+            AnomalyDetail = null;
+            BackupConfigFile = null;
             Config = DefaultSeekClawConfig.Build();
             State = new RuntimeState();
             DeleteIfExists(_configFile);
@@ -83,19 +92,67 @@ public sealed class ConfigStore : IConfigStore
     {
         if (File.Exists(_configFile))
         {
-            var loaded = TryDeserialize(_configFile, SeekClawJsonContext.Default.SeekClawConfig);
-            if (loaded is not null)
+            try
             {
-                if (string.IsNullOrWhiteSpace(loaded.Model))
-                    MigrateLegacyProfiles(loaded, _configFile);
-                return loaded;
+                var text = File.ReadAllText(_configFile);
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    HandleAnomaly("配置文件内容为空 (0 字节)");
+                }
+                else
+                {
+                    var loaded = JsonSerializer.Deserialize(text, SeekClawJsonContext.Default.SeekClawConfig);
+                    if (loaded is not null)
+                    {
+                        if (string.IsNullOrWhiteSpace(loaded.Model))
+                            MigrateLegacyProfiles(loaded, _configFile);
+                        HasAnomaly = false;
+                        AnomalyDetail = null;
+                        return loaded;
+                    }
+                    HandleAnomaly("配置文件反序列化结果为空");
+                }
             }
+            catch (Exception ex)
+            {
+                HandleAnomaly($"配置文件损坏或格式错误：{ex.Message}");
+            }
+
+            // Anomaly occurred: fallback to in-memory defaults, DO NOT overwrite the corrupt file on disk.
+            var fallback = DefaultSeekClawConfig.Build();
+            return fallback;
         }
 
+        // First run: file does not exist, seed and save cleanly
+        HasAnomaly = false;
+        AnomalyDetail = null;
+        BackupConfigFile = null;
         var seeded = DefaultSeekClawConfig.Build();
         Config = seeded;
         Save();
         return seeded;
+    }
+
+    private void HandleAnomaly(string detail)
+    {
+        HasAnomaly = true;
+        AnomalyDetail = detail;
+        try
+        {
+            var dir = Path.GetDirectoryName(_configFile) ?? "";
+            var fileName = Path.GetFileName(_configFile);
+            var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var backupPath = Path.Combine(dir, $"{fileName}.corrupt.{timestamp}.bak");
+            if (File.Exists(_configFile) && !File.Exists(backupPath))
+            {
+                File.Copy(_configFile, backupPath, true);
+                BackupConfigFile = backupPath;
+            }
+        }
+        catch
+        {
+            // Best effort backup: ignore I/O errors during backup
+        }
     }
 
     private static void MigrateLegacyProfiles(SeekClawConfig config, string configFile)

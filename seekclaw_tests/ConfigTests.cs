@@ -113,11 +113,23 @@ public sealed class ConfigTests : IDisposable
     }
 
     [Fact]
-    public void CorruptConfig_FallsBackToDefaults()
+    public void CorruptConfig_FallsBackToDefaults_SetsAnomaly_AndCreatesBackup()
     {
-        File.WriteAllText(Path.Combine(_dir, "config.json"), "{ not json !!");
+        var configFile = Path.Combine(_dir, "config.json");
+        File.WriteAllText(configFile, "{ not json !!");
         var store = NewStore();
         Assert.Equal(40, store.Config.Agent.MaxSteps);
+        Assert.True(store.HasAnomaly);
+        Assert.NotNull(store.AnomalyDetail);
+        Assert.NotNull(store.BackupConfigFile);
+        Assert.True(File.Exists(store.BackupConfigFile));
+        Assert.Equal("{ not json !!", File.ReadAllText(store.BackupConfigFile));
+        Assert.Equal("{ not json !!", File.ReadAllText(configFile));
+
+        store.Reset();
+        Assert.False(store.HasAnomaly);
+        Assert.Null(store.AnomalyDetail);
+        Assert.Null(store.BackupConfigFile);
     }
 
     [Fact]

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { Eye, EyeOff, Save, X } from '@lucide/vue'
+import { Eye, EyeOff, Plus, Save, Settings2, Trash2, X } from '@lucide/vue'
 import { nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import FieldLabel from './FieldLabel.vue'
 import SelectMenu from './SelectMenu.vue'
+import ModelConfigModal, { type ModelDetailConfig } from './ModelConfigModal.vue'
+import { formatTokenCount } from '../app-helpers'
 
-interface ProviderFormValue {
+export interface ProviderFormValue {
   id: string
   name: string
   kind: 'openai' | 'anthropic'
@@ -12,6 +14,7 @@ interface ProviderFormValue {
   modelListUrl: string
   apiKey: string
   models: string
+  modelDetails?: ModelDetailConfig[]
   enabled: boolean
   priority: number
   timeoutSeconds: number
@@ -36,6 +39,10 @@ const form = reactive<ProviderFormValue>({
   id: '', name: '', kind: 'openai', baseUrl: '', modelListUrl: '', apiKey: '', models: '',
   enabled: true, priority: 0, timeoutSeconds: 120, proxy: '', promptCaching: true
 })
+const modelList = ref<ModelDetailConfig[]>([])
+const newModelInput = ref('')
+const modelConfigModalOpen = ref(false)
+const selectedModelConfig = ref<ModelDetailConfig | null>(null)
 const firstInput = ref<HTMLInputElement | null>(null)
 const revealKey = ref(false)
 const protocolOptions = [
@@ -69,6 +76,62 @@ function onAdvancedToggle(): void {
   }
 }
 
+function syncModelsFromProps(): void {
+  if (props.value.modelDetails && props.value.modelDetails.length > 0) {
+    modelList.value = props.value.modelDetails.map((m) => ({ ...m }))
+  } else if (props.value.models) {
+    const ids = props.value.models
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    modelList.value = ids.map((id) => ({
+      id,
+      alias: undefined,
+      contextWindow: 1000000,
+      maxOutput: 128000,
+      vision: false
+    }))
+  } else {
+    modelList.value = []
+  }
+}
+
+function addModel(): void {
+  const raw = newModelInput.value.trim()
+  if (!raw) return
+  const ids = raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+  for (const id of ids) {
+    if (!modelList.value.some((m) => m.id.toLowerCase() === id.toLowerCase())) {
+      modelList.value.push({
+        id,
+        alias: undefined,
+        contextWindow: 1000000,
+        maxOutput: 128000,
+        vision: false
+      })
+    }
+  }
+  newModelInput.value = ''
+}
+
+function removeModel(index: number): void {
+  modelList.value.splice(index, 1)
+}
+
+function openModelConfig(model: ModelDetailConfig): void {
+  selectedModelConfig.value = model
+  modelConfigModalOpen.value = true
+}
+
+function handleModelConfigSave(updated: ModelDetailConfig): void {
+  const index = modelList.value.findIndex((m) => m.id === updated.id)
+  if (index !== -1) {
+    modelList.value[index] = { ...updated }
+  }
+  modelConfigModalOpen.value = false
+  selectedModelConfig.value = null
+}
+
 function close(): void {
   if (!props.saving) emit('close')
 }
@@ -78,11 +141,14 @@ function save(): void {
   if (!showAdvanced.value) {
     resetAdvancedToDefaults()
   }
+  const currentModels = modelList.value.map((m) => m.id).filter(Boolean)
   emit('save', {
     ...form,
     id: form.id.trim(),
     name: form.name.trim(),
     baseUrl: form.baseUrl.trim(),
+    models: currentModels.join('\n'),
+    modelDetails: modelList.value.map((m) => ({ ...m })),
     timeoutSeconds: showAdvanced.value
       ? (Number.isFinite(form.timeoutSeconds) && form.timeoutSeconds >= 5 ? form.timeoutSeconds : 120)
       : 120,
@@ -106,6 +172,8 @@ function handleKeydown(event: KeyboardEvent): void {
 watch(() => props.open, (open) => {
   if (!open) return
   Object.assign(form, props.value)
+  syncModelsFromProps()
+  newModelInput.value = ''
   showAdvanced.value = Boolean(props.editingId && hasCustomAdvancedSettings(props.value))
   if (!showAdvanced.value) {
     resetAdvancedToDefaults()
@@ -131,7 +199,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
           <header class="provider-editor-header">
             <div>
               <h2 id="provider-editor-title">{{ editingId ? '编辑模型提供商' : '新增模型提供商' }}</h2>
-              <p v-if="editingId">{{ editingId }}</p>
             </div>
             <button class="icon-button" type="button" title="关闭" :disabled="saving" @click="close">
               <X :size="18" />
@@ -173,7 +240,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                 <strong>鉴权与模型</strong>
               </div>
               <div class="provider-form-grid">
-                <label>
+                <label class="span-2">
                   <FieldLabel en="API Key" zh="API 密钥" help="直接查看和修改此模型提供商保存的访问密钥；清空后保存会删除密钥。" />
                   <span class="password-control">
                     <input v-model="form.apiKey" :type="revealKey ? 'text' : 'password'" placeholder="sk-…"
@@ -185,11 +252,53 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                     </button>
                   </span>
                 </label>
-                <label class="span-2">
-                  <FieldLabel en="Models" zh="模型" help="此模型提供商可用的模型 ID。每行填写一个，也支持使用英文逗号分隔。" required />
-                  <textarea v-model="form.models" rows="4" placeholder="gpt-5&#10;gpt-5-mini" spellcheck="false" />
-                  <small>每行一个模型 ID</small>
-                </label>
+                <div class="span-2 provider-models-block">
+                  <div class="provider-models-header">
+                    <FieldLabel en="Models" zh="模型列表" help="此模型提供商可用的模型。可点击每行右侧设置按钮配置多模态/视觉支持与上下文参数。" required />
+                    <small class="models-count-badge">{{ modelList.length }} 个模型</small>
+                  </div>
+
+                  <div class="model-add-bar">
+                    <input v-model="newModelInput" class="model-add-input" placeholder="输入模型 ID，如 gpt-5，支持逗号或换行粘贴批量输入"
+                      @keydown.enter.prevent="addModel" />
+                    <button type="button" class="secondary-button compact-button add-model-btn"
+                      :disabled="!newModelInput.trim()" @click="addModel">
+                      <Plus :size="14" /> 添加模型
+                    </button>
+                  </div>
+
+                  <div v-if="modelList.length === 0" class="models-empty-tip">
+                    暂未添加模型，请在上方输入框添加模型 ID
+                  </div>
+
+                  <div v-else class="provider-models-table">
+                    <div v-for="(model, idx) in modelList" :key="model.id" class="model-table-row">
+                      <div class="model-row-left">
+                        <span class="model-row-id">{{ model.id }}</span>
+                        <span v-if="model.vision" class="model-badge vision-badge" title="支持多模态 / 视觉">
+                          <Eye :size="11" /> 多模态
+                        </span>
+                        <span v-if="model.alias" class="model-badge alias-badge" :title="`别名: ${model.alias}`">
+                          {{ model.alias }}
+                        </span>
+                        <span class="model-badge context-badge"
+                          :title="`上下文窗口: ${(model.contextWindow || 1000000).toLocaleString()} Tokens`">
+                          {{ formatTokenCount(model.contextWindow) }}
+                        </span>
+                      </div>
+                      <div class="model-row-actions">
+                        <button type="button" class="icon-button compact" title="配置模型参数与多模态"
+                          @click="openModelConfig(model)">
+                          <Settings2 :size="15" />
+                        </button>
+                        <button type="button" class="icon-button compact danger-icon" title="删除模型"
+                          @click="removeModel(idx)">
+                          <Trash2 :size="15" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
 
@@ -252,4 +361,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
       </div>
     </Transition>
   </Teleport>
+
+  <ModelConfigModal :open="modelConfigModalOpen" :model="selectedModelConfig" @close="modelConfigModalOpen = false"
+    @save="handleModelConfigSave" />
 </template>

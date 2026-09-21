@@ -1,12 +1,22 @@
 <script setup lang="ts">
 import { Save, X } from '@lucide/vue'
 import { nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import ComboboxInput, { ComboboxOption } from './ComboboxInput.vue'
 import FieldLabel from './FieldLabel.vue'
 
-interface ModelFormValue {
-  provider: string
+const tokenPresets: ComboboxOption[] = [
+  { value: 128000, label: '128K', description: '128,000 Tokens' },
+  { value: 256000, label: '256K', description: '256,000 Tokens' },
+  { value: 384000, label: '384K', description: '384,000 Tokens' },
+  { value: 512000, label: '512K', description: '512,000 Tokens' },
+  { value: 1000000, label: '1M', description: '1,000,000 Tokens' },
+  { value: 1500000, label: '1.5M', description: '1,500,000 Tokens' },
+  { value: 2000000, label: '2M', description: '2,000,000 Tokens' }
+]
+
+export interface ModelDetailConfig {
   id: string
-  alias: string
+  alias?: string
   contextWindow: number
   maxOutput: number
   vision: boolean
@@ -14,38 +24,35 @@ interface ModelFormValue {
 
 const props = defineProps<{
   open: boolean
-  value: ModelFormValue
-  saving?: boolean
-  error?: string
+  model: ModelDetailConfig | null
 }>()
 
 const emit = defineEmits<{
   close: []
-  save: [value: ModelFormValue]
+  save: [value: ModelDetailConfig]
 }>()
 
-const form = reactive<ModelFormValue>({
-  provider: '',
+const form = reactive<ModelDetailConfig>({
   id: '',
   alias: '',
-  contextWindow: 128000,
-  maxOutput: 8192,
+  contextWindow: 1000000,
+  maxOutput: 128000,
   vision: false
 })
 
 const firstInput = ref<HTMLInputElement | null>(null)
 
 function close(): void {
-  if (!props.saving) emit('close')
+  emit('close')
 }
 
-function save(): void {
-  if (props.saving) return
+function handleSave(): void {
   emit('save', {
-    ...form,
-    alias: form.alias.trim(),
-    contextWindow: Number(form.contextWindow),
-    maxOutput: Number(form.maxOutput)
+    id: form.id,
+    alias: form.alias?.trim() || undefined,
+    contextWindow: Number(form.contextWindow) || 1000000,
+    maxOutput: Number(form.maxOutput) || 128000,
+    vision: Boolean(form.vision)
   })
 }
 
@@ -53,20 +60,25 @@ function handleKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') close()
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
     event.preventDefault()
-    save()
+    handleSave()
   }
 }
 
 watch(() => props.open, (open) => {
-  if (!open) return
-  Object.assign(form, props.value)
+  if (!open) {
+    document.removeEventListener('keydown', handleKeydown)
+    return
+  }
+  if (props.model) {
+    form.id = props.model.id
+    form.alias = props.model.alias ?? ''
+    form.contextWindow = props.model.contextWindow || 1000000
+    form.maxOutput = props.model.maxOutput || 128000
+    form.vision = Boolean(props.model.vision)
+  }
   document.addEventListener('keydown', handleKeydown)
   void nextTick(() => firstInput.value?.focus())
 }, { immediate: true })
-
-watch(() => props.open, (open, previous) => {
-  if (!open && previous) document.removeEventListener('keydown', handleKeydown)
-})
 
 onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 </script>
@@ -74,27 +86,47 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 <template>
   <Teleport to="body">
     <Transition name="modal-fade">
-      <div v-if="open" class="modal-backdrop model-editor-backdrop" @mousedown.self="close">
-        <form class="model-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="model-editor-title" @submit.prevent="save">
-          <header class="model-editor-header">
+      <div v-if="open && model" class="modal-backdrop model-config-backdrop" @mousedown.self="close">
+        <form
+          class="model-config-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="model-config-title"
+          novalidate
+          @submit.prevent="handleSave"
+        >
+          <header class="model-config-header">
             <div>
-              <h2 id="model-editor-title">编辑模型配置</h2>
-              <p>{{ form.provider }} / {{ form.id }}</p>
+              <h2 id="model-config-title">配置模型能力与参数</h2>
             </div>
-            <button class="icon-button" type="button" title="关闭" :disabled="saving" @click="close">
+            <button class="icon-button" type="button" title="关闭" @click="close">
               <X :size="18" />
             </button>
           </header>
 
-          <div class="model-editor-body">
+          <div class="model-config-body">
             <section class="model-form-section">
               <div class="model-section-heading">
-                <strong>基础信息</strong>
+                <strong>基本信息</strong>
               </div>
-              <div class="model-form-grid">
-                <label class="form-field full-width">
+              <div class="model-form-grid two-columns">
+                <label class="form-field">
+                  <FieldLabel en="Model ID" zh="模型 ID" help="模型的原生唯一标识符，不可修改。" required />
+                  <input
+                    :value="form.id"
+                    class="form-input"
+                    disabled
+                  />
+                </label>
+                <label class="form-field">
                   <FieldLabel en="Display Alias" zh="显示别名" help="在任务会话与模型切换器中展示的易读别名；留空则直接展示模型原生 ID。" />
-                  <input ref="firstInput" v-model="form.alias" class="form-input" placeholder="可选，例如 快速模型 / Flash" autocomplete="off" />
+                  <input
+                    ref="firstInput"
+                    v-model="form.alias"
+                    class="form-input"
+                    placeholder="可选，例如 快速模型 / Flash"
+                    autocomplete="off"
+                  />
                 </label>
               </div>
             </section>
@@ -105,12 +137,30 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               </div>
               <div class="model-form-grid two-columns">
                 <label class="form-field">
-                  <FieldLabel en="Context Window" zh="上下文长度 (Tokens)" help="单次会话支持的最大上下文 Token 总量。当会话估算 Tokens 接近该长度时，运行时会自动压缩较早的历史消息。" required />
-                  <input v-model.number="form.contextWindow" class="form-input" type="number" min="1024" max="10000000" step="1024" />
+                  <FieldLabel
+                    en="Context Window"
+                    zh="上下文长度 (Tokens)"
+                    help="单次会话支持的最大上下文 Token 总量。可直接输入数值，或点击右侧下拉箭头选择常用预设值。"
+                    required
+                  />
+                  <ComboboxInput
+                    v-model="form.contextWindow"
+                    :options="tokenPresets"
+                    placeholder="例如 1000000"
+                  />
                 </label>
                 <label class="form-field">
-                  <FieldLabel en="Max Output" zh="最大输出 (Tokens)" help="模型单次响应允许输出的最大 Token 数量。" required />
-                  <input v-model.number="form.maxOutput" class="form-input" type="number" min="128" max="1000000" step="128" />
+                  <FieldLabel
+                    en="Max Output"
+                    zh="最大输出 (Tokens)"
+                    help="模型单次响应允许输出的最大 Token 数量。可直接输入数值，或点击右侧下拉箭头选择常用预设值。"
+                    required
+                  />
+                  <ComboboxInput
+                    v-model="form.maxOutput"
+                    :options="tokenPresets"
+                    placeholder="例如 128000"
+                  />
                 </label>
               </div>
               <small class="model-context-hint">当会话估算 Tokens 接近该上下文长度时，运行时会自动压缩较早的历史消息。</small>
@@ -123,22 +173,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               <label class="model-enabled-row">
                 <span>
                   <strong>视觉 / 多模态输入</strong>
-                  <small>声明后，上传图片时会优先使用支持视觉的模型</small>
+                  <small>启用后，在对话中上传或粘贴图片时将优先调用该模型</small>
                 </span>
                 <input v-model="form.vision" class="sr-only" type="checkbox" />
                 <span class="toggle-switch" aria-hidden="true"><span /></span>
               </label>
             </section>
-
-            <div v-if="error" class="model-editor-error">{{ error }}</div>
           </div>
 
-          <footer class="model-editor-footer">
+          <footer class="model-config-footer">
             <span>按 Ctrl + Enter 保存</span>
-            <div>
-              <button class="secondary-button" type="button" :disabled="saving" @click="close">取消</button>
-              <button class="secondary-button primary-action" type="submit" :disabled="saving">
-                <Save :size="15" /> {{ saving ? '正在保存…' : '保存模型' }}
+            <div class="footer-buttons">
+              <button class="secondary-button" type="button" @click="close">取消</button>
+              <button class="secondary-button primary-action" type="submit">
+                <Save :size="15" /> 保存配置
               </button>
             </div>
           </footer>
@@ -149,9 +197,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 </template>
 
 <style scoped>
-.model-editor-backdrop {
+.model-config-backdrop {
   position: fixed;
-  z-index: 130;
+  z-index: 210;
   inset: 0;
   display: grid;
   place-items: center;
@@ -160,11 +208,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   backdrop-filter: blur(8px);
 }
 
-.model-editor-dialog {
+.model-config-dialog {
   display: flex;
   flex-direction: column;
-  width: min(100%, 640px);
-  max-height: min(800px, calc(100vh - 40px));
+  width: min(100%, 580px);
+  max-height: min(760px, calc(100vh - 40px));
   background: var(--surface-raised, #ffffff);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -172,40 +220,25 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   overflow: hidden;
 }
 
-.model-editor-header {
+.model-config-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 20px 24px 16px;
+  padding: 18px 24px;
   background: var(--surface-raised);
   border-bottom: 1px solid var(--border);
 }
 
-.model-editor-eyebrow {
-  color: var(--accent);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.model-editor-header h2 {
-  margin: 3px 0 0;
-  font-size: 18px;
+.model-config-header h2 {
+  margin: 0;
+  font-size: 17px;
   font-weight: 650;
   color: var(--text);
   letter-spacing: -0.01em;
 }
 
-.model-editor-header p {
-  margin: 4px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-family: var(--font-mono, monospace);
-}
-
-.model-editor-body {
+.model-config-body {
   flex: 1;
   padding: 20px 24px;
   overflow-y: auto;
@@ -285,6 +318,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 .form-input:focus {
   border-color: color-mix(in srgb, var(--accent) 66%, var(--border));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.form-input:disabled {
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  cursor: not-allowed;
+  border-color: var(--border);
 }
 
 .model-context-hint {
@@ -370,17 +410,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   transform: translateX(16px);
 }
 
-.model-editor-error {
-  margin-top: 10px;
-  padding: 9px 12px;
-  color: var(--danger);
-  font-size: 12px;
-  background: color-mix(in srgb, var(--danger) 9%, transparent);
-  border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
-  border-radius: 8px;
-}
-
-.model-editor-footer {
+.model-config-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -390,12 +420,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   border-top: 1px solid var(--border);
 }
 
-.model-editor-footer > span {
+.model-config-footer > span {
   color: var(--text-muted);
   font-size: 11.5px;
 }
 
-.model-editor-footer > div {
+.footer-buttons {
   display: flex;
   gap: 8px;
 }

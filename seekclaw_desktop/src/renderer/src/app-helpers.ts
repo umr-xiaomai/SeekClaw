@@ -180,3 +180,18 @@ export function updateThreadTitle(thread: ThreadItem, prompt: string): boolean {
   thread.title = prompt.length > 42 ? `${prompt.slice(0, 42)}…` : prompt
   return true
 }
+
+export function formatTokenCount(tokens?: number): string {
+  const count = tokens || 1000000
+  if (count >= 1_000_000) {
+    const inMillions = count / 1_000_000
+    const formatted = inMillions % 1 === 0 ? inMillions.toString() : inMillions.toFixed(2).replace(/\.?0+$/, '')
+    return `${formatted}M`
+  }
+  if (count >= 1000) {
+    const inThousands = count / 1000
+    const formatted = inThousands % 1 === 0 ? inThousands.toString() : Math.round(inThousands).toString()
+    return `${formatted}k`
+  }
+  return count.toString()
+}

@@ -540,6 +540,15 @@ public sealed class DaemonServer : IAsyncDisposable
                         break;
                     }
 
+                    case "config.status":
+                        await WriteAsync(writer, writerGate, id, "result", _admin.GetConfigStatus(), ct).ConfigureAwait(false);
+                        break;
+
+                    case "config.rebuild":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.RebuildConfigAndDatabase()), ct).ConfigureAwait(false);
+                        break;
+
                     case "routing.get":
                         await WriteAsync(writer, writerGate, id, "result", _admin.GetRoutingConfig(), ct).ConfigureAwait(false);
                         break;
@@ -1318,9 +1327,10 @@ public sealed class DaemonServer : IAsyncDisposable
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "provider",
-            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize"),
+            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
+            "config.status", "config.rebuild",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
             "routing.get", "routing.set",
             "prompt.optimize",

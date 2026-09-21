@@ -71,7 +71,15 @@ public static class DoctorCommand
             var table = new Table().Border(TableBorder.Rounded);
             table.AddColumn("Check").AddColumn("Status").AddColumn("Detail");
 
-            table.AddRow("Config", "[green]ok[/]", Markup.Escape(SeekClawPaths.ConfigFile));
+            if (rt.ConfigStore.HasAnomaly)
+            {
+                table.AddRow("Config", "[red]corrupt[/]", Markup.Escape(rt.ConfigStore.AnomalyDetail ?? "Invalid configuration") +
+                    (rt.ConfigStore.BackupConfigFile != null ? $" (backup: {rt.ConfigStore.BackupConfigFile})" : ""));
+            }
+            else
+            {
+                table.AddRow("Config", "[green]ok[/]", Markup.Escape(SeekClawPaths.ConfigFile));
+            }
             table.AddRow("Workspace", "[green]ok[/]",
                 Markup.Escape($"{rt.Workspace.Root} [{string.Join(", ", rt.Workspace.ProjectKinds)}]"));
 

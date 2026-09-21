@@ -22,6 +22,11 @@ public sealed class HealthChecker(ILlmHttpFactory httpFactory, Configuration.ICo
     {
         var results = new List<HealthCheckResult>();
 
+        // 0. Configuration File Integrity Check
+        var configOk = !configStore.HasAnomaly;
+        results.Add(new HealthCheckResult("Config File", configOk,
+            configOk ? "Configuration valid" : $"配置文件异常: {configStore.AnomalyDetail}"));
+
         // 1. Workspace Root Check
         var rootOk = Directory.Exists(workspace.Root);
         results.Add(new HealthCheckResult("Workspace Root", rootOk, rootOk ? workspace.Root : $"Directory not found: {workspace.Root}"));

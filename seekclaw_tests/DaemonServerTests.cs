@@ -808,6 +808,62 @@ public sealed class DaemonServerTests : IAsyncDisposable
         return connection;
     }
 
+    [Fact]
+    public async Task Config_Status_And_Rebuild()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+
+        await connection.SendAsync(1, "config.status");
+        var statusResp = await connection.ReadUntilAsync(
+            r => r["id"]!.GetValue<long>() == 1 && r["event"]!.GetValue<string>() == "result");
+        var statusData = JsonNode.Parse(statusResp["data"]!.GetValue<string>())!;
+        Assert.False(statusData["hasAnomaly"]!.GetValue<bool>());
+
+        await connection.SendAsync(2, "config.rebuild");
+        var rebuildResp = await connection.ReadUntilAsync(
+            r => r["id"]!.GetValue<long>() == 2 && r["event"]!.GetValue<string>() == "result");
+        var rebuildData = JsonNode.Parse(rebuildResp["data"]!.GetValue<string>())!;
+        Assert.True(rebuildData["ok"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task Provider_Upsert_WithModelDetails_PersistsCorrectly()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+
+        await connection.SendAsync(1, "provider.upsert", new JsonObject
+        {
+            ["id"] = "test-provider",
+            ["name"] = "Test Provider",
+            ["kind"] = "openai",
+            ["baseUrl"] = "https://api.test.com/v1",
+            ["modelDetails"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["id"] = "test-model-1",
+                    ["alias"] = "Test Vision",
+                    ["contextWindow"] = 64000,
+                    ["maxOutput"] = 4096,
+                    ["vision"] = true
+                }
+            }
+        });
+
+        var upsertResp = await connection.ReadUntilAsync(
+            r => r["id"]!.GetValue<long>() == 1 && r["event"]!.GetValue<string>() == "result");
+        var upsertData = JsonNode.Parse(upsertResp["data"]!.GetValue<string>())!;
+        Assert.Equal("test-provider", upsertData["id"]!.GetValue<string>());
+        var details = upsertData["modelDetails"]!.AsArray();
+        Assert.Single(details);
+        Assert.Equal("test-model-1", details[0]!["id"]!.GetValue<string>());
+        Assert.Equal("Test Vision", details[0]!["alias"]!.GetValue<string>());
+        Assert.Equal(64000, details[0]!["contextWindow"]!.GetValue<int>());
+        Assert.True(details[0]!["vision"]!.GetValue<bool>());
+    }
+
     private string CreateWorkspace(string name, string? workspaceConfig = null)
     {
         var root = Path.Combine(_tempDir, name);

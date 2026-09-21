@@ -98,6 +98,25 @@ internal sealed class DaemonAdminApi(
         }.ToJsonString();
     }
 
+    public string GetConfigStatus() => new JsonObject
+    {
+        ["hasAnomaly"] = runtime.ConfigStore.HasAnomaly,
+        ["detail"] = runtime.ConfigStore.AnomalyDetail,
+        ["backupFile"] = runtime.ConfigStore.BackupConfigFile,
+        ["configFile"] = SeekClawPaths.ConfigFile,
+    }.ToJsonString();
+
+    public string RebuildConfigAndDatabase()
+    {
+        runtime.ConfigStore.Reset();
+        runtime.Database.Rebuild();
+        return new JsonObject
+        {
+            ["ok"] = true,
+            ["message"] = "已重建数据库和配置文件",
+        }.ToJsonString();
+    }
+
     public string GetRoutingConfig() => new JsonObject
     {
         ["failoverEnabled"] = runtime.ConfigStore.Config.Routing.FailoverEnabled,
@@ -293,7 +312,29 @@ internal sealed class DaemonAdminApi(
         else if (OptionalString(parameters, "apiKey") is { } apiKey)
             provider.ApiKey = apiKey;
 
-        if (parameters["models"] is JsonArray models)
+        if (parameters["modelDetails"] is JsonArray modelDetails)
+        {
+            var existing = provider.Models.ToDictionary(model => model.Id, StringComparer.OrdinalIgnoreCase);
+            provider.Models = modelDetails
+                .Select(node => node as JsonObject)
+                .Where(node => node is not null && !string.IsNullOrWhiteSpace(node["id"]?.GetValue<string>()))
+                .Select(node =>
+                {
+                    var modelId = node!["id"]!.GetValue<string>().Trim();
+                    var model = existing.TryGetValue(modelId, out var m) ? m : new ModelConfig { Id = modelId };
+                    if (node.ContainsKey("alias"))
+                        model.Alias = node["alias"]?.GetValue<string>()?.Trim() is { Length: > 0 } alias ? alias : null;
+                    if (node["contextWindow"]?.GetValue<int?>() is { } cw && cw > 0)
+                        model.ContextWindow = cw;
+                    if (node["maxOutput"]?.GetValue<int?>() is { } mo && mo > 0)
+                        model.MaxOutput = mo;
+                    if (node["vision"]?.GetValue<bool?>() is { } v)
+                        model.Capabilities.Vision = v;
+                    return model;
+                })
+                .ToList();
+        }
+        else if (parameters["models"] is JsonArray models)
         {
             var existing = provider.Models.ToDictionary(model => model.Id, StringComparer.OrdinalIgnoreCase);
             provider.Models = models
@@ -457,14 +498,14 @@ internal sealed class DaemonAdminApi(
             model.Alias = parameters["alias"]?.GetValue<string>()?.Trim() is { Length: > 0 } alias ? alias : null;
         if (parameters["contextWindow"]?.GetValue<int?>() is { } contextWindow)
         {
-            if (contextWindow < 1_024 || contextWindow > 10_000_000)
-                throw new DaemonRequestException("params.contextWindow must be between 1024 and 10000000");
+            if (contextWindow <= 0)
+                throw new DaemonRequestException("params.contextWindow must be positive");
             model.ContextWindow = contextWindow;
         }
         if (parameters["maxOutput"]?.GetValue<int?>() is { } maxOutput)
         {
-            if (maxOutput < 128 || maxOutput > 1_000_000)
-                throw new DaemonRequestException("params.maxOutput must be between 128 and 1000000");
+            if (maxOutput <= 0)
+                throw new DaemonRequestException("params.maxOutput must be positive");
             model.MaxOutput = maxOutput;
         }
         if (parameters["vision"]?.GetValue<bool?>() is { } vision)
@@ -924,6 +965,14 @@ internal sealed class DaemonAdminApi(
         ["apiKey"] = provider.ApiKey,
         ["apiKeyConfigured"] = !string.IsNullOrWhiteSpace(provider.ResolveApiKey()),
         ["models"] = Strings(provider.Models.Select(model => model.Id)),
+        ["modelDetails"] = new JsonArray(provider.Models.Select(m => (JsonNode)new JsonObject
+        {
+            ["id"] = m.Id,
+            ["alias"] = m.Alias ?? "",
+            ["contextWindow"] = m.ContextWindow,
+            ["maxOutput"] = m.MaxOutput,
+            ["vision"] = m.Capabilities.Vision,
+        }).ToArray()),
         ["enabled"] = provider.Enabled,
         ["priority"] = provider.Priority,
         ["timeoutSeconds"] = provider.TimeoutSeconds,
