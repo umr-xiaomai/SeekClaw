@@ -43,13 +43,56 @@ const protocolOptions = [
   { value: 'anthropic', label: 'Anthropic', description: '使用 Anthropic Messages API' }
 ]
 
+const showAdvanced = ref(false)
+
+function hasCustomAdvancedSettings(val: ProviderFormValue): boolean {
+  return (
+    (val.timeoutSeconds !== undefined && val.timeoutSeconds !== 120) ||
+    (val.priority !== undefined && val.priority !== 0) ||
+    Boolean(val.proxy && val.proxy.trim() !== '') ||
+    val.enabled === false ||
+    val.promptCaching === false
+  )
+}
+
+function resetAdvancedToDefaults(): void {
+  form.timeoutSeconds = 120
+  form.priority = 0
+  form.proxy = ''
+  form.enabled = true
+  form.promptCaching = true
+}
+
+function onAdvancedToggle(): void {
+  if (!showAdvanced.value) {
+    resetAdvancedToDefaults()
+  }
+}
+
 function close(): void {
   if (!props.saving) emit('close')
 }
 
 function save(): void {
   if (!form.id.trim() || props.saving) return
-  emit('save', { ...form, id: form.id.trim(), name: form.name.trim(), baseUrl: form.baseUrl.trim() })
+  if (!showAdvanced.value) {
+    resetAdvancedToDefaults()
+  }
+  emit('save', {
+    ...form,
+    id: form.id.trim(),
+    name: form.name.trim(),
+    baseUrl: form.baseUrl.trim(),
+    timeoutSeconds: showAdvanced.value
+      ? (Number.isFinite(form.timeoutSeconds) && form.timeoutSeconds >= 5 ? form.timeoutSeconds : 120)
+      : 120,
+    priority: showAdvanced.value
+      ? (Number.isFinite(form.priority) ? form.priority : 0)
+      : 0,
+    proxy: showAdvanced.value ? form.proxy.trim() : '',
+    enabled: showAdvanced.value ? form.enabled : true,
+    promptCaching: showAdvanced.value ? form.promptCaching : true
+  })
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -63,6 +106,10 @@ function handleKeydown(event: KeyboardEvent): void {
 watch(() => props.open, (open) => {
   if (!open) return
   Object.assign(form, props.value)
+  showAdvanced.value = Boolean(props.editingId && hasCustomAdvancedSettings(props.value))
+  if (!showAdvanced.value) {
+    resetAdvancedToDefaults()
+  }
   revealKey.value = true
   document.addEventListener('keydown', handleKeydown)
   void nextTick(() => firstInput.value?.focus())
@@ -79,13 +126,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   <Teleport to="body">
     <Transition name="modal-fade">
       <div v-if="open" class="modal-backdrop provider-editor-backdrop" @mousedown.self="close">
-        <form class="provider-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-editor-title" @submit.prevent="save">
+        <form class="provider-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-editor-title"
+          @submit.prevent="save">
           <header class="provider-editor-header">
             <div>
               <h2 id="provider-editor-title">{{ editingId ? '编辑模型提供商' : '新增模型提供商' }}</h2>
               <p v-if="editingId">{{ editingId }}</p>
             </div>
-            <button class="icon-button" type="button" title="关闭" :disabled="saving" @click="close"><X :size="18" /></button>
+            <button class="icon-button" type="button" title="关闭" :disabled="saving" @click="close">
+              <X :size="18" />
+            </button>
           </header>
 
           <div class="provider-editor-body">
@@ -96,7 +146,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               <div class="provider-form-grid">
                 <label>
                   <FieldLabel en="Provider ID" zh="提供商 ID" help="用于模型引用和配置文件的唯一标识，例如 openai。创建后不可修改。" required />
-                  <input ref="firstInput" v-model="form.id" :disabled="!!editingId" placeholder="openai" autocomplete="off" />
+                  <input ref="firstInput" v-model="form.id" :disabled="!!editingId" placeholder="openai"
+                    autocomplete="off" />
                 </label>
                 <label>
                   <FieldLabel en="Display Name" zh="显示名称" help="仅用于界面展示；留空时会使用提供商 ID。" />
@@ -125,14 +176,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                 <label>
                   <FieldLabel en="API Key" zh="API 密钥" help="直接查看和修改此模型提供商保存的访问密钥；清空后保存会删除密钥。" />
                   <span class="password-control">
-                    <input
-                      v-model="form.apiKey"
-                      :type="revealKey ? 'text' : 'password'"
-                      placeholder="sk-…"
-                      autocomplete="new-password"
-                    />
-                    <button type="button" :title="revealKey ? '隐藏 API Key' : '显示 API Key'" @click="revealKey = !revealKey">
-                      <EyeOff v-if="revealKey" :size="16" /><Eye v-else :size="16" />
+                    <input v-model="form.apiKey" :type="revealKey ? 'text' : 'password'" placeholder="sk-…"
+                      autocomplete="new-password" />
+                    <button type="button" :title="revealKey ? '隐藏 API Key' : '显示 API Key'"
+                      @click="revealKey = !revealKey">
+                      <EyeOff v-if="revealKey" :size="16" />
+                      <Eye v-else :size="16" />
                     </button>
                   </span>
                 </label>
@@ -144,41 +193,48 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               </div>
             </section>
 
-            <section class="provider-form-section">
-              <div class="provider-section-heading">
-                <strong>请求与路由</strong>
-              </div>
-              <div class="provider-form-grid three-columns">
-                <label>
-                  <FieldLabel en="Timeout" zh="超时（秒）" help="单次模型请求允许等待的最长时间；网络较慢或推理模型可适当调高。" />
-                  <input v-model.number="form.timeoutSeconds" type="number" min="5" step="1" />
-                </label>
-                <label>
-                  <FieldLabel en="Priority" zh="优先级" help="自动路由时的模型提供商顺序。数值越小优先级越高；相同数值按配置顺序选择。" />
-                  <input v-model.number="form.priority" type="number" step="1" />
-                </label>
-                <label>
-                  <FieldLabel en="Proxy" zh="代理地址" help="仅此模型提供商使用的 HTTP/HTTPS 代理；留空表示遵循运行时默认网络设置。" />
-                  <input v-model="form.proxy" placeholder="http://127.0.0.1:7890" spellcheck="false" />
-                </label>
-              </div>
-              <label class="provider-enabled-row">
-                <span>
-                  <strong>启用</strong>
-                  <small>允许该模型提供商参与模型选择和自动路由</small>
-                </span>
-                <input v-model="form.enabled" class="sr-only" type="checkbox" />
-                <span class="toggle-switch" aria-hidden="true"><span /></span>
+            <div class="provider-advanced-section">
+              <label class="provider-advanced-check" style="margin-top: 10px;">
+                <input v-model="showAdvanced" type="checkbox" @change="onAdvancedToggle" />
+                <span>高级选项</span>
               </label>
-              <label class="provider-enabled-row">
-                <span>
-                  <strong>提示词缓存</strong>
-                  <small>保持稳定前缀；Anthropic 会发送原生 cache_control 检查点</small>
-                </span>
-                <input v-model="form.promptCaching" class="sr-only" type="checkbox" />
-                <span class="toggle-switch" aria-hidden="true"><span /></span>
-              </label>
-            </section>
+
+              <div v-if="showAdvanced" class="provider-advanced-content">
+                <div class="provider-section-heading">
+                  <strong>请求与路由</strong>
+                </div>
+                <div class="provider-form-grid three-columns">
+                  <label>
+                    <FieldLabel en="Timeout" zh="超时（秒）" help="单次模型请求允许等待的最长时间；网络较慢或推理模型可适当调高。" />
+                    <input v-model.number="form.timeoutSeconds" type="number" min="5" step="1" />
+                  </label>
+                  <label>
+                    <FieldLabel en="Priority" zh="优先级" help="自动路由时的模型提供商顺序。数值越小优先级越高；相同数值按配置顺序选择。" />
+                    <input v-model.number="form.priority" type="number" step="1" />
+                  </label>
+                  <label>
+                    <FieldLabel en="Proxy" zh="代理地址" help="仅此模型提供商使用的 HTTP/HTTPS 代理；留空表示遵循运行时默认网络设置。" />
+                    <input v-model="form.proxy" placeholder="http://127.0.0.1:7890" spellcheck="false" />
+                  </label>
+                </div>
+                <label class="provider-enabled-row">
+                  <span>
+                    <strong>启用</strong>
+                    <small>允许该模型提供商参与模型选择和自动路由</small>
+                  </span>
+                  <input v-model="form.enabled" class="sr-only" type="checkbox" />
+                  <span class="toggle-switch" aria-hidden="true"><span /></span>
+                </label>
+                <label class="provider-enabled-row">
+                  <span>
+                    <strong>提示词缓存</strong>
+                    <small>保持稳定前缀；Anthropic 会发送原生 cache_control 检查点</small>
+                  </span>
+                  <input v-model="form.promptCaching" class="sr-only" type="checkbox" />
+                  <span class="toggle-switch" aria-hidden="true"><span /></span>
+                </label>
+              </div>
+            </div>
 
             <div v-if="error" class="provider-editor-error">{{ error }}</div>
           </div>

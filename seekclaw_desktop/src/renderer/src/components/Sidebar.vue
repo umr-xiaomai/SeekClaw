@@ -5,7 +5,6 @@ import {
   CalendarClock,
   ChevronDown,
   ChevronRight,
-  CircleHelp,
   Folder,
   FolderCog,
   Info,
@@ -368,9 +367,6 @@ onBeforeUnmount(() => {
         </span>
         <Settings2 :size="17" />
       </button>
-      <a class="icon-button" href="https://seekclaw.hoilai.com/doc/" target="_blank" title="帮助" rel="noreferrer">
-        <CircleHelp :size="18" />
-      </a>
     </footer>
   </aside>
 </template>
