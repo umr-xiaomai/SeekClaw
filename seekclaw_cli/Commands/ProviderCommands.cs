@@ -26,7 +26,6 @@ public static class ProviderCommands
         {
             using var rt = CliHost.CreateRuntime();
             var config = rt.ConfigStore.Config;
-            var profile = config.GetActiveProfile();
 
             var table = new Table().Border(TableBorder.Rounded);
             table.AddColumn("").AddColumn("Id").AddColumn("Kind").AddColumn("Base URL")
@@ -34,7 +33,7 @@ public static class ProviderCommands
 
             foreach (var provider in config.Providers.OrderBy(p => p.Priority))
             {
-                var active = string.Equals(profile.Provider, provider.Id, StringComparison.OrdinalIgnoreCase);
+                var active = string.Equals(config.Provider, provider.Id, StringComparison.OrdinalIgnoreCase);
                 var hasKey = !string.IsNullOrWhiteSpace(provider.ResolveApiKey());
                 table.AddRow(
                     active ? "[green]●[/]" : "",
@@ -235,7 +234,7 @@ public static class ProviderCommands
     private static Command BuildUse()
     {
         var idArg = new Argument<string>("id");
-        var command = new Command("use", "Make a provider the active one for the current profile");
+        var command = new Command("use", "Make a provider active");
         command.Add(idArg);
         command.SetAction(parse =>
         {
@@ -248,15 +247,14 @@ public static class ProviderCommands
                 return 1;
             }
 
-            var profile = config.GetActiveProfile();
-            profile.Provider = provider.Id;
-            if (profile.Model is not null &&
-                !provider.Models.Any(m => m.Id.Equals(profile.Model, StringComparison.OrdinalIgnoreCase)))
-                profile.Model = provider.Models.FirstOrDefault()?.Id;
+            config.Provider = provider.Id;
+            if (config.Model is not null &&
+                !provider.Models.Any(m => m.Id.Equals(config.Model, StringComparison.OrdinalIgnoreCase)))
+                config.Model = provider.Models.FirstOrDefault()?.Id;
             rt.ConfigStore.Save();
 
             AnsiConsole.MarkupLine($"[green]Active provider → '{Markup.Escape(provider.Id)}'[/]"
-                + (profile.Model is null ? " [yellow](no model selected — run 'seekclaw model use')[/]" : $" model [cyan]{Markup.Escape(profile.Model)}[/]"));
+                + (config.Model is null ? " [yellow](no model selected — run 'seekclaw model use')[/]" : $" model [cyan]{Markup.Escape(config.Model)}[/]"));
             return 0;
         });
         return command;

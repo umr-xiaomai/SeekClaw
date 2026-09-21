@@ -580,26 +580,6 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.RunSchedule(Params(request))), ct).ConfigureAwait(false);
                         break;
 
-                    case "profile.list":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ListProfiles()), ct).ConfigureAwait(false);
-                        break;
-
-                    case "profile.upsert":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.UpsertProfile(Params(request))), ct).ConfigureAwait(false);
-                        break;
-
-                    case "profile.use":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.UseProfile(Params(request))), ct).ConfigureAwait(false);
-                        break;
-
-                    case "profile.remove":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.RemoveProfile(Params(request))), ct).ConfigureAwait(false);
-                        break;
-
                     case "provider.list":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _ => Task.FromResult(_admin.ListProviders()), ct).ConfigureAwait(false);
@@ -831,9 +811,9 @@ public sealed class DaemonServer : IAsyncDisposable
                                 await WriteAsync(writer, writerGate, id, "error", $"Unknown model {modelRef}", ct).ConfigureAwait(false);
                             else
                             {
-                                var profile = _runtime.ConfigStore.Config.GetActiveProfile();
-                                profile.Provider = model.Provider.Id;
-                                profile.Model = model.Model.Id;
+                                var config = _runtime.ConfigStore.Config;
+                                config.Provider = model.Provider.Id;
+                                config.Model = model.Model.Id;
                                 _runtime.ConfigStore.Save();
                                 await WriteAsync(writer, writerGate, id, "result", $"switched to {model.Ref}", ct).ConfigureAwait(false);
                             }
@@ -1294,7 +1274,6 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         var config = _runtime.ConfigStore.Config;
         config.Agent.Mode = mode;
-        config.GetActiveProfile().Mode = mode;
         _runtime.ConfigStore.Save();
 
         if (_runtime.Workspace.Config is not { } workspaceConfig) return;
@@ -1338,7 +1317,7 @@ public sealed class DaemonServer : IAsyncDisposable
         ["version"] = ProtocolVersion,
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
-            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "profile", "provider",
+            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "provider",
             "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
@@ -1346,7 +1325,6 @@ public sealed class DaemonServer : IAsyncDisposable
             "routing.get", "routing.set",
             "prompt.optimize",
             "schedule.list", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run",
-            "profile.list", "profile.upsert", "profile.use", "profile.remove",
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
             "model.list", "model.catalog", "model.switch", "model.test", "model.update",
             "mcp.list", "mcp.upsert", "mcp.remove", "mcp.reload",

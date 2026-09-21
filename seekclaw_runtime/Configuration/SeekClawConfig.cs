@@ -5,41 +5,17 @@ namespace SeekClaw.Runtime.Configuration;
 /// <summary>Root of ~/.seekclaw/config.json. All model/provider data is user data — never hard-coded.</summary>
 public sealed class SeekClawConfig
 {
-    public string ActiveProfile { get; set; } = "default";
-    public Dictionary<string, ProfileConfig> Profiles { get; set; } = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["default"] = new ProfileConfig(),
-    };
+    public string? Provider { get; set; }
+    public string? Model { get; set; }
+    public double? Temperature { get; set; }
 
     public List<ProviderConfig> Providers { get; set; } = [];
     public RoutingConfig Routing { get; set; } = new();
     public AgentConfig Agent { get; set; } = new();
     public McpConfig Mcp { get; set; } = new();
 
-    public ProfileConfig GetActiveProfile()
-    {
-        if (!Profiles.TryGetValue(ActiveProfile, out var profile))
-        {
-            profile = new ProfileConfig();
-            Profiles[ActiveProfile] = profile;
-        }
-        return profile;
-    }
-
     public ProviderConfig? FindProvider(string id) =>
         Providers.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
-}
-
-/// <summary>A named runtime environment (e.g. work / home / local) switchable in one command.</summary>
-public sealed class ProfileConfig
-{
-    public string? Provider { get; set; }
-    public string? Model { get; set; }
-    /// <summary>Routing strategy: fast | balanced | quality | cheap | offline.</summary>
-    public string? Strategy { get; set; }
-    public double? Temperature { get; set; }
-    /// <summary>Agent mode: edit | plan | readonly | auto.</summary>
-    public string? Mode { get; set; }
 }
 
 public sealed class ProviderConfig
@@ -122,9 +98,6 @@ public sealed class RoutingConfig
     /// </summary>
     public bool DeepSeekOptimizationEnabled { get; set; }
 
-    /// <summary>strategy name → ordered "provider/model" references.</summary>
-    public Dictionary<string, List<string>> Strategies { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-
     /// <summary>Global failover chain, tried in order after the active model fails.</summary>
     public List<string> Fallback { get; set; } = [];
 
@@ -189,7 +162,6 @@ public sealed class WorkspaceConfig
 {
     public string? Provider { get; set; }
     public string? Model { get; set; }
-    public string? Strategy { get; set; }
     public double? Temperature { get; set; }
     public string? Mode { get; set; }
     public string? SystemPrompt { get; set; }

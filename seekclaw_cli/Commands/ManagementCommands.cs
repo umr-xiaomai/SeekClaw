@@ -12,101 +12,6 @@ public static class CliHost
     public static SeekClawRuntime CreateRuntime(string? directory = null) => SeekClawRuntime.Create(directory);
 }
 
-public static class ProfileCommands
-{
-    public static Command Build()
-    {
-        var command = new Command("profile", "Switch whole environments in one command (work / home / local…)");
-
-        var list = new Command("list", "List profiles");
-        list.SetAction(_ =>
-        {
-            using var rt = CliHost.CreateRuntime();
-            var config = rt.ConfigStore.Config;
-            var table = new Table().Border(TableBorder.Rounded);
-            table.AddColumn("").AddColumn("Profile").AddColumn("Provider").AddColumn("Model").AddColumn("Strategy").AddColumn("Temp");
-            foreach (var (name, profile) in config.Profiles)
-                table.AddRow(
-                    name.Equals(config.ActiveProfile, StringComparison.OrdinalIgnoreCase) ? "[green]●[/]" : "",
-                    Markup.Escape(name),
-                    Markup.Escape(profile.Provider ?? "-"),
-                    Markup.Escape(profile.Model ?? "-"),
-                    Markup.Escape(profile.Strategy ?? "-"),
-                    profile.Temperature?.ToString("0.##") ?? "-");
-            AnsiConsole.Write(table);
-            return 0;
-        });
-
-        var nameArg = new Argument<string>("name");
-        var providerOption = new Option<string?>("--provider");
-        var modelOption = new Option<string?>("--model");
-        var strategyOption = new Option<string?>("--strategy") { Description = "fast | balanced | quality | cheap | offline" };
-        var temperatureOption = new Option<double?>("--temperature");
-
-        var create = new Command("create", "Create a profile");
-        create.Add(nameArg); create.Add(providerOption); create.Add(modelOption);
-        create.Add(strategyOption); create.Add(temperatureOption);
-        create.SetAction(parse =>
-        {
-            using var rt = CliHost.CreateRuntime();
-            var name = parse.GetRequiredValue(nameArg);
-            rt.ConfigStore.Config.Profiles[name] = new ProfileConfig
-            {
-                Provider = parse.GetValue(providerOption),
-                Model = parse.GetValue(modelOption),
-                Strategy = parse.GetValue(strategyOption),
-                Temperature = parse.GetValue(temperatureOption),
-            };
-            rt.ConfigStore.Save();
-            AnsiConsole.MarkupLine($"[green]Created profile '{Markup.Escape(name)}'.[/]");
-            return 0;
-        });
-
-        var useArg = new Argument<string>("name");
-        var use = new Command("use", "Activate a profile");
-        use.Add(useArg);
-        use.SetAction(parse =>
-        {
-            using var rt = CliHost.CreateRuntime();
-            var name = parse.GetRequiredValue(useArg);
-            if (!rt.ConfigStore.Config.Profiles.ContainsKey(name))
-            {
-                AnsiConsole.MarkupLine("[red]Profile not found.[/]");
-                return 1;
-            }
-            rt.ConfigStore.Config.ActiveProfile = name;
-            rt.ConfigStore.Save();
-            AnsiConsole.MarkupLine($"[green]Active profile → '{Markup.Escape(name)}'.[/]");
-            return 0;
-        });
-
-        var deleteArg = new Argument<string>("name");
-        var delete = new Command("delete", "Delete a profile");
-        delete.Add(deleteArg);
-        delete.SetAction(parse =>
-        {
-            using var rt = CliHost.CreateRuntime();
-            var name = parse.GetRequiredValue(deleteArg);
-            var config = rt.ConfigStore.Config;
-            if (name.Equals(config.ActiveProfile, StringComparison.OrdinalIgnoreCase))
-            {
-                AnsiConsole.MarkupLine("[red]Cannot delete the active profile.[/]");
-                return 1;
-            }
-            if (!config.Profiles.Remove(name))
-            {
-                AnsiConsole.MarkupLine("[red]Profile not found.[/]");
-                return 1;
-            }
-            rt.ConfigStore.Save();
-            AnsiConsole.MarkupLine($"[green]Deleted '{Markup.Escape(name)}'.[/]");
-            return 0;
-        });
-
-        command.Add(list); command.Add(create); command.Add(use); command.Add(delete);
-        return command;
-    }
-}
 
 public static class UsageCommands
 {
@@ -212,7 +117,7 @@ public static class SwitchCommand
 {
     public static Command Build()
     {
-        var command = new Command("switch", "Interactively switch provider, model and routing strategy");
+        var command = new Command("switch", "Interactively switch provider and model");
         command.SetAction(_ =>
         {
             using var rt = CliHost.CreateRuntime();
@@ -233,17 +138,11 @@ public static class SwitchCommand
                 .Title("Model:")
                 .AddChoices(provider.Models.Select(m => m.Id)));
 
-            var strategy = AnsiConsole.Prompt(new SelectionPrompt<string>()
-                .Title("Routing strategy (used when the model is unavailable):")
-                .AddChoices("balanced", "fast", "quality", "cheap", "offline"));
-
-            var profile = config.GetActiveProfile();
-            profile.Provider = providerId;
-            profile.Model = modelId;
-            profile.Strategy = strategy;
+            config.Provider = providerId;
+            config.Model = modelId;
             rt.ConfigStore.Save();
 
-            AnsiConsole.MarkupLine($"[green]Switched to {Markup.Escape(providerId)}/{Markup.Escape(modelId)}[/] (strategy: {strategy})");
+            AnsiConsole.MarkupLine($"[green]Switched to {Markup.Escape(providerId)}/{Markup.Escape(modelId)}[/]");
             return 0;
         });
         return command;

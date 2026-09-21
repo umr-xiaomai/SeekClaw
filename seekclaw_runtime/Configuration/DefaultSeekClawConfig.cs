@@ -12,17 +12,11 @@ public static class DefaultSeekClawConfig
 {
     public static SeekClawConfig Build() => new()
     {
-        ActiveProfile = "default",
-        Profiles = new Dictionary<string, ProfileConfig>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["default"] = new ProfileConfig(),
-        },
         Providers = [],
         Routing = new RoutingConfig
         {
             FailoverEnabled = true,
             DeepSeekOptimizationEnabled = false,
-            Strategies = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase),
             Fallback = [],
             LoadBalance = "priority",
             Retry = new RetryConfig

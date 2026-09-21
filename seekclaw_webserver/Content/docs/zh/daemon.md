@@ -106,7 +106,6 @@ Desktop 设置中心通过结构化方法管理与 CLI 相同的配置，不直�
 | `schedule.toggle` | 参数 `{ "id", "enabled" }`，启用/暂停任务 |
 | `schedule.delete` | 参数 `{ "id" }`，删除任务 |
 | `schedule.run` | 参数 `{ "id" }`，立即触发一次执行（后台运行，不等执行完成即返回 `started`） |
-| `profile.list/upsert/use/remove` | 管理运行 Profile |
 | `provider.list/upsert/use/remove/test` | 管理和测试 Provider |
 | `mcp.list/upsert/remove/reload` | 管理、重连 MCP Server 并刷新工具注册 |
 | `skill.list/toggle` | 查询和启用/禁用 Skill |

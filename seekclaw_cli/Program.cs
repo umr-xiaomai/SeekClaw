@@ -40,7 +40,6 @@ root.Add(chat);
 
 root.Add(ProviderCommands.Build());
 root.Add(ModelCommands.Build());
-root.Add(ProfileCommands.Build());
 root.Add(UsageCommands.Build());
 root.Add(DoctorCommand.Build());
 root.Add(SwitchCommand.Build());
@@ -64,10 +63,10 @@ static async Task<int> RunChatAsync(string[] promptWords, bool continueLast, str
             AnsiConsole.MarkupLine($"[red]Unknown model:[/] {Markup.Escape(modelOverride)}");
             return 1;
         }
-        // In-memory override only — the saved profile is untouched.
-        var profile = runtime.ConfigStore.Config.GetActiveProfile();
-        profile.Provider = model.Provider.Id;
-        profile.Model = model.Model.Id;
+        // In-memory override only — the saved config is untouched.
+        var config = runtime.ConfigStore.Config;
+        config.Provider = model.Provider.Id;
+        config.Model = model.Model.Id;
     }
 
     var loop = new ChatLoop(runtime);

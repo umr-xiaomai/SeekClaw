@@ -84,13 +84,59 @@ public sealed class ConfigStore : IConfigStore
         if (File.Exists(_configFile))
         {
             var loaded = TryDeserialize(_configFile, SeekClawJsonContext.Default.SeekClawConfig);
-            if (loaded is not null) return loaded;
+            if (loaded is not null)
+            {
+                if (string.IsNullOrWhiteSpace(loaded.Model))
+                    MigrateLegacyProfiles(loaded, _configFile);
+                return loaded;
+            }
         }
 
         var seeded = DefaultSeekClawConfig.Build();
         Config = seeded;
         Save();
         return seeded;
+    }
+
+    private static void MigrateLegacyProfiles(SeekClawConfig config, string configFile)
+    {
+        try
+        {
+            var json = File.ReadAllText(configFile);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("profiles", out var profiles) || profiles.ValueKind != JsonValueKind.Object)
+                return;
+
+            string? activeName = null;
+            if (root.TryGetProperty("activeProfile", out var activeProp) && activeProp.ValueKind == JsonValueKind.String)
+                activeName = activeProp.GetString();
+
+            JsonElement targetProfile = default;
+            if (activeName != null && profiles.TryGetProperty(activeName, out var p))
+                targetProfile = p;
+            else if (profiles.TryGetProperty("default", out var defP))
+                targetProfile = defP;
+            else
+            {
+                var first = profiles.EnumerateObject().FirstOrDefault();
+                targetProfile = first.Value;
+            }
+
+            if (targetProfile.ValueKind == JsonValueKind.Object)
+            {
+                if (targetProfile.TryGetProperty("model", out var modelProp) && modelProp.ValueKind == JsonValueKind.String)
+                    config.Model = modelProp.GetString();
+                if (targetProfile.TryGetProperty("provider", out var providerProp) && providerProp.ValueKind == JsonValueKind.String)
+                    config.Provider = providerProp.GetString();
+                if (targetProfile.TryGetProperty("temperature", out var tempProp) && tempProp.ValueKind == JsonValueKind.Number)
+                    config.Temperature = tempProp.GetDouble();
+            }
+        }
+        catch
+        {
+            // Best effort migration: ignore parse issues
+        }
     }
 
     private RuntimeState LoadState() =>

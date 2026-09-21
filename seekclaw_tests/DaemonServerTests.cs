@@ -540,16 +540,8 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.False(provider["apiKeyConfigured"]!.GetValue<bool>());
         Assert.Null(provider["apiKey"]);
 
-        await connection.SendAsync(12, "profile.upsert", new JsonObject
-        {
-            ["name"] = "desktop",
-            ["provider"] = "local",
-            ["model"] = "test-model",
-            ["strategy"] = "balanced",
-        });
-        Assert.Equal("result", (await connection.ReadAsync())["event"]!.GetValue<string>());
-        await connection.SendAsync(13, "profile.use", new JsonObject { ["name"] = "desktop" });
-        Assert.Equal("desktop", (await connection.ReadAsync())["data"]!.GetValue<string>());
+        await connection.SendAsync(13, "provider.use", new JsonObject { ["id"] = "local" });
+        Assert.Equal("local", (await connection.ReadAsync())["data"]!.GetValue<string>());
 
         await connection.SendAsync(131, "model.update", new JsonObject
         {

@@ -252,71 +252,10 @@ internal sealed class DaemonAdminApi(
         }
     }
 
-    public string ListProfiles()
-    {
-        var profiles = new JsonArray();
-        foreach (var (name, profile) in runtime.ConfigStore.Config.Profiles.OrderBy(item => item.Key))
-        {
-            profiles.Add((JsonNode)new JsonObject
-            {
-                ["name"] = name,
-                ["active"] = name.Equals(runtime.ConfigStore.Config.ActiveProfile, StringComparison.OrdinalIgnoreCase),
-                ["provider"] = profile.Provider,
-                ["model"] = profile.Model,
-                ["strategy"] = profile.Strategy,
-                ["temperature"] = profile.Temperature,
-                ["mode"] = profile.Mode,
-            });
-        }
-        return profiles.ToJsonString();
-    }
-
-    public string UpsertProfile(JsonObject parameters)
-    {
-        var name = RequiredString(parameters, "name");
-        var profiles = runtime.ConfigStore.Config.Profiles;
-        if (!profiles.TryGetValue(name, out var profile))
-        {
-            profile = new ProfileConfig();
-            profiles[name] = profile;
-        }
-
-        profile.Provider = OptionalString(parameters, "provider");
-        profile.Model = OptionalString(parameters, "model");
-        profile.Strategy = OptionalString(parameters, "strategy");
-        profile.Mode = OptionalString(parameters, "mode");
-        profile.Temperature = parameters["temperature"]?.GetValue<double?>();
-        runtime.ConfigStore.Save();
-        return name;
-    }
-
-    public string UseProfile(JsonObject parameters)
-    {
-        var name = RequiredString(parameters, "name");
-        if (!runtime.ConfigStore.Config.Profiles.ContainsKey(name))
-            throw new DaemonRequestException($"Profile not found: {name}");
-        runtime.ConfigStore.Config.ActiveProfile = name;
-        runtime.ConfigStore.Save();
-        return name;
-    }
-
-    public string RemoveProfile(JsonObject parameters)
-    {
-        var name = RequiredString(parameters, "name");
-        var config = runtime.ConfigStore.Config;
-        if (name.Equals(config.ActiveProfile, StringComparison.OrdinalIgnoreCase))
-            throw new DaemonRequestException("Cannot remove the active profile");
-        if (!config.Profiles.Remove(name))
-            throw new DaemonRequestException($"Profile not found: {name}");
-        config.GetActiveProfile();
-        runtime.ConfigStore.Save();
-        return name;
-    }
-
     public string ListProviders()
     {
         var config = runtime.ConfigStore.Config;
-        var active = config.GetActiveProfile().Provider;
+        var active = config.Provider;
         var providers = new JsonArray();
         foreach (var provider in config.Providers.OrderBy(item => item.Priority).ThenBy(item => item.Id))
             providers.Add((JsonNode)ProviderJson(provider, provider.Id.Equals(active, StringComparison.OrdinalIgnoreCase)));
@@ -379,7 +318,7 @@ internal sealed class DaemonAdminApi(
         }
 
         runtime.ConfigStore.Save();
-        return ProviderJson(provider, provider.Id.Equals(config.GetActiveProfile().Provider, StringComparison.OrdinalIgnoreCase)).ToJsonString();
+        return ProviderJson(provider, provider.Id.Equals(config.Provider, StringComparison.OrdinalIgnoreCase)).ToJsonString();
     }
 
     public string UseProvider(JsonObject parameters)
@@ -387,10 +326,10 @@ internal sealed class DaemonAdminApi(
         var id = RequiredString(parameters, "id");
         var provider = runtime.ConfigStore.Config.FindProvider(id)
                        ?? throw new DaemonRequestException($"Provider not found: {id}");
-        var profile = runtime.ConfigStore.Config.GetActiveProfile();
-        profile.Provider = provider.Id;
-        if (profile.Model is null || !provider.Models.Any(model => model.Id.Equals(profile.Model, StringComparison.OrdinalIgnoreCase)))
-            profile.Model = provider.Models.FirstOrDefault()?.Id;
+        var config = runtime.ConfigStore.Config;
+        config.Provider = provider.Id;
+        if (config.Model is null || !provider.Models.Any(model => model.Id.Equals(config.Model, StringComparison.OrdinalIgnoreCase)))
+            config.Model = provider.Models.FirstOrDefault()?.Id;
         runtime.ConfigStore.Save();
         return provider.Id;
     }
@@ -402,11 +341,10 @@ internal sealed class DaemonAdminApi(
         var provider = config.FindProvider(id)
                        ?? throw new DaemonRequestException($"Provider not found: {id}");
         config.Providers.Remove(provider);
-        foreach (var profile in config.Profiles.Values.Where(profile =>
-                     id.Equals(profile.Provider, StringComparison.OrdinalIgnoreCase)))
+        if (id.Equals(config.Provider, StringComparison.OrdinalIgnoreCase))
         {
-            profile.Provider = null;
-            profile.Model = null;
+            config.Provider = null;
+            config.Model = null;
         }
         runtime.ConfigStore.Save();
         return id;

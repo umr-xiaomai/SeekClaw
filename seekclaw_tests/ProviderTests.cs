@@ -804,24 +804,21 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
-    public void Candidates_WorkspaceOverride_BeatsProfile_ThenStrategy_ThenFallback()
+    public void Candidates_WorkspaceOverride_BeatsConfig_ThenFallback()
     {
-        var profile = _store.Config.GetActiveProfile();
-        profile.Provider = "alpha";
-        profile.Model = "small";
-        profile.Strategy = "quality";
-        _store.Config.Routing.Strategies["quality"] = ["beta/big"];
+        _store.Config.Provider = "alpha";
+        _store.Config.Model = "small";
         _store.Config.Routing.Fallback = ["beta/tiny"];
 
         var manager = NewManager();
         var workspace = new WorkspaceConfig { Model = "alpha/big" };
 
         var chain = manager.BuildCandidates(workspace).Select(m => m.Ref).ToList();
-        Assert.Equal(["alpha/big", "alpha/small", "beta/big", "beta/tiny"], chain);
+        Assert.Equal(["alpha/big", "alpha/small", "beta/tiny"], chain);
 
-        // Without the workspace override the profile model leads.
+        // Without the workspace override the config model leads.
         chain = manager.BuildCandidates(null).Select(m => m.Ref).ToList();
-        Assert.Equal(["alpha/small", "beta/big", "beta/tiny"], chain);
+        Assert.Equal(["alpha/small", "beta/tiny"], chain);
     }
 
     [Fact]
@@ -915,10 +912,9 @@ public sealed class ProviderTests : IDisposable
     {
         var store = _store;
         store.Config.Routing.Retry.MaxAttempts = 1;
-        store.Config.Routing.Strategies.Clear();
         store.Config.Routing.Fallback = ["beta/tiny", "gamma/ok"];
-        store.Config.GetActiveProfile().Provider = "alpha";
-        store.Config.GetActiveProfile().Model = "big";
+        store.Config.Provider = "alpha";
+        store.Config.Model = "big";
         store.Config.Providers.Add(new ProviderConfig
         {
             Id = "gamma", Kind = "gamma", BaseUrl = "https://gamma.test", Priority = 2,
@@ -956,10 +952,9 @@ public sealed class ProviderTests : IDisposable
     {
         var store = _store;
         store.Config.Routing.Retry.MaxAttempts = 1;
-        store.Config.Routing.Strategies.Clear();
         store.Config.Routing.Fallback = ["beta/tiny"];
-        store.Config.GetActiveProfile().Provider = "alpha";
-        store.Config.GetActiveProfile().Model = "big";
+        store.Config.Provider = "alpha";
+        store.Config.Model = "big";
 
         var manager = NewManagerWithClients(
             store, _registry, Path.Combine(_dir, "usage3.jsonl"),
@@ -993,10 +988,9 @@ public sealed class ProviderTests : IDisposable
         var store = _store;
         store.Config.Routing.FailoverEnabled = false;
         store.Config.Routing.Retry.MaxAttempts = 1;
-        store.Config.Routing.Strategies.Clear();
         store.Config.Routing.Fallback = ["beta/tiny"];
-        store.Config.GetActiveProfile().Provider = "alpha";
-        store.Config.GetActiveProfile().Model = "big";
+        store.Config.Provider = "alpha";
+        store.Config.Model = "big";
 
         var alpha = new StubLlmClient("openai", new LlmException("local server exploded", 500, retryable: true));
         var beta = new StubLlmClient("anthropic", new LlmException("HTTP 401: x-api-key header is required", 401, retryable: false));
@@ -1027,10 +1021,9 @@ public sealed class ProviderTests : IDisposable
     {
         var store = _store;
         store.Config.Routing.Retry.MaxAttempts = 1;
-        store.Config.Routing.Strategies.Clear();
         store.Config.Routing.Fallback = ["beta/tiny"];
-        store.Config.GetActiveProfile().Provider = "alpha";
-        store.Config.GetActiveProfile().Model = "big";
+        store.Config.Provider = "alpha";
+        store.Config.Model = "big";
 
         var manager = NewManagerWithClients(
             store, _registry, Path.Combine(_dir, "usage4.jsonl"),

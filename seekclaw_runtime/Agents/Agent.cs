@@ -87,7 +87,7 @@ public sealed partial class Agent(
                     ? providerManager.BuildCandidates(workspace.Config)
                         .FirstOrDefault(candidate => candidate.Model.Capabilities.Vision)
                       ?? throw new LlmException(
-                          "The current routing profile has no model that supports image understanding.",
+                          "No configured model supports image understanding.",
                           retryable: false)
                     : providerManager.ResolveActive(workspace.Config);
                 var requiresVision = turnHasImages && model.Model.Capabilities.Vision;

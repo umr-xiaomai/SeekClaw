@@ -79,7 +79,7 @@ public static class ModelCommands
     private static Command BuildUse()
     {
         var refArg = new Argument<string>("model") { Description = "\"provider/model\", alias, or unique model id" };
-        var command = new Command("use", "Make a model the active one for the current profile");
+        var command = new Command("use", "Make a model active");
         command.Add(refArg);
         command.SetAction(parse =>
         {
@@ -90,9 +90,8 @@ public static class ModelCommands
                 AnsiConsole.MarkupLine("[red]Model not found or ambiguous.[/] Try [cyan]seekclaw model search <query>[/].");
                 return 1;
             }
-            var profile = rt.ConfigStore.Config.GetActiveProfile();
-            profile.Provider = model.Provider.Id;
-            profile.Model = model.Model.Id;
+            rt.ConfigStore.Config.Provider = model.Provider.Id;
+            rt.ConfigStore.Config.Model = model.Model.Id;
             rt.ConfigStore.Save();
             AnsiConsole.MarkupLine($"[green]Active model → {Markup.Escape(model.Ref)}[/]");
             return 0;

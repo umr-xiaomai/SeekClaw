@@ -88,8 +88,8 @@ public sealed class ToolAndAgentTests
                 BaseUrl = "https://test.local/v1",
                 Models = [new ModelConfig { Id = "text-only", ContextWindow = 8_000, MaxOutput = 256 }],
             });
-            store.Config.Profiles["default"].Strategy = "fast";
-            store.Config.Routing.Strategies["fast"] = ["openai/text-only"];
+            store.Config.Provider = "openai";
+            store.Config.Model = "text-only";
             store.Config.Routing.Fallback = ["openai/text-only"];
 
             var capture = new CapturingClientFactory();
@@ -160,8 +160,8 @@ public sealed class ToolAndAgentTests
                     },
                 ],
             });
-            store.Config.Profiles["default"].Strategy = "fast";
-            store.Config.Routing.Strategies["fast"] = ["openai/text-only"];
+            store.Config.Provider = "openai";
+            store.Config.Model = "text-only";
             store.Config.Routing.Fallback = ["visionp/v1"];
 
             var capture = new CapturingClientFactory();
@@ -225,8 +225,8 @@ public sealed class ToolAndAgentTests
                     },
                 ],
             });
-            store.Config.Profiles["default"].Strategy = "fast";
-            store.Config.Routing.Strategies["fast"] = ["openai/text-only"];
+            store.Config.Provider = "openai";
+            store.Config.Model = "text-only";
             store.Config.Routing.Fallback = ["visionp/v1"];
 
             var steering = new AgentSteeringQueue();

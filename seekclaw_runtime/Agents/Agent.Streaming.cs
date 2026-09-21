@@ -31,8 +31,7 @@ public sealed partial class Agent
         CancellationToken ct)
     {
         var config = configStore.Config;
-        var profile = config.GetActiveProfile();
-        var temperature = workspace.Config?.Temperature ?? profile.Temperature;
+        var temperature = workspace.Config?.Temperature ?? config.Temperature;
         var definitions = tools
             .Select(t => new ToolDefinition(t.Name, t.Description, t.ParameterSchema))
             .ToList();

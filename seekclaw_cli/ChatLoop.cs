@@ -271,9 +271,8 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                     }
                     else
                     {
-                        var profile = runtime.ConfigStore.Config.GetActiveProfile();
-                        profile.Provider = model.Provider.Id;
-                        profile.Model = model.Model.Id;
+                        runtime.ConfigStore.Config.Provider = model.Provider.Id;
+                        runtime.ConfigStore.Config.Model = model.Model.Id;
                         runtime.ConfigStore.Save();
                         renderer.WriteLine($"model → {model.Ref}".Style(Ansi.Green));
                     }
@@ -293,8 +292,6 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                     {
                         runtime.Workspace.Config.Mode = targetMode.ToString().ToLowerInvariant();
                     }
-                    var profile = runtime.ConfigStore.Config.GetActiveProfile();
-                    profile.Mode = targetMode.ToString().ToLowerInvariant();
                     runtime.ConfigStore.Config.Agent.Mode = targetMode.ToString().ToLowerInvariant();
                     runtime.ConfigStore.Save();
                     renderer.WriteLine($"mode → {targetMode.ToDisplayString()}".Style(Ansi.Green));

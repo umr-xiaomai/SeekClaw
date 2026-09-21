@@ -33,7 +33,7 @@ public sealed class HealthChecker(ILlmHttpFactory httpFactory, Configuration.ICo
         // 3. Provider Configuration Check
         var providers = configStore.Config.Providers;
         var hasProvider = providers.Count > 0;
-        results.Add(new HealthCheckResult("Provider Config", hasProvider, hasProvider ? $"{providers.Count} provider(s) configured. Active profile: {configStore.Config.ActiveProfile}" : "No providers configured"));
+        results.Add(new HealthCheckResult("Provider Config", hasProvider, hasProvider ? $"{providers.Count} provider(s) configured. Active provider: {configStore.Config.Provider ?? "-"}, model: {configStore.Config.Model ?? "-"}" : "No providers configured"));
 
         // 4. Memory File Check
         var memoryFile = workspace.MemoryFile;

@@ -62,26 +62,18 @@ public sealed class ProviderManager(
     public IReadOnlyList<ModelInfo> BuildCandidates(WorkspaceConfig? workspace = null)
     {
         var config = configStore.Config;
-        var profile = config.GetActiveProfile();
         var explicitRefs = new List<string>();
 
         // 1. Workspace override beats everything.
         if (!string.IsNullOrWhiteSpace(workspace?.Model))
-            explicitRefs.Add(Qualify(workspace!.Model!, workspace.Provider ?? profile.Provider));
+            explicitRefs.Add(Qualify(workspace!.Model!, workspace.Provider ?? config.Provider));
 
-        // 2. Active profile selection.
-        if (!string.IsNullOrWhiteSpace(profile.Model))
-            explicitRefs.Add(Qualify(profile.Model!, profile.Provider));
+        // 2. Global active model selection.
+        if (!string.IsNullOrWhiteSpace(config.Model))
+            explicitRefs.Add(Qualify(config.Model!, config.Provider));
 
-        // 3. Routing strategy candidates (load-balanced).
-        var strategy = workspace?.Strategy ?? profile.Strategy ?? "balanced";
-        var strategyRefs = config.Routing.Strategies.TryGetValue(strategy, out var refs)
-            ? ApplyLoadBalance(strategy, refs)
-            : [];
-
-        // 4. Global fallback chain.
+        // 3. Global fallback chain.
         var chain = explicitRefs
-            .Concat(strategyRefs)
             .Concat(config.Routing.Fallback)
             .Select(registry.Resolve)
             .Where(m => m is not null && m.Provider.Enabled)
@@ -416,40 +408,4 @@ public sealed class ProviderManager(
     private static string Qualify(string modelRef, string? providerId) =>
         modelRef.Contains('/') || string.IsNullOrWhiteSpace(providerId) ? modelRef : $"{providerId}/{modelRef}";
 
-    private List<string> ApplyLoadBalance(string strategy, List<string> refs)
-    {
-        var config = configStore.Config;
-        switch (config.Routing.LoadBalance.ToLowerInvariant())
-        {
-            case "roundrobin":
-            {
-                var state = configStore.State;
-                var cursor = state.RoundRobinCursors.GetValueOrDefault(strategy);
-                state.RoundRobinCursors[strategy] = (cursor + 1) % Math.Max(1, refs.Count);
-                configStore.SaveState();
-                return [.. refs.Skip(cursor % Math.Max(1, refs.Count)), .. refs.Take(cursor % Math.Max(1, refs.Count))];
-            }
-            case "leastused":
-                return OrderByUsage(refs, a => a.Calls);
-            case "lowestcost":
-                return refs.OrderBy(r =>
-                {
-                    var model = registry.Resolve(r);
-                    return model is null ? decimal.MaxValue : model.Model.InputPricePerMTok + model.Model.OutputPricePerMTok;
-                }).ToList();
-            case "fastest":
-                return OrderByUsage(refs, a => a.AvgLatencyMs);
-            default: // priority / sticky keep configured order
-                return refs;
-        }
-    }
-
-    private List<string> OrderByUsage<TKey>(List<string> refs, Func<UsageAggregate, TKey> key)
-    {
-        var aggregates = usageTracker.Aggregate()
-            .ToDictionary(a => $"{a.Provider}/{a.Model}", StringComparer.OrdinalIgnoreCase);
-        return refs
-            .OrderBy(r => aggregates.TryGetValue(r, out var agg) ? key(agg) : default)
-            .ToList();
-    }
 }

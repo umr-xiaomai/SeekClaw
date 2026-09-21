@@ -40,16 +40,6 @@ import SelectMenu from './SelectMenu.vue'
 
 type SettingsSection = 'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'
 
-interface ProfileInfo {
-  name: string
-  active: boolean
-  provider?: string
-  model?: string
-  strategy?: string
-  temperature?: number
-  mode?: string
-}
-
 interface ProviderInfo {
   id: string
   name: string
@@ -162,7 +152,6 @@ const deepSeekOptimizationEnabled = ref(false)
 const action = ref('')
 const error = ref('')
 const notice = ref('')
-const profiles = ref<ProfileInfo[]>([])
 const providers = ref<ProviderInfo[]>([])
 const models = ref<ModelInfo[]>([])
 const mcpServers = ref<McpServerInfo[]>([])
@@ -173,7 +162,6 @@ const selectedModel = ref('')
 const modelQuery = ref('')
 const modelEditorOpen = ref(false)
 const providerEditorOpen = ref(false)
-const profileEditorOpen = ref(false)
 const mcpEditorOpen = ref(false)
 const editingMcpServer = ref<McpServerSummary | null>(null)
 const mcpDialogError = ref('')
@@ -187,46 +175,14 @@ const providerForm = reactive({
 const modelForm = reactive<ModelFormValue>({
   provider: '', id: '', alias: '', contextWindow: 128000, maxOutput: 8192, vision: false
 })
-const profileForm = reactive({
-  name: '', provider: '', model: '', strategy: 'balanced', temperature: ''
-})
 
-const strategyLabelMap: Record<string, string> = {
-  balanced: '平衡',
-  fast: '快速',
-  quality: '高质量',
-  cheap: '低成本',
-  offline: '离线'
-}
-
-function strategyLabel(value?: string): string {
-  return value ? strategyLabelMap[value] ?? value : ''
-}
-
-const activeProfile = computed(() => profiles.value.find((profile) => profile.active))
 const activeModel = computed(() => models.value.find((model) => model.active))
-const profileOptions = computed(() => profiles.value.map((profile) => ({
-  value: profile.name,
-  label: profile.name,
-  description: profile.strategy ? `策略 · ${strategyLabel(profile.strategy)}` : undefined
-})))
 const modelOptions = computed(() => models.value.map((model) => ({
   value: model.ref,
   label: model.ref,
   description: `${model.contextWindow.toLocaleString()} 上下文 · ${model.provider}`,
   disabled: !model.providerEnabled
 })))
-const providerOptions = computed(() => [
-  { value: '', label: '自动选择', description: '自动路由' },
-  ...providers.value.map((provider) => ({ value: provider.id, label: provider.name, description: provider.id }))
-])
-const strategyOptions = [
-  { value: 'balanced', label: '平衡', description: '平衡质量、速度和成本' },
-  { value: 'fast', label: '快速', description: '优先选择响应更快的模型' },
-  { value: 'quality', label: '高质量', description: '优先选择能力更强的模型' },
-  { value: 'cheap', label: '低成本', description: '优先降低调用成本' },
-  { value: 'offline', label: '离线', description: '仅使用离线模型' }
-]
 const filteredModels = computed(() => {
   const query = modelQuery.value.trim().toLocaleLowerCase()
   if (!query) return models.value
@@ -390,12 +346,10 @@ async function toggleDeepSeekOptimization(): Promise<void> {
 }
 
 async function loadModels(): Promise<void> {
-  const [profileData, providerData, modelData] = await Promise.all([
-    requestJson<ProfileInfo[]>('profile.list'),
+  const [providerData, modelData] = await Promise.all([
     requestJson<ProviderInfo[]>('provider.list'),
     requestJson<ModelInfo[]>('model.catalog')
   ])
-  profiles.value = profileData
   providers.value = providerData
   models.value = modelData
   selectedModel.value = modelData.find((model) => model.active)?.ref ?? modelData[0]?.ref ?? ''
@@ -408,69 +362,6 @@ async function loadDiagnostics(): Promise<void> {
   ])
   checks.value = healthData
   usage.value = usageData
-}
-
-async function switchProfile(name: string): Promise<void> {
-  beginAction('profile.use')
-  try {
-    await window.seekclaw.daemon.request('profile.use', { name })
-    await loadModels()
-    emit('runtimeChanged')
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    endAction()
-  }
-}
-
-function newProfile(): void {
-  Object.assign(profileForm, { name: '', provider: '', model: '', strategy: 'balanced', temperature: '' })
-  profileEditorOpen.value = true
-}
-
-function editProfile(profile: ProfileInfo): void {
-  Object.assign(profileForm, {
-    name: profile.name,
-    provider: profile.provider ?? '',
-    model: profile.model ?? '',
-    strategy: profile.strategy ?? 'balanced',
-    temperature: profile.temperature?.toString() ?? ''
-  })
-  profileEditorOpen.value = true
-}
-
-async function saveProfile(): Promise<void> {
-  beginAction('profile.save')
-  try {
-    await window.seekclaw.daemon.request('profile.upsert', {
-      name: profileForm.name,
-      provider: profileForm.provider,
-      model: profileForm.model,
-      strategy: profileForm.strategy,
-      temperature: profileForm.temperature === '' ? null : Number(profileForm.temperature)
-    })
-    profileEditorOpen.value = false
-    await loadModels()
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    endAction()
-  }
-}
-
-async function removeProfile(profile: ProfileInfo): Promise<void> {
-  if (!await confirmAction({
-    title: '删除配置方案', message: `删除配置方案 “${profile.name}”？`, confirmLabel: '删除', danger: true
-  })) return
-  beginAction('profile.remove')
-  try {
-    await window.seekclaw.daemon.request('profile.remove', { name: profile.name })
-    await loadModels()
-  } catch (reason) {
-    fail(reason)
-  } finally {
-    endAction()
-  }
 }
 
 function newProvider(): void {
@@ -940,44 +831,12 @@ onBeforeUnmount(() => {
 
             <section class="settings-group compact-group">
               <div class="settings-row">
-                <div><strong>活动配置方案</strong><small>{{ strategyLabel(activeProfile?.strategy) || '未设置路由策略' }}</small></div>
-                <div class="row-actions">
-                  <SelectMenu
-                    class="settings-select"
-                    :model-value="activeProfile?.name ?? ''"
-                    :options="profileOptions"
-                    label="活动配置方案"
-                    :menu-min-width="240"
-                    @update:model-value="switchProfile"
-                  />
-                  <button class="icon-button" title="编辑配置方案" @click="activeProfile && editProfile(activeProfile)"><Settings2 :size="16" /></button>
-                  <button class="icon-button" title="新增配置方案" @click="newProfile"><Plus :size="16" /></button>
-                </div>
-              </div>
-              <div class="settings-row">
                 <div><strong>活动模型</strong><small>{{ activeModel ? `${activeModel.contextWindow.toLocaleString()} 上下文` : '无可用模型' }}</small></div>
                 <div class="row-actions model-actions">
                   <SelectMenu v-model="selectedModel" class="settings-select model-select" :options="modelOptions" label="活动模型" :menu-min-width="330" />
                   <button class="secondary-button" :disabled="!selectedModel" @click="testModel">测试</button>
                   <button class="secondary-button primary-action" :disabled="!selectedModel" @click="switchModel">使用</button>
                 </div>
-              </div>
-            </section>
-
-            <section v-if="profileEditorOpen" class="settings-editor">
-              <div class="editor-heading"><strong>配置方案</strong><button class="icon-button compact" @click="profileEditorOpen = false"><X :size="15" /></button></div>
-              <div class="form-grid">
-                <label><span>名称</span><input v-model="profileForm.name" :disabled="profiles.some((item) => item.name === profileForm.name)" /></label>
-                <label><span>提供商</span><SelectMenu v-model="profileForm.provider" :options="providerOptions" label="配置方案提供商" :menu-min-width="240" /></label>
-                <label><span>模型</span><input v-model="profileForm.model" /></label>
-                <label><span>策略</span><SelectMenu v-model="profileForm.strategy" :options="strategyOptions" label="配置方案策略" :menu-min-width="250" /></label>
-                <label><span>温度</span><input v-model="profileForm.temperature" type="number" min="0" max="2" step="0.1" /></label>
-              </div>
-              <div class="editor-actions">
-                <button v-if="profiles.some((item) => item.name === profileForm.name && !item.active)" class="danger-button" @click="removeProfile(profiles.find((item) => item.name === profileForm.name)!)"><Trash2 :size="15" /> 删除</button>
-                <span class="toolbar-spacer" />
-                <button class="secondary-button" @click="profileEditorOpen = false">取消</button>
-                <button class="secondary-button primary-action" @click="saveProfile"><Save :size="15" /> 保存</button>
               </div>
             </section>
 

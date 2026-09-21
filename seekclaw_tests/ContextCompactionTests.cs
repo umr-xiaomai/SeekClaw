@@ -85,8 +85,8 @@ public sealed class ContextCompactionTests
                     },
                 ],
             });
-            store.Config.Profiles["default"].Strategy = "fast";
-            store.Config.Routing.Strategies["fast"] = ["openai/small"];
+            store.Config.Provider = "openai";
+            store.Config.Model = "small";
             store.Config.Routing.Fallback = ["openai/small"];
 
             var capture = new RecordingClientFactory();
@@ -157,8 +157,8 @@ public sealed class ContextCompactionTests
                     },
                 ],
             });
-            store.Config.Profiles["default"].Strategy = "fast";
-            store.Config.Routing.Strategies["fast"] = ["openai/small"];
+            store.Config.Provider = "openai";
+            store.Config.Model = "small";
             store.Config.Routing.Fallback = ["openai/small"];
 
             var capture = new FailingCompactionClientFactory();
@@ -215,8 +215,8 @@ public sealed class ContextCompactionTests
                     },
                 ],
             });
-            store.Config.Profiles["default"].Strategy = "fast";
-            store.Config.Routing.Strategies["fast"] = ["deepseek/reasoner"];
+            store.Config.Provider = "deepseek";
+            store.Config.Model = "reasoner";
             store.Config.Routing.Fallback = ["deepseek/reasoner"];
 
             var capture = new SequenceClientFactory(

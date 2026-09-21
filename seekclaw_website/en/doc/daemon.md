@@ -96,7 +96,6 @@ The Desktop settings workbench uses structured methods to manage the same config
 
 | Method | Description |
 | --- | --- |
-| `profile.list/upsert/use/remove` | Manages runtime profiles |
 | `provider.list/upsert/use/remove/test` | Manages and probes providers |
 | `mcp.list/upsert/remove/reload` | Manages and reconnects MCP servers and tool registrations |
 | `skill.list/toggle` | Lists and enables or disables skills |
