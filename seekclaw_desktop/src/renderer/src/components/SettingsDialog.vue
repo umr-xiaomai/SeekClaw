@@ -706,34 +706,49 @@ onBeforeUnmount(() => {
     role="region"
     :aria-label="pageTitle"
   >
-    <header class="settings-header">
-      <div>
-        <button class="page-back-button" type="button" @click="emit('close')">
-          <ArrowLeft :size="18" />
+    <nav class="settings-nav" aria-label="页面导航">
+      <div class="settings-nav-header">
+        <button class="page-back-button" type="button" title="返回应用" @click="emit('close')">
+          <ArrowLeft :size="16" />
           <span>返回应用</span>
         </button>
-        <h2>{{ pageTitle }}</h2>
-        <span class="settings-connection" :class="{ online: daemonConnected }">
-          <Circle :size="8" fill="currentColor" />
-          {{ daemonConnected ? '运行时已连接' : '运行时离线' }}
-        </span>
       </div>
-    </header>
 
-      <div class="settings-layout">
-        <nav class="settings-nav" aria-label="页面导航">
-          <button
-            v-for="item in visibleSections"
-            :key="item.id"
-            :class="{ active: section === item.id }"
-            @click="section = item.id"
-          >
-            <component :is="item.icon" :size="17" />
-            <span>{{ item.label }}</span>
-          </button>
-        </nav>
+      <div class="settings-nav-group-title">
+        {{ pageTitle }}
+      </div>
 
-        <main class="settings-content">
+      <div class="settings-nav-list">
+        <button
+          v-for="item in visibleSections"
+          :key="item.id"
+          class="settings-nav-item"
+          :class="{ active: section === item.id }"
+          @click="section = item.id"
+        >
+          <component :is="item.icon" :size="17" />
+          <span>{{ item.label }}</span>
+        </button>
+      </div>
+
+      <div class="settings-nav-footer">
+        <span class="settings-connection" :class="{ online: daemonConnected }" :title="daemonEndpoint">
+          <Circle :size="8" fill="currentColor" />
+          <span>{{ daemonConnected ? '运行时已连接' : '运行时离线' }}</span>
+        </span>
+        <button
+          v-if="!daemonConnected"
+          class="icon-button compact reconnect-btn"
+          title="重新连接"
+          @click="emit('reconnect')"
+        >
+          <RefreshCw :size="13" />
+        </button>
+      </div>
+    </nav>
+
+    <main class="settings-main">
+      <div class="settings-content">
           <div v-if="loading" class="settings-loading"><LoaderCircle class="spin" :size="20" /> 正在加载</div>
 
           <template v-else-if="section === 'general'">
@@ -1098,8 +1113,8 @@ onBeforeUnmount(() => {
             </section>
           </template>
 
-        </main>
       </div>
+    </main>
   </section>
   <Teleport to="body">
     <Transition name="global-toast">
