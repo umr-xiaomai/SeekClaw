@@ -674,6 +674,11 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.Usage(Params(request))), ct).ConfigureAwait(false);
                         break;
 
+                    case "usage.timeline":
+                        await RunAdminAsync(writer, writerGate, id, false,
+                            _ => Task.FromResult(_admin.UsageTimeline(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
                     case "doctor.run":
                         await RunAdminAsync(writer, writerGate, id, false,
                             _admin.DoctorAsync, ct).ConfigureAwait(false);
@@ -1338,7 +1343,7 @@ public sealed class DaemonServer : IAsyncDisposable
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
             "model.list", "model.catalog", "model.switch", "model.test", "model.update",
             "mcp.list", "mcp.upsert", "mcp.remove", "mcp.reload",
-            "skill.list", "skill.import", "skill.toggle", "usage.get", "doctor", "doctor.run",
+            "skill.list", "skill.import", "skill.toggle", "usage.get", "usage.timeline", "doctor", "doctor.run",
             "project.list", "project.upsert", "project.remove",
             "session.list", "session.get", "session.update", "session.archive", "session.delete",
             "session.resume", "session.new",

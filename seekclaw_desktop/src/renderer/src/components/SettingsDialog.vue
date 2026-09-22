@@ -6,6 +6,7 @@ import {
   Bot,
   Check,
   Circle,
+  Clock,
   FolderOpen,
   Gauge,
   GripVertical,
@@ -23,7 +24,8 @@ import {
   Trash2,
   Upload,
   Wrench,
-  X
+  X,
+  Zap
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { confirmAction } from '../confirmation'
@@ -38,6 +40,8 @@ import McpEditorDialog from './McpEditorDialog.vue'
 import type { ModelDetailConfig } from './ModelConfigModal.vue'
 import ProviderEditorDialog from './ProviderEditorDialog.vue'
 import SelectMenu from './SelectMenu.vue'
+import UsageTrendChart, { type TimelinePoint } from './UsageTrendChart.vue'
+import UsageModelBarChart from './UsageModelBarChart.vue'
 
 type SettingsSection = 'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'
 
@@ -116,7 +120,7 @@ interface UsageInfo {
   cachedInputTokens?: number
   cacheCreationInputTokens?: number
   outputTokens: number
-  cost: number
+  totalTokens?: number
   avgLatencyMs: number
   successRate: number
 }
@@ -152,6 +156,8 @@ const mcpServers = ref<McpServerInfo[]>([])
 const skills = ref<SkillInfo[]>([])
 const checks = ref<HealthCheck[]>([])
 const usage = ref<UsageInfo[]>([])
+const usageDays = ref<number>(14)
+const timeline = ref<TimelinePoint[]>([])
 const selectedModel = ref('')
 const providerEditorOpen = ref(false)
 const mcpEditorOpen = ref(false)
@@ -172,11 +178,37 @@ const modelOptions = computed(() => models.value.map((model) => ({
   description: `${model.contextWindow.toLocaleString()} 上下文 · ${model.provider}`,
   disabled: !model.providerEnabled
 })))
-const totalUsage = computed(() => usage.value.reduce((total, item) => ({
-  calls: total.calls + item.calls,
-  tokens: total.tokens + promptInputTokens(item) + item.outputTokens,
-  cost: total.cost + item.cost
-}), { calls: 0, tokens: 0, cost: 0 }))
+
+const totalUsage = computed(() => {
+  let calls = 0
+  let failures = 0
+  let tokens = 0
+  let cachedTokens = 0
+  let totalLatency = 0
+
+  for (const item of usage.value) {
+    calls += item.calls
+    failures += item.failures
+    const itemInput = promptInputTokens(item)
+    tokens += itemInput + item.outputTokens
+    cachedTokens += item.cachedInputTokens ?? 0
+    totalLatency += item.avgLatencyMs * item.calls
+  }
+
+  const successRate = calls > 0 ? (calls - failures) / calls : 1.0
+  const cacheEfficiency = tokens > 0 ? Math.min(100, Math.round((cachedTokens / tokens) * 100)) : 0
+  const avgLatencyMs = calls > 0 ? Math.round(totalLatency / calls) : 0
+
+  return {
+    calls,
+    failures,
+    tokens,
+    cachedTokens,
+    successRate,
+    cacheEfficiency,
+    avgLatencyMs
+  }
+})
 
 function promptInputTokens(item: UsageInfo): number {
   return item.totalInputTokens && item.totalInputTokens > 0 ? item.totalInputTokens : item.inputTokens
@@ -337,13 +369,21 @@ async function loadModels(): Promise<void> {
 }
 
 async function loadDiagnostics(): Promise<void> {
-  const [healthData, usageData] = await Promise.all([
+  const [healthData, usageData, timelineData] = await Promise.all([
     requestJson<HealthCheck[]>('doctor.run'),
-    requestJson<UsageInfo[]>('usage.get')
+    requestJson<UsageInfo[]>('usage.get', { days: usageDays.value }),
+    requestJson<TimelinePoint[]>('usage.timeline', { days: usageDays.value })
   ])
   checks.value = healthData
   usage.value = usageData
+  timeline.value = timelineData
 }
+
+watch(usageDays, () => {
+  if (section.value === 'diagnostics') {
+    void loadDiagnostics()
+  }
+})
 
 function newProvider(): void {
   error.value = ''
@@ -890,27 +930,170 @@ onBeforeUnmount(() => {
 
           <template v-else>
             <div class="settings-section-heading">
-              <div><h3>诊断与用量</h3></div>
-              <button class="secondary-button" @click="loadCurrentSection"><RefreshCw :size="15" /> 重新检查</button>
+              <div>
+                <h3>诊断与用量</h3>
+                <p>运行时健康体检与智能体调用效能看板</p>
+              </div>
+              <div class="row-actions">
+                <div class="days-segmented-filter">
+                  <button
+                    type="button"
+                    class="filter-chip"
+                    :class="{ active: usageDays === 7 }"
+                    @click="usageDays = 7"
+                  >
+                    近 7 天
+                  </button>
+                  <button
+                    type="button"
+                    class="filter-chip"
+                    :class="{ active: usageDays === 14 }"
+                    @click="usageDays = 14"
+                  >
+                    近 14 天
+                  </button>
+                  <button
+                    type="button"
+                    class="filter-chip"
+                    :class="{ active: usageDays === 30 }"
+                    @click="usageDays = 30"
+                  >
+                    近 30 天
+                  </button>
+                </div>
+                <button class="secondary-button" :disabled="loading" @click="loadDiagnostics">
+                  <RefreshCw :size="15" :class="{ spin: loading }" /> 重新检查
+                </button>
+              </div>
             </div>
 
-            <section class="usage-summary">
-              <div><Gauge :size="17" /><span>调用</span><strong>{{ totalUsage.calls.toLocaleString() }}</strong></div>
-              <div><Activity :size="17" /><span>Tokens</span><strong>{{ totalUsage.tokens.toLocaleString() }}</strong></div>
-              <div><Bot :size="17" /><span>成本</span><strong>${{ totalUsage.cost.toFixed(4) }}</strong></div>
+            <!-- KPI Metric Cards (No Cost) -->
+            <section class="usage-kpi-grid">
+              <div class="kpi-card">
+                <div class="kpi-icon-badge kpi-indigo"><Gauge :size="18" /></div>
+                <div class="kpi-data">
+                  <span class="kpi-title">总调用量</span>
+                  <div class="kpi-main-metric">
+                    <strong>{{ totalUsage.calls.toLocaleString() }}</strong>
+                    <span class="kpi-tag" :class="{ 'tag-success': totalUsage.successRate >= 0.95 }">
+                      {{ Math.round(totalUsage.successRate * 100) }}% 成功
+                    </span>
+                  </div>
+                  <small class="kpi-subtext">异常失败 {{ totalUsage.failures }} 次</small>
+                </div>
+              </div>
+
+              <div class="kpi-card">
+                <div class="kpi-icon-badge kpi-purple"><Activity :size="18" /></div>
+                <div class="kpi-data">
+                  <span class="kpi-title">消耗 Tokens</span>
+                  <div class="kpi-main-metric">
+                    <strong>{{ totalUsage.tokens.toLocaleString() }}</strong>
+                  </div>
+                  <small class="kpi-subtext">输入 + 输出累计上下文处理量</small>
+                </div>
+              </div>
+
+              <div class="kpi-card">
+                <div class="kpi-icon-badge kpi-teal"><Zap :size="18" /></div>
+                <div class="kpi-data">
+                  <span class="kpi-title">缓存节省效率</span>
+                  <div class="kpi-main-metric">
+                    <strong>{{ totalUsage.cacheEfficiency }}%</strong>
+                    <span class="kpi-tag tag-cyan">Prompt Cache</span>
+                  </div>
+                  <small class="kpi-subtext">
+                    命中 {{ totalUsage.cachedTokens.toLocaleString() }} Tokens
+                  </small>
+                </div>
+              </div>
+
+              <div class="kpi-card">
+                <div class="kpi-icon-badge kpi-amber"><Clock :size="18" /></div>
+                <div class="kpi-data">
+                  <span class="kpi-title">平均响应延迟</span>
+                  <div class="kpi-main-metric">
+                    <strong>{{ totalUsage.avgLatencyMs }}</strong>
+                    <span class="kpi-unit">ms</span>
+                  </div>
+                  <small class="kpi-subtext">端到端网络与生成延迟均值</small>
+                </div>
+              </div>
             </section>
+
+            <!-- Visual Charts Dashboard -->
+            <section class="usage-charts-dashboard">
+              <UsageTrendChart :data="timeline" />
+              <UsageModelBarChart :items="usage" />
+            </section>
+
+            <!-- System Doctor Diagnostics -->
+            <div class="diagnostics-sub-heading">
+              <div>
+                <h4>系统健康体检</h4>
+                <small>{{ checks.filter(c => c.ok).length }} / {{ checks.length }} 项检查通过</small>
+              </div>
+            </div>
 
             <section class="settings-group diagnostic-list">
               <div v-for="check in checks" :key="check.name" class="settings-row">
                 <div><strong>{{ check.name }}</strong><small>{{ check.detail }}</small></div>
-                <span class="check-status" :class="{ ok: check.ok }"><Check v-if="check.ok" :size="15" /><X v-else :size="15" /> {{ check.ok ? '正常' : '异常' }}</span>
+                <span class="check-status" :class="{ ok: check.ok }">
+                  <Check v-if="check.ok" :size="15" />
+                  <X v-else :size="15" />
+                  {{ check.ok ? '正常' : '异常' }}
+                </span>
               </div>
             </section>
 
+            <!-- Model Usage Detail Table -->
+            <div v-if="usage.length > 0" class="diagnostics-sub-heading">
+              <div>
+                <h4>模型用量明细</h4>
+                <small>共 {{ usage.length }} 个活跃模型配置记录</small>
+              </div>
+            </div>
+
             <section v-if="usage.length > 0" class="usage-table-wrap">
               <table class="usage-table">
-                <thead><tr><th>模型</th><th>调用</th><th>成功率</th><th>缓存命中</th><th>Tokens</th><th>平均延迟</th><th>成本</th></tr></thead>
-                <tbody><tr v-for="item in usage" :key="`${item.provider}/${item.model}`"><td><strong>{{ item.provider }}/{{ item.model }}</strong></td><td>{{ item.calls }}</td><td>{{ Math.round(item.successRate * 100) }}%</td><td><span class="cache-rate">{{ cacheHitRate(item) }}%</span><small v-if="item.cachedInputTokens">命中 {{ item.cachedInputTokens.toLocaleString() }}<template v-if="item.cacheCreationInputTokens"> · 写入 {{ item.cacheCreationInputTokens.toLocaleString() }}</template></small></td><td>{{ (promptInputTokens(item) + item.outputTokens).toLocaleString() }}</td><td>{{ Math.round(item.avgLatencyMs) }} ms</td><td>${{ item.cost.toFixed(4) }}</td></tr></tbody>
+                <thead>
+                  <tr>
+                    <th style="text-align: left;">模型</th>
+                    <th>调用</th>
+                    <th>成功率</th>
+                    <th>缓存命中</th>
+                    <th>普通输入</th>
+                    <th>生成输出</th>
+                    <th>总 Tokens</th>
+                    <th>平均延迟</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in usage" :key="`${item.provider}/${item.model}`">
+                    <td style="text-align: left;">
+                      <div class="model-row-identity">
+                        <strong>{{ item.model }}</strong>
+                        <small>{{ item.provider }}</small>
+                      </div>
+                    </td>
+                    <td>{{ item.calls.toLocaleString() }}</td>
+                    <td>{{ Math.round(item.successRate * 100) }}%</td>
+                    <td>
+                      <span class="cache-rate">{{ cacheHitRate(item) }}%</span>
+                      <small v-if="item.cachedInputTokens" class="table-sub-detail">
+                        命中 {{ item.cachedInputTokens.toLocaleString() }}
+                      </small>
+                    </td>
+                    <td>{{ Math.max(0, promptInputTokens(item) - (item.cachedInputTokens ?? 0)).toLocaleString() }}</td>
+                    <td>{{ item.outputTokens.toLocaleString() }}</td>
+                    <td>
+                      <strong class="total-tokens-cell">
+                        {{ (promptInputTokens(item) + item.outputTokens).toLocaleString() }}
+                      </strong>
+                    </td>
+                    <td>{{ Math.round(item.avgLatencyMs) }} ms</td>
+                  </tr>
+                </tbody>
               </table>
             </section>
           </template>

@@ -389,7 +389,7 @@ public sealed class ProviderManager(
             CachedInputTokens = usage.CachedInputTokens,
             CacheCreationInputTokens = usage.CacheCreationInputTokens,
             OutputTokens = usage.OutputTokens,
-            Cost = ComputeCost(model.Model, usage),
+            Cost = 0,
             ElapsedMs = stopwatch.Elapsed.TotalMilliseconds,
             Success = success,
         });

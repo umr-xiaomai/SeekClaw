@@ -591,7 +591,22 @@ public sealed class DaemonServerTests : IAsyncDisposable
 
         await connection.SendAsync(17, "usage.get");
         var usage = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
-        Assert.All(usage, item => Assert.NotNull(item!["model"]));
+        Assert.All(usage, item =>
+        {
+            Assert.NotNull(item!["model"]);
+            Assert.Null(item["cost"]);
+        });
+
+        await connection.SendAsync(171, "usage.timeline", new JsonObject { ["days"] = 7 });
+        var timeline = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
+        Assert.Equal(7, timeline.Count);
+        Assert.All(timeline, point =>
+        {
+            Assert.NotNull(point!["date"]);
+            Assert.NotNull(point!["totalTokens"]);
+            Assert.NotNull(point!["calls"]);
+        });
+
         await connection.SendAsync(18, "doctor.run");
         var checks = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
         Assert.NotEmpty(checks);

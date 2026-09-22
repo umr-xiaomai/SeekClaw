@@ -76,6 +76,6 @@ public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : 
                 Cost = g.Sum(e => e.Cost),
                 AvgLatencyMs = g.Average(e => e.ElapsedMs),
             })
-            .OrderByDescending(a => a.Cost)
+            .OrderByDescending(a => a.TotalTokens)
             .ToList();
 }

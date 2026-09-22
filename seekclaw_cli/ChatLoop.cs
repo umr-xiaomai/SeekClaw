@@ -21,7 +21,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
         new("/skills", "", "List available skills", SubmitsOnSelect: true),
         new("/doctor", "", "Run environment health diagnostics", SubmitsOnSelect: true),
         new("/clear", "", "Start a new session", SubmitsOnSelect: true),
-        new("/usage", "", "Token and cost statistics", SubmitsOnSelect: true),
+        new("/usage", "", "Token and latency statistics", SubmitsOnSelect: true),
         new("/session", "", "Current session info", SubmitsOnSelect: true),
         new("/copy", "", "Copy the last assistant answer to clipboard", SubmitsOnSelect: true),
         new("/print", "config", "Print configuration", SubmitsOnSelect: true),
@@ -347,7 +347,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                 var aggregates = runtime.Usage.Aggregate();
                 if (aggregates.Count == 0) { renderer.WriteLine("no usage recorded yet.".Style(Ansi.Gray)); return false; }
                 foreach (var a in aggregates.Take(10))
-                    renderer.WriteLine($"{a.Provider}/{a.Model}  {a.TotalTokens:N0} tok  ${a.Cost:0.####}  {a.Calls} calls".Style(Ansi.Dim));
+                    renderer.WriteLine($"{a.Provider}/{a.Model}  {a.TotalTokens:N0} tok  {a.Calls} calls  {a.AvgLatencyMs:0}ms".Style(Ansi.Dim));
                 return false;
             }
 
@@ -423,7 +423,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                 renderer.WriteLine("/skills        list available skills".Style(Ansi.Dim));
                 renderer.WriteLine("/doctor        run runtime health diagnostics".Style(Ansi.Dim));
                 renderer.WriteLine("/clear         start a new session".Style(Ansi.Dim));
-                renderer.WriteLine("/usage         token/cost statistics".Style(Ansi.Dim));
+                renderer.WriteLine("/usage         token/latency statistics".Style(Ansi.Dim));
                 renderer.WriteLine("/session       current session info".Style(Ansi.Dim));
                 renderer.WriteLine("/copy          copy last assistant answer".Style(Ansi.Dim));
                 renderer.WriteLine("/print config  print configuration file path".Style(Ansi.Dim));

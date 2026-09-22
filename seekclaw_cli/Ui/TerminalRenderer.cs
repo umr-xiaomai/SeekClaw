@@ -45,7 +45,6 @@ public sealed class TerminalRenderer : IDisposable
     private string _modelRef = "";
     private long _sessionInputTokens;
     private long _sessionOutputTokens;
-    private decimal _sessionCost;
     private int _spinnerTick;
     private long _thinkingStartedAt;
     private long _nextThinkingPreviewAt;
@@ -221,7 +220,6 @@ public sealed class TerminalRenderer : IDisposable
             case UsageRecordedEvent usage:
                 _sessionInputTokens += usage.InputTokens;
                 _sessionOutputTokens += usage.OutputTokens;
-                _sessionCost += usage.Cost;
                 break;
 
             case VerificationStartedEvent verify:
@@ -318,19 +316,18 @@ public sealed class TerminalRenderer : IDisposable
         }
 
         var tokens = _sessionInputTokens + _sessionOutputTokens;
-        var costText = _sessionCost > 0 ? $" · ${_sessionCost:0.####}" : "";
         var mode = _getModeText?.Invoke();
         var contextWindow = _getContextWindow?.Invoke();
         var contextText = contextWindow is > 0 && tokens > 0
             ? $" · {(double)tokens / contextWindow.Value:P0} ctx"
             : "";
 
-        if (_modelRef.Length > 0 || !string.IsNullOrWhiteSpace(mode) || tokens > 0 || costText.Length > 0)
+        if (_modelRef.Length > 0 || !string.IsNullOrWhiteSpace(mode) || tokens > 0)
         {
             var status = new StringBuilder(_modelRef);
             if (!string.IsNullOrWhiteSpace(mode)) status.Append($" · {mode}");
             if (tokens > 0) status.Append($" · {tokens:N0} tokens");
-            status.Append(costText).Append(contextText);
+            status.Append(contextText);
             lines.Add(status.ToString().Style(Ansi.Gray));
         }
 

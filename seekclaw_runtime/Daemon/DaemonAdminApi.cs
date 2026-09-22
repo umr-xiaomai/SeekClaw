@@ -714,12 +714,74 @@ internal sealed class DaemonAdminApi(
                 ["cachedInputTokens"] = aggregate.CachedInputTokens,
                 ["cacheCreationInputTokens"] = aggregate.CacheCreationInputTokens,
                 ["outputTokens"] = aggregate.OutputTokens,
-                ["cost"] = aggregate.Cost,
+                ["totalTokens"] = aggregate.TotalTokens,
                 ["avgLatencyMs"] = aggregate.AvgLatencyMs,
                 ["successRate"] = aggregate.SuccessRate,
             });
         }
         return data.ToJsonString();
+    }
+
+    public string UsageTimeline(JsonObject parameters)
+    {
+        var days = parameters["days"]?.GetValue<int?>() ?? 14;
+        if (days < 1) days = 14;
+        if (days > 90) days = 90;
+
+        var startUtc = DateTimeOffset.UtcNow.Date.AddDays(-(days - 1));
+        var entries = runtime.Usage.ReadAll(startUtc);
+
+        var byDay = entries
+            .GroupBy(e => e.Timestamp.ToLocalTime().ToString("yyyy-MM-dd"))
+            .ToDictionary(g => g.Key, g => new
+            {
+                InputTokens = g.Sum(e => e.InputTokens),
+                TotalInputTokens = g.Sum(e => e.TotalInputTokens > 0 ? e.TotalInputTokens : e.InputTokens),
+                CachedInputTokens = g.Sum(e => e.CachedInputTokens),
+                OutputTokens = g.Sum(e => e.OutputTokens),
+                Calls = (long)g.Count(),
+                Failures = (long)g.Count(e => !e.Success),
+                AvgLatencyMs = g.Average(e => e.ElapsedMs)
+            });
+
+        var timeline = new JsonArray();
+        for (var i = 0; i < days; i++)
+        {
+            var date = DateTime.Today.AddDays(-(days - 1 - i)).ToString("yyyy-MM-dd");
+            if (byDay.TryGetValue(date, out var stat))
+            {
+                var total = stat.TotalInputTokens + stat.OutputTokens;
+                timeline.Add((JsonNode)new JsonObject
+                {
+                    ["date"] = date,
+                    ["totalTokens"] = total,
+                    ["inputTokens"] = stat.InputTokens,
+                    ["totalInputTokens"] = stat.TotalInputTokens,
+                    ["cachedInputTokens"] = stat.CachedInputTokens,
+                    ["outputTokens"] = stat.OutputTokens,
+                    ["calls"] = stat.Calls,
+                    ["failures"] = stat.Failures,
+                    ["avgLatencyMs"] = Math.Round(stat.AvgLatencyMs, 1)
+                });
+            }
+            else
+            {
+                timeline.Add((JsonNode)new JsonObject
+                {
+                    ["date"] = date,
+                    ["totalTokens"] = 0,
+                    ["inputTokens"] = 0,
+                    ["totalInputTokens"] = 0,
+                    ["cachedInputTokens"] = 0,
+                    ["outputTokens"] = 0,
+                    ["calls"] = 0,
+                    ["failures"] = 0,
+                    ["avgLatencyMs"] = 0
+                });
+            }
+        }
+
+        return timeline.ToJsonString();
     }
 
     public string ListProjects()

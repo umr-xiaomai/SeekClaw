@@ -18,7 +18,7 @@ public static class UsageCommands
     public static Command Build()
     {
         var daysOption = new Option<int?>("--days") { Description = "Only include the last N days" };
-        var command = new Command("usage", "Token, cost and latency statistics");
+        var command = new Command("usage", "Token and latency statistics");
         command.Add(daysOption);
         command.SetAction(parse =>
         {
@@ -41,20 +41,21 @@ public static class UsageCommands
 
         var table = new Table().Border(TableBorder.Rounded);
         table.AddColumn("Provider").AddColumn("Model").AddColumn("Calls").AddColumn("Success")
-             .AddColumn("In tok").AddColumn("Out tok").AddColumn("Cost").AddColumn("Avg ms");
+             .AddColumn("In tok").AddColumn("Cached").AddColumn("Out tok").AddColumn("Total tok").AddColumn("Avg ms");
 
         foreach (var a in aggregates)
             table.AddRow(
                 Markup.Escape(a.Provider), Markup.Escape(a.Model),
                 a.Calls.ToString("N0"), $"{a.SuccessRate:P0}",
-                a.InputTokens.ToString("N0"), a.OutputTokens.ToString("N0"),
-                $"${a.Cost:0.####}", $"{a.AvgLatencyMs:0}");
+                a.InputTokens.ToString("N0"), a.CachedInputTokens.ToString("N0"), a.OutputTokens.ToString("N0"),
+                a.TotalTokens.ToString("N0"), $"{a.AvgLatencyMs:0}");
 
         table.AddRow("[bold]total[/]", "",
             $"[bold]{aggregates.Sum(a => a.Calls):N0}[/]", "",
             $"[bold]{aggregates.Sum(a => a.InputTokens):N0}[/]",
+            $"[bold]{aggregates.Sum(a => a.CachedInputTokens):N0}[/]",
             $"[bold]{aggregates.Sum(a => a.OutputTokens):N0}[/]",
-            $"[bold]${aggregates.Sum(a => a.Cost):0.####}[/]", "");
+            $"[bold]{aggregates.Sum(a => a.TotalTokens):N0}[/]", "");
         AnsiConsole.Write(table);
     }
 }
