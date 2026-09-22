@@ -94,6 +94,38 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Advanced_GetAndSet_NetworkEnabled()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("", false, null)));
+
+        await connection.SendAsync(1, "advanced.get");
+        var initial = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 1
+                        && response["event"]!.GetValue<string>() == "result");
+        var initialData = JsonNode.Parse(initial["data"]!.GetValue<string>())!;
+        Assert.True(initialData["networkEnabled"]!.GetValue<bool>()); // default on
+        Assert.True(initialData["failoverEnabled"]!.GetValue<bool>());
+
+        await connection.SendAsync(2, "advanced.set", new JsonObject
+        {
+            ["networkEnabled"] = false,
+        });
+        var set = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 2
+                        && response["event"]!.GetValue<string>() == "result");
+        var setData = JsonNode.Parse(set["data"]!.GetValue<string>())!;
+        Assert.False(setData["networkEnabled"]!.GetValue<bool>());
+
+        await connection.SendAsync(3, "advanced.get");
+        var after = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 3
+                        && response["event"]!.GetValue<string>() == "result");
+        var afterData = JsonNode.Parse(after["data"]!.GetValue<string>())!;
+        Assert.False(afterData["networkEnabled"]!.GetValue<bool>());
+    }
+
+    [Fact]
     public async Task Schedule_AdminMethods_CrudToggleRunAndList()
     {
         var connection = await StartServerAsync(

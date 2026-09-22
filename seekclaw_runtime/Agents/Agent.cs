@@ -91,9 +91,10 @@ public sealed partial class Agent(
                           retryable: false)
                     : providerManager.ResolveActive(workspace.Config);
                 var requiresVision = turnHasImages && model.Model.Capabilities.Vision;
-                var tools = ActiveTools(workspace, model, session.Header.NetworkEnabled);
+                var effectiveNetworkEnabled = session.Header.NetworkEnabled && agentConfig.NetworkEnabled;
+                var tools = ActiveTools(workspace, model, effectiveNetworkEnabled);
                 var systemPrompt = await ComposeSystemPromptAsync(
-                    workspace, model, tools, session.Header.NetworkEnabled, ct).ConfigureAwait(false);
+                    workspace, model, tools, effectiveNetworkEnabled, ct).ConfigureAwait(false);
                 var source = requiresVision ? session.Messages : WithoutImages(session.Messages);
                 var history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
                 // Context compaction: when plain trimming would have to drop history, first

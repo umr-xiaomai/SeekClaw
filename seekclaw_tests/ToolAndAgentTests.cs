@@ -516,6 +516,17 @@ public sealed class ToolAndAgentTests
             Assert.DoesNotContain("web_fetch", offlineNames);
             Assert.Contains("read_file", offlineNames);
             Assert.Contains("write_file", offlineNames);
+
+            // Global configuration NetworkEnabled = false overrides session-level true.
+            capture.Reset();
+            store.Config.Agent.NetworkEnabled = false;
+            var globallyDisabled = runtime.Sessions.Create(globalWorkspace, networkEnabled: true);
+            await runtime.Agent.RunTurnAsync(globallyDisabled, globalWorkspace, "请搜索花濑HoiLai", CancellationToken.None);
+            var disabledNames = capture.LastRequest!.Tools.Select(tool => tool.Name).ToList();
+            Assert.DoesNotContain("web_search", disabledNames);
+            Assert.DoesNotContain("web_fetch", disabledNames);
+            Assert.Contains("read_file", disabledNames);
+            Assert.Contains("write_file", disabledNames);
         }
         finally
         {

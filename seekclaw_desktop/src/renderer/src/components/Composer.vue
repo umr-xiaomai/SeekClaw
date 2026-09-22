@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, Globe, ImagePlus, LoaderCircle, Sparkles, Square, X } from '@lucide/vue'
+import { ArrowUp, ImagePlus, LoaderCircle, Sparkles, Square, X } from '@lucide/vue'
 import { nextTick, ref, watch } from 'vue'
 import type { ImageAttachment, ReasoningLevel } from '../types'
 import { confirmAction } from '../confirmation'
@@ -16,7 +16,7 @@ const props = defineProps<{
   mode: string
   reasoningLevel: ReasoningLevel
   supportsImages: boolean
-  networkEnabled: boolean
+  networkEnabled?: boolean
   optimizePrompt?: (text: string) => Promise<string>
 }>()
 
@@ -321,18 +321,6 @@ watch(() => props.supportsImages, (supported) => {
         @click="selectImages"
       >
         <ImagePlus :size="18" />
-      </button>
-      <button
-        class="network-toggle"
-        :class="{ active: networkEnabled }"
-        type="button"
-        :disabled="disabled"
-        :title="networkEnabled ? '联网已开启：网页搜索与访问网络可用' : '联网已关闭：网页搜索与访问网络不可用'"
-        :aria-pressed="networkEnabled"
-        @click="emit('changeNetwork', !networkEnabled)"
-      >
-        <Globe :size="15" />
-        <span>联网</span>
       </button>
       <button
         class="icon-button composer-icon"

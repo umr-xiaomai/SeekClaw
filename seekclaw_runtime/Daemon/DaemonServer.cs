@@ -558,6 +558,15 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.SetRoutingConfig(Params(request))), ct).ConfigureAwait(false);
                         break;
 
+                    case "advanced.get":
+                        await WriteAsync(writer, writerGate, id, "result", _admin.GetAdvancedConfig(), ct).ConfigureAwait(false);
+                        break;
+
+                    case "advanced.set":
+                        await RunAdminAsync(writer, writerGate, id, true,
+                            _ => Task.FromResult(_admin.SetAdvancedConfig(Params(request))), ct).ConfigureAwait(false);
+                        break;
+
                     case "prompt.optimize":
                         await RunAdminAsync(writer, writerGate, id, false,
                             token => _admin.OptimizePromptAsync(Params(request), token), ct).ConfigureAwait(false);
@@ -794,7 +803,8 @@ public sealed class DaemonServer : IAsyncDisposable
                             await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
                             break;
                         }
-                        var networkEnabled = Params(request)["networkEnabled"]?.GetValue<bool?>() ?? true;
+                        var networkEnabled = Params(request)["networkEnabled"]?.GetValue<bool?>()
+                            ?? _runtime.ConfigStore.Config.Agent.NetworkEnabled;
                         session = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled);
                         await WriteAsync(writer, writerGate, id, "result", session.Header.Id, ct).ConfigureAwait(false);
                         break;
@@ -1337,7 +1347,7 @@ public sealed class DaemonServer : IAsyncDisposable
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
             "config.status", "config.rebuild",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
-            "routing.get", "routing.set",
+            "routing.get", "routing.set", "advanced.get", "advanced.set",
             "prompt.optimize",
             "schedule.list", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run",
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",

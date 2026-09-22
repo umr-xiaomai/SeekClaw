@@ -20,6 +20,7 @@ import {
   Save,
   Search,
   Settings2,
+  SlidersHorizontal,
   Sun,
   Trash2,
   Upload,
@@ -43,7 +44,7 @@ import SelectMenu from './SelectMenu.vue'
 import UsageTrendChart, { type TimelinePoint } from './UsageTrendChart.vue'
 import UsageModelBarChart from './UsageModelBarChart.vue'
 
-type SettingsSection = 'general' | 'models' | 'mcp' | 'skills' | 'diagnostics'
+type SettingsSection = 'general' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'
 
 interface ProviderInfo {
   id: string
@@ -145,6 +146,7 @@ const emit = defineEmits<{
 
 const section = ref<SettingsSection>('general')
 const loading = ref(false)
+const networkEnabled = ref(true)
 const failoverEnabled = ref(true)
 const deepSeekOptimizationEnabled = ref(false)
 const action = ref('')
@@ -225,7 +227,8 @@ const sections: Array<{ id: SettingsSection; label: string; icon: typeof Setting
   { id: 'models', label: '模型与提供商', icon: Bot },
   { id: 'mcp', label: 'MCP', icon: Blocks },
   { id: 'skills', label: '技能', icon: Wrench },
-  { id: 'diagnostics', label: '诊断与用量', icon: Activity }
+  { id: 'diagnostics', label: '诊断与用量', icon: Activity },
+  { id: 'advanced', label: '高级设置', icon: SlidersHorizontal }
 ]
 
 const pageTitle = computed(() => props.page === 'extensions' ? 'MCP 与技能' : '设置')
@@ -272,6 +275,7 @@ async function loadCurrentSection(): Promise<void> {
     if (section.value === 'mcp') mcpServers.value = await requestJson<McpServerInfo[]>('mcp.list')
     if (section.value === 'skills') skills.value = await requestJson<SkillInfo[]>('skill.list')
     if (section.value === 'diagnostics') await loadDiagnostics()
+    if (section.value === 'advanced') await loadAdvanced()
   } catch (reason) {
     fail(reason)
   } finally {
@@ -283,6 +287,44 @@ async function loadGeneral(): Promise<void> {
   const routing = await requestJson<{ failoverEnabled: boolean; deepSeekOptimizationEnabled: boolean }>('routing.get')
   failoverEnabled.value = routing.failoverEnabled
   deepSeekOptimizationEnabled.value = routing.deepSeekOptimizationEnabled
+}
+
+async function loadAdvanced(): Promise<void> {
+  const config = await requestJson<{
+    networkEnabled: boolean
+    failoverEnabled: boolean
+    deepSeekOptimizationEnabled: boolean
+  }>('advanced.get')
+  networkEnabled.value = config.networkEnabled
+  failoverEnabled.value = config.failoverEnabled
+  deepSeekOptimizationEnabled.value = config.deepSeekOptimizationEnabled
+}
+
+async function toggleNetworkEnabled(): Promise<void> {
+  beginAction('advanced.set:network')
+  try {
+    const config = await requestJson<{
+      networkEnabled: boolean
+      failoverEnabled: boolean
+      deepSeekOptimizationEnabled: boolean
+    }>('advanced.set', {
+      networkEnabled: networkEnabled.value,
+      failoverEnabled: failoverEnabled.value,
+      deepSeekOptimizationEnabled: deepSeekOptimizationEnabled.value
+    })
+    networkEnabled.value = config.networkEnabled
+    notice.value = networkEnabled.value
+      ? '已开启全局网络访问（所有任务与项目可用网页搜索与抓取）'
+      : '已关闭全局网络访问（强制处于离线模式，禁止外网请求）'
+  } catch (reason) {
+    fail(reason)
+    try {
+      const config = await requestJson<{ networkEnabled: boolean }>('advanced.get')
+      networkEnabled.value = config.networkEnabled
+    } catch { /* keep last known state */ }
+  } finally {
+    endAction()
+  }
 }
 
 async function factoryReset(): Promise<void> {
@@ -770,27 +812,6 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="settings-group">
-            <label class="provider-enabled-row">
-              <span>
-                <strong>自动切换其他模型</strong>
-                <small>激活模型请求失败时自动尝试路由链中的其他模型；关闭后失败即停止，并显示真实错误</small>
-              </span>
-              <input v-model="failoverEnabled" class="sr-only" type="checkbox" :disabled="action === 'routing.set'"
-                @change="toggleFailover" />
-              <span class="toggle-switch" aria-hidden="true"><span /></span>
-            </label>
-            <label class="provider-enabled-row">
-              <span>
-                <strong>优化 DeepSeek 模型</strong>
-                <small>针对 DeepSeek 启用思维链选择性回传、空响应重试与空工具结果兜底；策略集中管理，可随模型变化调整</small>
-              </span>
-              <input v-model="deepSeekOptimizationEnabled" class="sr-only" type="checkbox"
-                :disabled="action === 'routing.set:deepseek'" @change="toggleDeepSeekOptimization" />
-              <span class="toggle-switch" aria-hidden="true"><span /></span>
-            </label>
-          </section>
-
-          <section class="settings-group">
             <div class="settings-row">
               <div>
                 <strong>恢复出厂设置</strong>
@@ -958,7 +979,7 @@ onBeforeUnmount(() => {
           </section>
         </template>
 
-        <template v-else>
+        <template v-else-if="section === 'diagnostics'">
           <div class="settings-section-heading">
             <div>
               <h3>诊断与用量</h3>
@@ -1118,6 +1139,47 @@ onBeforeUnmount(() => {
                 </tr>
               </tbody>
             </table>
+          </section>
+        </template>
+
+        <template v-else-if="section === 'advanced'">
+          <div class="settings-section-heading">
+            <div>
+              <h3>高级设置</h3>
+            </div>
+          </div>
+
+          <section class="settings-group">
+            <label class="provider-enabled-row">
+              <span>
+                <strong>全局网络访问（联网搜索与抓取）</strong>
+                <small>允许 Agent 使用网络搜索 (web_search) 与网页抓取 (web_fetch) 等网络工具。默认对所有项目开启；若关闭，所有项目和任务将强制处于离线模式，禁止外部网络请求。</small>
+              </span>
+              <input v-model="networkEnabled" class="sr-only" type="checkbox" :disabled="action === 'advanced.set:network'"
+                @change="toggleNetworkEnabled" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
+          </section>
+
+          <section class="settings-group">
+            <label class="provider-enabled-row">
+              <span>
+                <strong>自动切换其他模型（故障转移）</strong>
+                <small>激活模型请求失败时自动尝试路由链中的其他模型；关闭后失败即停止，并显示真实错误</small>
+              </span>
+              <input v-model="failoverEnabled" class="sr-only" type="checkbox" :disabled="action === 'routing.set'"
+                @change="toggleFailover" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
+            <label class="provider-enabled-row">
+              <span>
+                <strong>优化 DeepSeek 模型</strong>
+                <small>针对 DeepSeek 启用思维链选择性回传、空响应重试与空工具结果兜底；策略集中管理，可随模型变化调整</small>
+              </span>
+              <input v-model="deepSeekOptimizationEnabled" class="sr-only" type="checkbox"
+                :disabled="action === 'routing.set:deepseek'" @change="toggleDeepSeekOptimization" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
           </section>
         </template>
 

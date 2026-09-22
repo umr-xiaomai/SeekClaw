@@ -123,6 +123,13 @@ internal sealed class DaemonAdminApi(
         ["deepSeekOptimizationEnabled"] = runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled,
     }.ToJsonString();
 
+    public string GetAdvancedConfig() => new JsonObject
+    {
+        ["networkEnabled"] = runtime.ConfigStore.Config.Agent.NetworkEnabled,
+        ["failoverEnabled"] = runtime.ConfigStore.Config.Routing.FailoverEnabled,
+        ["deepSeekOptimizationEnabled"] = runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled,
+    }.ToJsonString();
+
     /// <summary>
     /// Rewrites an in-progress user prompt with the currently selected model. The
     /// response is deliberately stateless: it does not create or modify a Session.
@@ -203,6 +210,27 @@ internal sealed class DaemonAdminApi(
             ["failoverEnabled"] = failoverEnabled,
             ["deepSeekOptimizationEnabled"] = deepSeekOptimizationEnabled,
         }.ToJsonString();
+    }
+
+    public string SetAdvancedConfig(JsonObject parameters)
+    {
+        if (parameters["networkEnabled"] is JsonValue netVal && netVal.TryGetValue<bool>(out var netEnabled))
+        {
+            runtime.ConfigStore.Config.Agent.NetworkEnabled = netEnabled;
+        }
+
+        if (parameters["failoverEnabled"] is JsonValue failoverVal && failoverVal.TryGetValue<bool>(out var failover))
+        {
+            runtime.ConfigStore.Config.Routing.FailoverEnabled = failover;
+        }
+
+        if (parameters["deepSeekOptimizationEnabled"] is JsonValue deepSeekVal && deepSeekVal.TryGetValue<bool>(out var dsOpt))
+        {
+            runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled = dsOpt;
+        }
+
+        runtime.ConfigStore.Save();
+        return GetAdvancedConfig();
     }
 
     public string ListSchedules() =>

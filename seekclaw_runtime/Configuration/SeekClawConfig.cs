@@ -139,6 +139,11 @@ public sealed class AgentConfig
     public int BashTimeoutSeconds { get; set; } = 180;
     /// <summary>Wall-clock budget for one scheduled-task turn; exceeded runs are cancelled and recorded.</summary>
     public int ScheduledTurnTimeoutSeconds { get; set; } = 1_800;
+    /// <summary>
+    /// Global network access switch. When false, network tools (web_search, web_fetch) are stripped
+    /// and the agent prompt enforces offline operation across all workspaces.
+    /// </summary>
+    public bool NetworkEnabled { get; set; } = true;
 }
 
 public sealed class McpConfig
