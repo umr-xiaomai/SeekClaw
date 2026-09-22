@@ -454,11 +454,15 @@ select:focus-visible {
 }
 
 .nav-item:hover,
-.nav-item.active,
 .project-row:hover,
-.thread-row:hover,
-.thread-row.active {
+.thread-row:hover {
   background: var(--surface-hover);
+}
+
+.nav-item.active {
+  color: var(--text);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
 }
 
 .nav-item:disabled {
@@ -472,10 +476,6 @@ select:focus-visible {
 
 .nav-item.is-primary {
   font-weight: 450;
-}
-
-.nav-item.active {
-  color: var(--text);
 }
 
 .nav-item span,
@@ -555,19 +555,33 @@ select:focus-visible {
   min-width: 0;
   align-items: center;
   border-radius: 8px;
+  transition: background-color 140ms ease, box-shadow 160ms ease, color 140ms ease;
 }
 
 .project-heading-row:hover,
-.project-heading-row.active,
-.thread-heading-row:hover,
-.thread-heading-row.active {
+.thread-heading-row:hover {
   background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.project-heading-row.active,
+.project-heading-row.active:hover,
+.thread-heading-row.active,
+.thread-heading-row.active:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
 }
 
 .project-heading-row .project-row,
 .thread-heading-row .thread-row {
   min-width: 0;
   flex: 1;
+  background: transparent;
+}
+
+.project-heading-row.active .project-row,
+.thread-heading-row.active .thread-row {
+  color: var(--text);
   background: transparent;
 }
 
@@ -707,7 +721,8 @@ select:focus-visible {
   font-size: 14px;
 }
 
-.thread-row.active {
+.thread-row.active,
+.thread-heading-row.active .thread-row {
   color: var(--text);
 }
 
@@ -3198,7 +3213,6 @@ select:focus-visible {
 .settings-nav button.active,
 .settings-nav .settings-nav-item.active {
   color: var(--text);
-  font-weight: 600;
   background: var(--surface-raised);
   box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
 }
@@ -4211,22 +4225,29 @@ select:focus-visible {
 .days-segmented-filter {
   display: inline-flex;
   align-items: center;
+  height: 34px;
   background: var(--surface-hover);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 7px;
   padding: 2px;
   gap: 2px;
+  box-sizing: border-box;
 }
 
 .days-segmented-filter .filter-chip {
-  padding: 4px 11px;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
   font-weight: 500;
-  border-radius: 4px;
+  border-radius: 5px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  box-sizing: border-box;
   transition: all 0.15s ease;
 }
 
@@ -4237,7 +4258,6 @@ select:focus-visible {
 .days-segmented-filter .filter-chip.active {
   background: var(--surface-raised);
   color: var(--accent);
-  font-weight: 600;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 

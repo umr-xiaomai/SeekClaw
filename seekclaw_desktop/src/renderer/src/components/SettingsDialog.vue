@@ -700,12 +700,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section
-    v-if="open"
-    class="settings-dialog settings-workbench embedded-page"
-    role="region"
-    :aria-label="pageTitle"
-  >
+  <section v-if="open" class="settings-dialog settings-workbench embedded-page" role="region" :aria-label="pageTitle">
     <nav class="settings-nav" aria-label="页面导航">
       <div class="settings-nav-header">
         <button class="page-back-button" type="button" title="返回应用" @click="emit('close')">
@@ -719,13 +714,8 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="settings-nav-list">
-        <button
-          v-for="item in visibleSections"
-          :key="item.id"
-          class="settings-nav-item"
-          :class="{ active: section === item.id }"
-          @click="section = item.id"
-        >
+        <button v-for="item in visibleSections" :key="item.id" class="settings-nav-item"
+          :class="{ active: section === item.id }" @click="section = item.id">
           <component :is="item.icon" :size="17" />
           <span>{{ item.label }}</span>
         </button>
@@ -736,12 +726,8 @@ onBeforeUnmount(() => {
           <Circle :size="8" fill="currentColor" />
           <span>{{ daemonConnected ? '运行时已连接' : '运行时离线' }}</span>
         </span>
-        <button
-          v-if="!daemonConnected"
-          class="icon-button compact reconnect-btn"
-          title="重新连接"
-          @click="emit('reconnect')"
-        >
+        <button v-if="!daemonConnected" class="icon-button compact reconnect-btn" title="重新连接"
+          @click="emit('reconnect')">
           <RefreshCw :size="13" />
         </button>
       </div>
@@ -749,381 +735,399 @@ onBeforeUnmount(() => {
 
     <main class="settings-main">
       <div class="settings-content">
-          <div v-if="loading" class="settings-loading"><LoaderCircle class="spin" :size="20" /> 正在加载</div>
+        <div v-if="loading" class="settings-loading">
+          <LoaderCircle class="spin" :size="20" /> 正在加载
+        </div>
 
-          <template v-else-if="section === 'general'">
-            <div class="settings-section-heading">
-              <div><h3>常规</h3></div>
+        <template v-else-if="section === 'general'">
+          <div class="settings-section-heading">
+            <div>
+              <h3>常规</h3>
             </div>
+          </div>
 
-            <section class="settings-group">
-              <div class="settings-row">
-                <div><strong>外观</strong><small>界面主题</small></div>
-                <div class="segmented-control">
-                  <button :class="{ active: theme === 'system' }" title="跟随系统" @click="emit('changeTheme', 'system')"><Monitor :size="16" /></button>
-                  <button :class="{ active: theme === 'light' }" title="浅色" @click="emit('changeTheme', 'light')"><Sun :size="16" /></button>
-                  <button :class="{ active: theme === 'dark' }" title="深色" @click="emit('changeTheme', 'dark')"><Moon :size="16" /></button>
-                </div>
-              </div>
-              <div class="settings-row">
-                <div><strong>守护进程</strong><small>{{ daemonEndpoint }}</small></div>
-                <button class="secondary-button" @click="emit('reconnect')"><RefreshCw :size="15" /> 重新连接</button>
-              </div>
-            </section>
-
-            <section class="settings-group">
-              <label class="provider-enabled-row">
-                <span>
-                  <strong>自动切换其他模型</strong>
-                  <small>激活模型请求失败时自动尝试路由链中的其他模型；关闭后失败即停止，并显示真实错误</small>
-                </span>
-                <input
-                  v-model="failoverEnabled"
-                  class="sr-only"
-                  type="checkbox"
-                  :disabled="action === 'routing.set'"
-                  @change="toggleFailover"
-                />
-                <span class="toggle-switch" aria-hidden="true"><span /></span>
-              </label>
-              <label class="provider-enabled-row">
-                <span>
-                  <strong>优化 DeepSeek 模型</strong>
-                  <small>针对 DeepSeek 启用思维链选择性回传、空响应重试与空工具结果兜底；策略集中管理，可随模型变化调整</small>
-                </span>
-                <input
-                  v-model="deepSeekOptimizationEnabled"
-                  class="sr-only"
-                  type="checkbox"
-                  :disabled="action === 'routing.set:deepseek'"
-                  @change="toggleDeepSeekOptimization"
-                />
-                <span class="toggle-switch" aria-hidden="true"><span /></span>
-              </label>
-            </section>
-
-            <section class="settings-group">
-              <div class="settings-row">
-                <div>
-                  <strong>恢复出厂设置</strong>
-                  <small>清空全局配置、会话数据并重建数据库；不会删除项目源码文件</small>
-                </div>
-                <button class="danger-button" :disabled="action === 'factory.reset'" @click="factoryReset">
-                  <LoaderCircle v-if="action === 'factory.reset'" class="spin" :size="15" />
-                  <RotateCcw v-else :size="15" /> 恢复出厂设置
+          <section class="settings-group">
+            <div class="settings-row">
+              <div><strong>外观</strong><small>界面主题</small></div>
+              <div class="segmented-control">
+                <button :class="{ active: theme === 'system' }" title="跟随系统" @click="emit('changeTheme', 'system')">
+                  <Monitor :size="16" />
+                </button>
+                <button :class="{ active: theme === 'light' }" title="浅色" @click="emit('changeTheme', 'light')">
+                  <Sun :size="16" />
+                </button>
+                <button :class="{ active: theme === 'dark' }" title="深色" @click="emit('changeTheme', 'dark')">
+                  <Moon :size="16" />
                 </button>
               </div>
-            </section>
-          </template>
-
-          <template v-else-if="section === 'models'">
-            <div class="settings-section-heading">
-              <div><h3>模型与提供商</h3><p>{{ activeModel?.ref || '未选择模型' }}</p></div>
-              <button class="secondary-button" @click="newProvider"><Plus :size="15" /> 模型提供商</button>
             </div>
+            <div class="settings-row">
+              <div><strong>运行时Runtime</strong><small>{{ daemonEndpoint }}</small></div>
+              <button class="secondary-button" @click="emit('reconnect')">
+                <RefreshCw :size="15" /> 重新连接
+              </button>
+            </div>
+          </section>
 
-            <section class="settings-group compact-group">
-              <div class="settings-row">
-                <div><strong>活动模型</strong><small>{{ activeModel ? `${activeModel.contextWindow.toLocaleString()} 上下文` : '无可用模型' }}</small></div>
-                <div class="row-actions model-actions">
-                  <SelectMenu v-model="selectedModel" class="settings-select model-select" :options="modelOptions" label="活动模型" :menu-min-width="330" />
-                  <button class="secondary-button" :disabled="!selectedModel" @click="testModel">测试</button>
-                  <button class="secondary-button primary-action" :disabled="!selectedModel" @click="switchModel">使用</button>
-                </div>
+          <section class="settings-group">
+            <label class="provider-enabled-row">
+              <span>
+                <strong>自动切换其他模型</strong>
+                <small>激活模型请求失败时自动尝试路由链中的其他模型；关闭后失败即停止，并显示真实错误</small>
+              </span>
+              <input v-model="failoverEnabled" class="sr-only" type="checkbox" :disabled="action === 'routing.set'"
+                @change="toggleFailover" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
+            <label class="provider-enabled-row">
+              <span>
+                <strong>优化 DeepSeek 模型</strong>
+                <small>针对 DeepSeek 启用思维链选择性回传、空响应重试与空工具结果兜底；策略集中管理，可随模型变化调整</small>
+              </span>
+              <input v-model="deepSeekOptimizationEnabled" class="sr-only" type="checkbox"
+                :disabled="action === 'routing.set:deepseek'" @change="toggleDeepSeekOptimization" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-row">
+              <div>
+                <strong>恢复出厂设置</strong>
+                <small>清空全局配置、会话数据并重建数据库；不会删除项目源码文件</small>
               </div>
-            </section>
+              <button class="danger-button" :disabled="action === 'factory.reset'" @click="factoryReset">
+                <LoaderCircle v-if="action === 'factory.reset'" class="spin" :size="15" />
+                <RotateCcw v-else :size="15" /> 恢复出厂设置
+              </button>
+            </div>
+          </section>
+        </template>
 
-            <section class="provider-switch-list" aria-label="提供商列表">
-              <div v-if="providers.length === 0" class="empty-settings">尚未配置提供商</div>
-              <div
-                v-for="provider in providers"
-                :key="provider.id"
-                class="provider-switch-card"
-                :class="{ active: provider.active, disabled: !provider.enabled }"
-                @click="!provider.active && useProvider(provider)"
-              >
-                <div class="provider-card-left">
-                  <GripVertical class="provider-drag-handle" :size="15" />
-                  <div class="provider-card-content">
-                    <div class="provider-card-header">
-                      <strong class="provider-card-title">{{ provider.name }}</strong>
-                      <span v-if="provider.active" class="inline-badge active-provider-badge">活动</span>
-                      <span v-if="!provider.enabled" class="inline-badge disabled-provider-badge">已禁用</span>
-                    </div>
-                    <div class="provider-card-sub">
-                      <span class="provider-url" :title="provider.baseUrl">{{ provider.baseUrl }}</span>
-                      <span class="provider-bullet">·</span>
-                      <span class="provider-meta-tag">{{ provider.models.length }} 个模型</span>
-                      <span class="provider-bullet">·</span>
-                      <span class="provider-meta-tag">{{ provider.kind === 'anthropic' ? 'Anthropic' : 'OpenAI' }}</span>
-                    </div>
+        <template v-else-if="section === 'models'">
+          <div class="settings-section-heading">
+            <div>
+              <h3>模型与提供商</h3>
+              <p>{{ activeModel?.ref || '未选择模型' }}</p>
+            </div>
+            <button class="secondary-button" @click="newProvider">
+              <Plus :size="15" /> 模型提供商
+            </button>
+          </div>
+
+          <section class="settings-group compact-group">
+            <div class="settings-row">
+              <div><strong>活动模型</strong><small>{{ activeModel ? `${activeModel.contextWindow.toLocaleString()} 上下文` :
+                  '无可用模型' }}</small></div>
+              <div class="row-actions model-actions">
+                <SelectMenu v-model="selectedModel" class="settings-select model-select" :options="modelOptions"
+                  label="活动模型" :menu-min-width="330" />
+                <button class="secondary-button" :disabled="!selectedModel" @click="testModel">测试</button>
+                <button class="secondary-button primary-action" :disabled="!selectedModel"
+                  @click="switchModel">使用</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="provider-switch-list" aria-label="提供商列表">
+            <div v-if="providers.length === 0" class="empty-settings">尚未配置提供商</div>
+            <div v-for="provider in providers" :key="provider.id" class="provider-switch-card"
+              :class="{ active: provider.active, disabled: !provider.enabled }"
+              @click="!provider.active && useProvider(provider)">
+              <div class="provider-card-left">
+                <GripVertical class="provider-drag-handle" :size="15" />
+                <div class="provider-card-content">
+                  <div class="provider-card-header">
+                    <strong class="provider-card-title">{{ provider.name }}</strong>
+                    <span v-if="provider.active" class="inline-badge active-provider-badge">活动</span>
+                    <span v-if="!provider.enabled" class="inline-badge disabled-provider-badge">已禁用</span>
+                  </div>
+                  <div class="provider-card-sub">
+                    <span class="provider-url" :title="provider.baseUrl">{{ provider.baseUrl }}</span>
+                    <span class="provider-bullet">·</span>
+                    <span class="provider-meta-tag">{{ provider.models.length }} 个模型</span>
+                    <span class="provider-bullet">·</span>
+                    <span class="provider-meta-tag">{{ provider.kind === 'anthropic' ? 'Anthropic' : 'OpenAI' }}</span>
                   </div>
                 </div>
+              </div>
 
-                <div class="provider-card-actions" @click.stop>
-                  <span class="key-indicator" :title="provider.apiKeyConfigured ? '已配置 API Key' : '未配置 API Key'">
-                    <KeyRound :size="15" :class="provider.apiKeyConfigured ? 'key-set' : 'key-missing'" />
+              <div class="provider-card-actions" @click.stop>
+                <span class="key-indicator" :title="provider.apiKeyConfigured ? '已配置 API Key' : '未配置 API Key'">
+                  <KeyRound :size="15" :class="provider.apiKeyConfigured ? 'key-set' : 'key-missing'" />
+                </span>
+                <button class="secondary-button compact-button" :disabled="action === `provider.test:${provider.id}`"
+                  @click="testProvider(provider)">
+                  <LoaderCircle v-if="action === `provider.test:${provider.id}`" class="spin" :size="13" />
+                  <template v-else>测试</template>
+                </button>
+                <button class="secondary-button compact-button"
+                  :disabled="action === `provider.models.fetch:${provider.id}`" @click="fetchProviderModels(provider)">
+                  <RefreshCw :size="13" :class="{ spin: action === `provider.models.fetch:${provider.id}` }" /> 获取模型
+                </button>
+                <button v-if="!provider.active" class="secondary-button compact-button primary-action"
+                  @click="useProvider(provider)">使用</button>
+                <button class="icon-button compact" title="编辑提供商与模型" @click="editProvider(provider)">
+                  <Settings2 :size="15" />
+                </button>
+                <button class="icon-button compact danger-icon" title="删除提供商" @click="removeProvider(provider)">
+                  <Trash2 :size="15" />
+                </button>
+              </div>
+            </div>
+          </section>
+        </template>
+
+        <template v-else-if="section === 'mcp'">
+          <div class="settings-section-heading">
+            <div>
+              <h3>MCP 服务器</h3>
+              <p>{{mcpServers.filter((server) => server.connected).length}} / {{ mcpServers.length }} 已连接 · {{
+                mcpServers.reduce((sum, server) => sum + server.toolCount, 0) }} 个工具</p>
+            </div>
+            <div class="row-actions">
+              <button class="icon-button" title="重新加载" :disabled="action === 'mcp.reload'" @click="reloadMcp">
+                <RefreshCw :class="{ spin: action === 'mcp.reload' }" :size="17" />
+              </button>
+              <button class="secondary-button" @click="newMcpServer">
+                <Plus :size="15" /> 服务器
+              </button>
+            </div>
+          </div>
+
+          <section class="settings-list">
+            <div v-if="mcpServers.length === 0" class="empty-settings">尚未配置 MCP 服务器</div>
+            <div v-for="server in mcpServers" :key="`${server.scope}:${server.name}`" class="settings-list-row">
+              <span class="status-dot" :class="{ online: server.connected }" />
+              <div class="list-main">
+                <div><strong>{{ server.name }}</strong><span class="inline-badge">{{ server.scope === 'workspace' ?
+                    '工作区' : '全局' }}</span></div>
+                <small :title="server.error">{{ mcpStatusText(server) }} · {{ transportLabel(server.transport)
+                  }}</small>
+              </div>
+              <button class="switch-control" :class="{ active: server.enabled, pending: mcpServerPending(server) }"
+                :disabled="mcpServerPending(server)"
+                :aria-label="mcpServerPending(server) ? '正在连接' : (server.enabled ? '禁用' : '启用')"
+                @click="toggleMcp(server)">
+                <LoaderCircle v-if="mcpServerPending(server)" class="spin" :size="12" /><span v-else />
+              </button>
+              <button class="icon-button compact" title="编辑" @click="editMcpServer(server)">
+                <Settings2 :size="15" />
+              </button>
+              <button class="icon-button compact danger-icon" title="删除" @click="removeMcp(server)">
+                <Trash2 :size="15" />
+              </button>
+            </div>
+          </section>
+
+          <McpEditorDialog :open="mcpEditorOpen" :server="editingMcpServer" :saving="action === 'mcp.save'"
+            :error="mcpDialogError" @close="closeMcpEditor" @save="saveMcpServer" />
+        </template>
+
+        <template v-else-if="section === 'skills'">
+          <div class="settings-section-heading">
+            <div>
+              <h3>技能</h3>
+              <p>{{skills.filter((skill) => skill.enabled).length}} 已启用</p>
+            </div>
+            <div class="row-actions">
+              <button class="icon-button" title="刷新" @click="loadCurrentSection">
+                <RefreshCw :size="17" />
+              </button>
+              <button class="secondary-button" :disabled="action === 'skill.import'" @click="importSkills">
+                <LoaderCircle v-if="action === 'skill.import'" class="spin" :size="15" />
+                <Upload v-else :size="15" />导入技能
+              </button>
+            </div>
+          </div>
+          <section class="settings-list">
+            <div v-if="skills.length === 0" class="empty-settings">尚未发现技能，可导入 .md 或 .zip 文件</div>
+            <div v-for="skill in skills" :key="skill.name" class="settings-list-row skill-row">
+              <Wrench :size="17" />
+              <div class="list-main">
+                <div><strong>{{ skill.name }}</strong><span class="inline-badge">{{ skill.scope === 'workspace' ? '工作区'
+                    : '全局' }}</span><span v-if="skill.version" class="version-text">v{{ skill.version }}</span></div>
+                <small>{{ skill.description || skill.directory }}</small>
+              </div>
+              <button class="icon-button compact" title="打开位置" @click="showPath(skill.directory)">
+                <FolderOpen :size="15" />
+              </button>
+              <button class="switch-control" :class="{ active: skill.enabled }"
+                :aria-label="skill.enabled ? '禁用' : '启用'" @click="toggleSkill(skill)"><span /></button>
+            </div>
+          </section>
+        </template>
+
+        <template v-else>
+          <div class="settings-section-heading">
+            <div>
+              <h3>诊断与用量</h3>
+              <p>运行时健康体检与智能体调用效能看板</p>
+            </div>
+            <div class="row-actions">
+              <div class="days-segmented-filter">
+                <button type="button" class="filter-chip" :class="{ active: usageDays === 7 }" @click="usageDays = 7">
+                  近 7 天
+                </button>
+                <button type="button" class="filter-chip" :class="{ active: usageDays === 14 }" @click="usageDays = 14">
+                  近 14 天
+                </button>
+                <button type="button" class="filter-chip" :class="{ active: usageDays === 30 }" @click="usageDays = 30">
+                  近 30 天
+                </button>
+              </div>
+              <button class="secondary-button" :disabled="loading" @click="loadDiagnostics">
+                <RefreshCw :size="15" :class="{ spin: loading }" /> 重新检查
+              </button>
+            </div>
+          </div>
+
+          <!-- KPI Metric Cards (No Cost) -->
+          <section class="usage-kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-icon-badge kpi-indigo">
+                <Gauge :size="18" />
+              </div>
+              <div class="kpi-data">
+                <span class="kpi-title">总调用量</span>
+                <div class="kpi-main-metric">
+                  <strong>{{ totalUsage.calls.toLocaleString() }}</strong>
+                  <span class="kpi-tag" :class="{ 'tag-success': totalUsage.successRate >= 0.95 }">
+                    {{ Math.round(totalUsage.successRate * 100) }}% 成功
                   </span>
-                  <button class="secondary-button compact-button" :disabled="action === `provider.test:${provider.id}`" @click="testProvider(provider)">
-                    <LoaderCircle v-if="action === `provider.test:${provider.id}`" class="spin" :size="13" />
-                    <template v-else>测试</template>
-                  </button>
-                  <button class="secondary-button compact-button" :disabled="action === `provider.models.fetch:${provider.id}`" @click="fetchProviderModels(provider)">
-                    <RefreshCw :size="13" :class="{ spin: action === `provider.models.fetch:${provider.id}` }" /> 获取模型
-                  </button>
-                  <button v-if="!provider.active" class="secondary-button compact-button primary-action" @click="useProvider(provider)">使用</button>
-                  <button class="icon-button compact" title="编辑提供商与模型" @click="editProvider(provider)"><Settings2 :size="15" /></button>
-                  <button class="icon-button compact danger-icon" title="删除提供商" @click="removeProvider(provider)"><Trash2 :size="15" /></button>
                 </div>
-              </div>
-            </section>
-          </template>
-
-          <template v-else-if="section === 'mcp'">
-            <div class="settings-section-heading">
-              <div><h3>MCP 服务器</h3><p>{{ mcpServers.filter((server) => server.connected).length }} / {{ mcpServers.length }} 已连接 · {{ mcpServers.reduce((sum, server) => sum + server.toolCount, 0) }} 个工具</p></div>
-              <div class="row-actions">
-                <button class="icon-button" title="重新加载" :disabled="action === 'mcp.reload'" @click="reloadMcp"><RefreshCw :class="{ spin: action === 'mcp.reload' }" :size="17" /></button>
-                <button class="secondary-button" @click="newMcpServer"><Plus :size="15" /> 服务器</button>
+                <small class="kpi-subtext">异常失败 {{ totalUsage.failures }} 次</small>
               </div>
             </div>
 
-            <section class="settings-list">
-              <div v-if="mcpServers.length === 0" class="empty-settings">尚未配置 MCP 服务器</div>
-              <div v-for="server in mcpServers" :key="`${server.scope}:${server.name}`" class="settings-list-row">
-                <span class="status-dot" :class="{ online: server.connected }" />
-                <div class="list-main">
-                  <div><strong>{{ server.name }}</strong><span class="inline-badge">{{ server.scope === 'workspace' ? '工作区' : '全局' }}</span></div>
-                  <small :title="server.error">{{ mcpStatusText(server) }} · {{ transportLabel(server.transport) }}</small>
+            <div class="kpi-card">
+              <div class="kpi-icon-badge kpi-purple">
+                <Activity :size="18" />
+              </div>
+              <div class="kpi-data">
+                <span class="kpi-title">消耗 Tokens</span>
+                <div class="kpi-main-metric">
+                  <strong>{{ totalUsage.tokens.toLocaleString() }}</strong>
                 </div>
-                <button
-                  class="switch-control"
-                  :class="{ active: server.enabled, pending: mcpServerPending(server) }"
-                  :disabled="mcpServerPending(server)"
-                  :aria-label="mcpServerPending(server) ? '正在连接' : (server.enabled ? '禁用' : '启用')"
-                  @click="toggleMcp(server)"
-                ><LoaderCircle v-if="mcpServerPending(server)" class="spin" :size="12" /><span v-else /></button>
-                <button class="icon-button compact" title="编辑" @click="editMcpServer(server)"><Settings2 :size="15" /></button>
-                <button class="icon-button compact danger-icon" title="删除" @click="removeMcp(server)"><Trash2 :size="15" /></button>
-              </div>
-            </section>
-
-            <McpEditorDialog
-              :open="mcpEditorOpen"
-              :server="editingMcpServer"
-              :saving="action === 'mcp.save'"
-              :error="mcpDialogError"
-              @close="closeMcpEditor"
-              @save="saveMcpServer"
-            />
-          </template>
-
-          <template v-else-if="section === 'skills'">
-            <div class="settings-section-heading">
-              <div><h3>技能</h3><p>{{ skills.filter((skill) => skill.enabled).length }} 已启用</p></div>
-              <div class="row-actions">
-                <button class="icon-button" title="刷新" @click="loadCurrentSection"><RefreshCw :size="17" /></button>
-                <button class="secondary-button" :disabled="action === 'skill.import'" @click="importSkills">
-                  <LoaderCircle v-if="action === 'skill.import'" class="spin" :size="15" />
-                  <Upload v-else :size="15" />导入技能
-                </button>
-              </div>
-            </div>
-            <section class="settings-list">
-              <div v-if="skills.length === 0" class="empty-settings">尚未发现技能，可导入 .md 或 .zip 文件</div>
-              <div v-for="skill in skills" :key="skill.name" class="settings-list-row skill-row">
-                <Wrench :size="17" />
-                <div class="list-main">
-                  <div><strong>{{ skill.name }}</strong><span class="inline-badge">{{ skill.scope === 'workspace' ? '工作区' : '全局' }}</span><span v-if="skill.version" class="version-text">v{{ skill.version }}</span></div>
-                  <small>{{ skill.description || skill.directory }}</small>
-                </div>
-                <button class="icon-button compact" title="打开位置" @click="showPath(skill.directory)"><FolderOpen :size="15" /></button>
-                <button class="switch-control" :class="{ active: skill.enabled }" :aria-label="skill.enabled ? '禁用' : '启用'" @click="toggleSkill(skill)"><span /></button>
-              </div>
-            </section>
-          </template>
-
-          <template v-else>
-            <div class="settings-section-heading">
-              <div>
-                <h3>诊断与用量</h3>
-                <p>运行时健康体检与智能体调用效能看板</p>
-              </div>
-              <div class="row-actions">
-                <div class="days-segmented-filter">
-                  <button
-                    type="button"
-                    class="filter-chip"
-                    :class="{ active: usageDays === 7 }"
-                    @click="usageDays = 7"
-                  >
-                    近 7 天
-                  </button>
-                  <button
-                    type="button"
-                    class="filter-chip"
-                    :class="{ active: usageDays === 14 }"
-                    @click="usageDays = 14"
-                  >
-                    近 14 天
-                  </button>
-                  <button
-                    type="button"
-                    class="filter-chip"
-                    :class="{ active: usageDays === 30 }"
-                    @click="usageDays = 30"
-                  >
-                    近 30 天
-                  </button>
-                </div>
-                <button class="secondary-button" :disabled="loading" @click="loadDiagnostics">
-                  <RefreshCw :size="15" :class="{ spin: loading }" /> 重新检查
-                </button>
+                <small class="kpi-subtext">输入 + 输出累计上下文处理量</small>
               </div>
             </div>
 
-            <!-- KPI Metric Cards (No Cost) -->
-            <section class="usage-kpi-grid">
-              <div class="kpi-card">
-                <div class="kpi-icon-badge kpi-indigo"><Gauge :size="18" /></div>
-                <div class="kpi-data">
-                  <span class="kpi-title">总调用量</span>
-                  <div class="kpi-main-metric">
-                    <strong>{{ totalUsage.calls.toLocaleString() }}</strong>
-                    <span class="kpi-tag" :class="{ 'tag-success': totalUsage.successRate >= 0.95 }">
-                      {{ Math.round(totalUsage.successRate * 100) }}% 成功
-                    </span>
-                  </div>
-                  <small class="kpi-subtext">异常失败 {{ totalUsage.failures }} 次</small>
-                </div>
+            <div class="kpi-card">
+              <div class="kpi-icon-badge kpi-teal">
+                <Zap :size="18" />
               </div>
-
-              <div class="kpi-card">
-                <div class="kpi-icon-badge kpi-purple"><Activity :size="18" /></div>
-                <div class="kpi-data">
-                  <span class="kpi-title">消耗 Tokens</span>
-                  <div class="kpi-main-metric">
-                    <strong>{{ totalUsage.tokens.toLocaleString() }}</strong>
-                  </div>
-                  <small class="kpi-subtext">输入 + 输出累计上下文处理量</small>
+              <div class="kpi-data">
+                <span class="kpi-title">缓存节省效率</span>
+                <div class="kpi-main-metric">
+                  <strong>{{ totalUsage.cacheEfficiency }}%</strong>
+                  <span class="kpi-tag tag-cyan">Prompt Cache</span>
                 </div>
-              </div>
-
-              <div class="kpi-card">
-                <div class="kpi-icon-badge kpi-teal"><Zap :size="18" /></div>
-                <div class="kpi-data">
-                  <span class="kpi-title">缓存节省效率</span>
-                  <div class="kpi-main-metric">
-                    <strong>{{ totalUsage.cacheEfficiency }}%</strong>
-                    <span class="kpi-tag tag-cyan">Prompt Cache</span>
-                  </div>
-                  <small class="kpi-subtext">
-                    命中 {{ totalUsage.cachedTokens.toLocaleString() }} Tokens
-                  </small>
-                </div>
-              </div>
-
-              <div class="kpi-card">
-                <div class="kpi-icon-badge kpi-amber"><Clock :size="18" /></div>
-                <div class="kpi-data">
-                  <span class="kpi-title">平均响应延迟</span>
-                  <div class="kpi-main-metric">
-                    <strong>{{ totalUsage.avgLatencyMs }}</strong>
-                    <span class="kpi-unit">ms</span>
-                  </div>
-                  <small class="kpi-subtext">端到端网络与生成延迟均值</small>
-                </div>
-              </div>
-            </section>
-
-            <!-- Visual Charts Dashboard -->
-            <section class="usage-charts-dashboard">
-              <UsageTrendChart :data="timeline" />
-              <UsageModelBarChart :items="usage" />
-            </section>
-
-            <!-- System Doctor Diagnostics -->
-            <div class="diagnostics-sub-heading">
-              <div>
-                <h4>系统健康体检</h4>
-                <small>{{ checks.filter(c => c.ok).length }} / {{ checks.length }} 项检查通过</small>
+                <small class="kpi-subtext">
+                  命中 {{ totalUsage.cachedTokens.toLocaleString() }} Tokens
+                </small>
               </div>
             </div>
 
-            <section class="settings-group diagnostic-list">
-              <div v-for="check in checks" :key="check.name" class="settings-row">
-                <div><strong>{{ check.name }}</strong><small>{{ check.detail }}</small></div>
-                <span class="check-status" :class="{ ok: check.ok }">
-                  <Check v-if="check.ok" :size="15" />
-                  <X v-else :size="15" />
-                  {{ check.ok ? '正常' : '异常' }}
-                </span>
+            <div class="kpi-card">
+              <div class="kpi-icon-badge kpi-amber">
+                <Clock :size="18" />
               </div>
-            </section>
-
-            <!-- Model Usage Detail Table -->
-            <div v-if="usage.length > 0" class="diagnostics-sub-heading">
-              <div>
-                <h4>模型用量明细</h4>
-                <small>共 {{ usage.length }} 个活跃模型配置记录</small>
+              <div class="kpi-data">
+                <span class="kpi-title">平均响应延迟</span>
+                <div class="kpi-main-metric">
+                  <strong>{{ totalUsage.avgLatencyMs }}</strong>
+                  <span class="kpi-unit">ms</span>
+                </div>
+                <small class="kpi-subtext">端到端网络与生成延迟均值</small>
               </div>
             </div>
+          </section>
 
-            <section v-if="usage.length > 0" class="usage-table-wrap">
-              <table class="usage-table">
-                <thead>
-                  <tr>
-                    <th style="text-align: left;">模型</th>
-                    <th>调用</th>
-                    <th>成功率</th>
-                    <th>缓存命中</th>
-                    <th>普通输入</th>
-                    <th>生成输出</th>
-                    <th>总 Tokens</th>
-                    <th>平均延迟</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in usage" :key="`${item.provider}/${item.model}`">
-                    <td style="text-align: left;">
-                      <div class="model-row-identity">
-                        <strong>{{ item.model }}</strong>
-                        <small>{{ item.provider }}</small>
-                      </div>
-                    </td>
-                    <td>{{ item.calls.toLocaleString() }}</td>
-                    <td>{{ Math.round(item.successRate * 100) }}%</td>
-                    <td>
-                      <span class="cache-rate">{{ cacheHitRate(item) }}%</span>
-                      <small v-if="item.cachedInputTokens" class="table-sub-detail">
-                        命中 {{ item.cachedInputTokens.toLocaleString() }}
-                      </small>
-                    </td>
-                    <td>{{ Math.max(0, promptInputTokens(item) - (item.cachedInputTokens ?? 0)).toLocaleString() }}</td>
-                    <td>{{ item.outputTokens.toLocaleString() }}</td>
-                    <td>
-                      <strong class="total-tokens-cell">
-                        {{ (promptInputTokens(item) + item.outputTokens).toLocaleString() }}
-                      </strong>
-                    </td>
-                    <td>{{ Math.round(item.avgLatencyMs) }} ms</td>
-                  </tr>
-                </tbody>
-              </table>
-            </section>
-          </template>
+          <!-- Visual Charts Dashboard -->
+          <section class="usage-charts-dashboard">
+            <UsageTrendChart :data="timeline" />
+            <UsageModelBarChart :items="usage" />
+          </section>
+
+          <!-- System Doctor Diagnostics -->
+          <div class="diagnostics-sub-heading">
+            <div>
+              <h4>系统健康体检</h4>
+              <small>{{checks.filter(c => c.ok).length}} / {{ checks.length }} 项检查通过</small>
+            </div>
+          </div>
+
+          <section class="settings-group diagnostic-list">
+            <div v-for="check in checks" :key="check.name" class="settings-row">
+              <div><strong>{{ check.name }}</strong><small>{{ check.detail }}</small></div>
+              <span class="check-status" :class="{ ok: check.ok }">
+                <Check v-if="check.ok" :size="15" />
+                <X v-else :size="15" />
+                {{ check.ok ? '正常' : '异常' }}
+              </span>
+            </div>
+          </section>
+
+          <!-- Model Usage Detail Table -->
+          <div v-if="usage.length > 0" class="diagnostics-sub-heading">
+            <div>
+              <h4>模型用量明细</h4>
+              <small>共 {{ usage.length }} 个活跃模型配置记录</small>
+            </div>
+          </div>
+
+          <section v-if="usage.length > 0" class="usage-table-wrap">
+            <table class="usage-table">
+              <thead>
+                <tr>
+                  <th style="text-align: left;">模型</th>
+                  <th>调用</th>
+                  <th>成功率</th>
+                  <th>缓存命中</th>
+                  <th>普通输入</th>
+                  <th>生成输出</th>
+                  <th>总 Tokens</th>
+                  <th>平均延迟</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in usage" :key="`${item.provider}/${item.model}`">
+                  <td style="text-align: left;">
+                    <div class="model-row-identity">
+                      <strong>{{ item.model }}</strong>
+                      <small>{{ item.provider }}</small>
+                    </div>
+                  </td>
+                  <td>{{ item.calls.toLocaleString() }}</td>
+                  <td>{{ Math.round(item.successRate * 100) }}%</td>
+                  <td>
+                    <span class="cache-rate">{{ cacheHitRate(item) }}%</span>
+                    <small v-if="item.cachedInputTokens" class="table-sub-detail">
+                      命中 {{ item.cachedInputTokens.toLocaleString() }}
+                    </small>
+                  </td>
+                  <td>{{ Math.max(0, promptInputTokens(item) - (item.cachedInputTokens ?? 0)).toLocaleString() }}</td>
+                  <td>{{ item.outputTokens.toLocaleString() }}</td>
+                  <td>
+                    <strong class="total-tokens-cell">
+                      {{ (promptInputTokens(item) + item.outputTokens).toLocaleString() }}
+                    </strong>
+                  </td>
+                  <td>{{ Math.round(item.avgLatencyMs) }} ms</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        </template>
 
       </div>
     </main>
   </section>
   <Teleport to="body">
     <Transition name="global-toast">
-      <div
-        v-if="open && (error || notice)"
-        class="global-toast-layer"
-        role="status"
-        :aria-live="error ? 'assertive' : 'polite'"
-      >
+      <div v-if="open && (error || notice)" class="global-toast-layer" role="status"
+        :aria-live="error ? 'assertive' : 'polite'">
         <div class="global-toast" :class="{ error: error, success: !error && notice }">
           <X v-if="error" :size="15" />
           <Check v-else :size="15" />
@@ -1132,13 +1136,7 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
   </Teleport>
-  <ProviderEditorDialog
-    :open="providerEditorOpen"
-    :editing-id="editingProviderId"
-    :value="providerForm"
-    :saving="action === 'provider.save'"
-    :error="providerEditorOpen ? error : ''"
-    @close="providerEditorOpen = false"
-    @save="saveProvider"
-  />
+  <ProviderEditorDialog :open="providerEditorOpen" :editing-id="editingProviderId" :value="providerForm"
+    :saving="action === 'provider.save'" :error="providerEditorOpen ? error : ''" @close="providerEditorOpen = false"
+    @save="saveProvider" />
 </template>

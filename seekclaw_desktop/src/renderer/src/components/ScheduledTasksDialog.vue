@@ -236,12 +236,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section
-    v-if="open"
-    class="scheduled-tasks-dialog embedded-page"
-    role="region"
-    aria-label="计划任务"
-  >
+  <section v-if="open" class="scheduled-tasks-dialog embedded-page" role="region" aria-label="计划任务">
     <header class="scheduled-tasks-header">
       <div class="scheduled-tasks-heading">
         <button class="page-back-button" type="button" @click="emit('close')">
@@ -253,98 +248,105 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="scheduled-tasks-actions">
-        <button class="secondary-button" :disabled="loading" @click="newTask"><Plus :size="15" /> 新建</button>
+        <button class="secondary-button" :disabled="loading" @click="newTask">
+          <Plus :size="15" /> 新建
+        </button>
       </div>
     </header>
 
-          <div class="scheduled-tasks-body">
-            <div v-if="notice" class="scheduled-tasks-notice">{{ notice }}</div>
-            <div v-if="error" class="scheduled-tasks-error">{{ error }}</div>
+    <div class="scheduled-tasks-body">
+      <div v-if="notice" class="scheduled-tasks-notice">{{ notice }}</div>
+      <div v-if="error" class="scheduled-tasks-error">{{ error }}</div>
 
-            <div v-if="loading" class="scheduled-tasks-loading"><LoaderCircle class="spin" :size="18" /> 正在加载</div>
+      <div v-if="loading" class="scheduled-tasks-loading">
+        <LoaderCircle class="spin" :size="18" /> 正在加载
+      </div>
 
-            <template v-else-if="!editorOpen">
-              <div v-if="tasks.length === 0" class="scheduled-tasks-empty">
-                <CalendarClock :size="28" />
-                <p>还没有计划任务</p>
-                <small>创建后由守护进程在后台按时自动执行</small>
+      <template v-else-if="!editorOpen">
+        <div v-if="tasks.length === 0" class="scheduled-tasks-empty">
+          <CalendarClock :size="28" />
+          <p>还没有计划任务</p>
+          <small>创建后由运行时Runtime在后台按时自动执行</small>
+        </div>
+        <div v-else class="scheduled-task-list">
+          <div v-for="task in tasks" :key="task.id" class="scheduled-task-row">
+            <div class="scheduled-task-main">
+              <div class="scheduled-task-title">
+                <strong>{{ task.name }}</strong>
+                <span class="scheduled-task-cron">{{ task.cron }}</span>
               </div>
-              <div v-else class="scheduled-task-list">
-                <div v-for="task in tasks" :key="task.id" class="scheduled-task-row">
-                  <div class="scheduled-task-main">
-                    <div class="scheduled-task-title">
-                      <strong>{{ task.name }}</strong>
-                      <span class="scheduled-task-cron">{{ task.cron }}</span>
-                    </div>
-                    <small class="scheduled-task-meta">
-                      {{ taskWorkspaceName(task) }} · 下次运行 {{ formatTime(task.nextRunAt) }} · {{ statusLabel(task) }}
-                    </small>
-                    <p v-if="task.prompt" class="scheduled-task-prompt" :title="task.prompt">{{ task.prompt }}</p>
-                  </div>
-                  <div class="scheduled-task-controls">
-                    <span class="scheduled-task-status" :class="statusClass(task)">{{ statusLabel(task) }}</span>
-                    <label class="scheduled-task-toggle" :title="task.enabled ? '暂停' : '启用'">
-                      <input
-                        class="sr-only"
-                        type="checkbox"
-                        :checked="task.enabled"
-                        :disabled="action === `schedule.toggle:${task.id}`"
-                        @change="toggleTask(task)"
-                      />
-                      <span class="toggle-switch" aria-hidden="true"><span /></span>
-                    </label>
-                    <button class="icon-button compact" title="立即运行" :disabled="action === `schedule.run:${task.id}`" @click="runTask(task)">
-                      <LoaderCircle v-if="action === `schedule.run:${task.id}`" class="spin" :size="14" />
-                      <Play v-else :size="14" />
-                    </button>
-                    <button class="icon-button compact" title="编辑" @click="editTask(task)"><Pencil :size="14" /></button>
-                    <button class="icon-button compact danger-icon" title="删除" @click="removeTask(task)"><Trash2 :size="14" /></button>
-                  </div>
-                </div>
-              </div>
-            </template>
-
-            <form v-else class="scheduled-task-editor" @submit.prevent="saveTask">
-              <div class="scheduled-editor-heading">
-                <strong>{{ editingId ? '编辑计划任务' : '新建计划任务' }}</strong>
-                <button type="button" class="icon-button compact" @click="editorOpen = false"><X :size="15" /></button>
-              </div>
-              <div class="scheduled-form-grid">
-                <label class="span-2">
-                  <span>任务名称</span>
-                  <input v-model="form.name" placeholder="例如：每日代码检查" autocomplete="off" />
-                </label>
-                <label class="span-2">
-                  <span>提示词</span>
-                  <textarea v-model="form.prompt" rows="4" placeholder="例如：检查当前项目是否有未提交的改动并生成日报" />
-                </label>
-                <label class="span-2">
-                  <span>执行位置</span>
-                  <SelectMenu v-model="form.workspace" :options="workspaceOptions" label="执行位置" :menu-min-width="300" />
-                </label>
-                <label class="span-2">
-                  <span>频率</span>
-                  <div class="scheduled-cron-row">
-                    <SelectMenu v-model="selectedPreset" :options="cronPresets" label="频率" :menu-min-width="260" />
-                    <input v-if="customCron" v-model="form.cron" class="scheduled-cron-input" placeholder="分 时 日 月 周，如 0 9 * * 1" spellcheck="false" />
-                  </div>
-                </label>
-                <label class="scheduled-enabled-row span-2">
-                  <span><strong>启用</strong><small>关闭后保留任务但不再自动执行</small></span>
-                  <input v-model="form.enabled" class="sr-only" type="checkbox" />
-                  <span class="toggle-switch" aria-hidden="true"><span /></span>
-                </label>
-              </div>
-              <div class="scheduled-editor-actions">
-                <span class="scheduled-editor-hint">5 段 Cron：分 时 日 月 周（本地时区）</span>
-                <button type="button" class="secondary-button" @click="editorOpen = false">取消</button>
-                <button type="submit" class="secondary-button primary-action" :disabled="action === 'schedule.save'">
-                  <LoaderCircle v-if="action === 'schedule.save'" class="spin" :size="15" />
-                  <Save v-else :size="15" /> 保存
-                </button>
-              </div>
-            </form>
+              <small class="scheduled-task-meta">
+                {{ taskWorkspaceName(task) }} · 下次运行 {{ formatTime(task.nextRunAt) }} · {{ statusLabel(task) }}
+              </small>
+              <p v-if="task.prompt" class="scheduled-task-prompt" :title="task.prompt">{{ task.prompt }}</p>
+            </div>
+            <div class="scheduled-task-controls">
+              <span class="scheduled-task-status" :class="statusClass(task)">{{ statusLabel(task) }}</span>
+              <label class="scheduled-task-toggle" :title="task.enabled ? '暂停' : '启用'">
+                <input class="sr-only" type="checkbox" :checked="task.enabled"
+                  :disabled="action === `schedule.toggle:${task.id}`" @change="toggleTask(task)" />
+                <span class="toggle-switch" aria-hidden="true"><span /></span>
+              </label>
+              <button class="icon-button compact" title="立即运行" :disabled="action === `schedule.run:${task.id}`"
+                @click="runTask(task)">
+                <LoaderCircle v-if="action === `schedule.run:${task.id}`" class="spin" :size="14" />
+                <Play v-else :size="14" />
+              </button>
+              <button class="icon-button compact" title="编辑" @click="editTask(task)">
+                <Pencil :size="14" />
+              </button>
+              <button class="icon-button compact danger-icon" title="删除" @click="removeTask(task)">
+                <Trash2 :size="14" />
+              </button>
+            </div>
           </div>
+        </div>
+      </template>
+
+      <form v-else class="scheduled-task-editor" @submit.prevent="saveTask">
+        <div class="scheduled-editor-heading">
+          <strong>{{ editingId ? '编辑计划任务' : '新建计划任务' }}</strong>
+          <button type="button" class="icon-button compact" @click="editorOpen = false">
+            <X :size="15" />
+          </button>
+        </div>
+        <div class="scheduled-form-grid">
+          <label class="span-2">
+            <span>任务名称</span>
+            <input v-model="form.name" placeholder="例如：每日代码检查" autocomplete="off" />
+          </label>
+          <label class="span-2">
+            <span>提示词</span>
+            <textarea v-model="form.prompt" rows="4" placeholder="例如：检查当前项目是否有未提交的改动并生成日报" />
+          </label>
+          <label class="span-2">
+            <span>执行位置</span>
+            <SelectMenu v-model="form.workspace" :options="workspaceOptions" label="执行位置" :menu-min-width="300" />
+          </label>
+          <label class="span-2">
+            <span>频率</span>
+            <div class="scheduled-cron-row">
+              <SelectMenu v-model="selectedPreset" :options="cronPresets" label="频率" :menu-min-width="260" />
+              <input v-if="customCron" v-model="form.cron" class="scheduled-cron-input"
+                placeholder="分 时 日 月 周，如 0 9 * * 1" spellcheck="false" />
+            </div>
+          </label>
+          <label class="scheduled-enabled-row span-2">
+            <span><strong>启用</strong><small>关闭后保留任务但不再自动执行</small></span>
+            <input v-model="form.enabled" class="sr-only" type="checkbox" />
+            <span class="toggle-switch" aria-hidden="true"><span /></span>
+          </label>
+        </div>
+        <div class="scheduled-editor-actions">
+          <span class="scheduled-editor-hint">5 段 Cron：分 时 日 月 周（本地时区）</span>
+          <button type="button" class="secondary-button" @click="editorOpen = false">取消</button>
+          <button type="submit" class="secondary-button primary-action" :disabled="action === 'schedule.save'">
+            <LoaderCircle v-if="action === 'schedule.save'" class="spin" :size="15" />
+            <Save v-else :size="15" /> 保存
+          </button>
+        </div>
+      </form>
+    </div>
   </section>
 </template>
 
@@ -546,16 +548,16 @@ onBeforeUnmount(() => {
   height: 20px;
 }
 
-.scheduled-task-toggle .toggle-switch > span {
+.scheduled-task-toggle .toggle-switch>span {
   width: 16px;
   height: 16px;
 }
 
-.scheduled-task-toggle input:checked + .toggle-switch {
+.scheduled-task-toggle input:checked+.toggle-switch {
   background: var(--accent);
 }
 
-.scheduled-task-toggle input:checked + .toggle-switch > span {
+.scheduled-task-toggle input:checked+.toggle-switch>span {
   transform: translateX(14px);
 }
 
@@ -628,15 +630,15 @@ onBeforeUnmount(() => {
 }
 
 /* The editor toggle mirrors the list-row switch so toggling gives visible feedback. */
-.scheduled-enabled-row input:checked + .toggle-switch {
+.scheduled-enabled-row input:checked+.toggle-switch {
   background: var(--accent);
 }
 
-.scheduled-enabled-row input:checked + .toggle-switch > span {
+.scheduled-enabled-row input:checked+.toggle-switch>span {
   transform: translateX(16px);
 }
 
-.scheduled-enabled-row input:focus-visible + .toggle-switch {
+.scheduled-enabled-row input:focus-visible+.toggle-switch {
   outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
   outline-offset: 2px;
 }

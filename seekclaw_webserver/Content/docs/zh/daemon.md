@@ -1,4 +1,4 @@
-# Daemon 守护进程与 IPC 协议
+# Daemon 运行时Runtime与 IPC 协议
 
 SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开放 Runtime。当前协议版本为 `2.1`，使用一行一个 JSON 对象的 JSONL 消息，不是完整的 JSON-RPC 2.0 实现。
 
