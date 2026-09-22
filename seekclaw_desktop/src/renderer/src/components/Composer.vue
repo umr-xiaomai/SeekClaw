@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ArrowUp, ImagePlus, LoaderCircle, Sparkles, Square, X } from '@lucide/vue'
+import { ArrowUp, ImagePlus, LoaderCircle, Paperclip, Sparkles, Square, X } from '@lucide/vue'
 import { nextTick, ref, watch } from 'vue'
-import type { ImageAttachment, ReasoningLevel } from '../types'
+import type { FileAttachment, ImageAttachment, ReasoningLevel } from '../types'
 import { confirmAction } from '../confirmation'
+import { fileBadgeText, fileExtClass, getFileExtension } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import ReasoningDepthMenu from './ReasoningDepthMenu.vue'
 import SelectMenu from './SelectMenu.vue'
@@ -21,7 +22,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [message: string, images: ImageAttachment[]]
+  send: [message: string, images: ImageAttachment[], files?: FileAttachment[]]
   stop: []
   changeModel: [model: string]
   changeMode: [mode: string]
@@ -35,6 +36,9 @@ const maxTotalImageBytes = 40 * 1024 * 1024
 const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const value = ref('')
 const images = ref<ImageAttachment[]>([])
+const attachedFiles = ref<FileAttachment[]>([])
+const isDragOver = ref(false)
+const selectingFiles = ref(false)
 const imageNotice = ref('')
 const selectingImages = ref(false)
 const optimizing = ref(false)
@@ -153,75 +157,128 @@ function clipboardImageName(mediaType: string, index: number): string {
   return `截图-${new Date().toLocaleString('sv-SE').replace(/[\s:]/g, '-')}-${index + 1}.${extension}`
 }
 
+function addFileByPath(filePath: string, sizeBytes = 0): boolean {
+  const path = filePath.trim()
+  if (!path) return false
+  if (attachedFiles.value.some((f) => f.path.toLowerCase() === path.toLowerCase())) return false
+  const name = path.split(/[/\\]/).pop() || 'file'
+  const extension = getFileExtension(name)
+  attachedFiles.value.push({
+    id: crypto.randomUUID(),
+    name,
+    path,
+    sizeBytes,
+    extension
+  })
+  return true
+}
+
+function removeAttachedFile(id: string): void {
+  attachedFiles.value = attachedFiles.value.filter((file) => file.id !== id)
+}
+
+async function selectFiles(): Promise<void> {
+  if (props.disabled || selectingFiles.value) return
+  selectingFiles.value = true
+  try {
+    const paths = await window.seekclaw.selectFiles()
+    for (const path of paths) {
+      addFileByPath(path)
+    }
+  } finally {
+    selectingFiles.value = false
+  }
+}
+
 async function handlePaste(event: ClipboardEvent): Promise<void> {
-  const files = Array.from(event.clipboardData?.items ?? [])
+  const clipboardFiles = Array.from(event.clipboardData?.files ?? [])
+  let hasAttachment = false
+  for (const file of clipboardFiles) {
+    const nativePath = window.seekclaw?.getPathForFile?.(file) || (file as unknown as { path?: string }).path || ''
+    if (nativePath) {
+      if (addFileByPath(nativePath, file.size)) hasAttachment = true
+    }
+  }
+
+  const imageFiles = Array.from(event.clipboardData?.items ?? [])
     .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
     .map((item) => item.getAsFile())
     .filter((file): file is File => file !== null)
-  if (files.length === 0) return
-  if (props.disabled || !props.supportsImages) {
-    imageNotice.value = props.supportsImages
-      ? '当前任务无法添加图片。'
-      : '当前模型不支持图片理解，请切换支持视觉的模型。'
-    return
+
+  if (imageFiles.length > 0 && props.supportsImages) {
+    try {
+      const candidates = await Promise.all(imageFiles.map(async (file, index) => ({
+        name: file.name && file.name !== 'image.png' ? file.name : clipboardImageName(file.type, index),
+        mediaType: file.type,
+        data: await readClipboardFile(file),
+        sizeBytes: file.size
+      })))
+      imageNotice.value = addImages(candidates)
+      hasAttachment = true
+    } catch (error) {
+      imageNotice.value = error instanceof Error ? error.message : '无法读取剪贴板图片。'
+    }
   }
 
-  event.preventDefault()
-  try {
-    const candidates = await Promise.all(files.map(async (file, index) => ({
-      name: file.name && file.name !== 'image.png' ? file.name : clipboardImageName(file.type, index),
-      mediaType: file.type,
-      data: await readClipboardFile(file),
-      sizeBytes: file.size
-    })))
-    imageNotice.value = addImages(candidates)
-  } catch (error) {
-    imageNotice.value = error instanceof Error ? error.message : '无法读取剪贴板图片。'
+  if (hasAttachment) {
+    event.preventDefault()
   }
 }
 
 const dropNotice = ref('')
 
+function handleDragEnter(event: DragEvent): void {
+  if (props.disabled) return
+  isDragOver.value = true
+}
+
+function handleDragOver(event: DragEvent): void {
+  if (props.disabled) return
+  event.preventDefault()
+  isDragOver.value = true
+}
+
+function handleDragLeave(event: DragEvent): void {
+  const related = event.relatedTarget as Node | null
+  if (!related || !(event.currentTarget as Node)?.contains(related)) {
+    isDragOver.value = false
+  }
+}
+
 async function handleDrop(event: DragEvent): Promise<void> {
   event.preventDefault()
+  isDragOver.value = false
   if (props.disabled) return
   const files = Array.from(event.dataTransfer?.files ?? [])
   if (files.length === 0) return
-  const images = files.filter((file) => file.type.startsWith('image/'))
-  const texts = files.filter((file) => !file.type.startsWith('image/'))
-  let notice = ''
-  if (images.length > 0) {
-    const candidates = images.map((file) => ({
-      name: file.name,
-      mediaType: file.type || 'image/png',
-      data: '',
-      sizeBytes: file.size
-    }))
-    const decoded = await Promise.all(images.map((file) => new Promise<string>((resolve, reject) => {
+
+  let addedCount = 0
+  for (const file of files) {
+    const nativePath = window.seekclaw?.getPathForFile?.(file) || (file as unknown as { path?: string }).path || ''
+    if (nativePath) {
+      if (addFileByPath(nativePath, file.size)) addedCount++
+    }
+
+    // If image and model supports images, also add to vision images
+    if (file.type.startsWith('image/') && props.supportsImages) {
       const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
-      reader.onerror = () => reject(new Error('无法读取图片'))
+      reader.onload = () => {
+        const data = String(reader.result).split(',')[1] ?? ''
+        addImages([{
+          name: file.name,
+          mediaType: file.type || 'image/png',
+          data,
+          sizeBytes: file.size
+        }])
+      }
       reader.readAsDataURL(file)
-    })))
-    candidates.forEach((candidate, index) => { candidate.data = decoded[index] ?? '' })
-    const warning = addImages(candidates)
-    notice = [notice, warning].filter(Boolean).join(' ')
-  }
-  if (texts.length > 0) {
-    const parts: string[] = []
-    for (const file of texts.slice(0, 3)) {
-      const text = (await file.text()).slice(0, 16_000)
-      parts.push(`[附件：${file.name}]\n\`\`\`\n${text}\n\`\`\``)
-    }
-    if (parts.length > 0) {
-      const block = parts.join('\n\n')
-      value.value = value.value.trim() ? `${value.value.trim()}\n\n${block}` : block
-      notice = [notice, '文本附件已加入输入框，可编辑后发送。'].filter(Boolean).join(' ')
-      void nextTick(() => { resize(); focus() })
     }
   }
-  dropNotice.value = notice
-  window.setTimeout(() => { dropNotice.value = '' }, 4000)
+
+  if (addedCount > 0) {
+    dropNotice.value = `已附加 ${addedCount} 个文件`
+    window.setTimeout(() => { dropNotice.value = '' }, 3000)
+  }
 }
 
 function removeImage(id: string): void {
@@ -231,13 +288,11 @@ function removeImage(id: string): void {
 
 function submit(): void {
   const message = value.value.trim()
-  if ((!message && images.value.length === 0) || props.disabled) return
+  if ((!message && images.value.length === 0 && attachedFiles.value.length === 0) || props.disabled) return
   if (images.value.length > 0 && !props.supportsImages) {
     imageNotice.value = '当前模型不支持图片理解，请切换支持视觉的模型。'
     return
   }
-  // Vue reactive proxies cannot be structured-cloned by Electron IPC, so hand
-  // the renderer plain copies of the attachments before crossing the bridge.
   const outgoingImages = images.value.map((image) => ({
     id: image.id,
     name: image.name,
@@ -245,9 +300,11 @@ function submit(): void {
     data: image.data,
     sizeBytes: image.sizeBytes
   }))
-  emit('send', message, outgoingImages)
+  const outgoingFiles = attachedFiles.value.map((file) => ({ ...file }))
+  emit('send', message, outgoingImages, outgoingFiles)
   value.value = ''
   images.value = []
+  attachedFiles.value = []
   imageNotice.value = ''
   void nextTick(resize)
 }
@@ -278,6 +335,7 @@ defineExpose({ focus, setValue, getValue })
 watch(value, resize)
 watch(() => props.taskId, () => {
   images.value = []
+  attachedFiles.value = []
   imageNotice.value = ''
   previewImage.value = null
 })
@@ -290,8 +348,31 @@ watch(() => props.supportsImages, (supported) => {
 </script>
 
 <template>
-  <div class="composer-shell" @drop.prevent="handleDrop" @dragover.prevent>
+  <div
+    class="composer-shell"
+    :class="{ 'drag-over': isDragOver }"
+    @dragenter="handleDragEnter"
+    @dragover="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop="handleDrop"
+  >
     <p v-if="dropNotice" class="composer-image-notice">{{ dropNotice }}</p>
+    <div v-if="attachedFiles.length" class="composer-files-strip" aria-label="待发送文件附件">
+      <div v-for="file in attachedFiles" :key="file.id" class="composer-file-chip" :title="file.path">
+        <span class="file-ext-badge" :class="fileExtClass(file.extension)">
+          {{ fileBadgeText(file.extension) }}
+        </span>
+        <span class="file-chip-name">{{ file.name }}</span>
+        <button
+          type="button"
+          class="file-chip-remove"
+          :title="`移除 ${file.name}`"
+          @click="removeAttachedFile(file.id)"
+        >
+          <X :size="12" />
+        </button>
+      </div>
+    </div>
     <div v-if="images.length" class="composer-image-strip" aria-label="待发送图片">
       <div v-for="image in images" :key="image.id" class="composer-image-card">
         <button type="button" class="composer-image-preview" :title="`预览 ${image.name}`" @click="previewImage = image">
@@ -314,6 +395,15 @@ watch(() => props.supportsImages, (supported) => {
       @paste="handlePaste"
     />
     <div class="composer-toolbar">
+      <button
+        class="icon-button composer-icon"
+        type="button"
+        title="添加文件附件（可直接拖拽任意文件或文件夹）"
+        :disabled="disabled || selectingFiles"
+        @click="selectFiles"
+      >
+        <Paperclip :size="17" />
+      </button>
       <button
         class="icon-button composer-icon"
         :title="supportsImages ? '添加图片（最多 10 张）' : '当前模型不支持图片理解'"
@@ -357,14 +447,14 @@ watch(() => props.supportsImages, (supported) => {
         :disabled="busy || disabled"
         @update:model-value="emit('changeReasoningLevel', $event)"
       />
-      <button v-if="busy && !value.trim() && images.length === 0" class="send-button" title="停止" @click="emit('stop')">
+      <button v-if="busy && !value.trim() && images.length === 0 && attachedFiles.length === 0" class="send-button" title="停止" @click="emit('stop')">
         <Square :size="14" fill="currentColor" />
       </button>
       <button
         v-else
         class="send-button"
         :title="busy ? '排队发送（本轮结束后自动发送）' : '发送'"
-        :disabled="disabled || (!value.trim() && images.length === 0) || (images.length > 0 && !supportsImages)"
+        :disabled="disabled || (!value.trim() && images.length === 0 && attachedFiles.length === 0) || (images.length > 0 && !supportsImages)"
         @click="submit"
       >
         <ArrowUp :size="19" />

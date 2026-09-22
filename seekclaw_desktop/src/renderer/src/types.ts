@@ -36,6 +36,14 @@ export interface ImageAttachment {
   sizeBytes: number
 }
 
+export interface FileAttachment {
+  id: string
+  name: string
+  path: string
+  sizeBytes: number
+  extension: string
+}
+
 export interface ImageReference {
   id: string
   name: string
@@ -46,6 +54,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   images?: ImageAttachment[]
+  files?: FileAttachment[]
   thinking?: string
   /** "provider/model" that produced this assistant message. */
   modelRef?: string
@@ -75,6 +84,7 @@ export interface QueuedMessage {
   id: string
   content: string
   images: ImageAttachment[]
+  files?: FileAttachment[]
   createdAt: number
 }
 

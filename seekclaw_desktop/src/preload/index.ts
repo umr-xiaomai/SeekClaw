@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { toIpcPayload } from '../shared/ipc.js'
 import type { DaemonMessage, DaemonState, DesktopApi } from '../shared/ipc.js'
 
@@ -6,6 +6,14 @@ const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke('app:info'),
   selectWorkspace: () => ipcRenderer.invoke('app:select-workspace'),
   selectImages: () => ipcRenderer.invoke('app:select-images'),
+  selectFiles: () => ipcRenderer.invoke('app:select-files'),
+  getPathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return (file as unknown as { path?: string }).path || ''
+    }
+  },
   selectSkillFiles: () => ipcRenderer.invoke('app:select-skill-files'),
   showItemInFolder: (path) => ipcRenderer.invoke('app:show-item', path),
   closeApp: () => ipcRenderer.invoke('app:close'),

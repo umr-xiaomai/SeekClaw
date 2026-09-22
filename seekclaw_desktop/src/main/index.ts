@@ -371,6 +371,18 @@ function registerIpc(): void {
     return { paths: result.filePaths }
   })
 
+  ipcMain.handle('app:select-files', async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: '选择文件',
+      properties: ['openFile', 'multiSelections']
+    }
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled) return []
+    return result.filePaths
+  })
+
   ipcMain.handle('app:show-item', async (_event, path: string) => {
     shell.showItemInFolder(path)
   })

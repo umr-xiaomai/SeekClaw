@@ -12,6 +12,7 @@ import {
 } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import type { ChatMessage } from '../types'
+import { fileBadgeText, fileExtClass } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 
@@ -93,6 +94,12 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
   stats.removed += current.removed
   return stats
 }, { added: 0, removed: 0 }))
+
+function openFileLocation(path?: string): void {
+  if (path) {
+    window.seekclaw?.showItemInFolder?.(path)
+  }
+}
 </script>
 
 <template>
@@ -116,6 +123,21 @@ const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
         </div>
       </div>
       <div v-else class="user-message-stack">
+        <div v-if="message.files?.length" class="user-files-grid">
+          <button
+            v-for="file in message.files"
+            :key="file.id"
+            type="button"
+            class="user-file-chip"
+            :title="`在文件夹中显示: ${file.path}`"
+            @click="openFileLocation(file.path)"
+          >
+            <span class="file-ext-badge" :class="fileExtClass(file.extension)">
+              {{ fileBadgeText(file.extension) }}
+            </span>
+            <span class="file-chip-name">{{ file.name }}</span>
+          </button>
+        </div>
         <div v-if="message.images?.length" class="user-image-grid" :class="{ single: message.images.length === 1 }">
           <button v-for="image in message.images" :key="image.id" type="button" class="user-image-button"
             :title="`预览 ${image.name}`" @click="previewImage(image.id, image.name)">

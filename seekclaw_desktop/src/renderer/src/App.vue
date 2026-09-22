@@ -43,8 +43,9 @@ import { finalizeAssistantBubbles } from './conversation-state'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
-import type { ChatMessage, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity } from './types'
+import type { ChatMessage, FileAttachment, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity } from './types'
 import {
+  formatPromptWithFiles,
   hydrateMessages,
   makeId,
   messageMatches,
@@ -798,18 +799,18 @@ async function regenerateMessage(message: ChatMessage): Promise<void> {
   await sendMessage(prompt, [])
 }
 
-async function sendMessage(content: string, images: ImageAttachment[]): Promise<void> {
+async function sendMessage(content: string, images: ImageAttachment[], files?: FileAttachment[]): Promise<void> {
   const thread = activeThread.value
   const project = thread ? projects.value.find((item) => item.id === thread.projectId) : undefined
   if (!thread || (thread.projectId && !project) || thread.archived) return
-  if (!content.trim() && images.length === 0) return
+  if (!content.trim() && images.length === 0 && (!files || files.length === 0)) return
   if (thread.running || thread.queueDraining) {
     thread.queuedMessages ??= []
-    thread.queuedMessages.push({ id: makeId(), content, images, createdAt: Date.now() })
+    thread.queuedMessages.push({ id: makeId(), content, images, files, createdAt: Date.now() })
     return
   }
   composerDrafts.delete(thread.id)
-  await runMessageTurn(thread, content, images)
+  await runMessageTurn(thread, content, images, files)
 }
 
 function rememberFinishedRequest(thread: ThreadItem, requestId: number): void {
@@ -836,7 +837,7 @@ async function drainQueuedMessages(thread: ThreadItem): Promise<void> {
   if (!next) return
   thread.queueDraining = true
   try {
-    await runMessageTurn(thread, next.content, next.images)
+    await runMessageTurn(thread, next.content, next.images, next.files)
   } finally {
     thread.queueDraining = false
     scheduleQueuedDrain(thread)
@@ -860,6 +861,7 @@ async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Pr
     role: 'user',
     content: queued.content,
     images: queued.images,
+    files: queued.files,
     createdAt: Date.now()
   }
   // Reflect the steer immediately. The daemon request is still awaited below so
@@ -871,7 +873,7 @@ async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Pr
   if (thread.id === activeThreadId.value) void scrollToBottom(true, true)
   try {
     await window.seekclaw.daemon.request('agent.steer', {
-      message: queued.content,
+      message: formatPromptWithFiles(queued.content, queued.files),
       images: plainImages(queued.images),
       sessionId: thread.sessionId,
       requestId: thread.requestId,
@@ -888,7 +890,12 @@ async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Pr
   }
 }
 
-async function runMessageTurn(thread: ThreadItem, content: string, images: ImageAttachment[]): Promise<void> {
+async function runMessageTurn(
+  thread: ThreadItem,
+  content: string,
+  images: ImageAttachment[],
+  files?: FileAttachment[]
+): Promise<void> {
   const project = projects.value.find((item) => item.id === thread.projectId)
   if ((thread.projectId && !project) || thread.archived || thread.running) return
   const reasoningLevel = thread.reasoningLevel ?? ReasoningLevel.High
@@ -899,6 +906,7 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
     role: 'user',
     content,
     images,
+    files,
     createdAt: Date.now()
   }
   const assistant: ChatMessage = {
@@ -906,7 +914,9 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
   }
   thread.messages.push(userMessage, assistant)
   thread.updatedAt = Date.now()
-  const titlePrompt = content.trim() || `查看图片：${images.map((image) => image.name).join('、')}`
+  const titlePrompt = content.trim()
+    || (files?.length ? `处理文件：${files.map((f) => f.name).join('、')}` : '')
+    || `查看图片：${images.map((image) => image.name).join('、')}`
   const titleChanged = updateThreadTitle(thread, titlePrompt)
   thread.running = true
   thread.activeTurnToken = turnToken
@@ -937,8 +947,9 @@ async function runMessageTurn(thread: ThreadItem, content: string, images: Image
         title: thread.title
       })
     }
+    const daemonPrompt = formatPromptWithFiles(content, files)
     const response = await window.seekclaw.daemon.request('chat', {
-      message: content,
+      message: daemonPrompt,
       images: plainImages(images),
       sessionId: thread.sessionId,
       reasoningLevel,

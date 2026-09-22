@@ -100,6 +100,8 @@ export interface DesktopApi {
   getAppInfo(): Promise<AppInfo>
   selectWorkspace(): Promise<string | null>
   selectImages(): Promise<DesktopImageSelection>
+  selectFiles(): Promise<string[]>
+  getPathForFile(file: File): string
   selectSkillFiles(): Promise<DesktopSkillFileSelection>
   showItemInFolder(path: string): Promise<void>
   closeApp(): Promise<void>

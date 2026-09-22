@@ -35,3 +35,39 @@ describe('path helpers', () => {
     expect(pathName('C:\\Project\\SeekClaw')).toBe('SeekClaw')
   })
 })
+
+describe('attachment helpers', () => {
+  it('formats prompt with attached files including filenames and absolute paths', async () => {
+    const { formatPromptWithFiles, parseAttachmentsFromText } = await import('./app-helpers')
+    const files = [
+      { id: '1', name: '简历.pdf', path: 'C:\\Users\\zhang\\Documents\\简历.pdf', sizeBytes: 1024, extension: 'pdf' },
+      { id: '2', name: 'config.ts', path: 'E:\\Project\\SeekClaw\\config.ts', sizeBytes: 2048, extension: 'ts' }
+    ]
+    const prompt = formatPromptWithFiles('帮我分析简历', files)
+    expect(prompt).toContain('简历.pdf')
+    expect(prompt).toContain('C:\\Users\\zhang\\Documents\\简历.pdf')
+    expect(prompt).toContain('config.ts')
+    expect(prompt).toContain('帮我分析简历')
+
+    const parsed = parseAttachmentsFromText(prompt)
+    expect(parsed.content).toBe('帮我分析简历')
+    expect(parsed.files).toHaveLength(2)
+    expect(parsed.files[0]!.name).toBe('简历.pdf')
+    expect(parsed.files[0]!.path).toBe('C:\\Users\\zhang\\Documents\\简历.pdf')
+    expect(parsed.files[0]!.extension).toBe('pdf')
+    expect(parsed.files[1]!.name).toBe('config.ts')
+    expect(parsed.files[1]!.extension).toBe('ts')
+  })
+
+  it('handles empty content with default instruction', async () => {
+    const { formatPromptWithFiles, parseAttachmentsFromText } = await import('./app-helpers')
+    const files = [
+      { id: '1', name: 'doc.txt', path: 'C:\\doc.txt', sizeBytes: 100, extension: 'txt' }
+    ]
+    const prompt = formatPromptWithFiles('', files)
+    expect(prompt).toContain('请直接查看、分析并处理以上附加的文件。')
+    const parsed = parseAttachmentsFromText(prompt)
+    expect(parsed.content).toBe('')
+    expect(parsed.files).toHaveLength(1)
+  })
+})

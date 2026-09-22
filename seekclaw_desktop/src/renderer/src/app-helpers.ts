@@ -1,6 +1,7 @@
 import { ReasoningLevel } from './types'
 import type {
   ChatMessage,
+  FileAttachment,
   ImageAttachment,
   ProjectItem,
   QueuedMessage,
@@ -89,6 +90,82 @@ export function normalizeReasoningLevel(value?: string): ReasoningLevel {
     : ReasoningLevel.High
 }
 
+export function formatPromptWithFiles(content: string, files?: FileAttachment[]): string {
+  if (!files || files.length === 0) return content
+
+  const fileLines = files
+    .map((file) => `- 文件名: "${file.name}" | 绝对路径: "${file.path}"`)
+    .join('\n')
+
+  const header = `[用户已附加以下本地文件。请直接根据任务需求调用相应的工具（如 read_file、bash 等）读取和处理这些文件，无需让用户手动提供文件路径]：\n${fileLines}`
+
+  if (!content.trim()) {
+    return `${header}\n\n请直接查看、分析并处理以上附加的文件。`
+  }
+
+  return `${header}\n\n用户指示：\n${content.trim()}`
+}
+
+export function parseAttachmentsFromText(rawText: string): { content: string; files: FileAttachment[] } {
+  if (!rawText || !rawText.startsWith('[用户已附加以下本地文件')) {
+    return { content: rawText, files: [] }
+  }
+
+  const files: FileAttachment[] = []
+  const fileRegex = /- 文件名: "([^"]+)" \| 绝对路径: "([^"]+)"/g
+  let match: RegExpExecArray | null
+  while ((match = fileRegex.exec(rawText)) !== null) {
+    const name = match[1] ?? ''
+    const path = match[2] ?? ''
+    if (!name || !path) continue
+    const dot = name.lastIndexOf('.')
+    const extension = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
+    files.push({
+      id: `${name}:${path}`,
+      name,
+      path,
+      sizeBytes: 0,
+      extension
+    })
+  }
+
+  const marker = '\n\n用户指示：\n'
+  const defaultMarker = '\n\n请直接查看、分析并处理以上附加的文件。'
+  let content = ''
+  if (rawText.includes(marker)) {
+    content = rawText.slice(rawText.indexOf(marker) + marker.length).trim()
+  } else if (!rawText.includes(defaultMarker)) {
+    content = ''
+  }
+
+  return { content, files }
+}
+
+export function getFileExtension(name: string): string {
+  const dot = name.lastIndexOf('.')
+  if (dot < 0 || dot === name.length - 1) return ''
+  return name.slice(dot + 1).toLowerCase()
+}
+
+export function fileBadgeText(ext?: string): string {
+  if (!ext) return 'FILE'
+  const upper = ext.toUpperCase()
+  if (upper.length <= 4) return upper
+  return upper.slice(0, 3)
+}
+
+export function fileExtClass(ext?: string): string {
+  const e = (ext || '').toLowerCase()
+  if (e === 'pdf') return 'badge-pdf'
+  if (['ts', 'js', 'py', 'cs', 'cpp', 'c', 'go', 'rs', 'java', 'vue', 'json', 'html', 'css', 'sql', 'sh', 'bat', 'ps1', 'dart'].includes(e)) return 'badge-code'
+  if (['doc', 'docx', 'txt', 'md', 'rtf', 'odt'].includes(e)) return 'badge-doc'
+  if (['xls', 'xlsx', 'csv', 'tsv'].includes(e)) return 'badge-sheet'
+  if (['ppt', 'pptx'].includes(e)) return 'badge-slide'
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(e)) return 'badge-archive'
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp', 'ico'].includes(e)) return 'badge-image'
+  return 'badge-default'
+}
+
 export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
   const messages: ChatMessage[] = []
   saved.messages.forEach((item, index) => {
@@ -112,11 +189,21 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
       }
       return
     }
+
+    let messageContent = item.text
+    let messageFiles: FileAttachment[] | undefined
+    if (item.role === 'user' && item.text) {
+      const parsed = parseAttachmentsFromText(item.text)
+      messageContent = parsed.content
+      if (parsed.files.length > 0) messageFiles = parsed.files
+    }
+
     messages.push({
       id: `${saved.id}:${index}`,
       role: item.role,
-      content: item.text,
+      content: messageContent,
       images: item.images,
+      files: messageFiles,
       thinking: item.thinking,
       modelRef: item.modelRef,
       viewedImages: item.viewedImages,
@@ -168,6 +255,9 @@ export function phaseLabel(status: string): string {
 export function queuedMessagePreview(message: QueuedMessage): string {
   const text = message.content.trim().replace(/\s+/g, ' ')
   if (text) return text.length > 120 ? `${text.slice(0, 120)}…` : text
+  if (message.files?.length) {
+    return `发送 ${message.files.length} 个附件文件`
+  }
   return message.images.length > 1 ? `发送 ${message.images.length} 张图片` : '发送图片'
 }
 
