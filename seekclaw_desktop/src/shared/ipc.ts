@@ -101,6 +101,7 @@ export interface DesktopApi {
   selectWorkspace(): Promise<string | null>
   selectImages(): Promise<DesktopImageSelection>
   selectFiles(): Promise<string[]>
+  readFileBase64(path: string): Promise<{ data: string; mediaType: string; sizeBytes: number } | null>
   getPathForFile(file: File): string
   selectSkillFiles(): Promise<DesktopSkillFileSelection>
   showItemInFolder(path: string): Promise<void>

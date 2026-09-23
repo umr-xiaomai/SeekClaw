@@ -19,7 +19,8 @@ export function plainImages(images?: ImageAttachment[]): ImageAttachment[] {
     name: image.name,
     mediaType: image.mediaType,
     data: image.data,
-    sizeBytes: image.sizeBytes
+    sizeBytes: image.sizeBytes,
+    path: image.path
   }))
 }
 

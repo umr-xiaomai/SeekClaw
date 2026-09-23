@@ -34,6 +34,7 @@ export interface ImageAttachment {
   mediaType: string
   data: string
   sizeBytes: number
+  path?: string
 }
 
 export interface FileAttachment {

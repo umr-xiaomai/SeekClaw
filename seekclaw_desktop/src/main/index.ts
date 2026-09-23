@@ -383,6 +383,21 @@ function registerIpc(): void {
     return result.filePaths
   })
 
+  ipcMain.handle('app:read-file-base64', async (_event, path: string) => {
+    try {
+      const data = await readFile(path)
+      const ext = extname(path).toLocaleLowerCase()
+      const mediaType = imageMediaTypes[ext] || 'image/png'
+      return {
+        data: data.toString('base64'),
+        mediaType,
+        sizeBytes: data.byteLength
+      }
+    } catch {
+      return null
+    }
+  })
+
   ipcMain.handle('app:show-item', async (_event, path: string) => {
     shell.showItemInFolder(path)
   })

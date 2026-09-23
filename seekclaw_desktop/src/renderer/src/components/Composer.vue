@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, ImagePlus, LoaderCircle, Paperclip, Sparkles, Square, X } from '@lucide/vue'
+import { ArrowUp, LoaderCircle, Paperclip, Sparkles, Square, X } from '@lucide/vue'
 import { nextTick, ref, watch } from 'vue'
 import type { FileAttachment, ImageAttachment, ReasoningLevel } from '../types'
 import { confirmAction } from '../confirmation'
@@ -40,7 +40,6 @@ const attachedFiles = ref<FileAttachment[]>([])
 const isDragOver = ref(false)
 const selectingFiles = ref(false)
 const imageNotice = ref('')
-const selectingImages = ref(false)
 const optimizing = ref(false)
 const previewImage = ref<ImageAttachment | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
@@ -59,21 +58,6 @@ function resize(): void {
   if (!textarea.value) return
   textarea.value.style.height = '0'
   textarea.value.style.height = `${Math.min(176, Math.max(30, textarea.value.scrollHeight))}px`
-}
-
-async function selectImages(): Promise<void> {
-  if (props.disabled || !props.supportsImages || selectingImages.value) return
-  selectingImages.value = true
-  imageNotice.value = ''
-  try {
-    const result = await window.seekclaw.selectImages()
-    const warning = addImages(result.images)
-    imageNotice.value = [result.warning, warning].filter(Boolean).join(' ')
-  } catch (error) {
-    imageNotice.value = error instanceof Error ? error.message : '无法读取所选图片。'
-  } finally {
-    selectingImages.value = false
-  }
 }
 
 async function optimizeCurrentPrompt(): Promise<void> {
@@ -112,10 +96,33 @@ async function optimizeCurrentPrompt(): Promise<void> {
   }
 }
 
+function isImageFile(name: string, mediaType?: string): boolean {
+  if (mediaType && mediaType.startsWith('image/')) return true
+  const ext = getFileExtension(name).toLowerCase()
+  return ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg'].includes(ext)
+}
+
 function addImages(candidates: Array<Omit<ImageAttachment, 'id'>>): string {
   const warnings: string[] = []
   let totalBytes = images.value.reduce((total, image) => total + image.sizeBytes, 0)
   for (const candidate of candidates) {
+    // 联动互斥：如果在 attachedFiles 里存在，立即移除，绝不重复展示
+    if (candidate.path) {
+      attachedFiles.value = attachedFiles.value.filter(
+        (f) => f.path.toLowerCase() !== candidate.path!.toLowerCase()
+      )
+    } else {
+      attachedFiles.value = attachedFiles.value.filter(
+        (f) => f.name.toLowerCase() !== candidate.name.toLowerCase()
+      )
+    }
+
+    const isDup = images.value.some((img) =>
+      (candidate.path && img.path && img.path.toLowerCase() === candidate.path.toLowerCase()) ||
+      img.name === candidate.name
+    )
+    if (isDup) continue
+
     if (images.value.length >= maxImageCount) {
       warnings.push(`每条消息最多添加 ${maxImageCount} 张图片。`)
       break
@@ -160,8 +167,14 @@ function clipboardImageName(mediaType: string, index: number): string {
 function addFileByPath(filePath: string, sizeBytes = 0): boolean {
   const path = filePath.trim()
   if (!path) return false
-  if (attachedFiles.value.some((f) => f.path.toLowerCase() === path.toLowerCase())) return false
   const name = path.split(/[/\\]/).pop() || 'file'
+
+  // 联动互斥：如果已在图片预览列表中，绝不重复作为文件展示
+  if (images.value.some((img) => img.path?.toLowerCase() === path.toLowerCase() || img.name.toLowerCase() === name.toLowerCase())) {
+    return false
+  }
+
+  if (attachedFiles.value.some((f) => f.path.toLowerCase() === path.toLowerCase())) return false
   const extension = getFileExtension(name)
   attachedFiles.value.push({
     id: crypto.randomUUID(),
@@ -183,6 +196,21 @@ async function selectFiles(): Promise<void> {
   try {
     const paths = await window.seekclaw.selectFiles()
     for (const path of paths) {
+      const name = path.split(/[/\\]/).pop() || 'file'
+      const isImg = isImageFile(name)
+      if (isImg && props.supportsImages) {
+        const fileData = await window.seekclaw.readFileBase64?.(path)
+        if (fileData) {
+          addImages([{
+            name,
+            mediaType: fileData.mediaType,
+            data: fileData.data,
+            sizeBytes: fileData.sizeBytes,
+            path
+          }])
+          continue
+        }
+      }
       addFileByPath(path)
     }
   } finally {
@@ -192,35 +220,68 @@ async function selectFiles(): Promise<void> {
 
 async function handlePaste(event: ClipboardEvent): Promise<void> {
   const clipboardFiles = Array.from(event.clipboardData?.files ?? [])
-  let hasAttachment = false
-  for (const file of clipboardFiles) {
-    const nativePath = window.seekclaw?.getPathForFile?.(file) || (file as unknown as { path?: string }).path || ''
-    if (nativePath) {
-      if (addFileByPath(nativePath, file.size)) hasAttachment = true
-    }
-  }
+  const clipboardItems = Array.from(event.clipboardData?.items ?? [])
 
-  const imageFiles = Array.from(event.clipboardData?.items ?? [])
+  // 1. 优先提取剪贴板图片（截图或复制的图片对象）
+  const imageItemFiles = clipboardItems
     .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
     .map((item) => item.getAsFile())
     .filter((file): file is File => file !== null)
 
-  if (imageFiles.length > 0 && props.supportsImages) {
+  let handledImage = false
+
+  if (imageItemFiles.length > 0 && props.supportsImages) {
     try {
-      const candidates = await Promise.all(imageFiles.map(async (file, index) => ({
-        name: file.name && file.name !== 'image.png' ? file.name : clipboardImageName(file.type, index),
-        mediaType: file.type,
-        data: await readClipboardFile(file),
-        sizeBytes: file.size
-      })))
+      const candidates = await Promise.all(imageItemFiles.map(async (file, index) => {
+        const nativePath = window.seekclaw?.getPathForFile?.(file) || (file as unknown as { path?: string }).path || ''
+        return {
+          name: file.name && file.name !== 'image.png' ? file.name : clipboardImageName(file.type, index),
+          mediaType: file.type,
+          data: await readClipboardFile(file),
+          sizeBytes: file.size,
+          path: nativePath || undefined
+        }
+      }))
       imageNotice.value = addImages(candidates)
-      hasAttachment = true
+      handledImage = true
     } catch (error) {
       imageNotice.value = error instanceof Error ? error.message : '无法读取剪贴板图片。'
     }
   }
 
-  if (hasAttachment) {
+  // 2. 提取剪贴板中的文件列表（如在文件管理器中复制的文件）
+  let handledFile = false
+  for (const file of clipboardFiles) {
+    const isImg = isImageFile(file.name, file.type)
+
+    // 如果此图片在步骤 1 中已经作为图片处理过，绝不重复作为文件添加
+    if (isImg && props.supportsImages && handledImage) {
+      continue
+    }
+
+    const nativePath = window.seekclaw?.getPathForFile?.(file) || (file as unknown as { path?: string }).path || ''
+    if (nativePath) {
+      if (isImg && props.supportsImages) {
+        try {
+          const data = await readClipboardFile(file)
+          addImages([{
+            name: file.name,
+            mediaType: file.type || 'image/png',
+            data,
+            sizeBytes: file.size,
+            path: nativePath
+          }])
+          handledImage = true
+        } catch {
+          if (addFileByPath(nativePath, file.size)) handledFile = true
+        }
+      } else {
+        if (addFileByPath(nativePath, file.size)) handledFile = true
+      }
+    }
+  }
+
+  if (handledImage || handledFile) {
     event.preventDefault()
   }
 }
@@ -249,34 +310,47 @@ async function handleDrop(event: DragEvent): Promise<void> {
   event.preventDefault()
   isDragOver.value = false
   if (props.disabled) return
-  const files = Array.from(event.dataTransfer?.files ?? [])
-  if (files.length === 0) return
+  const droppedFiles = Array.from(event.dataTransfer?.files ?? [])
+  if (droppedFiles.length === 0) return
 
-  let addedCount = 0
-  for (const file of files) {
+  let addedFileCount = 0
+  let addedImageCount = 0
+
+  for (const file of droppedFiles) {
     const nativePath = window.seekclaw?.getPathForFile?.(file) || (file as unknown as { path?: string }).path || ''
-    if (nativePath) {
-      if (addFileByPath(nativePath, file.size)) addedCount++
-    }
+    const isImg = isImageFile(file.name, file.type)
 
-    // If image and model supports images, also add to vision images
-    if (file.type.startsWith('image/') && props.supportsImages) {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const data = String(reader.result).split(',')[1] ?? ''
-        addImages([{
+    if (isImg && props.supportsImages) {
+      // 图片格式且当前模型支持视觉：只作为图片卡片添加，绝不添加到文件附件列表
+      try {
+        const data = await readClipboardFile(file)
+        const mediaType = file.type || (file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : 'image/png')
+        const warning = addImages([{
           name: file.name,
-          mediaType: file.type || 'image/png',
+          mediaType,
           data,
-          sizeBytes: file.size
+          sizeBytes: file.size,
+          path: nativePath || undefined
         }])
+        if (warning) imageNotice.value = warning
+        else addedImageCount++
+      } catch {
+        // 读取图片内容失败时回退为普通文件
+        if (nativePath && addFileByPath(nativePath, file.size)) addedFileCount++
       }
-      reader.readAsDataURL(file)
+    } else {
+      // 非图片文件，或模型不支持图片理解时作为普通文件附件
+      if (nativePath) {
+        if (addFileByPath(nativePath, file.size)) addedFileCount++
+      }
     }
   }
 
-  if (addedCount > 0) {
-    dropNotice.value = `已附加 ${addedCount} 个文件`
+  const notices: string[] = []
+  if (addedImageCount > 0) notices.push(`已添加 ${addedImageCount} 张图片`)
+  if (addedFileCount > 0) notices.push(`已附加 ${addedFileCount} 个文件`)
+  if (notices.length > 0) {
+    dropNotice.value = notices.join('，')
     window.setTimeout(() => { dropNotice.value = '' }, 3000)
   }
 }
@@ -298,7 +372,8 @@ function submit(): void {
     name: image.name,
     mediaType: image.mediaType,
     data: image.data,
-    sizeBytes: image.sizeBytes
+    sizeBytes: image.sizeBytes,
+    path: image.path
   }))
   const outgoingFiles = attachedFiles.value.map((file) => ({ ...file }))
   emit('send', message, outgoingImages, outgoingFiles)
@@ -339,36 +414,66 @@ watch(() => props.taskId, () => {
   imageNotice.value = ''
   previewImage.value = null
 })
-watch(() => props.supportsImages, (supported) => {
-  if (!supported && images.value.length > 0)
-    imageNotice.value = '当前模型不支持图片理解，请切换支持视觉的模型或移除图片。'
-  else if (supported && imageNotice.value.startsWith('当前模型不支持图片理解'))
-    imageNotice.value = ''
+watch(() => props.supportsImages, async (supported) => {
+  if (!supported) {
+    // 切换为不支持图片的模型：将已附带本地路径的图片自动平滑转换为文件附件
+    if (images.value.length > 0) {
+      const remainingImages: ImageAttachment[] = []
+      for (const img of images.value) {
+        if (img.path) {
+          addFileByPath(img.path, img.sizeBytes)
+        } else {
+          remainingImages.push(img)
+        }
+      }
+      images.value = remainingImages
+      if (remainingImages.length > 0) {
+        imageNotice.value = '当前模型不支持图片理解，请切换支持视觉的模型或移除纯截图。'
+      } else {
+        imageNotice.value = '当前模型不支持视觉理解，已自动将图片转为文件附件供模型调用处理。'
+        window.setTimeout(() => { if (imageNotice.value.startsWith('当前模型不支持视觉理解')) imageNotice.value = '' }, 3500)
+      }
+    }
+  } else {
+    // 切换为支持视觉的模型：检查文件附件中是否有图片，如有则自动升格为图片卡片
+    if (attachedFiles.value.length > 0) {
+      const remainingFiles: FileAttachment[] = []
+      for (const file of attachedFiles.value) {
+        if (isImageFile(file.name)) {
+          const fileData = await window.seekclaw?.readFileBase64?.(file.path)
+          if (fileData) {
+            addImages([{
+              name: file.name,
+              mediaType: fileData.mediaType,
+              data: fileData.data,
+              sizeBytes: fileData.sizeBytes,
+              path: file.path
+            }])
+            continue
+          }
+        }
+        remainingFiles.push(file)
+      }
+      attachedFiles.value = remainingFiles
+    }
+    if (imageNotice.value.startsWith('当前模型不支持图片理解')) {
+      imageNotice.value = ''
+    }
+  }
 })
 </script>
 
 <template>
-  <div
-    class="composer-shell"
-    :class="{ 'drag-over': isDragOver }"
-    @dragenter="handleDragEnter"
-    @dragover="handleDragOver"
-    @dragleave="handleDragLeave"
-    @drop="handleDrop"
-  >
-    <p v-if="dropNotice" class="composer-image-notice">{{ dropNotice }}</p>
+  <div class="composer-shell" :class="{ 'drag-over': isDragOver }" @dragenter="handleDragEnter"
+    @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop">
+    <!--  <p v-if="dropNotice" class="composer-image-notice">{{ dropNotice }}</p>-->
     <div v-if="attachedFiles.length" class="composer-files-strip" aria-label="待发送文件附件">
       <div v-for="file in attachedFiles" :key="file.id" class="composer-file-chip" :title="file.path">
         <span class="file-ext-badge" :class="fileExtClass(file.extension)">
           {{ fileBadgeText(file.extension) }}
         </span>
         <span class="file-chip-name">{{ file.name }}</span>
-        <button
-          type="button"
-          class="file-chip-remove"
-          :title="`移除 ${file.name}`"
-          @click="removeAttachedFile(file.id)"
-        >
+        <button type="button" class="file-chip-remove" :title="`移除 ${file.name}`" @click="removeAttachedFile(file.id)">
           <X :size="12" />
         </button>
       </div>
@@ -384,87 +489,40 @@ watch(() => props.supportsImages, (supported) => {
       </div>
     </div>
     <p v-if="imageNotice" class="composer-image-notice">{{ imageNotice }}</p>
-    <textarea
-      ref="textarea"
-      v-model="value"
-      :disabled="disabled"
-      rows="1"
-      :placeholder="disabled ? '恢复任务后可继续对话' : '交给 SeekClaw'"
-      aria-label="消息"
-      @keydown="handleKeydown"
-      @paste="handlePaste"
-    />
+    <textarea ref="textarea" v-model="value" :disabled="disabled" rows="1"
+      :placeholder="disabled ? '恢复任务后可继续对话' : '交给 SeekClaw'" aria-label="消息" @keydown="handleKeydown"
+      @paste="handlePaste" />
     <div class="composer-toolbar">
-      <button
-        class="icon-button composer-icon"
-        type="button"
-        title="添加文件附件（可直接拖拽任意文件或文件夹）"
-        :disabled="disabled || selectingFiles"
-        @click="selectFiles"
-      >
+      <button class="icon-button composer-icon" type="button" title="添加文件附件（可直接拖拽任意文件或文件夹）"
+        :disabled="disabled || selectingFiles" @click="selectFiles">
         <Paperclip :size="17" />
       </button>
-      <button
-        class="icon-button composer-icon"
-        :title="supportsImages ? '添加图片（最多 10 张）' : '当前模型不支持图片理解'"
-        :disabled="disabled || !supportsImages || selectingImages || images.length >= maxImageCount"
-        @click="selectImages"
-      >
-        <ImagePlus :size="18" />
-      </button>
-      <button
-        class="icon-button composer-icon"
-        type="button"
-        :title="optimizing ? '正在优化提示词' : '优化提示词'"
-        :disabled="disabled || busy || optimizing || !value.trim()"
-        @click="optimizeCurrentPrompt"
-      >
+      <button class="icon-button composer-icon" type="button" :title="optimizing ? '正在优化提示词' : '优化提示词'"
+        :disabled="disabled || busy || optimizing || !value.trim()" @click="optimizeCurrentPrompt">
         <LoaderCircle v-if="optimizing" class="spin" :size="16" />
         <Sparkles v-else :size="16" />
       </button>
-      <SelectMenu
-        class="composer-select mode-control"
-        :model-value="mode"
-        :options="modeOptions"
-        label="Agent 模式"
-        :disabled="busy || disabled"
-        :menu-min-width="220"
-        @update:model-value="emit('changeMode', $event)"
-      />
-      <SelectMenu
-        class="composer-select model-control"
-        :model-value="model"
+      <SelectMenu class="composer-select mode-control" :model-value="mode" :options="modeOptions" label="Agent 模式"
+        :disabled="busy || disabled" :menu-min-width="220" @update:model-value="emit('changeMode', $event)" />
+      <SelectMenu class="composer-select model-control" :model-value="model"
         :options="models.length > 0 ? models.map((item) => ({ value: item, label: item })) : [{ value: '', label: '未配置模型' }]"
-        label="模型"
-        :disabled="busy || disabled || models.length === 0"
-        :menu-min-width="300"
-        searchable
-        @update:model-value="emit('changeModel', $event)"
-      />
+        label="模型" :disabled="busy || disabled || models.length === 0" :menu-min-width="300" searchable
+        @update:model-value="emit('changeModel', $event)" />
       <span class="toolbar-spacer" />
-      <ReasoningDepthMenu
-        :model-value="reasoningLevel"
-        :disabled="busy || disabled"
-        @update:model-value="emit('changeReasoningLevel', $event)"
-      />
-      <button v-if="busy && !value.trim() && images.length === 0 && attachedFiles.length === 0" class="send-button" title="停止" @click="emit('stop')">
+      <ReasoningDepthMenu :model-value="reasoningLevel" :disabled="busy || disabled"
+        @update:model-value="emit('changeReasoningLevel', $event)" />
+      <button v-if="busy && !value.trim() && images.length === 0 && attachedFiles.length === 0" class="send-button"
+        title="停止" @click="emit('stop')">
         <Square :size="14" fill="currentColor" />
       </button>
-      <button
-        v-else
-        class="send-button"
-        :title="busy ? '排队发送（本轮结束后自动发送）' : '发送'"
+      <button v-else class="send-button" :title="busy ? '排队发送（本轮结束后自动发送）' : '发送'"
         :disabled="disabled || (!value.trim() && images.length === 0 && attachedFiles.length === 0) || (images.length > 0 && !supportsImages)"
-        @click="submit"
-      >
+        @click="submit">
         <ArrowUp :size="19" />
       </button>
     </div>
   </div>
 
-  <ImagePreviewDialog
-    :src="previewImage ? imageUrl(previewImage) : undefined"
-    :name="previewImage?.name"
-    @close="previewImage = null"
-  />
+  <ImagePreviewDialog :src="previewImage ? imageUrl(previewImage) : undefined" :name="previewImage?.name"
+    @close="previewImage = null" />
 </template>
