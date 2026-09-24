@@ -763,6 +763,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+      <!--
       <div class="settings-nav-footer">
         <span class="settings-connection" :class="{ online: daemonConnected }" :title="daemonEndpoint">
           <Circle :size="8" fill="currentColor" />
@@ -773,6 +774,8 @@ onBeforeUnmount(() => {
           <RefreshCw :size="13" />
         </button>
       </div>
+      -->
+
     </nav>
 
     <main class="settings-main">
@@ -839,7 +842,7 @@ onBeforeUnmount(() => {
           <section class="settings-group compact-group">
             <div class="settings-row">
               <div><strong>活动模型</strong><small>{{ activeModel ? `${activeModel.contextWindow.toLocaleString()} 上下文` :
-                  '无可用模型' }}</small></div>
+                '无可用模型' }}</small></div>
               <div class="row-actions model-actions">
                 <SelectMenu v-model="selectedModel" class="settings-select model-select" :options="modelOptions"
                   label="活动模型" :menu-min-width="330" />
@@ -904,7 +907,7 @@ onBeforeUnmount(() => {
             <div>
               <h3>MCP 服务器</h3>
               <p>{{mcpServers.filter((server) => server.connected).length}} / {{ mcpServers.length }} 已连接 · {{
-                mcpServers.reduce((sum, server) => sum + server.toolCount, 0) }} 个工具</p>
+                mcpServers.reduce((sum, server) => sum + server.toolCount, 0)}} 个工具</p>
             </div>
             <div class="row-actions">
               <button class="icon-button" title="重新加载" :disabled="action === 'mcp.reload'" @click="reloadMcp">
@@ -922,9 +925,9 @@ onBeforeUnmount(() => {
               <span class="status-dot" :class="{ online: server.connected }" />
               <div class="list-main">
                 <div><strong>{{ server.name }}</strong><span class="inline-badge">{{ server.scope === 'workspace' ?
-                    '工作区' : '全局' }}</span></div>
+                  '工作区' : '全局' }}</span></div>
                 <small :title="server.error">{{ mcpStatusText(server) }} · {{ transportLabel(server.transport)
-                  }}</small>
+                }}</small>
               </div>
               <button class="switch-control" :class="{ active: server.enabled, pending: mcpServerPending(server) }"
                 :disabled="mcpServerPending(server)"
@@ -967,7 +970,7 @@ onBeforeUnmount(() => {
               <Wrench :size="17" />
               <div class="list-main">
                 <div><strong>{{ skill.name }}</strong><span class="inline-badge">{{ skill.scope === 'workspace' ? '工作区'
-                    : '全局' }}</span><span v-if="skill.version" class="version-text">v{{ skill.version }}</span></div>
+                  : '全局' }}</span><span v-if="skill.version" class="version-text">v{{ skill.version }}</span></div>
                 <small>{{ skill.description || skill.directory }}</small>
               </div>
               <button class="icon-button compact" title="打开位置" @click="showPath(skill.directory)">
@@ -1153,10 +1156,11 @@ onBeforeUnmount(() => {
             <label class="provider-enabled-row">
               <span>
                 <strong>全局网络访问（联网搜索与抓取）</strong>
-                <small>允许 Agent 使用网络搜索 (web_search) 与网页抓取 (web_fetch) 等网络工具。默认对所有项目开启；若关闭，所有项目和任务将强制处于离线模式，禁止外部网络请求。</small>
+                <small>允许 Agent 使用网络搜索 (web_search) 与网页抓取 (web_fetch)
+                  等网络工具。默认对所有项目开启；若关闭，所有项目和任务将强制处于离线模式，禁止外部网络请求。</small>
               </span>
-              <input v-model="networkEnabled" class="sr-only" type="checkbox" :disabled="action === 'advanced.set:network'"
-                @change="toggleNetworkEnabled" />
+              <input v-model="networkEnabled" class="sr-only" type="checkbox"
+                :disabled="action === 'advanced.set:network'" @change="toggleNetworkEnabled" />
               <span class="toggle-switch" aria-hidden="true"><span /></span>
             </label>
           </section>
