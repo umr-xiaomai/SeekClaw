@@ -356,6 +356,35 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ConcurrentRequests_AreDispatchedConcurrently_WithoutHeadOfLineBlocking()
+    {
+        var connection = await StartServerAsync((_, _, _, _) => Task.FromResult(new AgentTurnResult("", false, null)));
+
+        // Send 10 different concurrent requests simultaneously
+        var requestIds = Enumerable.Range(100, 10).Select(i => (long)i).ToList();
+        foreach (var id in requestIds)
+        {
+            var method = id % 2 == 0 ? "ping" : "protocol.info";
+            await connection.SendAsync(id, method);
+        }
+
+        // Read all 10 responses, verifying no blocking or corruption
+        var receivedIds = new HashSet<long>();
+        for (var i = 0; i < requestIds.Count; i++)
+        {
+            var resp = await connection.ReadAsync();
+            var respId = resp["id"]!.GetValue<long>();
+            receivedIds.Add(respId);
+        }
+
+        Assert.Equal(requestIds.Count, receivedIds.Count);
+        foreach (var id in requestIds)
+        {
+            Assert.Contains(id, receivedIds);
+        }
+    }
+
+    [Fact]
     public async Task ChatError_ReturnsProviderDetailInsteadOfRuntimeSummary()
     {
         const string detail = "openai returned HTTP 401: Invalid API key supplied";

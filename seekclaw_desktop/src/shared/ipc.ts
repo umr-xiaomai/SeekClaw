@@ -12,7 +12,9 @@ export type DaemonEventName =
   | 'usage'
   | 'workflow'
   | 'plan_update'
+  | 'computer_step'
   | 'result'
+
   | 'done'
   | 'cancelled'
   | 'error'

@@ -98,8 +98,20 @@ public sealed record ScheduledTaskCompletedEvent(
     string? Error = null,
     string? Output = null) : RuntimeEvent;
 
+// ---------------------------------------------------------------- computer use
+
+public sealed record ComputerActionEvent(
+    string Action,
+    int? X,
+    int? Y,
+    string? Target,
+    bool Success,
+    string? Error,
+    string? Base64Screenshot) : RuntimeEvent;
+
 // ---------------------------------------------------------------- diagnostics
 
 public sealed record WarningEvent(string Message) : RuntimeEvent;
 
 public sealed record ErrorEvent(string Message, string? Detail = null) : RuntimeEvent;
+

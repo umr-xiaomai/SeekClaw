@@ -1093,6 +1093,59 @@ select:focus-visible {
   color: var(--accent);
 }
 
+.conversation-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.skeleton-bubble {
+  height: 32px;
+  border-radius: 14px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text-muted) 6%, transparent) 0%,
+    color-mix(in srgb, var(--text-muted) 14%, transparent) 50%,
+    color-mix(in srgb, var(--text-muted) 6%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}
+
+.skeleton-bubble.user {
+  align-self: flex-end;
+  border-bottom-right-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text-muted) 9%, transparent) 0%,
+    color-mix(in srgb, var(--text-muted) 18%, transparent) 50%,
+    color-mix(in srgb, var(--text-muted) 9%, transparent) 100%
+  );
+  background-size: 200% 100%;
+}
+
+.skeleton-bubble.assistant {
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bubble {
+    animation: none;
+  }
+}
+
 .task-notice {
   position: absolute;
   z-index: 6;
@@ -5767,4 +5820,3 @@ select:focus-visible {
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
-

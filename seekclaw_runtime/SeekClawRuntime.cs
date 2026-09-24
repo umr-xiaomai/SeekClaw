@@ -4,6 +4,7 @@ using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Extensions;
 using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
@@ -43,6 +44,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public IScheduleStore Schedules => _services.GetRequiredService<IScheduleStore>();
     public SeekClawDatabase Database => _services.GetRequiredService<SeekClawDatabase>();
     public SkillManager Skills => _services.GetRequiredService<SkillManager>();
+    public ExtensionManager Extensions { get; } = ExtensionManager.CreateDefault();
     public IMcpManager Mcp => _services.GetRequiredService<IMcpManager>();
     public Agent Agent => _services.GetRequiredService<Agent>();
 
@@ -230,13 +232,17 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                      new CaptureScreenTool(prompts),
                  })
             Tools.Register(tool);
+
+        Extensions.InitializeAll(this);
     }
 
     public async ValueTask DisposeAsync()
     {
+        await Extensions.DisposeAsync().ConfigureAwait(false);
         await Mcp.DisposeAsync().ConfigureAwait(false);
         await _services.DisposeAsync().ConfigureAwait(false);
     }
+
 
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 }

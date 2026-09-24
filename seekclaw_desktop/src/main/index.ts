@@ -9,6 +9,13 @@ import icon from '../../resources/logo.png?asset'
 import type { DaemonMessage, DaemonRequestOptions } from '../shared/ipc.js'
 import { DaemonClient } from './daemon-client.js'
 import { getGitHistory, getGitOverview, openProjectTerminal } from './project-tools.js'
+import {
+  destroyComputerOverlay,
+  hideComputerOverlay,
+  isComputerOverlayActive,
+  scheduleHideComputerOverlay,
+  showComputerOverlay
+} from './computer-overlay.js'
 
 const daemon = new DaemonClient()
 let mainWindow: BrowserWindow | null = null
@@ -431,6 +438,16 @@ function registerIpc(): void {
       daemon.request(method, params, options))
 
   daemon.on('event', (message) => {
+    if (message.event === 'tool_start' && (message.data === 'computer' || message.data === 'computer_inspect')) {
+      showComputerOverlay(() => {
+        void daemon.request('agent.cancel').catch(() => undefined)
+      })
+    } else if (message.event === 'tool_done' && (message.data?.includes('computer') || isComputerOverlayActive())) {
+      scheduleHideComputerOverlay(900)
+    } else if (message.event === 'done' || message.event === 'cancelled' || message.event === 'error') {
+      hideComputerOverlay(true)
+    }
+
     showScheduleNativeNotification(message)
     mainWindow?.webContents.send('daemon:event', message)
   })
@@ -462,6 +479,7 @@ if (!hasSingleInstanceLock) {
 
 app.on('before-quit', (event) => {
   isQuitting = true
+  destroyComputerOverlay()
   if (tray) {
     tray.destroy()
     tray = null

@@ -149,6 +149,9 @@ const loading = ref(false)
 const networkEnabled = ref(true)
 const failoverEnabled = ref(true)
 const deepSeekOptimizationEnabled = ref(false)
+const computerUseEnabled = ref(false)
+const computerUseDriver = ref('auto')
+
 const action = ref('')
 const error = ref('')
 const notice = ref('')
@@ -294,13 +297,49 @@ async function loadAdvanced(): Promise<void> {
     networkEnabled: boolean
     failoverEnabled: boolean
     deepSeekOptimizationEnabled: boolean
+    computerUseEnabled?: boolean
+    computerUseDriver?: string
   }>('advanced.get')
   networkEnabled.value = config.networkEnabled
   failoverEnabled.value = config.failoverEnabled
   deepSeekOptimizationEnabled.value = config.deepSeekOptimizationEnabled
+  computerUseEnabled.value = config.computerUseEnabled ?? false
+  computerUseDriver.value = config.computerUseDriver ?? 'auto'
+}
+
+async function toggleComputerUse(): Promise<void> {
+  beginAction('advanced.set:computerUse')
+  try {
+    const config = await requestJson<{
+      networkEnabled: boolean
+      failoverEnabled: boolean
+      deepSeekOptimizationEnabled: boolean
+      computerUseEnabled: boolean
+      computerUseDriver: string
+    }>('advanced.set', {
+      networkEnabled: networkEnabled.value,
+      failoverEnabled: failoverEnabled.value,
+      deepSeekOptimizationEnabled: deepSeekOptimizationEnabled.value,
+      computerUseEnabled: computerUseEnabled.value,
+      computerUseDriver: computerUseDriver.value
+    })
+    computerUseEnabled.value = config.computerUseEnabled
+    notice.value = computerUseEnabled.value
+      ? '已启用电脑操作智能体 (Computer Use)，Agent 获得直接操作桌面能力'
+      : '已禁用电脑操作智能体，所有相关驱动与工具已注销并保持零开销'
+  } catch (reason) {
+    fail(reason)
+    try {
+      const config = await requestJson<{ computerUseEnabled: boolean }>('advanced.get')
+      computerUseEnabled.value = config.computerUseEnabled ?? false
+    } catch { /* keep last known state */ }
+  } finally {
+    endAction()
+  }
 }
 
 async function toggleNetworkEnabled(): Promise<void> {
+
   beginAction('advanced.set:network')
   try {
     const config = await requestJson<{
@@ -1164,6 +1203,19 @@ onBeforeUnmount(() => {
               <span class="toggle-switch" aria-hidden="true"><span /></span>
             </label>
           </section>
+
+          <section class="settings-group">
+            <label class="provider-enabled-row">
+              <span>
+                <strong>电脑操作智能体 (Computer Use)</strong>
+                <small>允许 Agent 获得跨平台桌面直接操作能力（点击、输入、移动、滚动、快捷键与原生窗口UI元素解析）。内置双层故障沙盒与熔断防护，安全解耦，零残留。</small>
+              </span>
+              <input v-model="computerUseEnabled" class="sr-only" type="checkbox"
+                :disabled="action === 'advanced.set:computerUse'" @change="toggleComputerUse" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
+          </section>
+
 
           <section class="settings-group">
             <label class="provider-enabled-row">
