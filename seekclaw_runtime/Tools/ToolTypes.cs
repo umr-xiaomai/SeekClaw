@@ -148,4 +148,12 @@ public static class ToolSchema
 
     public static JsonObject Boolean(string description) =>
         new() { ["type"] = "boolean", ["description"] = description };
+
+    public static JsonObject Array(string description, JsonObject? items = null)
+    {
+        var schema = new JsonObject { ["type"] = "array", ["description"] = description };
+        if (items is not null) schema["items"] = items;
+        return schema;
+    }
 }
+

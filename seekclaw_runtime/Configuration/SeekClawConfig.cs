@@ -13,6 +13,8 @@ public sealed class SeekClawConfig
     public RoutingConfig Routing { get; set; } = new();
     public AgentConfig Agent { get; set; } = new();
     public McpConfig Mcp { get; set; } = new();
+    public SeekClaw.Runtime.ComputerUse.ComputerUseConfig ComputerUse { get; set; } = new();
+
 
     public ProviderConfig? FindProvider(string id) =>
         Providers.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));

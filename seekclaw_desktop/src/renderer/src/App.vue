@@ -27,9 +27,11 @@ import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
 import ScheduledTasksDialog from './components/ScheduledTasksDialog.vue'
 import Composer from './components/Composer.vue'
 import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
+
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
+
 import OfficialSkillsDialog from './components/OfficialSkillsDialog.vue'
 import ProjectPropertiesDialog from './components/ProjectPropertiesDialog.vue'
 import RuntimeReconnectDialog from './components/RuntimeReconnectDialog.vue'
@@ -102,6 +104,7 @@ const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 const gitPanelWidth = ref(560)
 const toolDiff = ref<{ path: string; diff: string } | null>(null)
+
 const settingsSection = ref<'general' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'>('general')
 const extensionsSection = ref<'mcp' | 'skills'>('mcp')
 const taskSettingsThreadId = ref('')
@@ -159,7 +162,9 @@ const activeProject = computed(() => {
   return projects.value.find((project) => project.id === projectId)
 })
 const globalTaskActive = computed(() => activeThread.value ? !activeThread.value.projectId : !selectedProjectId.value)
+
 const composerCaption = computed(() => {
+
   if (conversationLoading.value) return '正在读取会话历史…'
   if (!activeThread.value) return '选择一个任务，或新建任务开始。'
   if (activeThread.value.archived) return '此任务已归档，恢复后可继续。'
@@ -451,6 +456,8 @@ async function loadRuntimeState(): Promise<void> {
         selectedProjectId.value = recent.projectId ?? ''
         await selectThread(recent.id)
       }
+    } else if (activeThread.value && !activeThread.value.sessionLoaded) {
+      await selectThread(activeThread.value.id)
     }
   } catch {
     models.value = []
@@ -477,6 +484,10 @@ function handleDaemonState(state: DaemonState): void {
     automaticReconnectPaused = false
     reconnectPrompt.value = null
     return
+  }
+  if (conversationLoading.value) {
+    conversationLoading.value = false
+    conversationLoadError.value = '已与 SeekClaw Runtime 断开连接，正在尝试重连…'
   }
   if (!appReadyForRecovery || reconnecting.value || reconnectTask || automaticReconnectPaused || reconnectPrompt.value) return
   void runReconnectCycle(false)
@@ -653,6 +664,13 @@ async function selectThread(id: string): Promise<void> {
   activeThreadId.value = id
   selectedProjectId.value = project?.id ?? ''
   conversationLoadError.value = ''
+
+  if (needsLoad && !daemonState.value.connected) {
+    conversationLoading.value = false
+    conversationLoadError.value = '未连接到 SeekClaw Runtime，请检查运行时状态或点击重试。'
+    return
+  }
+
   conversationLoading.value = needsLoad
   try {
     if (project) await ensureRuntimeProject(project)
@@ -671,13 +689,19 @@ async function selectThread(id: string): Promise<void> {
       thread.networkEnabled = saved.networkEnabled ?? true
       thread.stats = sessionStats(saved)
     }
-  } catch {
+  } catch (error) {
     thread.sessionLoaded = false
-    if (selectionToken === conversationSelectionToken.value)
-      conversationLoadError.value = '无法读取此会话，请检查 Runtime 连接后重试。'
+    if (selectionToken === conversationSelectionToken.value) {
+      conversationLoadError.value = error instanceof Error
+        ? error.message
+        : '无法读取此会话，请检查 Runtime 连接后重试。'
+    }
+  } finally {
+    if (selectionToken === conversationSelectionToken.value) {
+      conversationLoading.value = false
+    }
   }
   if (selectionToken !== conversationSelectionToken.value) return
-  conversationLoading.value = false
   autoFollowConversation.value = true
   const draft = composerDrafts.get(thread.id)
   if (draft) composer.value?.setValue(draft)
@@ -1256,14 +1280,19 @@ watch(theme, applyTheme)
           </header>
 
           <section ref="scrollArea" class="conversation-scroll" @scroll="handleConversationScroll">
-            <div v-if="conversationLoading" class="conversation-loading" role="status" aria-live="polite">
-              <LoaderCircle :size="20" class="spin" />
-              <span>正在加载会话…</span>
+            <div v-if="conversationLoading" class="conversation-content conversation-skeleton" role="status" aria-label="正在加载会话">
+              <div class="skeleton-bubble user" style="width: 130px;" />
+              <div class="skeleton-bubble assistant" style="width: 240px;" />
+              <div class="skeleton-bubble user" style="width: 85px;" />
+              <div class="skeleton-bubble assistant" style="width: 190px;" />
             </div>
             <div v-else-if="conversationLoadError" class="empty-state conversation-load-error">
               <h1>会话加载失败</h1>
               <p>{{ conversationLoadError }}</p>
-              <button class="secondary-button empty-state-action" @click="selectThread(activeThreadId)">重新加载</button>
+              <div style="display: flex; gap: 8px; justify-content: center; margin-top: 12px;">
+                <button v-if="!daemonState.connected" class="primary-button empty-state-action" @click="reconnectDaemon">连接运行时</button>
+                <button class="secondary-button empty-state-action" @click="selectThread(activeThreadId)">重新加载</button>
+              </div>
             </div>
             <div v-else-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
               <template v-if="virtualWindow.active">
@@ -1348,6 +1377,7 @@ watch(theme, applyTheme)
           @resize="resizeGitPanel" @open-terminal="openProjectTerminal" />
       </div>
     </div>
+
 
     <SettingsDialog :open="activePage === 'settings' || activePage === 'extensions'"
       :page="activePage === 'extensions' ? 'extensions' : 'settings'" :theme="theme"

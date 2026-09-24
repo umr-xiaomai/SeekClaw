@@ -128,7 +128,10 @@ internal sealed class DaemonAdminApi(
         ["networkEnabled"] = runtime.ConfigStore.Config.Agent.NetworkEnabled,
         ["failoverEnabled"] = runtime.ConfigStore.Config.Routing.FailoverEnabled,
         ["deepSeekOptimizationEnabled"] = runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled,
+        ["computerUseEnabled"] = runtime.ConfigStore.Config.ComputerUse?.Enabled ?? false,
+        ["computerUseDriver"] = runtime.ConfigStore.Config.ComputerUse?.Driver ?? "auto",
     }.ToJsonString();
+
 
     /// <summary>
     /// Rewrites an in-progress user prompt with the currently selected model. The
@@ -229,8 +232,27 @@ internal sealed class DaemonAdminApi(
             runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled = dsOpt;
         }
 
+        if (parameters["computerUseEnabled"] is JsonValue cuVal && cuVal.TryGetValue<bool>(out var cuEnabled))
+        {
+            runtime.ConfigStore.Config.ComputerUse.Enabled = cuEnabled;
+            if (cuEnabled)
+            {
+                runtime.Extensions.InitializeAll(runtime);
+            }
+            else
+            {
+                _ = runtime.Extensions.DisposeAsync();
+            }
+        }
+
+        if (parameters["computerUseDriver"] is JsonValue driverVal && driverVal.TryGetValue<string>(out var driverStr))
+        {
+            runtime.ConfigStore.Config.ComputerUse.Driver = driverStr;
+        }
+
         runtime.ConfigStore.Save();
         return GetAdvancedConfig();
+
     }
 
     public string ListSchedules() =>

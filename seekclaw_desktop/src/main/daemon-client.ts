@@ -39,18 +39,28 @@ export class DaemonClient extends EventEmitter {
       const socket = createConnection(this.endpoint)
       let settled = false
 
+      let timer: NodeJS.Timeout | null = setTimeout(() => {
+        timer = null
+        try {
+          socket.destroy()
+        } catch {}
+        finish({ connected: false, endpoint: this.endpoint, error: 'Connection timed out' })
+      }, 2500)
+
       const finish = (state: DaemonState): void => {
         if (settled) return
         settled = true
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
         this.connecting = null
         this.emit('state', state)
         resolve(state)
       }
 
       socket.setEncoding('utf8')
-      socket.setTimeout(1600)
       socket.once('connect', () => {
-        socket.setTimeout(0)
         this.socket = socket
         this.bindSocket(socket)
         finish({ connected: true, endpoint: this.endpoint })
@@ -84,6 +94,7 @@ export class DaemonClient extends EventEmitter {
       throw new Error(state.error ?? `Unable to connect to ${this.endpoint}`)
 
     const id = this.nextId++
+    const timeoutMs = options.timeoutMs ?? 60_000
     return new Promise<DaemonMessage>((resolve, reject) => {
       const pending: PendingRequest = { method, resolve, reject }
       this.pending.set(id, pending)
@@ -91,13 +102,12 @@ export class DaemonClient extends EventEmitter {
       // daemon never started) must not leave the UI waiting forever. Any first
       // event or terminal response clears the timer; the turn is then confirmed
       // to be running and may legitimately take minutes.
-      if (options.timeoutMs) {
-        pending.idleTimer = setTimeout(() => {
-          if (this.pending.delete(id) === false) return
-          reject(new Error(
-            `请求超时：Runtime 在 ${Math.round(options.timeoutMs! / 1000)} 秒内未响应`))
-        }, options.timeoutMs)
-      }
+      pending.idleTimer = setTimeout(() => {
+        if (this.pending.delete(id) === false) return
+        reject(new Error(
+          `请求超时：Runtime 在 ${Math.round(timeoutMs / 1000)} 秒内未响应 (${method})`))
+      }, timeoutMs)
+
       this.socket!.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
         if (!error) return
         if (pending.idleTimer) clearTimeout(pending.idleTimer)

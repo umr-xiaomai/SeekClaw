@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text;
@@ -274,20 +275,28 @@ public sealed class DaemonServer : IAsyncDisposable
         }
     }
 
+    private sealed class ConnectionContext(
+        StreamWriter writer,
+        SemaphoreSlim writerGate,
+        CancellationToken connectionCt)
+    {
+        public StreamWriter Writer { get; } = writer;
+        public SemaphoreSlim WriterGate { get; } = writerGate;
+        public CancellationToken ConnectionCt { get; } = connectionCt;
+        public ConcurrentDictionary<long, ActiveTurn> ActiveTurns { get; } = new();
+        public AgentSession? LegacySession;
+    }
+
     internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct)
     {
         using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
-        await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true)
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(false), bufferSize: 64 * 1024, leaveOpen: true)
         {
             AutoFlush = true,
         };
         using var writerGate = new SemaphoreSlim(1, 1);
         var clientId = RegisterClient(writer, writerGate);
-
-        // A connection can own many independent tasks. The legacy `session` field is
-        // retained only for CLI-style requests that omit an explicit sessionId.
-        AgentSession? session = null;
-        var activeTurns = new Dictionary<long, ActiveTurn>();
+        var context = new ConnectionContext(writer, writerGate, ct);
 
         try
         {
@@ -318,37 +327,66 @@ public sealed class DaemonServer : IAsyncDisposable
                     continue;
                 }
 
-                foreach (var (turnId, turn) in activeTurns
-                    .Where(item => item.Value.Task?.IsCompleted == true)
-                    .ToList())
+                // Periodically clean up completed turns
+                foreach (var (turnId, turn) in context.ActiveTurns)
                 {
-                    if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
-                    turn.Cancellation.Dispose();
-                    activeTurns.Remove(turnId);
+                    if (turn.Task?.IsCompleted == true)
+                    {
+                        if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
+                        turn.Cancellation.Dispose();
+                        context.ActiveTurns.TryRemove(turnId, out _);
+                    }
                 }
 
-                switch (method)
+                // Non-blocking concurrent dispatch: reader immediately loops back to read the next line!
+                _ = Task.Run(async () =>
                 {
+                    try
+                    {
+                        await DispatchMethodAsync(request, id, method, context).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        await WriteAsync(context.Writer, context.WriterGate, id, "error", $"Server error: {ex.Message}", context.ConnectionCt).ConfigureAwait(false);
+                    }
+                }, ct);
+            }
+        }
+        finally
+        {
+            UnregisterClient(clientId);
+            foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Cancel();
+            foreach (var turn in context.ActiveTurns.Values)
+                if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
+            foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Dispose();
+            context.ActiveTurns.Clear();
+        }
+    }
+
+    private async Task DispatchMethodAsync(JsonObject request, long id, string method, ConnectionContext context)
+    {
+        switch (method)
+        {
                     case "ping":
-                        await WriteAsync(writer, writerGate, id, "pong", "", ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "pong", "", context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "protocol.info":
-                        await WriteAsync(writer, writerGate, id, "result", ProtocolInfoJson(), ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", ProtocolInfoJson(), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "workspace.init":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.InitializeWorkspace()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.InitializeWorkspace()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "factory.reset":
                     {
-                        foreach (var turn in activeTurns.Values) turn.Cancellation.Cancel();
-                        foreach (var turn in activeTurns.Values)
+                        foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Cancel();
+                        foreach (var turn in context.ActiveTurns.Values)
                             if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.FactoryReset()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.FactoryReset()), context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
 
@@ -364,12 +402,12 @@ public sealed class DaemonServer : IAsyncDisposable
                         try { images = ParseImages(parameters["images"]); }
                         catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", ex.Message, context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         if (string.IsNullOrWhiteSpace(message) && images.Count == 0)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "params.message or params.images is required", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.message or params.images is required", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         WorkspaceInfo workspace;
@@ -378,11 +416,11 @@ public sealed class DaemonServer : IAsyncDisposable
                         try
                         {
                             workspace = ResolveWorkspace(parameters);
-                            turnSession = LoadTurnSession(workspace, requestedSessionId, ref session);
+                            turnSession = LoadTurnSession(workspace, requestedSessionId, ref context.LegacySession);
                         }
                         catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct, requestedSessionId).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", ex.Message, context.ConnectionCt, requestedSessionId).ConfigureAwait(false);
                             break;
                         }
                         ReasoningLevel reasoningLevel;
@@ -399,15 +437,15 @@ public sealed class DaemonServer : IAsyncDisposable
                         }
                         catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct, requestedSessionId).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", ex.Message, context.ConnectionCt, requestedSessionId).ConfigureAwait(false);
                             break;
                         }
-                        var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.ConnectionCt);
                         var turn = new ActiveTurn(turnSession, workspace, turnCancellation);
-                        activeTurns[id] = turn;
+                        context.ActiveTurns[id] = turn;
                         turn.Task = RunTurnAsync(
-                            turnSession, workspace, message, images, reasoningLevel, id, writer, writerGate,
-                            turnCancellation.Token, ct, turn.Steering);
+                            turnSession, workspace, message, images, reasoningLevel, id, context.Writer, context.WriterGate,
+                            turnCancellation.Token, context.ConnectionCt, turn.Steering);
                         break;
                     }
 
@@ -421,35 +459,35 @@ public sealed class DaemonServer : IAsyncDisposable
                         try { images = ParseImages(parameters["images"]); }
                         catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", ex.Message, context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         if (string.IsNullOrWhiteSpace(message) && images.Count == 0)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "params.message or params.images is required", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.message or params.images is required", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
 
                         var requestedId = parameters["requestId"]?.GetValue<long?>();
                         var requestedSessionId = parameters["sessionId"]?.GetValue<string>();
                         ActiveTurn? target = requestedId is { } specific
-                            ? activeTurns.GetValueOrDefault(specific)
-                            : activeTurns.Values
+                            ? context.ActiveTurns.GetValueOrDefault(specific)
+                            : context.ActiveTurns.Values
                                 .Where(turn => string.Equals(turn.Session.Header.Id, requestedSessionId, StringComparison.OrdinalIgnoreCase))
                                 .OrderByDescending(turn => turn.Session.Header.UpdatedAt)
                                 .FirstOrDefault();
                         if (target is null)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "No active turn found for this session", ct, requestedSessionId).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "No active turn found for this session", context.ConnectionCt, requestedSessionId).ConfigureAwait(false);
                             break;
                         }
 
                         if (!target.Steering.TryEnqueue(ChatMessage.User(message, images)))
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "The active turn is already finishing", ct, target.Session.Header.Id).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "The active turn is already finishing", context.ConnectionCt, target.Session.Header.Id).ConfigureAwait(false);
                             break;
                         }
-                        await WriteAsync(writer, writerGate, id, "result", "guidance queued", ct, target.Session.Header.Id).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", "guidance queued", context.ConnectionCt, target.Session.Header.Id).ConfigureAwait(false);
                         break;
                     }
 
@@ -457,23 +495,23 @@ public sealed class DaemonServer : IAsyncDisposable
                     {
                         var requestedId = request["params"]?["requestId"]?.GetValue<long?>();
                         var targets = requestedId is { } specific
-                            ? activeTurns.Where(item => item.Key == specific).Select(item => item.Value).ToList()
-                            : activeTurns.Values.ToList();
+                            ? context.ActiveTurns.Where(item => item.Key == specific).Select(item => item.Value).ToList()
+                            : context.ActiveTurns.Values.ToList();
                         if (targets.Count == 0)
                         {
-                            await WriteAsync(writer, writerGate, id, "result", "no active turn", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "result", "no active turn", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         foreach (var target in targets) target.Cancellation.Cancel();
                         var detail = requestedId is { } one
                             ? $"cancellation requested for {one}"
                             : $"cancellation requested for {targets.Count} active turns";
-                        await WriteAsync(writer, writerGate, id, "result", detail, ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", detail, context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
 
                     case "workspace.get":
-                        await WriteAsync(writer, writerGate, id, "result", WorkspaceJson(_runtime.Workspace), ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", WorkspaceJson(_runtime.Workspace), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "workspace.open":
@@ -481,7 +519,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         var path = request["params"]?["path"]?.GetValue<string>();
                         if (string.IsNullOrWhiteSpace(path))
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "params.path is required", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.path is required", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
 
@@ -489,33 +527,42 @@ public sealed class DaemonServer : IAsyncDisposable
                         try { fullPath = Path.GetFullPath(path); }
                         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", $"Invalid workspace path: {ex.Message}", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", $"Invalid workspace path: {ex.Message}", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
 
                         if (!Directory.Exists(fullPath))
                         {
-                            await WriteAsync(writer, writerGate, id, "error", $"Workspace directory not found: {fullPath}", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", $"Workspace directory not found: {fullPath}", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
-                        await _adminGate.WaitAsync(ct).ConfigureAwait(false);
+                        await _adminGate.WaitAsync(context.ConnectionCt).ConfigureAwait(false);
 
                         try
                         {
                             _runtime.RefreshWorkspace(fullPath);
-                            session = null;
-                            await _runtime.ConnectMcpAsync(ct).ConfigureAwait(false);
-                            await WriteAsync(writer, writerGate, id, "result", WorkspaceJson(_runtime.Workspace), ct).ConfigureAwait(false);
+                            context.LegacySession = null;
+                            await WriteAsync(context.Writer, context.WriterGate, id, "result", WorkspaceJson(_runtime.Workspace), context.ConnectionCt).ConfigureAwait(false);
                         }
                         finally
                         {
                             _adminGate.Release();
                         }
+
+                        // Background connect MCP without blocking the admin gate or connection!
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await _runtime.ConnectMcpAsync(_shutdown.Token).ConfigureAwait(false);
+                            }
+                            catch { }
+                        }, _shutdown.Token);
                         break;
                     }
 
                     case "agent.mode.get":
-                        await WriteAsync(writer, writerGate, id, "result", CurrentMode(), ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", CurrentMode(), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "agent.mode.switch":
@@ -523,15 +570,15 @@ public sealed class DaemonServer : IAsyncDisposable
                         var rawMode = request["params"]?["mode"]?.GetValue<string>();
                         if (!TryNormalizeMode(rawMode, out var mode))
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "params.mode must be one of: plan, readonly, edit, auto", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.mode must be one of: plan, readonly, edit, auto", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
-                        await _adminGate.WaitAsync(ct).ConfigureAwait(false);
+                        await _adminGate.WaitAsync(context.ConnectionCt).ConfigureAwait(false);
 
                         try
                         {
                             SaveMode(mode);
-                            await WriteAsync(writer, writerGate, id, "result", mode, ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "result", mode, context.ConnectionCt).ConfigureAwait(false);
                         }
                         finally
                         {
@@ -541,219 +588,219 @@ public sealed class DaemonServer : IAsyncDisposable
                     }
 
                     case "config.status":
-                        await WriteAsync(writer, writerGate, id, "result", _admin.GetConfigStatus(), ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", _admin.GetConfigStatus(), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "config.rebuild":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.RebuildConfigAndDatabase()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.RebuildConfigAndDatabase()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "routing.get":
-                        await WriteAsync(writer, writerGate, id, "result", _admin.GetRoutingConfig(), ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", _admin.GetRoutingConfig(), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "routing.set":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.SetRoutingConfig(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.SetRoutingConfig(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "advanced.get":
-                        await WriteAsync(writer, writerGate, id, "result", _admin.GetAdvancedConfig(), ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", _admin.GetAdvancedConfig(), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "advanced.set":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.SetAdvancedConfig(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.SetAdvancedConfig(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "prompt.optimize":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            token => _admin.OptimizePromptAsync(Params(request), token), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.OptimizePromptAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "schedule.list":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ListSchedules()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListSchedules()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "schedule.create":
                     case "schedule.update":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.UpsertSchedule(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.UpsertSchedule(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "schedule.toggle":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.ToggleSchedule(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.ToggleSchedule(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "schedule.delete":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.DeleteSchedule(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.DeleteSchedule(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "schedule.run":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.RunSchedule(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.RunSchedule(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "provider.list":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ListProviders()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListProviders()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "provider.upsert":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.UpsertProvider(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.UpsertProvider(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "provider.use":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.UseProvider(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.UseProvider(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "provider.remove":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.RemoveProvider(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.RemoveProvider(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "provider.test":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            token => _admin.TestProvidersAsync(Params(request), token), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.TestProvidersAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "provider.models.fetch":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            token => _admin.FetchProviderModelsAsync(Params(request), token), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            token => _admin.FetchProviderModelsAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "model.catalog":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ModelCatalog()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ModelCatalog()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "model.test":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            token => _admin.TestModelAsync(Params(request), token), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.TestModelAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "model.update":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.UpdateModel(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.UpdateModel(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "mcp.list":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ListMcpServers()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListMcpServers()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "mcp.upsert":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            token => _admin.UpsertMcpServerAsync(Params(request), token), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            token => _admin.UpsertMcpServerAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "mcp.remove":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            token => _admin.RemoveMcpServerAsync(Params(request), token), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            token => _admin.RemoveMcpServerAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "mcp.reload":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _admin.ReloadMcpAsync, ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _admin.ReloadMcpAsync, context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "skill.list":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ListSkills()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListSkills()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "skill.import":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.ImportSkill(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.ImportSkill(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "skill.toggle":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.ToggleSkill(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.ToggleSkill(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "usage.get":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.Usage(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.Usage(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "usage.timeline":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.UsageTimeline(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.UsageTimeline(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "doctor.run":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _admin.DoctorAsync, ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _admin.DoctorAsync, context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "lock.list":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ListLocks()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListLocks()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "project.list":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ListProjects()), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListProjects()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "project.upsert":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.UpsertProject(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.UpsertProject(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "project.remove":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.RemoveProject(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.RemoveProject(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "session.list":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.ListSessions(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListSessions(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "session.get":
-                        await RunAdminAsync(writer, writerGate, id, false,
-                            _ => Task.FromResult(_admin.GetSession(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.GetSession(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "session.truncate":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.TruncateSession(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.TruncateSession(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "session.update":
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.UpdateSession(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.UpdateSession(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "session.archive":
                     {
                         var sessionId = request["params"]?["id"]?.GetValue<string>();
-                        if (session?.Header.Id == sessionId)
+                        if (context.LegacySession?.Header.Id == sessionId)
                         {
-                            session = null;
+                            context.LegacySession = null;
                         }
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.ArchiveSession(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.ArchiveSession(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
 
                     case "session.delete":
                     {
                         var sessionId = request["params"]?["id"]?.GetValue<string>();
-                        if (session?.Header.Id == sessionId)
+                        if (context.LegacySession?.Header.Id == sessionId)
                         {
-                            session = null;
+                            context.LegacySession = null;
                         }
-                        await RunAdminAsync(writer, writerGate, id, true,
-                            _ => Task.FromResult(_admin.DeleteSession(Params(request))), ct).ConfigureAwait(false);
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.DeleteSession(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
 
@@ -762,23 +809,23 @@ public sealed class DaemonServer : IAsyncDisposable
                         var sessionId = request["params"]?["id"]?.GetValue<string>();
                         if (string.IsNullOrEmpty(sessionId))
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "params.id is required", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.id is required", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         WorkspaceInfo workspace;
                         try { workspace = ResolveWorkspace(Params(request)); }
                         catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", ex.Message, context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         var loaded = _runtime.Sessions.Load(workspace, sessionId);
                         if (loaded is null)
-                            await WriteAsync(writer, writerGate, id, "error", $"Session {sessionId} not found", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", $"Session {sessionId} not found", context.ConnectionCt).ConfigureAwait(false);
                         else
                         {
-                            session = loaded;
-                            await WriteAsync(writer, writerGate, id, "result", $"resumed {session.Header.Id}", ct).ConfigureAwait(false);
+                            context.LegacySession = loaded;
+                            await WriteAsync(context.Writer, context.WriterGate, id, "result", $"resumed {loaded.Header.Id}", context.ConnectionCt).ConfigureAwait(false);
                         }
                         break;
                     }
@@ -789,7 +836,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         try { workspace = ResolveWorkspace(Params(request)); }
                         catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", ex.Message, context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         ReasoningLevel reasoningLevel;
@@ -800,13 +847,13 @@ public sealed class DaemonServer : IAsyncDisposable
                         }
                         catch (DaemonRequestException ex)
                         {
-                            await WriteAsync(writer, writerGate, id, "error", ex.Message, ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", ex.Message, context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         var networkEnabled = Params(request)["networkEnabled"]?.GetValue<bool?>()
                             ?? _runtime.ConfigStore.Config.Agent.NetworkEnabled;
-                        session = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled);
-                        await WriteAsync(writer, writerGate, id, "result", session.Header.Id, ct).ConfigureAwait(false);
+                        context.LegacySession = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", context.LegacySession.Header.Id, context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
 
@@ -814,7 +861,7 @@ public sealed class DaemonServer : IAsyncDisposable
                     {
                         var models = _runtime.Models.All().Select(m => m.Ref).ToList();
                         var json = JsonSerializer.Serialize(models, SeekClawJsonContext.Default.ListString);
-                        await WriteAsync(writer, writerGate, id, "result", json, ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", json, context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
 
@@ -823,23 +870,23 @@ public sealed class DaemonServer : IAsyncDisposable
                         var modelRef = request["params"]?["model"]?.GetValue<string>();
                         if (string.IsNullOrEmpty(modelRef))
                         {
-                            await WriteAsync(writer, writerGate, id, "error", "params.model is required", ct).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.model is required", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
-                        await _adminGate.WaitAsync(ct).ConfigureAwait(false);
+                        await _adminGate.WaitAsync(context.ConnectionCt).ConfigureAwait(false);
 
                         try
                         {
                             var model = _runtime.Models.Resolve(modelRef);
                             if (model is null)
-                                await WriteAsync(writer, writerGate, id, "error", $"Unknown model {modelRef}", ct).ConfigureAwait(false);
+                                await WriteAsync(context.Writer, context.WriterGate, id, "error", $"Unknown model {modelRef}", context.ConnectionCt).ConfigureAwait(false);
                             else
                             {
                                 var config = _runtime.ConfigStore.Config;
                                 config.Provider = model.Provider.Id;
                                 config.Model = model.Model.Id;
                                 _runtime.ConfigStore.Save();
-                                await WriteAsync(writer, writerGate, id, "result", $"switched to {model.Ref}", ct).ConfigureAwait(false);
+                                await WriteAsync(context.Writer, context.WriterGate, id, "result", $"switched to {model.Ref}", context.ConnectionCt).ConfigureAwait(false);
                             }
                         }
                         finally
@@ -853,33 +900,22 @@ public sealed class DaemonServer : IAsyncDisposable
                     {
                         var checks = _runtime.Health.RunChecks(_runtime.Workspace);
                         var summary = string.Join("\n", checks.Select(c => $"{(c.Ok ? "[OK]" : "[FAIL]")} {c.Name}: {c.Detail}"));
-                        await WriteAsync(writer, writerGate, id, "result", summary, ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", summary, context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
 
                     case "shutdown":
-                        foreach (var turn in activeTurns.Values) turn.Cancellation.Cancel();
-                        foreach (var turn in activeTurns.Values)
+                        foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Cancel();
+                        foreach (var turn in context.ActiveTurns.Values)
                             if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
-                        await WriteAsync(writer, writerGate, id, "bye", "", ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "bye", "", context.ConnectionCt).ConfigureAwait(false);
                         _shutdown.Cancel();
-                        return;
+                        break;
 
                     default:
-                        await WriteAsync(writer, writerGate, id, "error", $"Unknown method: {method}", ct).ConfigureAwait(false);
+                        await WriteAsync(context.Writer, context.WriterGate, id, "error", $"Unknown method: {method}", context.ConnectionCt).ConfigureAwait(false);
                         break;
-                }
-            }
-        }
-        finally
-        {
-            UnregisterClient(clientId);
-            foreach (var turn in activeTurns.Values) turn.Cancellation.Cancel();
-            foreach (var turn in activeTurns.Values)
-                if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
-            foreach (var turn in activeTurns.Values) turn.Cancellation.Dispose();
-            activeTurns.Clear();
-        }
+                        }
     }
 
     private void OnMcpStatusChanged() => _ = BroadcastMcpStatusAsync();
