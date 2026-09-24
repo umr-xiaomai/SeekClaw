@@ -9,4 +9,6 @@ using System.Threading.Tasks;
 public interface IScreenCapture
 {
     Task<ScreenCapture?> CaptureScreenAsync(int monitorIndex, CancellationToken ct);
+    ScreenMetrics GetScreenMetrics() => ScreenMetrics.Default;
+    ScreenCapture? LastCapture => null;
 }

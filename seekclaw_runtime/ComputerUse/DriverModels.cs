@@ -35,14 +35,34 @@ public sealed record UiElementInfo(
     public int CenterY => Y + (Height / 2);
 }
 
+public sealed record ScreenMetrics(
+    int PhysicalWidth,
+    int PhysicalHeight,
+    int LogicalWidth,
+    int LogicalHeight,
+    double ScaleFactor,
+    int OriginX = 0,
+    int OriginY = 0)
+{
+    public static readonly ScreenMetrics Default = new(1920, 1080, 1920, 1080, 1.0);
+}
+
 public sealed record ScreenCapture(
     byte[] Bytes,
     int Width,
     int Height,
-    string Format = "image/png")
+    string Format = "image/png",
+    int PhysicalWidth = 0,
+    int PhysicalHeight = 0,
+    double ScaleFactor = 1.0,
+    int OriginX = 0,
+    int OriginY = 0)
 {
     private string? _base64;
     public string ToBase64() => _base64 ??= Convert.ToBase64String(Bytes);
+
+    public int EffectivePhysicalWidth => PhysicalWidth > 0 ? PhysicalWidth : Width;
+    public int EffectivePhysicalHeight => PhysicalHeight > 0 ? PhysicalHeight : Height;
 }
 
 public sealed record ActionResult(

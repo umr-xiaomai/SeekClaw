@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using SeekClaw.Runtime;
 using SeekClaw.Runtime.ComputerUse;
 using SeekClaw.Runtime.ComputerUse.Abstractions;
+using SeekClaw.Runtime.ComputerUse.Drivers.Windows;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Prompts;
@@ -204,6 +205,97 @@ public sealed class ComputerUseTests : IAsyncDisposable
         Assert.NotEqual(SeekClaw.Runtime.ComputerUse.Drivers.Linux.LinuxInputBackend.Unknown, controller.DetectedBackend);
     }
 
+    [Fact]
+    public void ScreenCoordinateTransformer_ScalesDownsampledImage_ToPhysicalPixels()
+    {
+        // Screen is 3072x1920 (175% scaling on high-DPI display)
+        var metrics = new ScreenMetrics(
+            PhysicalWidth: 3072,
+            PhysicalHeight: 1920,
+            LogicalWidth: 1755,
+            LogicalHeight: 1097,
+            ScaleFactor: 1.75);
+
+        // Screenshot was downsampled by 50% for vision token optimization (1536x960)
+        var capture = new ScreenCapture(
+            Bytes: [0x01],
+            Width: 1536,
+            Height: 960,
+            Format: "image/png",
+            PhysicalWidth: 3072,
+            PhysicalHeight: 1920,
+            ScaleFactor: 1.75);
+
+        // AI model identifies button at (768, 480) in the 1536x960 image
+        var (physX, physY) = ScreenCoordinateTransformer.ToPhysicalCoordinates(768, 480, capture, metrics);
+
+        // Expect exact 2x upscale to physical screen coordinate (1536, 960)
+        Assert.Equal(1536, physX);
+        Assert.Equal(960, physY);
+    }
+
+    [Fact]
+    public void ScreenCoordinateTransformer_ClampsOutOfBoundsCoordinates()
+    {
+        var metrics = new ScreenMetrics(3072, 1920, 1755, 1097, 1.75);
+        var capture = new ScreenCapture([0x01], 3072, 1920, "image/png", 3072, 1920, 1.75);
+
+        var (negX, negY) = ScreenCoordinateTransformer.ToPhysicalCoordinates(-50, -100, capture, metrics);
+        Assert.Equal(0, negX);
+        Assert.Equal(0, negY);
+
+        var (overX, overY) = ScreenCoordinateTransformer.ToPhysicalCoordinates(4000, 3000, capture, metrics);
+        Assert.Equal(3071, overX);
+        Assert.Equal(1919, overY);
+    }
+
+    [Fact]
+    public async Task ComputerTool_MapsDownsampledCoordinates_ToPhysicalClick()
+    {
+        var prompts = new MockPromptProvider();
+        var driver = new MockWorkingDriver();
+
+        // 3072x1920 physical, 1536x960 capture (e.g. 50% downsampled)
+        driver.LastCapture = new ScreenCapture(
+            Bytes: [0x01],
+            Width: 1536,
+            Height: 960,
+            Format: "image/png",
+            PhysicalWidth: 3072,
+            PhysicalHeight: 1920,
+            ScaleFactor: 1.75);
+
+        var tool = new ComputerTool(prompts, driver, new ComputerUseConfig());
+        var context = CreateToolContext();
+
+        var res = await tool.ExecuteAsync(new JsonObject
+        {
+            ["action"] = "left_click",
+            ["coordinate"] = new JsonArray { 768, 480 }
+        }, context, CancellationToken.None);
+
+        Assert.True(res.Success);
+        // Transformed from 768, 480 to 1536, 960
+        Assert.Equal(1536, driver.LastClickX);
+        Assert.Equal(960, driver.LastClickY);
+    }
+
+    [Fact]
+    public async Task WindowsDriver_DpiAwarenessAndScreenMetrics_AreValid()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        WindowsDriver.EnsureDpiAwareness();
+        await using var driver = new WindowsDriver();
+        var metrics = driver.GetScreenMetrics();
+
+        Assert.True(metrics.PhysicalWidth > 0);
+        Assert.True(metrics.PhysicalHeight > 0);
+        Assert.True(metrics.ScaleFactor > 0);
+        Assert.True(metrics.LogicalWidth > 0);
+        Assert.True(metrics.LogicalHeight > 0);
+    }
+
     private ToolContext CreateToolContext()
     {
         var bus = new EventBus();
@@ -272,6 +364,10 @@ public sealed class ComputerUseTests : IAsyncDisposable
         public IInputController InputController => this;
         public IWindowManager WindowManager => this;
         public IAccessibilityProvider AccessibilityProvider => this;
+
+        public ScreenCapture? LastCapture { get; set; }
+        public ScreenMetrics Metrics { get; set; } = ScreenMetrics.Default;
+        public ScreenMetrics GetScreenMetrics() => Metrics;
 
         public DriverCapabilities GetCapabilities() =>
             new(true, true, true, true, true, false, PlatformName, "Working mock");

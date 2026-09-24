@@ -28,15 +28,107 @@ public sealed class WindowsDriver : IComputerDriver, IScreenCapture, IInputContr
         PlatformName: PlatformName,
         DriverDescription: "Windows native Win32 input injection, GDI+ capture, and control-tree inspection");
 
+    private static bool _dpiAwarenessInitialized;
+    private static readonly object _dpiLock = new();
+    private ScreenCapture? _lastCapture;
+
+    public ScreenCapture? LastCapture => _lastCapture;
+
+    static WindowsDriver()
+    {
+        EnsureDpiAwareness();
+    }
+
+    public static void EnsureDpiAwareness()
+    {
+        if (_dpiAwarenessInitialized || !OperatingSystem.IsWindows()) return;
+        lock (_dpiLock)
+        {
+            if (_dpiAwarenessInitialized) return;
+            try
+            {
+                // Try PerMonitorV2 (Windows 10 1703+)
+                if (!Win32.SetProcessDpiAwarenessContext(Win32.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+                {
+                    // Fallback to PerMonitorV1 (Windows 8.1+)
+                    if (!Win32.SetProcessDpiAwarenessContext(Win32.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE))
+                    {
+                        // Fallback to system DPI aware (Windows Vista+)
+                        Win32.SetProcessDPIAware();
+                    }
+                }
+            }
+            catch
+            {
+                try { Win32.SetProcessDPIAware(); } catch { }
+            }
+            finally
+            {
+                _dpiAwarenessInitialized = true;
+            }
+        }
+    }
+
+    public ScreenMetrics GetScreenMetrics()
+    {
+        if (!OperatingSystem.IsWindows()) return ScreenMetrics.Default;
+        EnsureDpiAwareness();
+
+        var hdc = Win32.GetDC(IntPtr.Zero);
+        if (hdc == IntPtr.Zero)
+        {
+            var fallbackW = Win32.GetSystemMetrics(Win32.SM_CXSCREEN);
+            var fallbackH = Win32.GetSystemMetrics(Win32.SM_CYSCREEN);
+            var w = fallbackW > 0 ? fallbackW : 1920;
+            var h = fallbackH > 0 ? fallbackH : 1080;
+            return new ScreenMetrics(w, h, w, h, 1.0);
+        }
+
+        try
+        {
+            var physW = Win32.GetDeviceCaps(hdc, Win32.DESKTOPHORZRES);
+            var physH = Win32.GetDeviceCaps(hdc, Win32.DESKTOPVERTRES);
+            var logPixelsX = Win32.GetDeviceCaps(hdc, Win32.LOGPIXELSX);
+
+            if (physW <= 0 || physH <= 0)
+            {
+                physW = Win32.GetSystemMetrics(Win32.SM_CXSCREEN);
+                physH = Win32.GetSystemMetrics(Win32.SM_CYSCREEN);
+            }
+
+            var scale = logPixelsX > 0 ? (double)logPixelsX / 96.0 : 1.0;
+            if (scale < 0.5 || scale > 5.0) scale = 1.0;
+
+            var logicalW = (int)Math.Round(physW / scale);
+            var logicalH = (int)Math.Round(physH / scale);
+
+            return new ScreenMetrics(
+                PhysicalWidth: physW,
+                PhysicalHeight: physH,
+                LogicalWidth: logicalW,
+                LogicalHeight: logicalH,
+                ScaleFactor: scale,
+                OriginX: 0,
+                OriginY: 0);
+        }
+        finally
+        {
+            Win32.ReleaseDC(IntPtr.Zero, hdc);
+        }
+    }
+
     public Task<ScreenCapture?> CaptureScreenAsync(int monitorIndex, CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows())
             return Task.FromResult<ScreenCapture?>(null);
 
+        EnsureDpiAwareness();
+
         return Task.Run(() =>
         {
-            var width = Win32.GetSystemMetrics(Win32.SM_CXSCREEN);
-            var height = Win32.GetSystemMetrics(Win32.SM_CYSCREEN);
+            var metrics = GetScreenMetrics();
+            var width = metrics.PhysicalWidth;
+            var height = metrics.PhysicalHeight;
 
             if (width <= 0 || height <= 0) return null;
 
@@ -109,7 +201,18 @@ public sealed class WindowsDriver : IComputerDriver, IScreenCapture, IInputContr
                             {
                                 var buffer = new byte[size];
                                 Marshal.Copy(ptr, buffer, 0, size);
-                                return new ScreenCapture(buffer, width, height);
+                                var capture = new ScreenCapture(
+                                    Bytes: buffer,
+                                    Width: width,
+                                    Height: height,
+                                    Format: "image/png",
+                                    PhysicalWidth: metrics.PhysicalWidth,
+                                    PhysicalHeight: metrics.PhysicalHeight,
+                                    ScaleFactor: metrics.ScaleFactor,
+                                    OriginX: metrics.OriginX,
+                                    OriginY: metrics.OriginY);
+                                _lastCapture = capture;
+                                return capture;
                             }
                             finally
                             {
@@ -648,6 +751,12 @@ public sealed class WindowsDriver : IComputerDriver, IScreenCapture, IInputContr
         public const int SM_CXSCREEN = 0;
         public const int SM_CYSCREEN = 1;
         public const int SRCCOPY = 0x00CC0020;
+        public const int DESKTOPVERTRES = 117;
+        public const int DESKTOPHORZRES = 118;
+        public const int LOGPIXELSX = 88;
+        public const int LOGPIXELSY = 90;
+        public static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (IntPtr)(-4);
+        public static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE = (IntPtr)(-3);
 
         public const uint INPUT_MOUSE = 0;
         public const uint INPUT_KEYBOARD = 1;
@@ -856,5 +965,14 @@ public sealed class WindowsDriver : IComputerDriver, IScreenCapture, IInputContr
 
         [DllImport("kernel32.dll", ExactSpelling = true)]
         public static extern nuint GlobalSize(IntPtr hMem);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetProcessDpiAwarenessContext(IntPtr dpiFlag);
+
+        [DllImport("user32.dll")]
+        public static extern bool SetProcessDPIAware();
+
+        [DllImport("gdi32.dll", ExactSpelling = true)]
+        public static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
     }
 }

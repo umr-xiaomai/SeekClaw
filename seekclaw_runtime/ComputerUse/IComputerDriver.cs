@@ -21,6 +21,8 @@ public interface IComputerDriver : IAsyncDisposable
     IAccessibilityProvider AccessibilityProvider { get; }
 
     // Backward-compatible default delegation methods
+    ScreenMetrics GetScreenMetrics() => ScreenCapture.GetScreenMetrics();
+
     Task<ScreenCapture?> CaptureScreenAsync(int monitorIndex, CancellationToken ct) =>
         ScreenCapture.CaptureScreenAsync(monitorIndex, ct);
 

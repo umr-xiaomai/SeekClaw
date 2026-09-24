@@ -16,6 +16,9 @@ public sealed class UniversalVisionDriver : IComputerDriver, IScreenCapture, IIn
     public IWindowManager WindowManager => this;
     public IAccessibilityProvider AccessibilityProvider => this;
 
+    private ScreenCapture? _lastCapture;
+    public ScreenCapture? LastCapture => _lastCapture;
+
     public DriverCapabilities GetCapabilities() => new(
         CanCapture: true,
         CanInspectUiTree: false,
@@ -54,7 +57,10 @@ public sealed class UniversalVisionDriver : IComputerDriver, IScreenCapture, IIn
             if (captured && File.Exists(tempFile))
             {
                 var bytes = await File.ReadAllBytesAsync(tempFile, ct).ConfigureAwait(false);
-                return new ScreenCapture(bytes, 0, 0);
+                var (width, height) = ParsePngDimensions(bytes);
+                var capture = new ScreenCapture(bytes, width, height);
+                _lastCapture = capture;
+                return capture;
             }
 
             return null;
@@ -271,6 +277,19 @@ public sealed class UniversalVisionDriver : IComputerDriver, IScreenCapture, IIn
             return await RunProcessAsync("osascript", $"-e \"{script}\"", ct).ConfigureAwait(false);
         }
         return false;
+    }
+
+    private static (int width, int height) ParsePngDimensions(byte[] bytes)
+    {
+        if (bytes.Length >= 24 &&
+            bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+            bytes[12] == (byte)'I' && bytes[13] == (byte)'H' && bytes[14] == (byte)'D' && bytes[15] == (byte)'R')
+        {
+            var w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+            var h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+            return (w, h);
+        }
+        return (0, 0);
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

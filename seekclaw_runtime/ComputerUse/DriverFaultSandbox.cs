@@ -52,6 +52,33 @@ public sealed class DriverFaultSandbox(IComputerDriver inner, int maxConsecutive
         }
     }
 
+    public ScreenMetrics GetScreenMetrics()
+    {
+        try
+        {
+            return _inner.ScreenCapture.GetScreenMetrics();
+        }
+        catch
+        {
+            return ScreenMetrics.Default;
+        }
+    }
+
+    public ScreenCapture? LastCapture
+    {
+        get
+        {
+            try
+            {
+                return _inner.ScreenCapture.LastCapture;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
     public async Task<ScreenCapture?> CaptureScreenAsync(int monitorIndex, CancellationToken ct)
     {
         if (_isCircuitTripped) return null;

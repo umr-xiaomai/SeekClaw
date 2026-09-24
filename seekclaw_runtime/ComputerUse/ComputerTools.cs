@@ -37,6 +37,8 @@ public sealed class ComputerInspectTool(
         }
 
         var sb = new StringBuilder();
+        var metrics = driver.ScreenCapture.GetScreenMetrics();
+        sb.AppendLine($"[Display]: {metrics.PhysicalWidth}x{metrics.PhysicalHeight} (Scale: {metrics.ScaleFactor * 100:0}%, Logical: {metrics.LogicalWidth}x{metrics.LogicalHeight})");
         sb.AppendLine($"[Active Window]: {hierarchy.ActiveWindowTitle ?? "(None/Desktop)"}");
         if (hierarchy.Success)
         {
@@ -92,6 +94,48 @@ public sealed class ComputerInspectTool(
 
 
 /// <summary>
+/// High-precision screen coordinate transformation engine.
+/// Maps coordinates produced by AI models (based on downsampled screenshots,
+/// DPI-virtualized viewports, or normalized coordinates) to exact physical display pixels.
+/// </summary>
+public static class ScreenCoordinateTransformer
+{
+    public static (int physicalX, int physicalY) ToPhysicalCoordinates(
+        int modelX,
+        int modelY,
+        ScreenCapture? referenceCapture,
+        ScreenMetrics metrics)
+    {
+        var targetPhysW = referenceCapture?.EffectivePhysicalWidth ?? metrics.PhysicalWidth;
+        var targetPhysH = referenceCapture?.EffectivePhysicalHeight ?? metrics.PhysicalHeight;
+        var originX = referenceCapture?.OriginX ?? metrics.OriginX;
+        var originY = referenceCapture?.OriginY ?? metrics.OriginY;
+
+        if (targetPhysW <= 0) targetPhysW = 1920;
+        if (targetPhysH <= 0) targetPhysH = 1080;
+
+        // When the AI model observed a captured image of specific width/height:
+        if (referenceCapture is not null && referenceCapture.Width > 0 && referenceCapture.Height > 0)
+        {
+            var scaleX = (double)targetPhysW / referenceCapture.Width;
+            var scaleY = (double)targetPhysH / referenceCapture.Height;
+
+            var mappedX = originX + (int)Math.Round(modelX * scaleX);
+            var mappedY = originY + (int)Math.Round(modelY * scaleY);
+
+            return (
+                Math.Clamp(mappedX, originX, originX + targetPhysW - 1),
+                Math.Clamp(mappedY, originY, originY + targetPhysH - 1));
+        }
+
+        // Direct coordinates with clamping to physical display boundaries
+        return (
+            Math.Clamp(modelX, originX, originX + targetPhysW - 1),
+            Math.Clamp(modelY, originY, originY + targetPhysH - 1));
+    }
+}
+
+/// <summary>
 /// Unified computer operation tool supporting clicks, cursor movement, typing, key combinations,
 /// scrolling, and screen capture. Compatible with standard AI computer use conventions.
 /// </summary>
@@ -129,12 +173,22 @@ public sealed class ComputerTool(
         var deltaY = ReadIntNode(arguments["delta_y"]) ?? 0;
         var autoScreenshot = arguments.ContainsKey("auto_screenshot") && GetBool(arguments, "auto_screenshot");
 
+        var metrics = driver.ScreenCapture.GetScreenMetrics();
+        var lastCapture = driver.ScreenCapture.LastCapture;
+
+        if (x.HasValue && y.HasValue)
+        {
+            var (physX, physY) = ScreenCoordinateTransformer.ToPhysicalCoordinates(x.Value, y.Value, lastCapture, metrics);
+            x = physX;
+            y = physY;
+        }
+
         ActionResult result;
         switch (rawAction)
         {
             case "screenshot":
                 autoScreenshot = true;
-                result = ActionResult.Ok("Screenshot captured", "screenshot");
+                result = ActionResult.Ok($"Screenshot captured ({metrics.PhysicalWidth}x{metrics.PhysicalHeight}, Scale: {metrics.ScaleFactor * 100:0}%)", "screenshot");
                 break;
 
             case "left_click" or "click":
