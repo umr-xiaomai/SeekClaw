@@ -71,3 +71,42 @@ describe('attachment helpers', () => {
     expect(parsed.files).toHaveLength(1)
   })
 })
+
+describe('formatMessageTime', () => {
+  it('formats timestamp into M月d日 H:mm format', async () => {
+    const { formatMessageTime } = await import('./app-helpers')
+    // 2026-09-15 02:11:00 UTC -> Local time
+    const date = new Date(2026, 8, 15, 2, 11) // September is month index 8
+    expect(formatMessageTime(date.getTime())).toBe('9月15日 2:11')
+
+    const date2 = new Date(2026, 8, 26, 14, 5)
+    expect(formatMessageTime(date2.getTime())).toBe('9月26日 14:05')
+  })
+
+  it('returns empty string for invalid or missing timestamp', async () => {
+    const { formatMessageTime } = await import('./app-helpers')
+    expect(formatMessageTime(undefined)).toBe('')
+    expect(formatMessageTime(0)).toBe('')
+    expect(formatMessageTime(NaN)).toBe('')
+  })
+})
+
+describe('hydrateMessages', () => {
+  it('preserves message timestamp from backend', async () => {
+    const { hydrateMessages } = await import('./app-helpers')
+    const ts1 = 1757890000000
+    const ts2 = 1757890060000
+    const hydrated = hydrateMessages({
+      id: 'session-1',
+      createdAt: '2026-09-15T02:11:00Z',
+      updatedAt: '2026-09-15T02:12:00Z',
+      messages: [
+        { role: 'user', text: 'hello', timestamp: ts1 },
+        { role: 'assistant', text: 'hi', timestamp: ts2 }
+      ]
+    })
+    expect(hydrated).toHaveLength(2)
+    expect(hydrated[0]!.createdAt).toBe(ts1)
+    expect(hydrated[1]!.createdAt).toBe(ts2)
+  })
+})

@@ -6,9 +6,9 @@ import { release } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, shell, Tray } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
-import type { DaemonMessage, DaemonRequestOptions } from '../shared/ipc.js'
+import type { DaemonMessage, DaemonRequestOptions, RevertDiffItem } from '../shared/ipc.js'
 import { DaemonClient } from './daemon-client.js'
-import { getGitHistory, getGitOverview, openProjectTerminal } from './project-tools.js'
+import { getGitHistory, getGitOverview, openProjectTerminal, revertFileDiffs } from './project-tools.js'
 import {
   destroyComputerOverlay,
   hideComputerOverlay,
@@ -429,6 +429,9 @@ function registerIpc(): void {
   ipcMain.handle('project:open-terminal', (_event, path: string) => openProjectTerminal(path))
   ipcMain.handle('project:git-overview', (_event, path: string) => getGitOverview(path))
   ipcMain.handle('project:git-history', (_event, path: string) => getGitHistory(path))
+  ipcMain.handle('project:revert-file-diffs', (_event, workspace: string, patches: RevertDiffItem[]) =>
+    revertFileDiffs(workspace, patches)
+  )
 
   ipcMain.handle('daemon:connect', () => daemon.connect())
   ipcMain.handle('daemon:disconnect', () => daemon.disconnect())

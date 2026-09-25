@@ -937,6 +937,7 @@ internal sealed class DaemonAdminApi(
             {
                 ["role"] = message.Role.ToString().ToLowerInvariant(),
                 ["text"] = message.Text,
+                ["timestamp"] = (message.Timestamp ?? session.Header.CreatedAt).ToUnixTimeMilliseconds(),
                 ["images"] = images,
                 ["thinking"] = message.Thinking,
                 ["viewedImages"] = viewedImages,
@@ -1005,6 +1006,25 @@ internal sealed class DaemonAdminApi(
         runtime.Sessions.Truncate(workspace, id, keepCount.Value);
         var remaining = runtime.Sessions.Load(workspace, id)?.Messages.Count ?? 0;
         return remaining.ToString();
+    }
+
+    public string ForkSession(JsonObject parameters)
+    {
+        var workspace = SessionWorkspace(parameters);
+        var id = RequiredString(parameters, "id");
+        var keepCount = parameters["keepCount"]?.GetValue<int?>() ?? 0;
+        var title = parameters.ContainsKey("title")
+            ? parameters["title"]?.GetValue<string>()
+            : null;
+        try
+        {
+            var forked = runtime.Sessions.Fork(workspace, id, keepCount, title);
+            return JsonSerializer.Serialize(forked.Header, SeekClawJsonContext.Default.SessionHeader);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or ArgumentException)
+        {
+            throw new DaemonRequestException(ex.Message);
+        }
     }
 
     public string ArchiveSession(JsonObject parameters)

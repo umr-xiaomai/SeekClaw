@@ -23,6 +23,11 @@ public interface ISessionStore
         WorkspaceInfo workspace,
         ReasoningLevel reasoningLevel = ReasoningLevel.High,
         bool networkEnabled = true);
+    AgentSession Fork(
+        WorkspaceInfo workspace,
+        string sourceSessionId,
+        int keepMessageCount = 0,
+        string? title = null);
     AgentSession? Load(WorkspaceInfo workspace, string sessionId);
     AgentSession? LoadLatest(WorkspaceInfo workspace);
     IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace, bool includeArchived = false);
@@ -77,6 +82,100 @@ public sealed class SessionStore : ISessionStore
         using var connection = _database.OpenConnection();
         InsertSession(connection, null, scope, header);
         return NewSession(header, scope);
+    }
+
+    public AgentSession Fork(
+        WorkspaceInfo workspace,
+        string sourceSessionId,
+        int keepMessageCount = 0,
+        string? title = null)
+    {
+        ValidateSessionId(sourceSessionId);
+        EnsureLegacyImported(workspace);
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+
+        lock (GateFor(scope, sourceSessionId))
+        {
+            using var connection = _database.OpenConnection();
+            var sourceHeader = ReadHeader(connection, scope, sourceSessionId)
+                ?? throw new FileNotFoundException($"Session not found: {sourceSessionId}", _database.FilePath);
+
+            var newId = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
+            var now = DateTimeOffset.UtcNow;
+            var branchTitle = string.IsNullOrWhiteSpace(title)
+                ? (sourceHeader.Title != null ? $"{sourceHeader.Title} (分支)" : "分支任务")
+                : title;
+
+            var newHeader = new SessionHeader
+            {
+                Id = newId,
+                Workspace = sourceHeader.Workspace,
+                Title = branchTitle,
+                Archived = false,
+                ReasoningLevel = sourceHeader.ReasoningLevel,
+                NetworkEnabled = sourceHeader.NetworkEnabled,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+
+            using var transaction = connection.BeginTransaction(deferred: false);
+            InsertSession(connection, transaction, scope, newHeader);
+
+            using (var copyCmd = connection.CreateCommand())
+            {
+                copyCmd.Transaction = transaction;
+                if (keepMessageCount > 0)
+                {
+                    copyCmd.CommandText = """
+                        INSERT INTO messages(scope, session_id, payload_json, timestamp)
+                        SELECT $scope, $newSessionId, payload_json, timestamp
+                        FROM messages
+                        WHERE scope = $scope AND session_id = $sourceSessionId
+                        ORDER BY id
+                        LIMIT $limit;
+                        """;
+                    copyCmd.Parameters.AddWithValue("$limit", keepMessageCount);
+                }
+                else
+                {
+                    copyCmd.CommandText = """
+                        INSERT INTO messages(scope, session_id, payload_json, timestamp)
+                        SELECT $scope, $newSessionId, payload_json, timestamp
+                        FROM messages
+                        WHERE scope = $scope AND session_id = $sourceSessionId
+                        ORDER BY id;
+                        """;
+                }
+                copyCmd.Parameters.AddWithValue("$scope", scope);
+                copyCmd.Parameters.AddWithValue("$sourceSessionId", sourceSessionId);
+                copyCmd.Parameters.AddWithValue("$newSessionId", newId);
+                copyCmd.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+
+            var session = NewSession(newHeader, scope);
+            using var readCmd = connection.CreateCommand();
+            readCmd.CommandText = """
+                SELECT payload_json FROM messages
+                WHERE scope = $scope AND session_id = $sessionId
+                ORDER BY id;
+                """;
+            readCmd.Parameters.AddWithValue("$scope", scope);
+            readCmd.Parameters.AddWithValue("$sessionId", newId);
+            using var reader = readCmd.ExecuteReader();
+            while (reader.Read())
+            {
+                try
+                {
+                    var record = JsonSerializer.Deserialize(
+                        reader.GetString(0), SeekClawJsonContext.Compact.SessionMessage);
+                    if (record is not null) session.Messages.Add(ToMessage(record));
+                }
+                catch (JsonException) { }
+            }
+            return session;
+        }
     }
 
     public AgentSession? Load(WorkspaceInfo workspace, string sessionId)
@@ -624,6 +723,7 @@ public sealed class SessionStore : ISessionStore
         ToolSuccess = message.Role == ChatRole.Tool ? message.ToolSuccess : null,
         ToolDiff = message.ToolDiff,
         ToolFilePath = message.ToolFilePath,
+        Timestamp = message.Timestamp ?? DateTimeOffset.UtcNow,
     };
 
     private static ChatMessage ToMessage(SessionMessage record)
@@ -638,6 +738,7 @@ public sealed class SessionStore : ISessionStore
         {
             Role = role,
             Text = record.Text ?? "",
+            Timestamp = record.Timestamp,
             Images = record.Images?.Select(image => new ChatImageAttachment(
                 image.Id, image.Name, image.MediaType, image.Data, image.SizeBytes)).ToList(),
             Thinking = record.Thinking,

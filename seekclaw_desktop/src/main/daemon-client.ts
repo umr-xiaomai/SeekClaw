@@ -16,7 +16,7 @@ const TERMINAL_EVENTS = new Set(['pong', 'result', 'done', 'cancelled', 'error',
 
 export class DaemonClient extends EventEmitter {
   private socket: Socket | null = null
-  private buffer = ''
+  private bufferChunks: string[] = []
   private nextId = 1
   private connecting: Promise<DaemonState> | null = null
   private readonly pending = new Map<number, PendingRequest>()
@@ -80,6 +80,7 @@ export class DaemonClient extends EventEmitter {
   disconnect(): void {
     this.socket?.destroy()
     this.socket = null
+    this.bufferChunks = []
     this.rejectPending(new Error('Daemon disconnected'))
     this.emit('state', { connected: false, endpoint: this.endpoint } satisfies DaemonState)
   }
@@ -122,14 +123,14 @@ export class DaemonClient extends EventEmitter {
     socket.on('close', () => {
       if (this.socket !== socket) return
       this.socket = null
-      this.buffer = ''
+      this.bufferChunks = []
       this.rejectPending(new Error('Daemon connection closed'))
       this.emit('state', { connected: false, endpoint: this.endpoint } satisfies DaemonState)
     })
     socket.on('error', (error) => {
       if (this.socket !== socket) return
       this.socket = null
-      this.buffer = ''
+      this.bufferChunks = []
       socket.destroy()
       this.rejectPending(new Error(`Daemon connection failed: ${error.message}`))
       this.emit('state', {
@@ -141,13 +142,24 @@ export class DaemonClient extends EventEmitter {
   }
 
   private consume(chunk: string): void {
-    this.buffer += chunk
-    let newline = this.buffer.indexOf('\n')
+    let start = 0
+    let newline = chunk.indexOf('\n')
     while (newline >= 0) {
-      const line = this.buffer.slice(0, newline).trim()
-      this.buffer = this.buffer.slice(newline + 1)
+      const part = chunk.slice(start, newline)
+      let line: string
+      if (this.bufferChunks.length === 0) {
+        line = part.trim()
+      } else {
+        this.bufferChunks.push(part)
+        line = this.bufferChunks.join('').trim()
+        this.bufferChunks = []
+      }
       if (line) this.consumeLine(line)
-      newline = this.buffer.indexOf('\n')
+      start = newline + 1
+      newline = chunk.indexOf('\n', start)
+    }
+    if (start < chunk.length) {
+      this.bufferChunks.push(chunk.slice(start))
     }
   }
 

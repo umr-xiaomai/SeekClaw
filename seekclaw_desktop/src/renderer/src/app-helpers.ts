@@ -61,6 +61,7 @@ export interface RuntimeSession extends RuntimeSessionHeader {
     toolSuccess?: boolean
     toolDiff?: string
     toolFilePath?: string
+    timestamp?: number
   }>
 }
 
@@ -215,7 +216,9 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
         state: 'done'
       })),
       state: item.role === 'assistant' ? 'done' : undefined,
-      createdAt: new Date(saved.createdAt).getTime() + index
+      createdAt: typeof item.timestamp === 'number' && item.timestamp > 0
+        ? item.timestamp
+        : new Date(saved.createdAt).getTime() + index
     })
   })
   return messages
@@ -285,4 +288,15 @@ export function formatTokenCount(tokens?: number): string {
     return `${formatted}k`
   }
   return count.toString()
+}
+
+export function formatMessageTime(timestamp?: number): string {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  if (isNaN(date.getTime())) return ''
+  const month = date.getMonth() + 1
+  const day = date.getDate()
+  const hours = date.getHours()
+  const minutes = date.getMinutes().toString().padStart(2, '0')
+  return `${month}月${day}日 ${hours}:${minutes}`
 }

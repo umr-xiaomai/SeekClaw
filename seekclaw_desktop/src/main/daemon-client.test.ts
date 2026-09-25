@@ -124,4 +124,34 @@ describe('DaemonClient', () => {
     expect(response.event).toBe('cancelled')
     expect(response.data).toBe('partial')
   })
+
+  it('correctly reassembles large messages delivered across multiple fragmented chunks', async () => {
+    const suffix = `${process.pid}-${Date.now()}-fragments`
+    const endpoint = process.platform === 'win32'
+      ? String.raw`\\.\pipe\seekclaw-test-${suffix}`
+      : join(tmpdir(), `seekclaw-test-${suffix}.sock`)
+
+    const largePayload = 'A'.repeat(50_000)
+    const server = createServer((socket) => {
+      socket.once('data', (chunk) => {
+        const request = JSON.parse(chunk.toString().trim()) as { id: number }
+        const line = `${JSON.stringify({ id: request.id, event: 'result', data: largePayload })}\n`
+        // Fragment into 1KB slices
+        const sliceSize = 1024
+        for (let i = 0; i < line.length; i += sliceSize) {
+          socket.write(line.slice(i, i + sliceSize))
+        }
+      })
+    })
+    servers.push(server)
+    server.listen(endpoint)
+    await once(server, 'listening')
+
+    const client = new DaemonClient(endpoint)
+    clients.push(client)
+    const response = await client.request('session.get', { id: 'test' })
+
+    expect(response.event).toBe('result')
+    expect(response.data).toBe(largePayload)
+  })
 })

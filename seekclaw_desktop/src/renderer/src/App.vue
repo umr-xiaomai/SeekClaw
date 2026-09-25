@@ -30,6 +30,7 @@ import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
 
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
+import EditMessageDialog from './components/EditMessageDialog.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
 
 import OfficialSkillsDialog from './components/OfficialSkillsDialog.vue'
@@ -637,6 +638,187 @@ function newTask(projectId?: string): void {
   void nextTick(() => composer.value?.focus())
 }
 
+async function branchFromMessage(message: ChatMessage): Promise<void> {
+  const currentThread = activeThread.value
+  if (!currentThread) return
+  const messageIndex = currentThread.messages.findIndex((m) => m.id === message.id)
+  if (messageIndex < 0) return
+
+  const project = projects.value.find((item) => item.id === currentThread.projectId)
+  const slicedMessages = currentThread.messages.slice(0, messageIndex + 1)
+  const branchTitle = currentThread.title.includes('分支')
+    ? currentThread.title
+    : `${currentThread.title} (分支)`
+
+  let newSessionId: string | undefined
+  if (currentThread.sessionId && daemonState.value.connected) {
+    try {
+      const match = /^.*:(\d+)$/.exec(message.id)
+      const keepCount = match && match[1] ? parseInt(match[1], 10) + 1 : 0
+      const response = await window.seekclaw.daemon.request('session.fork', {
+        id: currentThread.sessionId,
+        ...sessionScope(currentThread, project),
+        keepCount,
+        title: branchTitle
+      })
+      const data = JSON.parse(response.data) as { id: string }
+      newSessionId = data.id
+    } catch (err) {
+      console.error('Failed to fork session on daemon:', err)
+    }
+  }
+
+  const clonedMessages: ChatMessage[] = slicedMessages.map((m, idx) => ({
+    ...m,
+    id: newSessionId ? `${newSessionId}:${idx}` : makeId(),
+    tools: m.tools?.map((t) => ({ ...t })),
+    images: m.images ? [...m.images] : undefined,
+    files: m.files ? [...m.files] : undefined,
+    viewedImages: m.viewedImages ? [...m.viewedImages] : undefined
+  }))
+
+  const newThreadId = newSessionId
+    ? (project ? `${project.id}:session:${newSessionId}` : `global:session:${newSessionId}`)
+    : makeId()
+
+  const newThread: ThreadItem = {
+    id: newThreadId,
+    title: branchTitle,
+    projectId: project?.id,
+    updatedAt: Date.now(),
+    messages: clonedMessages,
+    sessionId: newSessionId,
+    sessionLoaded: true,
+    reasoningLevel: currentThread.reasoningLevel ?? ReasoningLevel.High,
+    networkEnabled: currentThread.networkEnabled ?? true,
+    archived: false,
+    stats: {
+      llmRounds: 0,
+      executionSteps: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalInputTokens: 0,
+      cachedInputTokens: 0,
+      outputElapsedMs: 0
+    }
+  }
+
+  threads.value.unshift(newThread)
+  await selectThread(newThread.id)
+  void nextTick(() => composer.value?.focus())
+}
+
+const editingUserMessage = ref<ChatMessage | null>(null)
+const editMessageModifiedFiles = ref<string[]>([])
+const editMessagePatches = ref<Array<{ filePath: string; diff: string }>>([])
+const editMessageDialogOpen = ref(false)
+
+function onEditUserMessage(message: ChatMessage): void {
+  const thread = activeThread.value
+  if (!thread || thread.archived) return
+  if (thread.running || thread.queueDraining) {
+    void window.seekclaw?.notify?.('无法编辑', '当前回合正在执行，请先等待或停止生成后再进行编辑。')
+    return
+  }
+
+  const promptIndex = thread.messages.findIndex((item) => item.id === message.id)
+  if (promptIndex < 0) return
+
+  // Collect subsequent file patches & modified files
+  const patches: Array<{ filePath: string; diff: string }> = []
+  const filesSet = new Set<string>()
+
+  for (let i = promptIndex + 1; i < thread.messages.length; i++) {
+    const msg = thread.messages[i]
+    if (!msg) continue
+    for (const tool of msg.tools ?? []) {
+      if (tool.filePath && tool.diff) {
+        patches.push({ filePath: tool.filePath, diff: tool.diff })
+        filesSet.add(tool.filePath)
+      }
+    }
+  }
+
+  editingUserMessage.value = message
+  editMessageModifiedFiles.value = Array.from(filesSet)
+  editMessagePatches.value = patches
+  editMessageDialogOpen.value = true
+}
+
+async function handleEditConfirm(revertFiles: boolean): Promise<void> {
+  const thread = activeThread.value
+  const message = editingUserMessage.value
+  const patches = editMessagePatches.value
+  editMessageDialogOpen.value = false
+  if (!thread || !message) return
+
+  const promptIndex = thread.messages.findIndex((item) => item.id === message.id)
+  if (promptIndex < 0) return
+
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  const workspace = project?.path || appInfo.value.defaultWorkspace
+
+  // Step 1: If reverting file modifications, apply diffs in reverse
+  if (revertFiles && patches.length > 0) {
+    try {
+      const res = await window.seekclaw.project.revertFileDiffs(workspace, patches)
+      if (res.failed.length > 0) {
+        const failedSummary = res.failed
+          .map((f) => `• ${f.filePath} (${f.reason})`)
+          .join('\n')
+        await confirmAction({
+          title: '部分文件撤销失败',
+          message: `以下文件未能成功自动撤回（可能已被外部修改或存在冲突），建议您手动检查：\n${failedSummary}`,
+          confirmLabel: '我知道了',
+          danger: true
+        })
+      }
+    } catch (err) {
+      await confirmAction({
+        title: '撤销文件修改失败',
+        message: `撤回文件修改时出错：${err instanceof Error ? err.message : String(err)}`,
+        confirmLabel: '我知道了',
+        danger: true
+      })
+    }
+  }
+
+  // Step 2: Truncate backend session in SQLite
+  let keepCount: number | null = null
+  if (message.id) {
+    const match = /^.*:(\d+)$/.exec(message.id)
+    if (match && match[1]) {
+      keepCount = parseInt(match[1], 10)
+    }
+  }
+  if (keepCount === null) keepCount = promptIndex
+
+  if (thread.sessionId) {
+    try {
+      await window.seekclaw.daemon.request('session.truncate', {
+        id: thread.sessionId,
+        ...sessionScope(thread, project),
+        keepCount
+      })
+    } catch (err) {
+      console.error('Failed to truncate session:', err)
+    }
+  }
+
+  // Step 3: Truncate frontend messages
+  thread.messages = thread.messages.slice(0, promptIndex)
+  thread.phase = undefined
+  thread.assistantId = undefined
+
+  // Step 4: Populate Composer and focus
+  if (typeof composer.value?.populate === 'function') {
+    composer.value.populate(message.content || '', message.images, message.files)
+  } else {
+    composer.value?.setValue(message.content || '')
+    composer.value?.focus()
+  }
+}
+
 async function ensureRuntimeProject(project: ProjectItem): Promise<void> {
   if (samePath(runtimeWorkspacePath.value, project.path)) return
   const response = await window.seekclaw.daemon.request('workspace.open', { path: project.path })
@@ -680,6 +862,11 @@ async function selectThread(id: string): Promise<void> {
         id: thread.sessionId,
         ...scope
       })
+      if (selectionToken !== conversationSelectionToken.value) return
+      // 让出事件循环，确保骨架屏平滑渲染、侧栏点击与拖拽无卡顿
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      if (selectionToken !== conversationSelectionToken.value) return
+
       const saved = JSON.parse(response.data) as RuntimeSession
       thread.messages = hydrateMessages(saved)
       thread.sessionLoaded = true
@@ -708,13 +895,40 @@ async function selectThread(id: string): Promise<void> {
   await scrollToBottom(false, true)
 }
 
-interface ConversationItem { message: ChatMessage }
+interface ConversationItem {
+  message: ChatMessage
+  showFooter: boolean
+}
 
 const conversationItems = computed<ConversationItem[]>(() => {
-  const messages = (activeThread.value?.messages ?? []).filter(
+  const thread = activeThread.value
+  const messages = (thread?.messages ?? []).filter(
     (message) => !message.content?.startsWith('>>> [output truncated]')
   )
-  return messages.map((message) => ({ message }))
+  const isThreadRunning = thread?.running === true
+  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
+
+  return messages.map((message, index) => {
+    let showFooter = false
+    if (message.role === 'assistant' && Boolean(message.content?.trim())) {
+      // If this message belongs to the actively running turn, do not show footer
+      const inActiveRunningTurn = isThreadRunning && (lastUserIndex < 0 || index >= lastUserIndex)
+      if (!inActiveRunningTurn) {
+        // Must be the last assistant message in this turn
+        let hasLaterAssistant = false
+        for (let j = index + 1; j < messages.length; j++) {
+          const next = messages[j]
+          if (!next || next.role === 'user') break
+          if (next.role === 'assistant') {
+            hasLaterAssistant = true
+            break
+          }
+        }
+        showFooter = !hasLaterAssistant
+      }
+    }
+    return { message, showFooter }
+  })
 })
 
 /**
@@ -1301,8 +1515,11 @@ watch(theme, applyTheme)
                   <div v-measure="item.message.id" class="virtual-message">
                     <ConversationMessage :message="item.message" :image-sources="activeImageSources"
                       :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
+                      :show-footer="item.showFooter"
                       :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
-                      @open-diff="openToolDiff" />
+                      @open-diff="openToolDiff"
+                      @branch="branchFromMessage"
+                      @edit="onEditUserMessage" />
                   </div>
                 </template>
                 <div class="virtual-pad" :style="{ height: `${virtualWindow.bottomPad}px` }" />
@@ -1311,8 +1528,11 @@ watch(theme, applyTheme)
                 <template v-for="item in conversationItems" :key="item.message.id">
                   <ConversationMessage :message="item.message" :image-sources="activeImageSources"
                     :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
+                    :show-footer="item.showFooter"
                     :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
-                    @open-diff="openToolDiff" />
+                    @open-diff="openToolDiff"
+                    @branch="branchFromMessage"
+                    @edit="onEditUserMessage" />
                 </template>
               </template>
             </div>
@@ -1413,6 +1633,10 @@ watch(theme, applyTheme)
     <ConfigAnomalyDialog v-if="configAnomaly && configAnomaly.hasAnomaly" :open="true" :detail="configAnomaly.detail"
       :config-file="configAnomaly.configFile" :backup-file="configAnomaly.backupFile" :rebuilding="rebuildingConfig"
       @close="configAnomaly = null" @rebuild="handleRebuildConfig" />
+
+    <EditMessageDialog :open="editMessageDialogOpen" :message="editingUserMessage"
+      :modified-files="editMessageModifiedFiles" @close="editMessageDialogOpen = false"
+      @confirm="handleEditConfirm" />
 
     <ConfirmDialog />
   </div>

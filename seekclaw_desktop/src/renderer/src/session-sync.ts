@@ -117,6 +117,8 @@ export async function reloadThreadSession(
       id: thread.sessionId,
       ...sessionScope(thread, project)
     })
+    // 让出事件循环，避免后台同步任务卡顿前台动画与交互
+    await new Promise((resolve) => setTimeout(resolve, 0))
     const saved = JSON.parse(response.data) as RuntimeSession
     thread.messages = hydrateMessages(saved)
     thread.sessionLoaded = true

@@ -775,6 +775,11 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.TruncateSession(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
+                    case "session.fork":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.ForkSession(Params(request))), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
                     case "session.update":
                         await RunAdminAsync(context.Writer, context.WriterGate, id, true,
                             _ => Task.FromResult(_admin.UpdateSession(Params(request))), context.ConnectionCt).ConfigureAwait(false);

@@ -1,8 +1,9 @@
 import { execFile, spawn } from 'node:child_process'
+import { existsSync, statSync, unlinkSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import type { GitCommit, GitHistory, GitOverview } from '../shared/ipc.js'
+import type { GitCommit, GitHistory, GitOverview, RevertDiffItem, RevertDiffsResult } from '../shared/ipc.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -124,3 +125,101 @@ export async function openProjectTerminal(path: string): Promise<void> {
   }
   throw lastError instanceof Error ? lastError : new Error(`No supported terminal found on ${process.platform}`)
 }
+
+export function normalizeDiffForGit(diff: string): string {
+  let normalized = diff.replace(/\r\n/g, '\n')
+  normalized = normalized.replace(/^([+-]{3} [ab])[/\\](.*)$/gm, (_match, prefix, filePath) => {
+    return prefix + '/' + filePath.replace(/\\/g, '/')
+  })
+  if (!normalized.endsWith('\n')) {
+    normalized += '\n'
+  }
+  return normalized
+}
+
+function cleanupNewFileIfEmpty(directory: string, patch: RevertDiffItem): void {
+  if (/@@ -[01],0 \+/.test(patch.diff)) {
+    const target = isAbsolute(patch.filePath) ? patch.filePath : resolve(directory, patch.filePath)
+    if (existsSync(target)) {
+      const stats = statSync(target)
+      if (stats.size === 0) {
+        unlinkSync(target)
+      }
+    }
+  }
+}
+
+async function applyPatchReverse(directory: string, patch: RevertDiffItem): Promise<void> {
+  const normalizedDiff = normalizeDiffForGit(patch.diff)
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const child = spawn('git', ['apply', '--reverse', '--whitespace=nowarn', '--unsafe-paths'], {
+      cwd: directory,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+
+    let stderr = ''
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+
+    child.once('error', (err) => {
+      rejectPromise(err)
+    })
+
+    child.once('close', (code) => {
+      if (code === 0) {
+        try {
+          cleanupNewFileIfEmpty(directory, patch)
+        } catch {
+          // ignore cleanup error
+        }
+        resolvePromise()
+      } else {
+        const message = stderr.trim() || `git apply failed with exit code ${code}`
+        rejectPromise(new Error(message))
+      }
+    })
+
+    child.stdin.end(normalizedDiff, 'utf8')
+  })
+}
+
+export async function revertFileDiffs(
+  workspacePath: string,
+  patches: RevertDiffItem[]
+): Promise<RevertDiffsResult> {
+  let directory: string
+  try {
+    directory = await workspaceDirectory(workspacePath)
+  } catch (error) {
+    return {
+      reverted: [],
+      failed: [{ filePath: workspacePath, reason: detail(error) }]
+    }
+  }
+
+  // Reverse chronological order: newest edits reverted first
+  const reversed = [...patches].reverse()
+  const failedMap = new Map<string, string>()
+  const revertedSet = new Set<string>()
+
+  for (const patch of reversed) {
+    if (!patch.diff || !patch.diff.trim()) continue
+    try {
+      await applyPatchReverse(directory, patch)
+      revertedSet.add(patch.filePath)
+    } catch (error) {
+      const raw = detail(error)
+      const reason = /ENOENT/i.test(raw) ? '系统未安装或未配置 Git' : raw
+      failedMap.set(patch.filePath, reason)
+    }
+  }
+
+  const reverted = Array.from(revertedSet).filter((filePath) => !failedMap.has(filePath))
+  const failed = Array.from(failedMap.entries()).map(([filePath, reason]) => ({ filePath, reason }))
+
+  return { reverted, failed }
+}
+

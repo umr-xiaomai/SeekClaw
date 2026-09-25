@@ -24,7 +24,8 @@ const api: DesktopApi = {
   project: {
     openTerminal: (path) => ipcRenderer.invoke('project:open-terminal', path),
     gitOverview: (path) => ipcRenderer.invoke('project:git-overview', path),
-    gitHistory: (path) => ipcRenderer.invoke('project:git-history', path)
+    gitHistory: (path) => ipcRenderer.invoke('project:git-history', path),
+    revertFileDiffs: (workspace, patches) => ipcRenderer.invoke('project:revert-file-diffs', workspace, patches)
   },
   daemon: {
     connect: () => ipcRenderer.invoke('daemon:connect'),

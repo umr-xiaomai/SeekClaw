@@ -35,6 +35,7 @@ public sealed class ChatMessage
     public string? ToolDiff { get; init; }
     /// <summary>Workspace-relative file path associated with ToolDiff.</summary>
     public string? ToolFilePath { get; init; }
+    public DateTimeOffset? Timestamp { get; init; }
 
     public static ChatMessage User(string text, IReadOnlyList<ChatImageAttachment>? images = null) => new()
     {

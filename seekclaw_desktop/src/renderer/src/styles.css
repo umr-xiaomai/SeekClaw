@@ -277,6 +277,8 @@ select:focus-visible {
   text-overflow: ellipsis;
   transform: translateX(-50%);
   white-space: nowrap;
+  -webkit-app-region: drag;
+  user-select: none;
 }
 
 .window-controls-space {
@@ -852,6 +854,8 @@ select:focus-visible {
   background: var(--surface);
   border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   border-top-left-radius: 14px;
+  -webkit-app-region: drag;
+  user-select: none;
 }
 
 .conversation-title {
@@ -1039,6 +1043,13 @@ select:focus-visible {
   min-width: 0;
   flex: 0 0 auto;
   gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.conversation-actions *,
+.conversation-title button,
+.task-phase-chip {
+  -webkit-app-region: no-drag;
 }
 
 .connection-button,
@@ -1104,12 +1115,10 @@ select:focus-visible {
 .skeleton-bubble {
   height: 32px;
   border-radius: 14px;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--text-muted) 6%, transparent) 0%,
-    color-mix(in srgb, var(--text-muted) 14%, transparent) 50%,
-    color-mix(in srgb, var(--text-muted) 6%, transparent) 100%
-  );
+  background: linear-gradient(90deg,
+      color-mix(in srgb, var(--text-muted) 6%, transparent) 0%,
+      color-mix(in srgb, var(--text-muted) 14%, transparent) 50%,
+      color-mix(in srgb, var(--text-muted) 6%, transparent) 100%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.8s ease-in-out infinite;
 }
@@ -1117,12 +1126,10 @@ select:focus-visible {
 .skeleton-bubble.user {
   align-self: flex-end;
   border-bottom-right-radius: 4px;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--text-muted) 9%, transparent) 0%,
-    color-mix(in srgb, var(--text-muted) 18%, transparent) 50%,
-    color-mix(in srgb, var(--text-muted) 9%, transparent) 100%
-  );
+  background: linear-gradient(90deg,
+      color-mix(in srgb, var(--text-muted) 9%, transparent) 0%,
+      color-mix(in srgb, var(--text-muted) 18%, transparent) 50%,
+      color-mix(in srgb, var(--text-muted) 9%, transparent) 100%);
   background-size: 200% 100%;
 }
 
@@ -1135,6 +1142,7 @@ select:focus-visible {
   0% {
     background-position: 200% 0;
   }
+
   100% {
     background-position: -200% 0;
   }
@@ -1356,7 +1364,7 @@ select:focus-visible {
 }
 
 .assistant-activity {
-  margin: 0 0 10px;
+  /*margin: 0 0 10px;*/
   padding-left: 12px;
   border-left: 2px solid var(--border);
 }
@@ -4318,7 +4326,7 @@ select:focus-visible {
   background: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
 }
 
-.switch-control > svg {
+.switch-control>svg {
   position: absolute;
   inset: 0;
   margin: auto;

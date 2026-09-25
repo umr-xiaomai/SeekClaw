@@ -98,6 +98,16 @@ export interface DesktopSkillFileSelection {
   warning?: string
 }
 
+export interface RevertDiffItem {
+  filePath: string
+  diff: string
+}
+
+export interface RevertDiffsResult {
+  reverted: string[]
+  failed: Array<{ filePath: string; reason: string }>
+}
+
 export interface DesktopApi {
   getAppInfo(): Promise<AppInfo>
   selectWorkspace(): Promise<string | null>
@@ -115,6 +125,7 @@ export interface DesktopApi {
     openTerminal(path: string): Promise<void>
     gitOverview(path: string): Promise<GitOverview>
     gitHistory(path: string): Promise<GitHistory>
+    revertFileDiffs(workspace: string, patches: RevertDiffItem[]): Promise<RevertDiffsResult>
   }
   daemon: {
     connect(): Promise<DaemonState>

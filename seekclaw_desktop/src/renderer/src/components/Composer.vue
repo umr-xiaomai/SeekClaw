@@ -406,7 +406,17 @@ function getValue(): string {
   return value.value
 }
 
-defineExpose({ focus, setValue, getValue })
+function populate(nextValue: string, nextImages?: ImageAttachment[], nextFiles?: FileAttachment[]): void {
+  value.value = nextValue
+  images.value = nextImages ? [...nextImages] : []
+  attachedFiles.value = nextFiles ? [...nextFiles] : []
+  void nextTick(() => {
+    resize()
+    focus()
+  })
+}
+
+defineExpose({ focus, setValue, getValue, populate })
 watch(value, resize)
 watch(() => props.taskId, () => {
   images.value = []

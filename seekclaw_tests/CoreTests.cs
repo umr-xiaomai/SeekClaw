@@ -203,6 +203,48 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void SessionStore_ForksSessionAndCopiesMessages()
+    {
+        var workspace = NewWorkspace("fork");
+        var store = NewSessionStore();
+        var session = store.Create(workspace, reasoningLevel: SeekClaw.Runtime.Providers.ReasoningLevel.Max, networkEnabled: false);
+        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("first"));
+        store.Append(session, new SeekClaw.Runtime.Providers.ChatMessage
+        {
+            Role = SeekClaw.Runtime.Providers.ChatRole.Assistant,
+            Text = "answer one",
+        });
+        store.Append(session, SeekClaw.Runtime.Providers.ChatMessage.User("second"));
+        store.Append(session, new SeekClaw.Runtime.Providers.ChatMessage
+        {
+            Role = SeekClaw.Runtime.Providers.ChatRole.Assistant,
+            Text = "answer two",
+        });
+
+        // Fork with keepCount: 2
+        var forked = store.Fork(workspace, session.Header.Id, keepMessageCount: 2, title: "分支一");
+        Assert.NotNull(forked);
+        Assert.NotEqual(session.Header.Id, forked.Header.Id);
+        Assert.Equal("分支一", forked.Header.Title);
+        Assert.Equal(SeekClaw.Runtime.Providers.ReasoningLevel.Max, forked.Header.ReasoningLevel);
+        Assert.False(forked.Header.NetworkEnabled);
+        Assert.Equal(2, forked.Messages.Count);
+        Assert.Equal("first", forked.Messages[0].Text);
+        Assert.Equal("answer one", forked.Messages[1].Text);
+
+        // Original session remains intact
+        var original = store.Load(workspace, session.Header.Id);
+        Assert.NotNull(original);
+        Assert.Equal(4, original!.Messages.Count);
+
+        // Fork keeping all (keepMessageCount = 0)
+        var forkedAll = store.Fork(workspace, session.Header.Id, keepMessageCount: 0);
+        Assert.NotNull(forkedAll);
+        Assert.Equal(4, forkedAll.Messages.Count);
+        Assert.Contains("分支", forkedAll.Header.Title ?? "");
+    }
+
+    [Fact]
     public void SessionStore_PersistsGlobalSessionsWithoutWorkspaceMetadata()
     {
         var global = new WorkspaceManager().CreateGlobal(Path.Combine(_dir, "global-state"));

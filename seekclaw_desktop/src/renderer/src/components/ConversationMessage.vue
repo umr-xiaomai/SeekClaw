@@ -4,15 +4,18 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
+  Copy,
   Eye,
   Image as ImageIcon,
   Layers,
   LoaderCircle,
+  Pencil,
+  Split,
   Wrench
 } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import type { ChatMessage } from '../types'
-import { fileBadgeText, fileExtClass } from '../app-helpers'
+import { fileBadgeText, fileExtClass, formatMessageTime } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 
@@ -23,15 +26,39 @@ const props = withDefaults(defineProps<{
   dimmed?: boolean
   /** True while this bubble belongs to the actively running turn. Gates the "..." placeholder. */
   streaming?: boolean
-}>(), { imageSources: () => ({}) })
+  /** Only true at the final bubble tail of an assistant turn. */
+  showFooter?: boolean
+}>(), { imageSources: () => ({}), showFooter: false })
 
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
+  branch: [message: ChatMessage]
+  edit: [message: ChatMessage]
 }>()
 
 const thinkingOpen = ref(false)
 const systemOpen = ref(false)
 const preview = ref<{ src: string; name: string } | null>(null)
+const isCopied = ref(false)
+let copyTimer: ReturnType<typeof setTimeout> | undefined
+
+onBeforeUnmount(() => {
+  if (copyTimer) clearTimeout(copyTimer)
+})
+
+async function copyContent(): Promise<void> {
+  if (!props.message.content) return
+  try {
+    await navigator.clipboard.writeText(props.message.content)
+    isCopied.value = true
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => {
+      isCopied.value = false
+    }, 2000)
+  } catch (err) {
+    console.error('Failed to copy to clipboard', err)
+  }
+}
 
 const regularTools = computed(() => (props.message.tools ?? []).filter((tool) => !tool.diff))
 const editedTools = computed(() => (props.message.tools ?? []).filter((tool) => tool.diff && tool.filePath))
@@ -146,6 +173,38 @@ function openFileLocation(path?: string): void {
           </button>
         </div>
         <div v-if="message.content" class="user-bubble">{{ message.content }}</div>
+        <footer
+          v-if="!streaming"
+          class="user-footer"
+          :class="{ active: isCopied }"
+        >
+          <span v-if="message.createdAt" class="message-time">
+            {{ formatMessageTime(message.createdAt) }}
+          </span>
+          <div class="user-actions">
+            <button
+              v-if="message.content"
+              type="button"
+              class="action-btn"
+              :class="{ success: isCopied }"
+              :title="isCopied ? '已复制' : '复制'"
+              aria-label="复制"
+              @click="copyContent"
+            >
+              <Check v-if="isCopied" :size="13" class="action-icon success-icon" />
+              <Copy v-else :size="13" class="action-icon" />
+            </button>
+            <button
+              type="button"
+              class="action-btn"
+              title="编辑此消息"
+              aria-label="编辑此消息"
+              @click="emit('edit', message)"
+            >
+              <Pencil :size="13" class="action-icon" />
+            </button>
+          </div>
+        </footer>
       </div>
     </template>
 
@@ -210,6 +269,38 @@ function openFileLocation(path?: string): void {
         class="response-placeholder" aria-label="AI 正在思考">
         <span /><span /><span />
       </div>
+
+      <footer
+        v-if="showFooter && !streaming && message.content"
+        class="assistant-footer"
+        :class="{ active: isCopied }"
+      >
+        <div class="assistant-actions">
+          <button
+            type="button"
+            class="action-btn"
+            :class="{ success: isCopied }"
+            :title="isCopied ? '已复制' : '复制回答'"
+            aria-label="复制回答"
+            @click="copyContent"
+          >
+            <Check v-if="isCopied" :size="13" class="action-icon success-icon" />
+            <Copy v-else :size="13" class="action-icon" />
+          </button>
+          <button
+            type="button"
+            class="action-btn"
+            title="在此分叉新任务"
+            aria-label="在此分叉新任务"
+            @click="emit('branch', message)"
+          >
+            <Split :size="13" class="action-icon" />
+          </button>
+        </div>
+        <span v-if="message.createdAt" class="message-time">
+          {{ formatMessageTime(message.createdAt) }}
+        </span>
+      </footer>
     </div>
   </article>
 
@@ -319,5 +410,70 @@ function openFileLocation(path?: string): void {
 
 .thinking-toggle>.lucide-chevron-down.rotated {
   transform: rotate(180deg);
+}
+
+.assistant-footer,
+.user-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.message:hover .assistant-footer,
+.assistant-message:hover .assistant-footer,
+.assistant-footer:focus-within,
+.assistant-footer.active,
+.message:hover .user-footer,
+.user-message-stack:hover .user-footer,
+.user-footer:focus-within,
+.user-footer.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.assistant-actions,
+.user-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.action-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.action-btn.success {
+  color: var(--accent, #10b981);
+}
+
+.action-icon {
+  flex: none;
+}
+
+.message-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 2px;
 }
 </style>
