@@ -186,6 +186,17 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
         registry.Register(new PromptContribution("permissions", PromptSlot.System, (ctx, _) =>
             ValueTask.FromResult(prompts.TryGet("system/permissions"))));
 
+        // Behavioral boundary calibration (few-shot examples for critical tool-use boundaries).
+        registry.Register(new PromptContribution("calibration", PromptSlot.System, (ctx, _) =>
+        {
+            var enabled = ctx.WorkspaceConfig?.EnableCalibration ?? configStore.Config.Agent.EnableCalibration;
+            if (!enabled)
+                return ValueTask.FromResult<string?>(null);
+
+            var key = ctx.WorkspaceConfig?.CalibrationPrompt ?? configStore.Config.Agent.CalibrationPrompt;
+            return ValueTask.FromResult(prompts.TryGet(key));
+        }));
+
         // Developer prompts per detected project kind (dotnet, node, python, rust, unity, vue…).
         registry.Register(new PromptContribution("developer", PromptSlot.Developer, (ctx, _) =>
         {

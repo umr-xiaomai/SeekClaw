@@ -41,6 +41,8 @@ public static class DefaultSeekClawConfig
             MaxToolOutputChars = 60_000,
             BashTimeoutSeconds = 180,
             ScheduledTurnTimeoutSeconds = 1_800,
+            EnableCalibration = false,
+            CalibrationPrompt = "system/calibration",
         },
         Mcp = new McpConfig(),
     };

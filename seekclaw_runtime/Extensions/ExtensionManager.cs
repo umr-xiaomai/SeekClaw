@@ -2,6 +2,7 @@ namespace SeekClaw.Runtime.Extensions;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -39,6 +40,7 @@ public sealed class ExtensionManager : IAsyncDisposable
     /// If an extension module is removed or excluded from compilation, this method
     /// automatically continues with remaining extensions without build or runtime breakage.
     /// </summary>
+    [RequiresUnreferencedCode("Discovers runtime extensions dynamically via reflection.")]
     public static ExtensionManager CreateDefault()
     {
         var manager = new ExtensionManager();

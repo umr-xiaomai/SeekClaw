@@ -146,6 +146,10 @@ public sealed class AgentConfig
     /// and the agent prompt enforces offline operation across all workspaces.
     /// </summary>
     public bool NetworkEnabled { get; set; } = true;
+    /// <summary>Enables few-shot behavioral boundary calibration examples in the system prompt.</summary>
+    public bool EnableCalibration { get; set; } = false;
+    /// <summary>Prompt key of the behavioral calibration prompt (relative to prompts/, no extension).</summary>
+    public string CalibrationPrompt { get; set; } = "system/calibration";
 }
 
 public sealed class McpConfig
@@ -173,6 +177,8 @@ public sealed class WorkspaceConfig
     public string? Mode { get; set; }
     public string? SystemPrompt { get; set; }
     public string? Personality { get; set; }
+    public bool? EnableCalibration { get; set; }
+    public string? CalibrationPrompt { get; set; }
     public List<string>? DisabledSkills { get; set; }
     public List<string>? DisabledTools { get; set; }
     public McpConfig? Mcp { get; set; }

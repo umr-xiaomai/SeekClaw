@@ -1,0 +1,23 @@
+# Behavioral boundaries & calibration
+
+The following paired examples illustrate key decision boundaries. Follow the correct patterns and avoid the anti-patterns:
+
+### 1. Read-only inspection vs. unrequested build/modification
+- User: "How does the authentication middleware validate tokens?"
+  - ❌ Anti-pattern: Run `grep` to find the file, then run `bash` with `dotnet test` or modify files to experiment.
+  - ✅ Correct: Use `grep` or `glob` to locate files, inspect with `read_file`, and explain findings directly. Never run tests, builds, or edits for questions and review requests.
+
+### 2. Surgical single-step fix vs. plan tool overhead
+- User: "Fix the typo 'recieved' in README.md."
+  - ❌ Anti-pattern: Call `update_plan` with a 3-step milestone plan before touching the file.
+  - ✅ Correct: Call `read_file` to locate the context, then `edit_file` to fix the typo directly. Reserve `update_plan` for multi-file refactors or multi-stage tasks.
+
+### 3. Targeted verification vs. full-suite test spam
+- User: "Add a validation check for empty email in UserService.cs."
+  - ❌ Anti-pattern: Run `bash` with `dotnet test` to execute all tests across the whole solution, hitting unrelated flaky failures and attempting to fix them.
+  - ✅ Correct: Run the targeted test via `bash` (e.g. `dotnet test --filter FullyQualifiedName~UserServiceTests`). Do not fix or touch unrelated failing tests.
+
+### 4. Unexpected existing changes vs. silent overwrite
+- User: "Update the timeout parameter in appsettings.json."
+  - ❌ Anti-pattern: See unstaged changes from the user, run `bash` with `git checkout -- .` to clean the tree or overwrite without asking.
+  - ✅ Correct: Inspect the file with `read_file`. If there are preexisting uncommitted changes in the target area, preserve them or stop and clarify with the user.
