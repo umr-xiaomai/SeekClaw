@@ -21,6 +21,7 @@ import {
   Search,
   Settings2,
   SlidersHorizontal,
+  Sparkles,
   Sun,
   Trash2,
   Upload,
@@ -235,10 +236,10 @@ const sections: Array<{ id: SettingsSection; label: string; icon: typeof Setting
   { id: 'advanced', label: '高级设置', icon: SlidersHorizontal }
 ]
 
-const pageTitle = computed(() => props.page === 'extensions' ? 'MCP 插件' : '设置')
+const pageTitle = computed(() => props.page === 'extensions' ? 'MCP 与技能' : '设置')
 const visibleSections = computed(() =>
   props.page === 'extensions'
-    ? sections.filter((item) => item.id === 'mcp')
+    ? sections.filter((item) => item.id === 'mcp' || item.id === 'skills')
     : sections.filter((item) => item.id !== 'mcp' && item.id !== 'skills'))
 
 async function requestJson<T>(
@@ -728,7 +729,7 @@ async function importSkills(): Promise<void> {
 }
 
 function normalizedSection(value?: SettingsSection): SettingsSection {
-  if (props.page === 'extensions') return 'mcp'
+  if (props.page === 'extensions') return value === 'skills' ? 'skills' : 'mcp'
   if (value === 'mcp' || value === 'skills') return 'general'
   return value ?? 'general'
 }
@@ -992,12 +993,15 @@ onBeforeUnmount(() => {
               <p>{{skills.filter((skill) => skill.enabled).length}} 已启用</p>
             </div>
             <div class="row-actions">
+              <button class="secondary-button" title="浏览官方精选技能市场" @click="emit('openOfficialSkills')">
+                <Sparkles :size="15" /><span>官方技能市场</span>
+              </button>
               <button class="icon-button" title="刷新" @click="loadCurrentSection">
                 <RefreshCw :size="17" />
               </button>
               <button class="secondary-button" :disabled="action === 'skill.import'" @click="importSkills">
                 <LoaderCircle v-if="action === 'skill.import'" class="spin" :size="15" />
-                <Upload v-else :size="15" />导入技能
+                <Upload v-else :size="15" /><span>导入技能</span>
               </button>
             </div>
           </div>
