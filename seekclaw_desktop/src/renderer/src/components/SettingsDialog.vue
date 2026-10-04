@@ -235,11 +235,11 @@ const sections: Array<{ id: SettingsSection; label: string; icon: typeof Setting
   { id: 'advanced', label: '高级设置', icon: SlidersHorizontal }
 ]
 
-const pageTitle = computed(() => props.page === 'extensions' ? 'MCP 与技能' : '设置')
+const pageTitle = computed(() => props.page === 'extensions' ? 'MCP 插件' : '设置')
 const visibleSections = computed(() =>
   props.page === 'extensions'
-    ? sections.filter((item) => item.id === 'mcp' || item.id === 'skills')
-    : sections)
+    ? sections.filter((item) => item.id === 'mcp')
+    : sections.filter((item) => item.id !== 'mcp' && item.id !== 'skills'))
 
 async function requestJson<T>(
   method: string,
@@ -728,7 +728,8 @@ async function importSkills(): Promise<void> {
 }
 
 function normalizedSection(value?: SettingsSection): SettingsSection {
-  if (props.page === 'extensions') return value === 'skills' ? 'skills' : 'mcp'
+  if (props.page === 'extensions') return 'mcp'
+  if (value === 'mcp' || value === 'skills') return 'general'
   return value ?? 'general'
 }
 

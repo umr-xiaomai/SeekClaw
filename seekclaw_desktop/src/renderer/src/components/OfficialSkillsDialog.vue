@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Sparkles,
   Store,
+  Upload,
   Users,
   Wrench,
   X
@@ -171,6 +172,27 @@ async function installSkill(skill: RemoteSkill): Promise<void> {
   }
 }
 
+const importingLocal = ref(false)
+
+async function importLocalSkills(): Promise<void> {
+  const selection = await window.seekclaw.selectSkillFiles()
+  if (!selection || selection.paths.length === 0) return
+  importingLocal.value = true
+  try {
+    for (const path of selection.paths) {
+      localSkills.value = await requestDaemon<LocalSkillInfo[]>('skill.import', {
+        path,
+        overwrite: true
+      })
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    alert(`导入技能失败: ${message}`)
+  } finally {
+    importingLocal.value = false
+  }
+}
+
 async function toggleSkill(skill: RemoteSkill): Promise<void> {
   const local = getLocalSkill(skill)
   if (!local) return
@@ -241,15 +263,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 </script>
 
 <template>
-  <div v-if="open" class="official-skills-workbench embedded-page" role="region" aria-labelledby="official-skills-title">
-    <TwoPaneLayout
-      storage-key="seekclaw-skills-sidebar-width"
-      :default-width="260"
-      :min-width="200"
-      :max-width="480"
-      :can-collapse="false"
-      aria-label="官方技能导航"
-    >
+  <div v-if="open" class="official-skills-workbench embedded-page" role="region"
+    aria-labelledby="official-skills-title">
+    <TwoPaneLayout storage-key="seekclaw-skills-sidebar-width" :default-width="260" :min-width="200" :max-width="480"
+      :can-collapse="false" aria-label="官方技能导航">
       <template #sidebar>
         <div class="skills-nav">
           <div class="skills-nav-header">
@@ -261,7 +278,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
           <div id="official-skills-title" class="skills-nav-group-title">
             <span>技能市场</span>
-            <span class="skills-chip">Marketplace</span>
+
           </div>
 
           <div class="skills-sidebar-search">
@@ -270,13 +287,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
           </div>
 
           <div class="skills-nav-list">
-            <button
-              v-for="cat in categories"
-              :key="cat.id"
-              class="skills-nav-item"
-              :class="{ active: activeCategory === cat.id }"
-              @click="activeCategory = cat.id"
-            >
+            <button v-for="cat in categories" :key="cat.id" class="skills-nav-item"
+              :class="{ active: activeCategory === cat.id }" @click="activeCategory = cat.id">
               <component :is="cat.icon" :size="16" />
               <span class="nav-item-label">{{ cat.label }}</span>
               <span class="nav-item-count">{{ cat.count }}</span>
@@ -293,6 +305,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
           </div>
 
           <div class="skills-header-actions">
+            <button class="secondary-action-button import-btn" :disabled="importingLocal" title="从本地导入 .zip 或 .md 技能文件" @click="importLocalSkills">
+              <LoaderCircle v-if="importingLocal" :size="13" class="spin" />
+              <Upload v-else :size="13" />
+              <span>导入本地技能</span>
+            </button>
             <button class="icon-button" title="刷新技能列表" :disabled="loading" @click="loadCatalog">
               <RefreshCw :size="16" :class="{ spin: loading }" />
             </button>
@@ -328,12 +345,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
           </div>
 
           <div v-else class="official-skills-items">
-            <div
-              v-for="skill in filtered"
-              :key="skill.slug"
-              class="official-skill-card"
-              :class="{ 'is-installed': isInstalled(skill) }"
-            >
+            <div v-for="skill in filtered" :key="skill.slug" class="official-skill-card"
+              :class="{ 'is-installed': isInstalled(skill) }">
               <div class="skill-card-top" @click="openDetail(skill)">
                 <div class="official-skill-icon" :class="{ official: skill.isOfficial }">
                   <ShieldCheck v-if="skill.isOfficial" :size="20" />
@@ -358,12 +371,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
               </div>
 
               <div class="skill-card-footer">
-                <button
-                  type="button"
-                  class="card-link-button"
-                  title="查看详细文档"
-                  @click="openDetail(skill)"
-                >
+                <button type="button" class="card-link-button" title="查看详细文档" @click="openDetail(skill)">
                   查看详情
                 </button>
 
@@ -374,34 +382,22 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
                       <span>已安装</span>
                     </div>
 
-                    <button
-                      class="switch-control"
-                      :class="{ active: isSkillEnabled(skill) }"
-                      :disabled="actionLoadingSlug === skill.slug"
-                      :title="isSkillEnabled(skill) ? '点击禁用技能' : '点击启用技能'"
-                      aria-label="启用/禁用技能"
-                      @click="toggleSkill(skill)"
-                    >
+                    <button class="switch-control" :class="{ active: isSkillEnabled(skill) }"
+                      :disabled="actionLoadingSlug === skill.slug" :title="isSkillEnabled(skill) ? '点击禁用技能' : '点击启用技能'"
+                      aria-label="启用/禁用技能" @click="toggleSkill(skill)">
                       <span />
                     </button>
 
-                    <button
-                      class="secondary-action-button"
-                      :disabled="actionLoadingSlug === skill.slug"
-                      title="从市场重新拉取更新该技能"
-                      @click="installSkill(skill)"
-                    >
+                    <button class="secondary-action-button" :disabled="actionLoadingSlug === skill.slug"
+                      title="从市场重新拉取更新该技能" @click="installSkill(skill)">
                       <LoaderCircle v-if="actionLoadingSlug === skill.slug" :size="12" class="spin" />
                       <span>更新</span>
                     </button>
                   </template>
 
                   <template v-else>
-                    <button
-                      class="install-button"
-                      :disabled="actionLoadingSlug === skill.slug"
-                      @click="installSkill(skill)"
-                    >
+                    <button class="install-button" :disabled="actionLoadingSlug === skill.slug"
+                      @click="installSkill(skill)">
                       <LoaderCircle v-if="actionLoadingSlug === skill.slug" :size="14" class="spin" />
                       <Download v-else :size="14" />
                       <span>安装</span>
@@ -414,15 +410,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
         </div>
 
         <footer class="official-skills-footer">
-          <span>官方技能市场地址：<a href="https://seekclaw.hoilai.com/skills" target="_blank">https://seekclaw.hoilai.com</a></span>
-          <span>已安装技能可在「设置 → 技能」中统一管理</span>
+          <span>官方技能市场地址：<a href="https://seekclaw.hoilai.com/skills"
+              target="_blank">https://seekclaw.hoilai.com</a></span>
+          <span>已安装技能可在此页面中统一管理与启禁用</span>
         </footer>
       </div>
     </TwoPaneLayout>
 
     <!-- 技能详情弹窗 / 抽屉 -->
     <div v-if="selectedSkill" class="skill-detail-overlay" @click.self="closeDetail">
-      <div class="skill-detail-modal" role="dialog" aria-modal="true" :aria-labelledby="`detail-title-${selectedSkill.slug}`">
+      <div class="skill-detail-modal" role="dialog" aria-modal="true"
+        :aria-labelledby="`detail-title-${selectedSkill.slug}`">
         <header class="detail-header">
           <div class="detail-title-area">
             <div class="d-flex align-items-center gap-2">
@@ -434,13 +432,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
             <div class="detail-slug-meta">
               <code>{{ selectedSkill.slug }}</code>
               <span>作者: {{ selectedSkill.author }}</span>
-              <a
-                v-if="selectedSkill.homepage"
-                :href="selectedSkill.homepage"
-                target="_blank"
-                class="detail-homepage-link"
-                title="打开技能主页"
-              >
+              <a v-if="selectedSkill.homepage" :href="selectedSkill.homepage" target="_blank"
+                class="detail-homepage-link" title="打开技能主页">
                 <Globe :size="13" />
                 <span>主页</span>
                 <ExternalLink :size="11" />
@@ -454,31 +447,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
                 <Check :size="13" />
                 <span>已安装</span>
               </div>
-              <button
-                class="switch-control"
-                :class="{ active: isSkillEnabled(selectedSkill) }"
-                :disabled="actionLoadingSlug === selectedSkill.slug"
-                title="启用/禁用技能"
-                @click="toggleSkill(selectedSkill)"
-              >
+              <button class="switch-control" :class="{ active: isSkillEnabled(selectedSkill) }"
+                :disabled="actionLoadingSlug === selectedSkill.slug" title="启用/禁用技能"
+                @click="toggleSkill(selectedSkill)">
                 <span />
               </button>
-              <button
-                class="secondary-action-button"
-                :disabled="actionLoadingSlug === selectedSkill.slug"
-                title="重新安装 / 覆盖"
-                @click="installSkill(selectedSkill)"
-              >
+              <button class="secondary-action-button" :disabled="actionLoadingSlug === selectedSkill.slug"
+                title="重新安装 / 覆盖" @click="installSkill(selectedSkill)">
                 <LoaderCircle v-if="actionLoadingSlug === selectedSkill.slug" :size="13" class="spin" />
                 <span>重新安装</span>
               </button>
             </template>
             <template v-else>
-              <button
-                class="install-button"
-                :disabled="actionLoadingSlug === selectedSkill.slug"
-                @click="installSkill(selectedSkill)"
-              >
+              <button class="install-button" :disabled="actionLoadingSlug === selectedSkill.slug"
+                @click="installSkill(selectedSkill)">
                 <LoaderCircle v-if="actionLoadingSlug === selectedSkill.slug" :size="14" class="spin" />
                 <Download v-else :size="14" />
                 <span>一键安装</span>
@@ -572,15 +554,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   letter-spacing: 0.02em;
 }
 
-.skills-chip {
-  padding: 1px 6px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
 
 .skills-sidebar-search {
   display: flex;
@@ -693,6 +666,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .skills-content-count {
   font-size: 12.5px;
   color: var(--text-muted);
+}
+
+.skills-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .skills-main-scroll {
@@ -1113,7 +1092,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>
