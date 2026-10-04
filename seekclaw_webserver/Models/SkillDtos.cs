@@ -12,7 +12,13 @@ public sealed record SkillSummary(
     string? AuthorUsername,
     bool Enabled,
     bool HasPackage,
-    long UpdatedAt);
+    long UpdatedAt,
+    string? Homepage = null);
+
+public sealed record SkillPackageResult(
+    byte[] Data,
+    string ContentType,
+    string FileName);
 
 public sealed record SkillDetailModel(
     int Id,

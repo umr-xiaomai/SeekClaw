@@ -713,24 +713,68 @@ internal sealed class DaemonAdminApi(
     public string ImportSkill(JsonObject parameters)
     {
         var path = RequiredString(parameters, "path");
+        var overwrite = parameters["overwrite"]?.GetValue<bool?>() ?? true;
+        string? tempFile = null;
         string fullPath;
         try
         {
-            fullPath = Path.GetFullPath(path);
+            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                var response = httpClient.GetAsync(path).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+                using var fs = File.Create(tempFile);
+                response.Content.CopyTo(fs, null, CancellationToken.None);
+                fullPath = tempFile;
+            }
+            else if (!File.Exists(path) && !path.Contains('/') && !path.Contains('\\'))
+            {
+                var officialUrl = $"https://seekclaw.hoilai.com/api/skills/{Uri.EscapeDataString(path)}/download";
+                tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                var response = httpClient.GetAsync(officialUrl).GetAwaiter().GetResult();
+                if (response.IsSuccessStatusCode)
+                {
+                    using var fs = File.Create(tempFile);
+                    response.Content.CopyTo(fs, null, CancellationToken.None);
+                    fullPath = tempFile;
+                }
+                else
+                {
+                    fullPath = Path.GetFullPath(path);
+                }
+            }
+            else
+            {
+                fullPath = Path.GetFullPath(path);
+            }
         }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or HttpRequestException)
         {
-            throw new DaemonRequestException($"Invalid skill import path: {ex.Message}");
+            if (tempFile != null && File.Exists(tempFile))
+            {
+                try { File.Delete(tempFile); } catch { }
+            }
+            throw new DaemonRequestException($"Invalid skill import path or failed to download: {ex.Message}");
         }
 
         try
         {
-            runtime.Skills.ImportGlobal(fullPath, runtime.Workspace);
+            runtime.Skills.ImportGlobal(fullPath, runtime.Workspace, overwrite);
             return ListSkills();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             throw new DaemonRequestException($"Skill import failed: {ex.Message}");
+        }
+        finally
+        {
+            if (tempFile != null && File.Exists(tempFile))
+            {
+                try { File.Delete(tempFile); } catch { }
+            }
         }
     }
 

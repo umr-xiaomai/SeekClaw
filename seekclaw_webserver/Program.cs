@@ -19,6 +19,16 @@ Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite($"Data Source={databasePath}"));
 
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
@@ -107,6 +117,7 @@ if (!app.Environment.IsDevelopment())
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
+app.UseCors();
 app.UseRateLimiter();
 app.UseAntiforgery();
 
@@ -218,19 +229,42 @@ app.MapPost("/api/auth/logout", async (HttpContext context) =>
 app.MapGet("/api/auth/registration", async (AuthService auth) =>
     Results.Json(new { enabled = await auth.IsRegistrationEnabledAsync() }));
 
-// Skill Package Downloads
-app.MapGet("/api/skills/{id:int}/download", async (int id, SkillService skills) =>
+// Skill Marketplace REST APIs
+app.MapGet("/api/skills", async (string? type, string? q, SkillService skills) =>
 {
-    var skill = await skills.GetPackageAsync(id);
-    if (skill is null || skill.PackageData is null || skill.PackageData.Length == 0)
+    var list = await skills.ListAsync(includeDisabled: false, typeFilter: type, search: q);
+    return Results.Json(list);
+});
+
+app.MapGet("/api/skills/{slugOrId}", async (string slugOrId, SkillService skills) =>
+{
+    SkillDetailModel? detail = null;
+    if (int.TryParse(slugOrId, out var id))
+    {
+        detail = await skills.GetDetailAsync(id);
+    }
+    detail ??= await skills.GetDetailBySlugAsync(slugOrId);
+
+    if (detail is null || !detail.Enabled)
+    {
+        return Results.NotFound(new { error = "技能不存在或已下线" });
+    }
+
+    return Results.Json(detail);
+});
+
+app.MapGet("/api/skills/{slugOrId}/download", async (string slugOrId, SkillService skills) =>
+{
+    var package = await skills.GetDownloadPackageAsync(slugOrId);
+    if (package is null)
     {
         return Results.NotFound();
     }
 
     return Results.File(
-        skill.PackageData,
-        skill.PackageContentType ?? "application/octet-stream",
-        skill.PackageFileName ?? $"{skill.Slug}.zip");
+        package.Data,
+        package.ContentType,
+        package.FileName);
 });
 
 app.MapStaticAssets();

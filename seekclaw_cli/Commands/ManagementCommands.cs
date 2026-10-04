@@ -231,7 +231,69 @@ public static class SkillCommands
             return 0;
         });
 
-        command.Add(list); command.Add(enable); command.Add(disable);
+        var installArg = new Argument<string>("source") { Description = "Path, URL or official skill name/slug" };
+        var install = new Command("install", "Install a skill from local file, URL, or official marketplace");
+        install.Add(installArg);
+        install.SetAction(parse =>
+        {
+            var source = parse.GetRequiredValue(installArg);
+            using var rt = CliHost.CreateRuntime();
+            string? tempFile = null;
+            string fullPath;
+            try
+            {
+                if (source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    source.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    AnsiConsole.MarkupLine($"[dim]Downloading from {Markup.Escape(source)}...[/]");
+                    tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
+                    using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                    var response = httpClient.GetAsync(source).GetAwaiter().GetResult();
+                    response.EnsureSuccessStatusCode();
+                    using var fs = File.Create(tempFile);
+                    response.Content.CopyTo(fs, null, CancellationToken.None);
+                    fullPath = tempFile;
+                }
+                else if (!File.Exists(source) && !source.Contains('/') && !source.Contains('\\'))
+                {
+                    var officialUrl = $"https://seekclaw.hoilai.com/api/skills/{Uri.EscapeDataString(source)}/download";
+                    AnsiConsole.MarkupLine($"[dim]Fetching skill '{Markup.Escape(source)}' from official marketplace...[/]");
+                    tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
+                    using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                    var response = httpClient.GetAsync(officialUrl).GetAwaiter().GetResult();
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        AnsiConsole.MarkupLine($"[red]Skill '{Markup.Escape(source)}' not found locally or on official marketplace ({response.StatusCode}).[/]");
+                        return 1;
+                    }
+                    using var fs = File.Create(tempFile);
+                    response.Content.CopyTo(fs, null, CancellationToken.None);
+                    fullPath = tempFile;
+                }
+                else
+                {
+                    fullPath = Path.GetFullPath(source);
+                }
+
+                rt.Skills.ImportGlobal(fullPath, rt.Workspace, overwrite: true);
+                AnsiConsole.MarkupLine($"[green]Skill '{Markup.Escape(source)}' installed successfully.[/]");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Failed to install skill: {Markup.Escape(ex.Message)}[/]");
+                return 1;
+            }
+            finally
+            {
+                if (tempFile != null && File.Exists(tempFile))
+                {
+                    try { File.Delete(tempFile); } catch { }
+                }
+            }
+        });
+
+        command.Add(list); command.Add(install); command.Add(enable); command.Add(disable);
         return command;
     }
 }

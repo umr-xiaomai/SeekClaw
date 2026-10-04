@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using seekclaw_webserver.Data;
@@ -12,7 +13,7 @@ public sealed class SkillService(AppDbContext db)
         ".zip", ".json", ".md", ".txt"
     };
 
-    public async Task<List<SkillSummary>> ListAsync(bool includeDisabled, string? typeFilter = null)
+    public async Task<List<SkillSummary>> ListAsync(bool includeDisabled, string? typeFilter = null, string? search = null)
     {
         var query = db.Skills.AsNoTracking();
         if (!includeDisabled)
@@ -29,6 +30,15 @@ public sealed class SkillService(AppDbContext db)
             query = query.Where(skill => !skill.IsOfficial);
         }
 
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(skill =>
+                skill.Name.Contains(term) ||
+                skill.Slug.Contains(term) ||
+                skill.Summary.Contains(term));
+        }
+
         return await query
             .OrderByDescending(skill => skill.IsOfficial)
             .ThenByDescending(skill => skill.UpdatedAt)
@@ -43,8 +53,9 @@ public sealed class SkillService(AppDbContext db)
                 skill.AuthorUserId,
                 skill.AuthorUsername,
                 skill.Enabled,
-                skill.PackageData != null && skill.PackageData.Length > 0,
-                skill.UpdatedAt))
+                (skill.PackageData != null && skill.PackageData.Length > 0) || !string.IsNullOrWhiteSpace(skill.ReadmeMarkdown) || !string.IsNullOrWhiteSpace(skill.Summary),
+                skill.UpdatedAt,
+                skill.Homepage))
             .ToListAsync();
     }
 
@@ -349,6 +360,90 @@ seekclaw skill install code-reviewer
         return await db.Skills.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id && x.Enabled && x.PackageData != null);
     }
 
+    public async Task<SkillPackageResult?> GetDownloadPackageAsync(string slugOrId)
+    {
+        if (string.IsNullOrWhiteSpace(slugOrId))
+            return null;
+
+        Skill? skill = null;
+        if (int.TryParse(slugOrId, out var id))
+        {
+            skill = await db.Skills.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id && x.Enabled);
+        }
+
+        if (skill is null)
+        {
+            var normalizedSlug = slugOrId.Trim().ToLowerInvariant();
+            skill = await db.Skills.AsNoTracking().SingleOrDefaultAsync(x => x.Slug == normalizedSlug && x.Enabled);
+        }
+
+        if (skill is null)
+        {
+            return null;
+        }
+
+        if (skill.PackageData != null && skill.PackageData.Length > 0)
+        {
+            return new SkillPackageResult(
+                skill.PackageData,
+                skill.PackageContentType ?? "application/zip",
+                skill.PackageFileName ?? $"{skill.Slug}.zip");
+        }
+
+        if (string.IsNullOrWhiteSpace(skill.ReadmeMarkdown) && string.IsNullOrWhiteSpace(skill.Summary))
+        {
+            return null;
+        }
+
+        var packageBytes = GenerateSkillZipPackage(skill);
+        return new SkillPackageResult(packageBytes, "application/zip", $"{skill.Slug}.zip");
+    }
+
+    private static byte[] GenerateSkillZipPackage(Skill skill)
+    {
+        using var memoryStream = new MemoryStream();
+        using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var promptContent = !string.IsNullOrWhiteSpace(skill.ReadmeMarkdown)
+                ? skill.ReadmeMarkdown
+                : skill.Summary;
+            var promptEntry = archive.CreateEntry("prompt.txt", CompressionLevel.Optimal);
+            using (var entryStream = promptEntry.Open())
+            using (var writer = new StreamWriter(entryStream, Encoding.UTF8))
+            {
+                writer.Write(promptContent);
+            }
+
+            var yamlContent = $"""
+            name: "{EscapeYaml(skill.Slug)}"
+            description: "{EscapeYaml(skill.Summary)}"
+            version: "{EscapeYaml(skill.Version)}"
+            prompt: "prompt.txt"
+            """;
+            var yamlEntry = archive.CreateEntry("skill.yaml", CompressionLevel.Optimal);
+            using (var entryStream = yamlEntry.Open())
+            using (var writer = new StreamWriter(entryStream, Encoding.UTF8))
+            {
+                writer.Write(yamlContent);
+            }
+
+            if (!string.IsNullOrWhiteSpace(skill.ReadmeMarkdown))
+            {
+                var readmeEntry = archive.CreateEntry("README.md", CompressionLevel.Optimal);
+                using (var entryStream = readmeEntry.Open())
+                using (var writer = new StreamWriter(entryStream, Encoding.UTF8))
+                {
+                    writer.Write(skill.ReadmeMarkdown);
+                }
+            }
+        }
+
+        return memoryStream.ToArray();
+    }
+
+    private static string EscapeYaml(string value) =>
+        value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "").Replace("\n", " ");
+
     private async Task<string> EnsureUniqueSlugAsync(string baseSlug, int? exceptId = null)
     {
         var slug = baseSlug;
@@ -435,7 +530,7 @@ seekclaw skill install code-reviewer
             skill.AuthorUserId,
             skill.AuthorUsername,
             skill.Enabled,
-            skill.PackageData != null && skill.PackageData.Length > 0,
+            (skill.PackageData != null && skill.PackageData.Length > 0) || !string.IsNullOrWhiteSpace(skill.ReadmeMarkdown) || !string.IsNullOrWhiteSpace(skill.Summary),
             skill.PackageFileName,
             skill.CreatedAt,
             skill.UpdatedAt);

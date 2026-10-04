@@ -120,7 +120,7 @@ public sealed class SkillManager : ISkillManager
     /// skill directory at the archive root or one directory per skill; a skill directory
     /// is recognized by <c>skill.yaml</c>/<c>skill.yml</c>/<c>prompt.txt</c>.
     /// </summary>
-    public IReadOnlyList<SkillInfo> ImportGlobal(string path, WorkspaceInfo workspace)
+    public IReadOnlyList<SkillInfo> ImportGlobal(string path, WorkspaceInfo workspace, bool overwrite = false)
     {
         var fullPath = Path.GetFullPath(path);
         if (!File.Exists(fullPath))
@@ -129,25 +129,25 @@ public sealed class SkillManager : ISkillManager
         Directory.CreateDirectory(_globalSkillsDir);
         var extension = Path.GetExtension(fullPath);
         if (extension.Equals(".md", StringComparison.OrdinalIgnoreCase))
-            ImportMarkdown(fullPath);
+            ImportMarkdown(fullPath, overwrite);
         else if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
-            ImportZip(fullPath);
+            ImportZip(fullPath, overwrite);
         else
             throw new InvalidDataException("Only .md and .zip skill files can be imported.");
 
         return Discover(workspace);
     }
 
-    private void ImportMarkdown(string markdownFile)
+    private void ImportMarkdown(string markdownFile, bool overwrite = false)
     {
         var name = Path.GetFileNameWithoutExtension(markdownFile);
-        var directory = NewSkillDirectory(SanitizeSkillName(name));
+        var directory = NewSkillDirectory(SanitizeSkillName(name), overwrite);
         Directory.CreateDirectory(directory);
-        File.Copy(markdownFile, Path.Combine(directory, "prompt.txt"), overwrite: false);
+        File.Copy(markdownFile, Path.Combine(directory, "prompt.txt"), overwrite: true);
         WriteManifest(directory, name, $"Imported from {Path.GetFileName(markdownFile)}");
     }
 
-    private void ImportZip(string zipFile)
+    private void ImportZip(string zipFile, bool overwrite = false)
     {
         var extractionRoot = Path.Combine(
             Path.GetTempPath(), "seekclaw-skill-import-" + Guid.NewGuid().ToString("N"));
@@ -160,7 +160,7 @@ public sealed class SkillManager : ISkillManager
 
             if (LooksLikeSkillDirectory(extractionRoot))
             {
-                CopySkillDirectory(extractionRoot, Path.GetFileNameWithoutExtension(zipFile));
+                CopySkillDirectory(extractionRoot, Path.GetFileNameWithoutExtension(zipFile), overwrite);
                 imported = true;
             }
             else
@@ -168,13 +168,13 @@ public sealed class SkillManager : ISkillManager
                 foreach (var directory in Directory.EnumerateDirectories(extractionRoot))
                 {
                     if (!LooksLikeSkillDirectory(directory)) continue;
-                    CopySkillDirectory(directory, Path.GetFileName(directory));
+                    CopySkillDirectory(directory, Path.GetFileName(directory), overwrite);
                     imported = true;
                 }
 
                 foreach (var markdown in Directory.EnumerateFiles(extractionRoot, "*.md", SearchOption.TopDirectoryOnly))
                 {
-                    ImportMarkdown(markdown);
+                    ImportMarkdown(markdown, overwrite);
                     imported = true;
                 }
             }
@@ -195,13 +195,13 @@ public sealed class SkillManager : ISkillManager
         }
     }
 
-    private void CopySkillDirectory(string source, string fallbackName)
+    private void CopySkillDirectory(string source, string fallbackName, bool overwrite = false)
     {
         var manifest = LoadManifest(source);
         var desiredName = !string.IsNullOrWhiteSpace(manifest?.Name)
             ? manifest.Name
             : fallbackName;
-        var destination = NewSkillDirectory(SanitizeSkillName(desiredName));
+        var destination = NewSkillDirectory(SanitizeSkillName(desiredName), overwrite);
         Directory.CreateDirectory(destination);
 
         foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
@@ -209,15 +209,27 @@ public sealed class SkillManager : ISkillManager
             var relative = Path.GetRelativePath(source, file);
             var target = Path.Combine(destination, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, overwrite: false);
+            File.Copy(file, target, overwrite: true);
         }
     }
 
-    private string NewSkillDirectory(string name)
+    private string NewSkillDirectory(string name, bool overwrite = false)
     {
         var candidate = Path.Combine(_globalSkillsDir, name);
         if (Directory.Exists(candidate) || File.Exists(candidate))
-            throw new InvalidDataException($"A global skill named '{name}' already exists.");
+        {
+            if (overwrite)
+            {
+                if (Directory.Exists(candidate))
+                    Directory.Delete(candidate, recursive: true);
+                else
+                    File.Delete(candidate);
+            }
+            else
+            {
+                throw new InvalidDataException($"A global skill named '{name}' already exists.");
+            }
+        }
         return candidate;
     }
 
