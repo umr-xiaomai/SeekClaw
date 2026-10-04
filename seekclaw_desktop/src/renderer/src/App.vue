@@ -22,6 +22,7 @@ import {
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
 import AppTitleBar from './components/AppTitleBar.vue'
+import ActivityBar from './components/ActivityBar.vue'
 import AboutDialog from './components/AboutDialog.vue'
 import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
 import ScheduledTasksDialog from './components/ScheduledTasksDialog.vue'
@@ -100,6 +101,71 @@ type AppPage = 'main' | 'settings' | 'extensions' | 'archived' | 'scheduled' | '
 
 const sidebarOpen = ref(true)
 const activePage = ref<AppPage>('main')
+
+const currentActivityItem = computed<'chat' | 'archived' | 'scheduled' | 'plugins' | 'skills' | 'settings'>(() => {
+  switch (activePage.value) {
+    case 'archived': return 'archived'
+    case 'scheduled': return 'scheduled'
+    case 'extensions': return 'plugins'
+    case 'official-skills': return 'skills'
+    case 'settings': return 'settings'
+    case 'main':
+    default:
+      return 'chat'
+  }
+})
+
+function handleToggleSidebar(): void {
+  sidebarOpen.value = !sidebarOpen.value
+  if (sidebarOpen.value && sidebarWidth.value < MIN_SIDEBAR_WIDTH) {
+    sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(DEFAULT_SIDEBAR_WIDTH))
+  }
+}
+
+function handleActivityChat(): void {
+  if (activePage.value !== 'main') {
+    activePage.value = 'main'
+    sidebarOpen.value = true
+    if (sidebarWidth.value < MIN_SIDEBAR_WIDTH) {
+      sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH
+      localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(DEFAULT_SIDEBAR_WIDTH))
+    }
+  } else {
+    handleToggleSidebar()
+  }
+}
+
+const SIDEBAR_WIDTH_STORAGE_KEY = 'seekclaw-sidebar-width-v1'
+const DEFAULT_SIDEBAR_WIDTH = 300
+const MIN_SIDEBAR_WIDTH = 200
+const MAX_SIDEBAR_WIDTH = 640
+
+function loadStoredSidebarWidth(): number {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+    if (!raw) return DEFAULT_SIDEBAR_WIDTH
+    const val = Number(raw)
+    if (Number.isFinite(val) && val >= MIN_SIDEBAR_WIDTH && val <= MAX_SIDEBAR_WIDTH) {
+      return val
+    }
+    return DEFAULT_SIDEBAR_WIDTH
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH
+  }
+}
+
+const sidebarWidth = ref(loadStoredSidebarWidth())
+
+function handleSidebarResize(width: number): void {
+  sidebarWidth.value = width
+  localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(width))
+}
+
+function handleSidebarResetWidth(): void {
+  sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH
+  localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(DEFAULT_SIDEBAR_WIDTH))
+}
 const aboutOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
@@ -1420,25 +1486,58 @@ watch(theme, applyTheme)
 <template>
   <div class="app-shell">
     <AppTitleBar :sidebar-open="sidebarOpen" :project-path="globalTaskActive ? undefined : activeProject?.path"
-      @toggle-sidebar="sidebarOpen = !sidebarOpen" @new-task="newTask(selectedProjectId || undefined)"
+      @toggle-sidebar="handleToggleSidebar" @new-task="newTask(selectedProjectId || undefined)"
       @open-workspace="openWorkspace" @show-project="showActiveProject" @open-settings="openSettings('general')"
       @focus-composer="composer?.focus()" @open-terminal="openProjectTerminal" @open-git-changes="openGitPanel('diff')"
       @open-git-history="openGitPanel('history')" @open-diagnostics="openSettings('diagnostics')"
       @open-dev-tools="openDevTools" @open-about="aboutOpen = true" />
 
-    <div class="app-body" v-show="activePage === 'main'" :class="{ 'sidebar-collapsed': !sidebarOpen }">
-      <Transition name="sidebar-slide">
-        <Sidebar v-if="sidebarOpen" :projects="projects" :threads="threads" :active-thread-id="activeThreadId"
-          :active-project-id="selectedProjectId" :version="appInfo.version" @new-task="newTask"
-          @open-workspace="openWorkspace" @select-thread="selectThread" @task-settings="openTaskSettings"
-          @archive-task="archiveTask" @restore-task="restoreTask" @delete-task="deleteTask"
-          @delete-project="deleteProject" @archive-project-tasks="archiveProjectTasks"
-          @initialize-project-workspace="initializeProjectWorkspace" @open-project-properties="openProjectProperties"
-          @delete-project-tasks="deleteProjectTasks" @archive-global-tasks="archiveGlobalTasks"
-          @delete-global-tasks="deleteGlobalTasks" @open-archived="openArchivedTasks"
-          @open-scheduled-tasks="openScheduledTasks" @open-extensions="openExtensions('mcp')"
-          @open-official-skills="openOfficialSkills" @open-settings="openSettings('general')" />
-      </Transition>
+    <div class="app-main-layout">
+      <ActivityBar
+        :active-item="currentActivityItem"
+        :sidebar-open="sidebarOpen"
+        @open-chat="handleActivityChat"
+        @open-archived="openArchivedTasks"
+        @open-scheduled-tasks="openScheduledTasks"
+        @open-plugins="openExtensions('mcp')"
+        @open-skills="openOfficialSkills"
+        @open-settings="openSettings('general')"
+      />
+
+      <div class="app-workspace-container">
+        <div
+          class="app-body"
+          v-show="activePage === 'main'"
+          :class="{ 'sidebar-collapsed': !sidebarOpen }"
+          :style="{ '--sidebar-width': `${sidebarWidth}px` }"
+        >
+          <Transition name="sidebar-slide">
+            <Sidebar
+              v-if="sidebarOpen"
+              :projects="projects"
+              :threads="threads"
+              :active-thread-id="activeThreadId"
+              :active-project-id="selectedProjectId"
+              :width="sidebarWidth"
+              @new-task="newTask"
+              @open-workspace="openWorkspace"
+              @select-thread="selectThread"
+              @task-settings="openTaskSettings"
+              @archive-task="archiveTask"
+              @restore-task="restoreTask"
+              @delete-task="deleteTask"
+              @delete-project="deleteProject"
+              @archive-project-tasks="archiveProjectTasks"
+              @initialize-project-workspace="initializeProjectWorkspace"
+              @open-project-properties="openProjectProperties"
+              @delete-project-tasks="deleteProjectTasks"
+              @archive-global-tasks="archiveGlobalTasks"
+              @delete-global-tasks="deleteGlobalTasks"
+              @resize="handleSidebarResize"
+              @collapse="sidebarOpen = false"
+              @reset-width="handleSidebarResetWidth"
+            />
+          </Transition>
       <Transition name="scrim-fade">
         <button v-if="sidebarOpen" class="sidebar-scrim" title="关闭侧栏" @click="sidebarOpen = false" />
       </Transition>
@@ -1487,7 +1586,7 @@ watch(theme, applyTheme)
               <button class="icon-button" title="任务设置" :disabled="!activeThread" @click="openTaskSettings()">
                 <MoreHorizontal :size="18" />
               </button>
-              <button class="icon-button" title="切换侧栏" @click="sidebarOpen = !sidebarOpen">
+              <button class="icon-button" title="切换侧栏" @click="handleToggleSidebar">
                 <PanelRight :size="18" />
               </button>
             </div>
@@ -1613,6 +1712,8 @@ watch(theme, applyTheme)
     <ArchivedTasksDialog :open="activePage === 'archived'" :projects="projects" :threads="threads" @close="closePage"
       @select-thread="selectArchivedThread" @restore-task="restoreTask" @delete-task="deleteTask"
       @delete-all="deleteArchivedTasks" />
+      </div>
+    </div>
 
     <AboutDialog :open="aboutOpen" :app-info="appInfo" @close="aboutOpen = false" />
 

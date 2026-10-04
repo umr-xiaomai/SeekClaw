@@ -148,8 +148,8 @@ async function stopManagedDaemon(): Promise<void> {
 function nativeWindowColors(): { background: string; titlebar: string; symbols: string } {
   const dark = nativeTheme.shouldUseDarkColors
   return {
-    background: dark ? '#181818' : '#f7f7f7',
-    titlebar: dark ? '#202020' : '#f3f3f3',
+    background: dark ? '#181818' : '#fafafa',
+    titlebar: dark ? '#191919' : '#eceef2',
     symbols: dark ? '#f2f2f2' : '#343434'
   }
 }
@@ -162,7 +162,7 @@ function syncNativeWindowTheme(): void {
     mainWindow.setTitleBarOverlay({
       color: supportsMica ? '#00000000' : colors.titlebar,
       symbolColor: colors.symbols,
-      height: 42
+      height: 48
     })
   }
 }
@@ -272,7 +272,7 @@ function createWindow(): void {
     titleBarOverlay: process.platform === 'darwin' ? false : {
       color: supportsMica ? '#00000000' : colors.titlebar,
       symbolColor: colors.symbols,
-      height: 42
+      height: 48
     },
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),

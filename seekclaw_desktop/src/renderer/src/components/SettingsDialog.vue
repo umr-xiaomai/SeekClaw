@@ -41,6 +41,7 @@ import McpEditorDialog from './McpEditorDialog.vue'
 import type { ModelDetailConfig } from './ModelConfigModal.vue'
 import ProviderEditorDialog from './ProviderEditorDialog.vue'
 import SelectMenu from './SelectMenu.vue'
+import TwoPaneLayout from './TwoPaneLayout.vue'
 import UsageTrendChart, { type TimelinePoint } from './UsageTrendChart.vue'
 import UsageModelBarChart from './UsageModelBarChart.vue'
 
@@ -781,43 +782,39 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section v-if="open" class="settings-dialog settings-workbench embedded-page" role="region" :aria-label="pageTitle">
-    <nav class="settings-nav" aria-label="页面导航">
-      <div class="settings-nav-header">
-        <button class="page-back-button" type="button" title="返回应用" @click="emit('close')">
-          <ArrowLeft :size="16" />
-          <span>返回应用</span>
-        </button>
-      </div>
+  <div v-if="open" class="settings-dialog settings-workbench embedded-page" role="region" :aria-label="pageTitle">
+    <TwoPaneLayout
+      storage-key="seekclaw-settings-sidebar-width"
+      :default-width="260"
+      :min-width="200"
+      :max-width="480"
+      :can-collapse="false"
+      :aria-label="pageTitle"
+    >
+      <template #sidebar>
+        <nav class="settings-nav" aria-label="页面导航">
+          <div class="settings-nav-header">
+            <button class="page-back-button" type="button" title="返回应用" @click="emit('close')">
+              <ArrowLeft :size="16" />
+              <span>返回应用</span>
+            </button>
+          </div>
 
-      <div class="settings-nav-group-title">
-        {{ pageTitle }}
-      </div>
+          <div class="settings-nav-group-title">
+            {{ pageTitle }}
+          </div>
 
-      <div class="settings-nav-list">
-        <button v-for="item in visibleSections" :key="item.id" class="settings-nav-item"
-          :class="{ active: section === item.id }" @click="section = item.id">
-          <component :is="item.icon" :size="17" />
-          <span>{{ item.label }}</span>
-        </button>
-      </div>
+          <div class="settings-nav-list">
+            <button v-for="item in visibleSections" :key="item.id" class="settings-nav-item"
+              :class="{ active: section === item.id }" @click="section = item.id">
+              <component :is="item.icon" :size="17" />
+              <span>{{ item.label }}</span>
+            </button>
+          </div>
+        </nav>
+      </template>
 
-      <!--
-      <div class="settings-nav-footer">
-        <span class="settings-connection" :class="{ online: daemonConnected }" :title="daemonEndpoint">
-          <Circle :size="8" fill="currentColor" />
-          <span>{{ daemonConnected ? '运行时已连接' : '运行时离线' }}</span>
-        </span>
-        <button v-if="!daemonConnected" class="icon-button compact reconnect-btn" title="重新连接"
-          @click="emit('reconnect')">
-          <RefreshCw :size="13" />
-        </button>
-      </div>
-      -->
-
-    </nav>
-
-    <main class="settings-main">
+      <main class="settings-main">
       <div class="settings-content">
         <div v-if="loading" class="settings-loading">
           <LoaderCircle class="spin" :size="20" /> 正在加载
@@ -1241,7 +1238,8 @@ onBeforeUnmount(() => {
 
       </div>
     </main>
-  </section>
+    </TwoPaneLayout>
+  </div>
   <Teleport to="body">
     <Transition name="global-toast">
       <div v-if="open && (error || notice)" class="global-toast-layer" role="status"

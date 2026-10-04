@@ -10,7 +10,7 @@ import {
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ProjectItem, ThreadItem } from '../types'
-import SelectMenu from './SelectMenu.vue'
+import TwoPaneLayout from './TwoPaneLayout.vue'
 
 const props = defineProps<{
   open: boolean
@@ -31,17 +31,6 @@ type TaskFilter = 'all' | 'global' | 'project'
 const query = ref('')
 const taskFilter = ref<TaskFilter>('all')
 const projectFilter = ref('all')
-
-const taskFilterOptions = [
-  { value: 'all', label: '所有任务' },
-  { value: 'global', label: '不绑定项目' },
-  { value: 'project', label: '项目任务' }
-]
-
-const projectFilterOptions = computed(() => [
-  { value: 'all', label: '所有项目' },
-  ...props.projects.map((project) => ({ value: project.id, label: project.name }))
-])
 
 const archivedThreads = computed(() => {
   const normalized = query.value.trim().toLocaleLowerCase()
@@ -68,7 +57,7 @@ const archiveGroups = computed(() => {
     }
     groups.set(id, {
       id,
-      name: project?.name ?? '任务',
+      name: project?.name ?? '任务 · 未绑定项目',
       path: project?.path,
       threads: [thread]
     })
@@ -77,6 +66,28 @@ const archiveGroups = computed(() => {
 })
 
 const archivedCount = computed(() => props.threads.filter((thread) => thread.archived).length)
+const globalArchivedCount = computed(() => props.threads.filter((thread) => thread.archived && !thread.projectId).length)
+
+const projectGroupsWithCount = computed(() => {
+  return props.projects.map((project) => {
+    const count = props.threads.filter((thread) => thread.archived && thread.projectId === project.id).length
+    return {
+      id: project.id,
+      name: project.name,
+      path: project.path,
+      count
+    }
+  }).filter((item) => item.count > 0)
+})
+
+const activeCategoryTitle = computed(() => {
+  if (taskFilter.value === 'global') return '未绑定项目任务'
+  if (taskFilter.value === 'project' && projectFilter.value !== 'all') {
+    const proj = props.projects.find((p) => p.id === projectFilter.value)
+    return proj ? `${proj.name} 任务` : '项目任务'
+  }
+  return '全部已归档任务'
+})
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
@@ -101,508 +112,497 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 </script>
 
 <template>
-  <section v-if="open" class="archived-tasks-dialog embedded-page" role="region" aria-labelledby="archived-title">
-    <header class="archived-header">
-      <div class="archived-heading">
-        <button class="page-back-button" type="button" @click="emit('close')">
-          <ArrowLeft :size="18" />
-          <span>返回应用</span>
-        </button>
-        <div class="archived-title-copy">
-          <h2 id="archived-title">已归档任务</h2>
-        </div>
-      </div>
-      <div class="archived-header-actions">
-        <button class="archive-delete-all" :disabled="archivedCount === 0" @click="emit('deleteAll')">
-          <Trash2 :size="16" />全部删除
-        </button>
-      </div>
-    </header>
-
-    <div class="archived-toolbar">
-      <label class="archived-search">
-        <Search :size="17" />
-        <input v-model="query" autofocus placeholder="搜索已归档任务" aria-label="搜索已归档任务" />
-      </label>
-
-      <SelectMenu v-model="taskFilter" class="archive-select-control" :options="taskFilterOptions" label="任务范围"
-        :menu-min-width="180" />
-
-      <div class="archive-select-control project-filter-control">
-        <Folder :size="17" />
-        <SelectMenu style="width: 100%;" v-model="projectFilter" class="archive-project-select"
-          :options="projectFilterOptions" label="项目筛选" :menu-min-width="220" />
-      </div>
-    </div>
-
-    <div class="archived-list-scroll">
-      <div v-if="archiveGroups.length === 0" class="archived-empty">
-        <Archive :size="28" />
-        <strong>{{ archivedCount === 0 ? '还没有已归档任务' : '没有匹配的任务' }}</strong>
-        <span>{{ archivedCount === 0 ? '归档后的任务会出现在这里。' : '试试其他搜索词或筛选条件。' }}</span>
-      </div>
-
-      <section v-for="group in archiveGroups" :key="group.id" class="archive-group">
-        <header class="archive-group-header">
-          <div class="archive-group-title">
-            <Globe2 v-if="group.id === 'global'" :size="18" />
-            <Folder v-else :size="18" />
-            <div>
-              <strong>{{ group.name }}</strong>
-              <small v-if="group.path">{{ group.path }}</small>
-            </div>
+  <div v-if="open" class="archived-tasks-workbench embedded-page" role="region" aria-labelledby="archived-title">
+    <TwoPaneLayout
+      storage-key="seekclaw-archived-sidebar-width"
+      :default-width="260"
+      :min-width="200"
+      :max-width="480"
+      :can-collapse="false"
+      aria-label="已归档导航"
+    >
+      <template #sidebar>
+        <div class="archived-nav">
+          <div class="archived-nav-header">
+            <button class="page-back-button" type="button" title="返回应用" @click="emit('close')">
+              <ArrowLeft :size="16" />
+              <span>返回应用</span>
+            </button>
           </div>
-          <div class="archive-group-meta">
-            <span>{{ group.threads.length }} 个任务</span>
+
+          <div id="archived-title" class="archived-nav-group-title">
+            已归档
+          </div>
+
+          <div class="archived-sidebar-search">
+            <Search :size="15" />
+            <input v-model="query" placeholder="搜索已归档..." aria-label="搜索已归档" />
+          </div>
+
+          <div class="archived-nav-list">
+            <button
+              class="archived-nav-item"
+              :class="{ active: taskFilter === 'all' && projectFilter === 'all' }"
+              @click="taskFilter = 'all'; projectFilter = 'all'"
+            >
+              <Archive :size="16" />
+              <span class="nav-item-title">全部任务</span>
+              <span class="nav-item-badge">{{ archivedCount }}</span>
+            </button>
+
+            <button
+              class="archived-nav-item"
+              :class="{ active: taskFilter === 'global' }"
+              @click="taskFilter = 'global'; projectFilter = 'all'"
+            >
+              <Globe2 :size="16" />
+              <span class="nav-item-title">未绑定项目</span>
+              <span class="nav-item-badge">{{ globalArchivedCount }}</span>
+            </button>
+
+            <template v-if="projectGroupsWithCount.length > 0">
+              <div class="archived-nav-section-label">
+                项目分类
+              </div>
+
+              <button
+                v-for="item in projectGroupsWithCount"
+                :key="item.id"
+                class="archived-nav-item"
+                :class="{ active: taskFilter === 'project' && projectFilter === item.id }"
+                @click="taskFilter = 'project'; projectFilter = item.id"
+              >
+                <Folder :size="16" />
+                <span class="nav-item-title" :title="item.name">{{ item.name }}</span>
+                <span class="nav-item-badge">{{ item.count }}</span>
+              </button>
+            </template>
+          </div>
+
+          <div class="archived-nav-footer">
+            <button
+              class="archived-delete-all-btn"
+              :disabled="archivedCount === 0"
+              title="全部永久删除"
+              @click="emit('deleteAll')"
+            >
+              <Trash2 :size="15" />
+              <span>全部删除</span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <div class="archived-main">
+        <header class="archived-content-header">
+          <div class="archived-content-title">
+            <h3>{{ activeCategoryTitle }}</h3>
+            <span class="archived-count-tag">{{ archivedThreads.length }} 个任务</span>
           </div>
         </header>
 
-        <div class="archive-task-card">
-          <article v-for="thread in group.threads" :key="thread.id" class="archive-task-row">
-            <button class="archive-task-main" @click="emit('selectThread', thread.id)">
-              <strong>{{ thread.title }}</strong>
-              <time>{{ formatDate(thread.updatedAt) }}</time>
-            </button>
-            <div class="archive-task-actions">
-              <button class="icon-button compact archive-row-delete" title="永久删除"
-                @click.stop="emit('deleteTask', thread)">
-                <Trash2 :size="16" />
-              </button>
-              <button class="archive-restore-button" @click.stop="emit('restoreTask', thread)">
-                <RotateCcw :size="15" />恢复任务
-              </button>
+        <div class="archived-list-scroll">
+          <div v-if="archiveGroups.length === 0" class="archived-empty">
+            <Archive :size="32" />
+            <strong>{{ archivedCount === 0 ? '还没有已归档任务' : '没有匹配的任务' }}</strong>
+            <span>{{ archivedCount === 0 ? '归档后的任务会出现在这里。' : '试试其他搜索词或筛选条件。' }}</span>
+          </div>
+
+          <section v-for="group in archiveGroups" :key="group.id" class="archive-group">
+            <header class="archive-group-header">
+              <div class="archive-group-title">
+                <Globe2 v-if="group.id === 'global'" :size="16" />
+                <Folder v-else :size="16" />
+                <div>
+                  <strong>{{ group.name }}</strong>
+                  <small v-if="group.path">{{ group.path }}</small>
+                </div>
+              </div>
+              <div class="archive-group-meta">
+                <span>{{ group.threads.length }} 个任务</span>
+              </div>
+            </header>
+
+            <div class="archive-task-card">
+              <article v-for="thread in group.threads" :key="thread.id" class="archive-task-row">
+                <button class="archive-task-main" @click="emit('selectThread', thread.id)">
+                  <strong>{{ thread.title }}</strong>
+                  <time>{{ formatDate(thread.updatedAt) }}</time>
+                </button>
+                <div class="archive-task-actions">
+                  <button class="icon-button compact archive-row-delete" title="永久删除"
+                    @click.stop="emit('deleteTask', thread)">
+                    <Trash2 :size="16" />
+                  </button>
+                  <button class="archive-restore-button" @click.stop="emit('restoreTask', thread)">
+                    <RotateCcw :size="15" />恢复任务
+                  </button>
+                </div>
+              </article>
             </div>
-          </article>
+          </section>
         </div>
-      </section>
-    </div>
-  </section>
+      </div>
+    </TwoPaneLayout>
+  </div>
 </template>
 
 <style scoped>
-.archived-backdrop {
-  z-index: 120;
-  padding: clamp(16px, 4vw, 54px);
-  background: rgb(0 0 0 / 38%);
-  backdrop-filter: blur(3px);
-}
-
-.archived-tasks-dialog.embedded-page {
+.archived-tasks-workbench.embedded-page {
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  background: var(--bg);
-}
-
-.archived-tasks-dialog {
-  display: grid;
-  width: min(1080px, 100%);
-  height: min(760px, calc(100vh - 44px));
-  grid-template-rows: auto auto minmax(0, 1fr);
-  min-height: 0;
+  background: transparent;
   overflow: hidden;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  box-shadow: 0 24px 70px rgb(0 0 0 / 24%);
 }
 
-.archived-header,
-.archived-header-actions,
-.archived-heading,
-.archived-toolbar,
-.archive-group-header,
-.archive-group-title,
-.archive-group-meta,
-.archive-task-actions {
+.archived-nav {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 10px 12px 14px;
+  overflow-y: auto;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.archived-nav-header {
+  margin-bottom: 8px;
+}
+
+.archived-nav .page-back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.archived-nav .page-back-button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-hover) 76%, transparent);
+}
+
+.archived-nav-group-title {
+  padding: 8px 10px 6px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.archived-sidebar-search {
   display: flex;
   align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  margin: 4px 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
 }
 
-.archived-header {
+.archived-sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.archived-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.archived-nav-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  gap: 10px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  font-weight: 450;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.archived-nav-item:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-hover) 75%, transparent);
+}
+
+.archived-nav-item.active {
+  color: var(--text);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+
+.nav-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-item-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.archived-nav-section-label {
+  padding: 12px 10px 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.archived-nav-footer {
+  padding-top: 10px;
+  margin-top: auto;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.archived-delete-all-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--danger);
+  font-size: 12.5px;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.archived-delete-all-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.archived-delete-all-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.archived-main {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.archived-content-header {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  min-height: 62px;
-  padding: 10px 22px;
+  padding: 16px 28px;
   border-bottom: 1px solid var(--border);
 }
 
-.archived-heading {
-  min-width: 0;
+.archived-content-title {
+  display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.archived-title-copy {
-  min-width: 0;
-}
-
-.archived-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .1em;
-}
-
-.archived-header h2,
-.archived-header p {
+.archived-content-title h3 {
   margin: 0;
-}
-
-.archived-header h2 {
-  margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 650;
-  letter-spacing: -.01em;
+  letter-spacing: -0.01em;
 }
 
-.archived-header p {
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.archived-header-actions {
-  gap: 10px;
-}
-
-.archive-delete-all {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 36px;
-  padding: 0 13px;
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-  border-radius: 999px;
-}
-
-.archive-delete-all:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-}
-
-.archive-delete-all:disabled {
-  cursor: default;
-  opacity: .45;
-}
-
-.archived-toolbar {
-  gap: 10px;
-  padding: 18px 22px 14px;
-}
-
-.archived-search {
-  display: flex;
-  min-width: 0;
-  height: 40px;
-  align-items: center;
-  gap: 9px;
-  padding: 0 13px;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.archived-search {
-  flex: 1;
-}
-
-.archived-search:focus-within,
-.archive-select-control:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-}
-
-.archived-search input {
-  min-width: 0;
-  flex: 1;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  outline: 0;
-}
-
-.archived-search input::placeholder {
-  color: var(--text-muted);
-}
-
-.archive-select-control {
-  position: relative;
-  width: 180px;
-  flex: 0 0 auto;
-}
-
-.archive-select-control .custom-select-trigger {
-  width: 100%;
-  height: 40px;
-  min-height: 40px;
-  padding: 0 13px;
-  border-radius: 10px;
-}
-
-.archive-select-control .custom-select-trigger:hover:not(:disabled),
-.archive-select-control.open .custom-select-trigger {
-  background: var(--surface);
-}
-
-.project-filter-control {
-  display: flex;
-  height: 40px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 13px;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  width: 220px;
-}
-
-.project-filter-control>svg {
-  flex: 0 0 auto;
-}
-
-.project-filter-control .archive-project-select {
-  min-width: 0;
-  flex: 1;
-}
-
-.project-filter-control .custom-select-trigger {
-  height: 38px;
-  min-height: 38px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.project-filter-control .custom-select-trigger:hover:not(:disabled),
-.project-filter-control .archive-project-select.open .custom-select-trigger {
-  border: 0;
-  background: transparent;
-}
-
-.archived-list-scroll {
-  min-height: 0;
-  padding: 0 22px 22px;
-  overflow-y: auto;
-}
-
-.archive-group {
-  margin-top: 18px;
-}
-
-.archive-group-header {
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 3px 10px;
-}
-
-.archive-group-title {
-  min-width: 0;
-  gap: 10px;
-}
-
-.archive-group-title>svg {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-}
-
-.archive-group-title div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.archive-group-title strong {
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.archive-group-title small {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.archive-group-meta {
-  flex: 0 0 auto;
-  gap: 4px;
+.archived-count-tag {
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
   color: var(--text-secondary);
   font-size: 12px;
 }
 
+.archived-list-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 28px 40px;
+}
+
+.archived-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 60px 0;
+  color: var(--text-muted);
+}
+
+.archive-group {
+  margin-bottom: 24px;
+}
+
+.archive-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.archive-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.archive-group-title strong {
+  font-size: 14px;
+}
+
+.archive-group-title small {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.archive-group-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .archive-task-card {
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 15px;
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .archive-task-row {
   display: flex;
-  min-width: 0;
   align-items: center;
-  gap: 18px;
-  min-height: 76px;
-  padding: 11px 14px 11px 18px;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: background-color 140ms ease;
 }
 
-.archive-task-row+.archive-task-row {
-  border-top: 1px solid var(--border);
+.archive-task-row:last-child {
+  border-bottom: none;
+}
+
+.archive-task-row:hover {
+  background: color-mix(in srgb, var(--surface-hover) 50%, transparent);
 }
 
 .archive-task-main {
-  display: grid;
-  min-width: 0;
   flex: 1;
-  gap: 7px;
-  padding: 3px 0;
-  color: var(--text);
-  text-align: left;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   background: transparent;
-}
-
-.archive-task-main:hover strong {
-  color: var(--accent);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
 }
 
 .archive-task-main strong {
-  overflow: hidden;
+  color: var(--text);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 550;
+  max-width: 100%;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .archive-task-main time {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .archive-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 0 0 auto;
-  gap: 12px;
+}
+
+.archive-restore-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  color: var(--text);
+  font-size: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.archive-restore-button:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
 }
 
 .archive-row-delete {
   color: var(--text-muted);
 }
 
-.archive-row-delete:hover:not(:disabled) {
+.archive-row-delete:hover {
   color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-}
-
-.archive-restore-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 12px;
-  color: var(--text);
-  background: var(--surface-hover);
-  border-radius: 9px;
-}
-
-.archive-restore-button:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.archived-empty {
-  display: grid;
-  min-height: 300px;
-  place-content: center;
-  justify-items: center;
-  gap: 9px;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.archived-empty svg {
-  margin-bottom: 5px;
-  color: var(--accent);
-}
-
-.archived-empty strong {
-  color: var(--text-secondary);
-  font-size: 15px;
-}
-
-.archived-empty span {
-  font-size: 12px;
-}
-
-@media (max-width: 700px) {
-  .archived-backdrop {
-    padding: 10px;
-  }
-
-  .archived-tasks-dialog {
-    height: calc(100vh - 20px);
-    border-radius: 14px;
-  }
-
-  .archived-header,
-  .archived-toolbar,
-  .archived-list-scroll {
-    padding-right: 17px;
-    padding-left: 17px;
-  }
-
-  .archived-header {
-    align-items: flex-start;
-    padding-top: 20px;
-    padding-bottom: 17px;
-  }
-
-  .archived-header p {
-    max-width: 230px;
-    line-height: 1.5;
-  }
-
-  .archive-delete-all {
-    width: 36px;
-    justify-content: center;
-    padding: 0;
-    font-size: 0;
-  }
-
-  .archived-toolbar {
-    flex-wrap: wrap;
-  }
-
-  .archived-search {
-    width: 100%;
-    flex-basis: 100%;
-  }
-
-  .archive-select-control,
-  .project-filter-control {
-    width: calc(50% - 5px);
-  }
-
-  .archive-task-row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 8px;
-    padding: 13px 14px 13px 16px;
-  }
-
-  .archive-task-actions {
-    width: 100%;
-    justify-content: flex-end;
-  }
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 </style>

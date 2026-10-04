@@ -128,7 +128,10 @@ function activateItem(item: MenuItem): void {
 }
 
 function handlePointerDown(event: PointerEvent): void {
-  if (activeMenu.value && !menuRoot.value?.contains(event.target as Node)) activeMenu.value = null
+  if (!activeMenu.value) return
+  const target = event.target as Node | null
+  if (target && menuRoot.value?.contains(target)) return
+  activeMenu.value = null
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -172,14 +175,14 @@ onBeforeUnmount(() => {
 <template>
   <header class="titlebar">
     <div class="titlebar-actions no-drag">
-      <button class="icon-button" title="切换侧栏" @click="emit('toggleSidebar')">
-        <PanelLeft :size="18" />
-      </button>
       <button class="icon-button is-muted" title="后退" disabled>
         <ArrowLeft :size="18" />
       </button>
       <button class="icon-button is-muted" title="前进" disabled>
         <ArrowRight :size="18" />
+      </button>
+      <button class="icon-button" title="切换侧栏" @click="emit('toggleSidebar')">
+        <PanelLeft :size="18" />
       </button>
     </div>
     <nav ref="menuRoot" class="app-menu no-drag" aria-label="应用菜单">
@@ -207,6 +210,7 @@ onBeforeUnmount(() => {
                 class="app-menu-item"
                 role="menuitem"
                 :disabled="item.requiresProject && !projectPath"
+                @pointerdown.stop
                 @click="activateItem(item)"
               >
                 <span>{{ item.label }}</span>

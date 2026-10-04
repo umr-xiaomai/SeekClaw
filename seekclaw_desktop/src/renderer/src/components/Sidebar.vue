@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import {
   Archive,
-  Blocks,
-  CalendarClock,
   ChevronDown,
   ChevronRight,
   Folder,
@@ -12,23 +10,23 @@ import {
   MoreHorizontal,
   Plus,
   Search,
-  Settings2,
   SlidersHorizontal,
   SquarePen,
-  Store,
   Trash2
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import logoUrl from '../../../../resources/logo.png?url'
 import type { ProjectItem, ThreadItem } from '../types'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   projects: ProjectItem[]
   threads: ThreadItem[]
   activeThreadId: string
   activeProjectId?: string
-  version: string
-}>()
+  width?: number
+}>(), {
+  width: 300
+})
 
 const emit = defineEmits<{
   newTask: [projectId?: string]
@@ -45,12 +43,51 @@ const emit = defineEmits<{
   deleteProjectTasks: [project: ProjectItem]
   archiveGlobalTasks: []
   deleteGlobalTasks: []
-  openArchived: []
-  openScheduledTasks: []
-  openExtensions: []
-  openOfficialSkills: []
-  openSettings: []
+  resize: [width: number]
+  collapse: []
+  resetWidth: []
 }>()
+
+const MIN_SIDEBAR_WIDTH = 200
+const COLLAPSE_THRESHOLD = 160
+
+const resizing = ref(false)
+let resizeStartX = 0
+let resizeStartWidth = 0
+
+function stopResize(): void {
+  if (!resizing.value) return
+  resizing.value = false
+  window.removeEventListener('pointermove', handleResize)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+  document.body.classList.remove('is-resizing-sidebar')
+}
+
+function handleResize(event: PointerEvent): void {
+  if (!resizing.value) return
+  const delta = event.clientX - resizeStartX
+  const nextWidth = resizeStartWidth + delta
+  if (nextWidth < COLLAPSE_THRESHOLD) {
+    stopResize()
+    emit('collapse')
+    return
+  }
+  const maxWidth = Math.min(600, Math.max(MIN_SIDEBAR_WIDTH, Math.floor(window.innerWidth * 0.55)))
+  emit('resize', Math.min(maxWidth, Math.max(MIN_SIDEBAR_WIDTH, Math.round(nextWidth))))
+}
+
+function startResize(event: PointerEvent): void {
+  if (event.button !== 0) return
+  event.preventDefault()
+  resizing.value = true
+  resizeStartX = event.clientX
+  resizeStartWidth = props.width
+  document.body.classList.add('is-resizing-sidebar')
+  window.addEventListener('pointermove', handleResize)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
+}
 
 const searching = ref(false)
 const query = ref('')
@@ -162,6 +199,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopResize()
   document.removeEventListener('pointerdown', closeMenuWhenFocusLeaves)
   document.removeEventListener('focusin', closeMenuWhenFocusLeaves)
   document.removeEventListener('keydown', closeMenuOnEscape)
@@ -193,22 +231,6 @@ onBeforeUnmount(() => {
       <button class="nav-item is-primary" @click="createTask(activeProjectId)">
         <SquarePen :size="18" />
         <span>新建任务</span>
-      </button>
-      <button class="nav-item" @click="emit('openArchived')">
-        <Archive :size="18" />
-        <span>已归档</span>
-      </button>
-      <button class="nav-item" @click="emit('openScheduledTasks')">
-        <CalendarClock :size="18" />
-        <span>计划任务</span>
-      </button>
-      <button class="nav-item" @click="emit('openExtensions')">
-        <Blocks :size="18" />
-        <span>MCP 与技能</span>
-      </button>
-      <button class="nav-item" @click="emit('openOfficialSkills')">
-        <Store :size="18" />
-        <span>官方技能</span>
       </button>
     </nav>
 
@@ -359,14 +381,14 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <footer class="sidebar-footer">
-      <button class="account-row" @click="emit('openSettings')">
-        <span class="account-copy">
-          <strong>SeekClaw Desktop</strong>
-          <small>v{{ version }}</small>
-        </span>
-        <Settings2 :size="17" />
-      </button>
-    </footer>
+    <div
+      class="sidebar-resize-handle"
+      role="separator"
+      aria-label="调整侧边栏宽度"
+      aria-orientation="vertical"
+      title="拖拽调节侧边栏宽度，拖至最小时隐藏，双击重置"
+      @pointerdown="startResize"
+      @dblclick="emit('resetWidth')"
+    />
   </aside>
 </template>
