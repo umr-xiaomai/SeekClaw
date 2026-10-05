@@ -68,7 +68,7 @@ function positionMenu(): void {
   const rect = trigger.value.getBoundingClientRect()
   const edge = 10
   const gap = 8
-  const width = Math.min(360, window.innerWidth - edge * 2)
+  const width = Math.min(290, window.innerWidth - edge * 2)
   const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge))
   const placeAbove = window.innerHeight - rect.bottom < 260
   menuStyle.value = placeAbove
@@ -162,14 +162,14 @@ onBeforeUnmount(removeListeners)
               { active: normalizedMode === opt.id }
             ]" role="radio" :aria-checked="normalizedMode === opt.id" @click="selectMode(opt.id)">
               <div class="option-icon-box">
-                <component :is="opt.icon" :size="18" />
+                <component :is="opt.icon" :size="15" />
               </div>
               <div class="option-text-box">
                 <div class="option-title">{{ opt.title }}</div>
                 <div class="option-desc">{{ opt.description }}</div>
               </div>
               <div class="option-check-wrap">
-                <Check v-if="normalizedMode === opt.id" :size="16" class="option-check-icon" />
+                <Check v-if="normalizedMode === opt.id" :size="14" class="option-check-icon" />
               </div>
             </button>
           </div>
@@ -251,36 +251,36 @@ onBeforeUnmount(removeListeners)
   position: fixed;
   z-index: 1000;
   box-sizing: border-box;
-  padding: 16px 14px 12px;
-  border-radius: 18px;
+  padding: 10px 10px 8px;
+  border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.16), 0 3px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.14), 0 2px 10px rgba(0, 0, 0, 0.06);
 }
 
 :root[data-theme="dark"] .approval-popover-card {
   background: var(--surface-raised);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45), 0 4px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45), 0 3px 12px rgba(0, 0, 0, 0.22);
 }
 
 .approval-popover-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 6px 12px;
+  gap: 10px;
+  padding: 0 4px 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
 .approval-header-title {
-  font-size: 13.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
   user-select: none;
 }
 
 .approval-learn-more {
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text-muted);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -295,17 +295,17 @@ onBeforeUnmount(removeListeners)
 .approval-options-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-top: 8px;
+  gap: 2px;
+  margin-top: 5px;
 }
 
 .approval-option-item {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
-  padding: 10px 10px;
-  border-radius: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
   text-align: left;
@@ -328,8 +328,8 @@ onBeforeUnmount(removeListeners)
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   margin-top: 1px;
   color: var(--text-secondary);
 }
@@ -340,17 +340,17 @@ onBeforeUnmount(removeListeners)
 }
 
 .option-title {
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 550;
   color: var(--text);
-  line-height: 1.3;
+  line-height: 1.25;
 }
 
 .option-desc {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
-  line-height: 1.45;
-  margin-top: 3px;
+  line-height: 1.35;
+  margin-top: 2px;
 }
 
 .option-check-wrap {
@@ -358,8 +358,8 @@ onBeforeUnmount(removeListeners)
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   align-self: center;
   color: var(--accent);
 }

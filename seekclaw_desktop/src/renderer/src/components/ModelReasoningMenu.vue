@@ -108,7 +108,7 @@ function positionPopover(): void {
   const rect = trigger.value.getBoundingClientRect()
   const edge = 10
   const gap = 8
-  const width = Math.min(300, window.innerWidth - edge * 2)
+  const width = Math.min(236, window.innerWidth - edge * 2)
   const right = Math.min(window.innerWidth - edge, rect.right)
   const left = Math.max(edge, right - width)
   const placeAbove = window.innerHeight - rect.bottom < 260
@@ -301,7 +301,7 @@ onBeforeUnmount(removeListeners)
                   last: index === steps.length - 1
                 }"
                 :style="{
-                  left: `calc(13px + (100% - 26px) * (${index} / ${steps.length - 1}))`
+                  left: `calc(7px + (100% - 14px) * (${index} / ${steps.length - 1}))`
                 }"
               />
 
@@ -309,7 +309,7 @@ onBeforeUnmount(removeListeners)
               <div
                 class="slider-bar-thumb"
                 :style="{
-                  left: `calc(13px + (100% - 26px) * (${currentStepIndex} / ${steps.length - 1}))`
+                  left: `calc(7px + (100% - 14px) * (${currentStepIndex} / ${steps.length - 1}))`
                 }"
               />
             </div>
@@ -430,16 +430,16 @@ onBeforeUnmount(removeListeners)
   position: fixed;
   z-index: 1000;
   box-sizing: border-box;
-  padding: 16px 18px 20px;
-  border-radius: 20px;
+  padding: 12px 14px 14px;
+  border-radius: 16px;
   border: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.16), 0 3px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.14), 0 2px 10px rgba(0, 0, 0, 0.06);
 }
 
 :root[data-theme="dark"] .model-reasoning-popover {
   background: var(--surface-raised);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45), 0 4px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45), 0 3px 12px rgba(0, 0, 0, 0.22);
 }
 
 /* Intensity View */
@@ -454,11 +454,11 @@ onBeforeUnmount(removeListeners)
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .intensity-title {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
   color: #1677ff;
   line-height: 1.2;
@@ -472,14 +472,14 @@ onBeforeUnmount(removeListeners)
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-top: 4px;
-  padding: 2px 6px;
+  margin-top: 2px;
+  padding: 1px 5px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 400;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
   transition: color 120ms ease, background 120ms ease;
 }
@@ -497,8 +497,8 @@ onBeforeUnmount(removeListeners)
 .slider-bar-track {
   position: relative;
   width: 100%;
-  height: 26px;
-  border-radius: 13px;
+  height: 14px;
+  border-radius: 7px;
   background: #e2e8f0;
   cursor: pointer;
   user-select: none;
@@ -515,7 +515,7 @@ onBeforeUnmount(removeListeners)
   top: 0;
   left: 0;
   height: 100%;
-  border-radius: 13px;
+  border-radius: 7px;
   background: #1677ff;
   pointer-events: none;
   transition: width 130ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -534,8 +534,8 @@ onBeforeUnmount(removeListeners)
 .slider-step-dot {
   position: absolute;
   top: 50%;
-  width: 4px;
-  height: 4px;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
   background: rgba(0, 0, 0, 0.22);
@@ -544,7 +544,7 @@ onBeforeUnmount(removeListeners)
 }
 
 .slider-step-dot.active {
-  background: rgba(255, 255, 255, 0.65);
+  background: rgba(255, 255, 255, 0.7);
 }
 
 :root[data-theme="dark"] .slider-step-dot {
@@ -558,12 +558,12 @@ onBeforeUnmount(removeListeners)
 /* White Circle Thumb */
 .slider-bar-thumb {
   position: absolute;
-  top: 0;
-  width: 26px;
-  height: 26px;
+  top: -2px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.1);
   transform: translateX(-50%);
   pointer-events: none;
   transition: left 130ms cubic-bezier(0.4, 0, 0.2, 1);
