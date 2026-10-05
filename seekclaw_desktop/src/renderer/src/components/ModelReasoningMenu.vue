@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Search } from '@lucide/vue'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Rocket, Search } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ReasoningLevel } from '../types'
 
@@ -88,6 +88,14 @@ const currentLabel = computed(() => {
 
 const currentDetailLabel = computed(() => {
   return steps.value[currentStepIndex.value]?.detailLabel ?? '高强度 (High)'
+})
+
+const isMaxTier = computed(() => {
+  return (
+    props.reasoningLevel === ReasoningLevel.Max ||
+    props.reasoningLevel === ReasoningLevel.XHigh ||
+    props.reasoningLevel === ReasoningLevel.Ultra
+  )
 })
 
 const fillPercentNumber = computed(() => {
@@ -292,7 +300,10 @@ onBeforeUnmount(removeListeners)
           <!-- View 1: Reasoning Intensity View (Codex Style) -->
           <div v-if="currentView === 'intensity'" class="intensity-view">
             <div class="intensity-header">
-              <div class="intensity-title">{{ currentDetailLabel }}</div>
+              <div class="intensity-title" :class="{ 'max-title': isMaxTier }">
+                <span>{{ currentDetailLabel }}</span>
+                <Rocket v-if="isMaxTier" :size="14" class="title-rocket-icon" />
+              </div>
               <button
                 type="button"
                 class="intensity-model-link"
@@ -308,7 +319,7 @@ onBeforeUnmount(removeListeners)
             <div
               ref="sliderTrack"
               class="slider-bar-track"
-              :class="{ dragging: isDragging }"
+              :class="{ dragging: isDragging, 'max-track': isMaxTier }"
               role="slider"
               aria-label="思考强度"
               :aria-valuenow="currentStepIndex"
@@ -324,12 +335,31 @@ onBeforeUnmount(removeListeners)
               <!-- Filled Blue Portion -->
               <div
                 class="slider-bar-fill"
+                :class="{ 'max-energy': isMaxTier }"
                 :style="{
                   width: currentStepIndex === steps.length - 1
                     ? '100%'
                     : `calc(12px + (100% - 24px) * (${currentStepIndex} / ${steps.length - 1}))`
                 }"
-              />
+              >
+                <!-- Particle / Rocket Stream effect when max tier -->
+                <div v-if="isMaxTier" class="max-particle-stream" aria-hidden="true">
+                  <div class="stream-line l-1" />
+                  <div class="stream-line l-2" />
+                  <div class="stream-line l-3" />
+                  <div class="stream-line l-4" />
+                  <div class="stream-line l-5" />
+                  <div class="stream-line l-6" />
+                  <div class="stream-spark s-1" />
+                  <div class="stream-spark s-2" />
+                  <div class="stream-spark s-3" />
+                  <div class="stream-spark s-4" />
+                  <div class="stream-rocket-wrapper">
+                    <Rocket :size="11" class="stream-rocket-icon" />
+                    <span class="rocket-flame" />
+                  </div>
+                </div>
+              </div>
 
               <!-- Intermediate Step Dots -->
               <div
@@ -499,6 +529,9 @@ onBeforeUnmount(removeListeners)
 }
 
 .intensity-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 15.5px;
   font-weight: 600;
   color: #1677ff;
@@ -507,6 +540,29 @@ onBeforeUnmount(removeListeners)
 
 :root[data-theme="dark"] .intensity-title {
   color: #38bdf8;
+}
+
+.intensity-title.max-title {
+  color: #2563eb;
+}
+
+:root[data-theme="dark"] .intensity-title.max-title {
+  color: #38bdf8;
+}
+
+.title-rocket-icon {
+  color: #f97316;
+  filter: drop-shadow(0 0 4px rgba(249, 115, 22, 0.65));
+  animation: rocket-lift 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes rocket-lift {
+  0% {
+    transform: translateY(0) rotate(0deg);
+  }
+  100% {
+    transform: translateY(-2px) rotate(4deg);
+  }
 }
 
 .intensity-model-link {
@@ -545,10 +601,15 @@ onBeforeUnmount(removeListeners)
   user-select: none;
   touch-action: none;
   outline: none;
+  transition: box-shadow 200ms ease;
 }
 
 :root[data-theme="dark"] .slider-bar-track {
   background: #2d3039;
+}
+
+.slider-bar-track.max-track {
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
 }
 
 .slider-bar-fill {
@@ -560,10 +621,136 @@ onBeforeUnmount(removeListeners)
   background: #1677ff;
   pointer-events: none;
   transition: width 130ms cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
 }
 
 :root[data-theme="dark"] .slider-bar-fill {
   background: #0ea5e9;
+}
+
+.slider-bar-fill.max-energy {
+  background: linear-gradient(90deg, #1d4ed8, #2563eb, #0284c7, #38bdf8, #2563eb);
+  background-size: 200% 100%;
+  animation: max-bar-flow 1.5s linear infinite;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+}
+
+:root[data-theme="dark"] .slider-bar-fill.max-energy {
+  background: linear-gradient(90deg, #0369a1, #0284c7, #38bdf8, #60a5fa, #0284c7);
+  background-size: 200% 100%;
+  animation: max-bar-flow 1.5s linear infinite;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+}
+
+@keyframes max-bar-flow {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+/* Particle / Rocket Stream Effects */
+.max-particle-stream {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.stream-line {
+  position: absolute;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.75) 40%, #ffffff);
+  box-shadow: 0 0 5px rgba(56, 189, 248, 0.9), 0 0 2px #ffffff;
+  animation: stream-rush linear infinite;
+  opacity: 0;
+}
+
+.stream-spark {
+  position: absolute;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 4px #38bdf8, 0 0 2px #ffffff;
+  animation: stream-rush linear infinite;
+  opacity: 0;
+}
+
+.stream-line.l-1 { top: 20%; height: 2px; width: 34px; animation-duration: 0.65s; animation-delay: 0s; }
+.stream-line.l-2 { top: 42%; height: 1.5px; width: 22px; animation-duration: 0.5s; animation-delay: 0.16s; }
+.stream-line.l-3 { top: 65%; height: 2px; width: 40px; animation-duration: 0.72s; animation-delay: 0.32s; }
+.stream-line.l-4 { top: 82%; height: 1.5px; width: 26px; animation-duration: 0.58s; animation-delay: 0.08s; }
+.stream-line.l-5 { top: 30%; height: 2px; width: 44px; animation-duration: 0.62s; animation-delay: 0.44s; }
+.stream-line.l-6 { top: 55%; height: 1.5px; width: 30px; animation-duration: 0.52s; animation-delay: 0.24s; }
+
+.stream-spark.s-1 { top: 36%; width: 3px; height: 3px; animation-duration: 0.6s; animation-delay: 0.12s; }
+.stream-spark.s-2 { top: 62%; width: 2.5px; height: 2.5px; animation-duration: 0.48s; animation-delay: 0.28s; }
+.stream-spark.s-3 { top: 22%; width: 3px; height: 3px; animation-duration: 0.54s; animation-delay: 0.4s; }
+.stream-spark.s-4 { top: 76%; width: 2px; height: 2px; animation-duration: 0.66s; animation-delay: 0.04s; }
+
+@keyframes stream-rush {
+  0% {
+    left: -48px;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.95;
+  }
+  100% {
+    left: 105%;
+    opacity: 0;
+  }
+}
+
+.stream-rocket-wrapper {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  animation: rocket-fly-across 2.2s cubic-bezier(0.38, 0, 0.22, 1) infinite;
+  z-index: 2;
+}
+
+.stream-rocket-icon {
+  transform: rotate(45deg);
+  color: #ffffff;
+  filter: drop-shadow(0 0 4px #38bdf8) drop-shadow(0 0 1px #ffffff);
+}
+
+.rocket-flame {
+  position: absolute;
+  right: calc(100% - 2px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #f97316, #fbbf24, #ffffff);
+  box-shadow: 0 0 5px #f97316, 0 0 2px #fbbf24;
+}
+
+@keyframes rocket-fly-across {
+  0% {
+    left: -35px;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    left: 105%;
+    opacity: 0;
+  }
 }
 
 .slider-bar-track.dragging .slider-bar-fill,
