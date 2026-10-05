@@ -1197,6 +1197,34 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["steps"] = JsonNode.Parse(plan.StepsJson),
                         ["explanation"] = plan.Explanation,
                     }),
+                SubAgentStartedEvent subStart => (
+                    Name: (string?)"subagent_start",
+                    Data: subStart.TaskPrompt,
+                    Details: new JsonObject
+                    {
+                        ["subAgentId"] = subStart.SubAgentId,
+                        ["role"] = subStart.Role,
+                        ["model"] = subStart.ModelRef,
+                    }),
+                SubAgentProgressEvent subProg => (
+                    Name: (string?)"subagent_progress",
+                    Data: subProg.Status,
+                    Details: new JsonObject
+                    {
+                        ["subAgentId"] = subProg.SubAgentId,
+                        ["role"] = subProg.Role,
+                        ["detail"] = subProg.Detail,
+                    }),
+                SubAgentCompletedEvent subDone => (
+                    Name: (string?)"subagent_done",
+                    Data: subDone.Summary,
+                    Details: new JsonObject
+                    {
+                        ["subAgentId"] = subDone.SubAgentId,
+                        ["role"] = subDone.Role,
+                        ["success"] = subDone.Success,
+                        ["elapsedMs"] = subDone.Elapsed.TotalMilliseconds,
+                    }),
                 _ => (Name: (string?)null, Data: "", Details: (JsonObject?)null),
             };
             if (payload.Name is not null)

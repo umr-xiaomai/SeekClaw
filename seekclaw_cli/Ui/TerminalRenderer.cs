@@ -123,6 +123,24 @@ public sealed class TerminalRenderer : IDisposable
                 scrollback.Add("");
                 break;
 
+            case SubAgentStartedEvent subStart:
+                scrollback.Add("");
+                scrollback.Add($"┌─► [SubAgent: {subStart.Role}] ({subStart.SubAgentId})".Style(Ansi.Magenta + Ansi.Bold));
+                scrollback.Add($"│   Task: {subStart.TaskPrompt}".Style(Ansi.Magenta + Ansi.Dim));
+                break;
+
+            case SubAgentProgressEvent subProg:
+                var subDetail = string.IsNullOrWhiteSpace(subProg.Detail) ? "" : $" ({subProg.Detail})";
+                scrollback.Add($"│   [{subProg.Role}] {subProg.Status}{subDetail}".Style(Ansi.Gray));
+                break;
+
+            case SubAgentCompletedEvent subDone:
+                var symbol = subDone.Success ? "✓" : "✗";
+                var color = subDone.Success ? Ansi.Green : Ansi.Red;
+                scrollback.Add($"└─► [SubAgent: {subDone.Role}] {symbol} ({subDone.Elapsed.TotalSeconds:0.1}s): {subDone.Summary}".Style(color + Ansi.Bold));
+                scrollback.Add("");
+                break;
+
             case StatusEvent status:
                 _status = status.Status;
                 _statusDetail = status.Detail ?? "";

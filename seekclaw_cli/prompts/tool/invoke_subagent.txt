@@ -1,0 +1,13 @@
+Deploys a specialized sub-agent with its own isolated context window to execute a focused, self-contained sub-task.
+
+Use this tool to:
+- Perform deep or broad codebase exploration, searches, and analysis without polluting your own context window (use role: 'researcher').
+- Delegate surgical code implementation or refactoring of a specific file or module (use role: 'coder').
+- Run test suites, compile, and diagnose errors (use role: 'tester').
+- Execute general, multi-step subtasks (use role: 'general').
+
+AUTONOMOUS DECISION GUIDELINES:
+- DO NOT SPLIT simple, localized tasks: If the user request is a simple question, involves inspecting or editing only 1 or 2 known files, or can be answered directly, do NOT use this tool. Execute directly yourself.
+- DO SPLIT large, complex, or multi-phase tasks: When exploring unfamiliar architecture, auditing dependencies, modifying multiple modules, or writing tests across components, split into sub-agents.
+
+The sub-agent will run independently and return a concise report of its work. You remain the overall orchestrator and will formulate the final answer to the user.

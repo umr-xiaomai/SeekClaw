@@ -109,6 +109,27 @@ public sealed record ComputerActionEvent(
     string? Error,
     string? Base64Screenshot) : RuntimeEvent;
 
+// ---------------------------------------------------------------- sub-agents
+
+public sealed record SubAgentStartedEvent(
+    string SubAgentId,
+    string Role,
+    string TaskPrompt,
+    string? ModelRef = null) : RuntimeEvent;
+
+public sealed record SubAgentProgressEvent(
+    string SubAgentId,
+    string Role,
+    string Status,
+    string? Detail = null) : RuntimeEvent;
+
+public sealed record SubAgentCompletedEvent(
+    string SubAgentId,
+    string Role,
+    bool Success,
+    string Summary,
+    TimeSpan Elapsed) : RuntimeEvent;
+
 // ---------------------------------------------------------------- diagnostics
 
 public sealed record WarningEvent(string Message) : RuntimeEvent;

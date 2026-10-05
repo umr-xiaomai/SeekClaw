@@ -33,7 +33,8 @@ public sealed partial class Agent(
     IVerifier verifier,
     IEventBus events,
     IFileLockCoordinator fileLocks,
-    FileLockScope lockScope)
+    FileLockScope lockScope,
+    SeekClaw.Runtime.SubAgents.SubAgentScope? subAgentScope = null)
 {
     public async Task<AgentTurnResult> RunTurnAsync(
         AgentSession session,

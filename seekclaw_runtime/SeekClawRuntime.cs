@@ -12,6 +12,7 @@ using SeekClaw.Runtime.Projects;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Skills;
+using SeekClaw.Runtime.SubAgents;
 using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Tools.Builtin;
 using SeekClaw.Runtime.Verification;
@@ -46,6 +47,8 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public SkillManager Skills => _services.GetRequiredService<SkillManager>();
     public ExtensionManager Extensions { get; } = ExtensionManager.CreateDefault();
     public IMcpManager Mcp => _services.GetRequiredService<IMcpManager>();
+    public ISubAgentRegistry SubAgents => _services.GetRequiredService<ISubAgentRegistry>();
+    public SubAgentRunner SubAgentRunner => _services.GetRequiredService<SubAgentRunner>();
     public Agent Agent => _services.GetRequiredService<Agent>();
 
     private SeekClawRuntime(ServiceProvider services, WorkspaceInfo workspace)
@@ -64,14 +67,22 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     /// </summary>
     internal static SeekClawRuntime CreateIsolated(
         WorkspaceInfo workspace,
+        IFileLockCoordinator? coordinator,
+        string? turnOwner,
+        Action<IServiceCollection>? configureServices)
+        => CreateIsolated(workspace, coordinator, turnOwner, null, configureServices);
+
+    internal static SeekClawRuntime CreateIsolated(
+        WorkspaceInfo workspace,
         IFileLockCoordinator? coordinator = null,
         string? turnOwner = null,
+        SubAgentScope? subAgentScope = null,
         Action<IServiceCollection>? configureServices = null)
     {
         SeekClawPaths.EnsureCreated();
 
         var serviceCollection = new ServiceCollection()
-            .AddSeekClawRuntime(coordinator, turnOwner);
+            .AddSeekClawRuntime(coordinator, turnOwner, subAgentScope);
         // Lets the daemon inject process-wide shared infrastructure (HttpClient
         // pool, circuit breaker) before per-turn state is added.
         configureServices?.Invoke(serviceCollection);
@@ -241,7 +252,8 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                      new WebSearchTool(prompts),
                      new WebFetchTool(prompts),
                      new CaptureScreenTool(prompts),
-                 })
+                     new InvokeSubAgentTool(prompts, SubAgentRunner),
+                  })
             Tools.Register(tool);
 
         Extensions.InitializeAll(this);
@@ -263,7 +275,8 @@ public static class RuntimeServiceCollectionExtensions
     public static IServiceCollection AddSeekClawRuntime(
         this IServiceCollection services,
         IFileLockCoordinator? coordinator = null,
-        string? turnOwner = null)
+        string? turnOwner = null,
+        SubAgentScope? subAgentScope = null)
     {
         services.AddSingleton<IEventBus, EventBus>();
         services.AddSingleton<IConfigStore>(_ => new ConfigStore());
@@ -300,6 +313,9 @@ public static class RuntimeServiceCollectionExtensions
         // daemon; single-turn (CLI) runtimes fall back to the no-op implementation.
         services.AddSingleton<IFileLockCoordinator>(coordinator ?? new NoopFileLockCoordinator());
         services.AddSingleton(new FileLockScope(turnOwner ?? ""));
+        services.AddSingleton(subAgentScope ?? new SubAgentScope(0));
+        services.AddSingleton<ISubAgentRegistry, SubAgentRegistry>();
+        services.AddSingleton<SubAgentRunner>();
         services.AddSingleton<Agent>();
         return services;
     }

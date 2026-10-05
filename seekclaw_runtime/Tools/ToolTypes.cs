@@ -19,6 +19,8 @@ public sealed class ToolContext
     public IFileLockCoordinator? Coordinator { get; init; }
     /// <summary>Task identity used when acquiring file write locks.</summary>
     public string Owner { get; init; } = "";
+    /// <summary>Sub-agent recursion depth (0 for top-level orchestrator agent).</summary>
+    public int SubAgentDepth { get; init; } = 0;
 
     public string ResolvePath(string path)
     {
@@ -80,6 +82,8 @@ public interface IToolRegistry
     IDisposable Register(ITool tool);
     ITool? Resolve(string name);
     IReadOnlyList<ITool> All { get; }
+    /// <summary>Filters registered tools in-place so only those satisfying the predicate remain.</summary>
+    void RetainOnly(Func<ITool, bool> predicate);
 }
 
 public sealed class ToolRegistry : IToolRegistry
@@ -90,6 +94,14 @@ public sealed class ToolRegistry : IToolRegistry
     public IReadOnlyList<ITool> All
     {
         get { lock (_gate) return [.. _tools]; }
+    }
+
+    public void RetainOnly(Func<ITool, bool> predicate)
+    {
+        lock (_gate)
+        {
+            _tools.RemoveAll(t => !predicate(t));
+        }
     }
 
     public IDisposable Register(ITool tool)

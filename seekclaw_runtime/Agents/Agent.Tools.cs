@@ -60,6 +60,7 @@ public sealed partial class Agent
             CallId = call.Id,
             Coordinator = fileLocks,
             Owner = lockScope.Owner,
+            SubAgentDepth = subAgentScope?.Depth ?? 0,
         };
 
         var stopwatch = Stopwatch.StartNew();
