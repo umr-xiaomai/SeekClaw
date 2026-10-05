@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Rocket, Search } from '@lucide/vue'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Search } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ReasoningLevel } from '../types'
 
@@ -300,10 +300,7 @@ onBeforeUnmount(removeListeners)
           <!-- View 1: Reasoning Intensity View (Codex Style) -->
           <div v-if="currentView === 'intensity'" class="intensity-view">
             <div class="intensity-header">
-              <div class="intensity-title" :class="{ 'max-title': isMaxTier }">
-                <span>{{ currentDetailLabel }}</span>
-                <Rocket v-if="isMaxTier" :size="14" class="title-rocket-icon" />
-              </div>
+              <div class="intensity-title">{{ currentDetailLabel }}</div>
               <button
                 type="button"
                 class="intensity-model-link"
@@ -342,7 +339,7 @@ onBeforeUnmount(removeListeners)
                     : `calc(12px + (100% - 24px) * (${currentStepIndex} / ${steps.length - 1}))`
                 }"
               >
-                <!-- Particle / Rocket Stream effect when max tier -->
+                <!-- Particle Stream effect when max tier -->
                 <div v-if="isMaxTier" class="max-particle-stream" aria-hidden="true">
                   <div class="stream-line l-1" />
                   <div class="stream-line l-2" />
@@ -354,10 +351,6 @@ onBeforeUnmount(removeListeners)
                   <div class="stream-spark s-2" />
                   <div class="stream-spark s-3" />
                   <div class="stream-spark s-4" />
-                  <div class="stream-rocket-wrapper">
-                    <Rocket :size="11" class="stream-rocket-icon" />
-                    <span class="rocket-flame" />
-                  </div>
                 </div>
               </div>
 
@@ -542,29 +535,6 @@ onBeforeUnmount(removeListeners)
   color: #38bdf8;
 }
 
-.intensity-title.max-title {
-  color: #2563eb;
-}
-
-:root[data-theme="dark"] .intensity-title.max-title {
-  color: #38bdf8;
-}
-
-.title-rocket-icon {
-  color: #f97316;
-  filter: drop-shadow(0 0 4px rgba(249, 115, 22, 0.65));
-  animation: rocket-lift 0.6s ease-in-out infinite alternate;
-}
-
-@keyframes rocket-lift {
-  0% {
-    transform: translateY(0) rotate(0deg);
-  }
-  100% {
-    transform: translateY(-2px) rotate(4deg);
-  }
-}
-
 .intensity-model-link {
   display: inline-flex;
   align-items: center;
@@ -631,14 +601,14 @@ onBeforeUnmount(removeListeners)
 .slider-bar-fill.max-energy {
   background: linear-gradient(90deg, #1d4ed8, #2563eb, #0284c7, #38bdf8, #2563eb);
   background-size: 200% 100%;
-  animation: max-bar-flow 1.5s linear infinite;
+  animation: max-bar-flow 3.2s linear infinite;
   box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
 }
 
 :root[data-theme="dark"] .slider-bar-fill.max-energy {
   background: linear-gradient(90deg, #0369a1, #0284c7, #38bdf8, #60a5fa, #0284c7);
   background-size: 200% 100%;
-  animation: max-bar-flow 1.5s linear infinite;
+  animation: max-bar-flow 3.2s linear infinite;
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
 }
 
@@ -651,7 +621,7 @@ onBeforeUnmount(removeListeners)
   }
 }
 
-/* Particle / Rocket Stream Effects */
+/* Particle Stream Effects */
 .max-particle-stream {
   position: absolute;
   inset: 0;
@@ -678,74 +648,28 @@ onBeforeUnmount(removeListeners)
   opacity: 0;
 }
 
-.stream-line.l-1 { top: 20%; height: 2px; width: 34px; animation-duration: 0.65s; animation-delay: 0s; }
-.stream-line.l-2 { top: 42%; height: 1.5px; width: 22px; animation-duration: 0.5s; animation-delay: 0.16s; }
-.stream-line.l-3 { top: 65%; height: 2px; width: 40px; animation-duration: 0.72s; animation-delay: 0.32s; }
-.stream-line.l-4 { top: 82%; height: 1.5px; width: 26px; animation-duration: 0.58s; animation-delay: 0.08s; }
-.stream-line.l-5 { top: 30%; height: 2px; width: 44px; animation-duration: 0.62s; animation-delay: 0.44s; }
-.stream-line.l-6 { top: 55%; height: 1.5px; width: 30px; animation-duration: 0.52s; animation-delay: 0.24s; }
+.stream-line.l-1 { top: 20%; height: 2px; width: 36px; animation-duration: 1.6s; animation-delay: 0s; }
+.stream-line.l-2 { top: 42%; height: 1.5px; width: 24px; animation-duration: 1.35s; animation-delay: 0.35s; }
+.stream-line.l-3 { top: 65%; height: 2px; width: 42px; animation-duration: 1.85s; animation-delay: 0.75s; }
+.stream-line.l-4 { top: 82%; height: 1.5px; width: 28px; animation-duration: 1.5s; animation-delay: 0.18s; }
+.stream-line.l-5 { top: 30%; height: 2px; width: 44px; animation-duration: 1.75s; animation-delay: 1.05s; }
+.stream-line.l-6 { top: 55%; height: 1.5px; width: 32px; animation-duration: 1.4s; animation-delay: 0.55s; }
 
-.stream-spark.s-1 { top: 36%; width: 3px; height: 3px; animation-duration: 0.6s; animation-delay: 0.12s; }
-.stream-spark.s-2 { top: 62%; width: 2.5px; height: 2.5px; animation-duration: 0.48s; animation-delay: 0.28s; }
-.stream-spark.s-3 { top: 22%; width: 3px; height: 3px; animation-duration: 0.54s; animation-delay: 0.4s; }
-.stream-spark.s-4 { top: 76%; width: 2px; height: 2px; animation-duration: 0.66s; animation-delay: 0.04s; }
+.stream-spark.s-1 { top: 36%; width: 3px; height: 3px; animation-duration: 1.55s; animation-delay: 0.25s; }
+.stream-spark.s-2 { top: 62%; width: 2.5px; height: 2.5px; animation-duration: 1.3s; animation-delay: 0.65s; }
+.stream-spark.s-3 { top: 22%; width: 3px; height: 3px; animation-duration: 1.45s; animation-delay: 0.95s; }
+.stream-spark.s-4 { top: 76%; width: 2px; height: 2px; animation-duration: 1.7s; animation-delay: 0.1s; }
 
 @keyframes stream-rush {
   0% {
     left: -48px;
     opacity: 0;
   }
-  15% {
+  18% {
     opacity: 1;
   }
-  80% {
+  82% {
     opacity: 0.95;
-  }
-  100% {
-    left: 105%;
-    opacity: 0;
-  }
-}
-
-.stream-rocket-wrapper {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  pointer-events: none;
-  animation: rocket-fly-across 2.2s cubic-bezier(0.38, 0, 0.22, 1) infinite;
-  z-index: 2;
-}
-
-.stream-rocket-icon {
-  transform: rotate(45deg);
-  color: #ffffff;
-  filter: drop-shadow(0 0 4px #38bdf8) drop-shadow(0 0 1px #ffffff);
-}
-
-.rocket-flame {
-  position: absolute;
-  right: calc(100% - 2px);
-  top: 50%;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 3px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, transparent, #f97316, #fbbf24, #ffffff);
-  box-shadow: 0 0 5px #f97316, 0 0 2px #fbbf24;
-}
-
-@keyframes rocket-fly-across {
-  0% {
-    left: -35px;
-    opacity: 0;
-  }
-  10% {
-    opacity: 1;
-  }
-  85% {
-    opacity: 1;
   }
   100% {
     left: 105%;
