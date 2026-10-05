@@ -82,7 +82,13 @@ export interface RuntimeProject {
 export interface RuntimeModelCatalogItem {
   ref: string
   active: boolean
-  capabilities?: { vision?: boolean }
+  capabilities?: {
+    vision?: boolean
+    thinking?: boolean
+    reasoning?: boolean
+    maxReasoningLevel?: string
+    [key: string]: boolean | string | undefined
+  }
 }
 
 export function normalizeReasoningLevel(value?: string): ReasoningLevel {

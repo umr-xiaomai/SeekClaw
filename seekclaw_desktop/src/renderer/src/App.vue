@@ -218,8 +218,25 @@ const conversationSelectionToken = { value: 0 }
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
 const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? ReasoningLevel.High)
+const activeModelCatalogItem = computed(() =>
+  modelCatalog.value.find((model) => model.ref === activeModel.value)
+)
 const activeModelSupportsImages = computed(() =>
-  modelCatalog.value.find((model) => model.ref === activeModel.value)?.capabilities?.vision === true)
+  activeModelCatalogItem.value?.capabilities?.vision === true)
+const activeModelMaxReasoning = computed<ReasoningLevel>(() => {
+  const cap = activeModelCatalogItem.value?.capabilities
+  if (cap?.maxReasoningLevel) {
+    return normalizeReasoningLevel(cap.maxReasoningLevel)
+  }
+  return ReasoningLevel.Max
+})
+const activeModelSupportsReasoning = computed<boolean>(() => {
+  const cap = activeModelCatalogItem.value?.capabilities
+  if (!cap) return true
+  if (cap.maxReasoningLevel === 'none') return false
+  if (cap.thinking === false && cap.reasoning === false && !cap.maxReasoningLevel) return false
+  return true
+})
 const activeImageSources = computed<Record<string, string>>(() => {
   const sources: Record<string, string> = {}
   for (const message of activeThread.value?.messages ?? [])
@@ -1689,7 +1706,8 @@ watch(theme, applyTheme)
             <Composer ref="composer" :busy="busy"
               :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
               :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
-              :reasoning-level="activeReasoningLevel" :network-enabled="activeThread?.networkEnabled ?? true"
+              :reasoning-level="activeReasoningLevel" :max-reasoning-level="activeModelMaxReasoning"
+              :supports-reasoning="activeModelSupportsReasoning" :network-enabled="activeThread?.networkEnabled ?? true"
               :optimize-prompt="optimizePrompt" @send="sendMessage" @stop="stopTurn" @change-model="changeModel"
               @change-mode="changeMode" @change-reasoning-level="changeReasoningLevel"
               @change-network="changeNetwork" />

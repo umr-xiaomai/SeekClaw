@@ -52,7 +52,7 @@ const options: ModeOption[] = [
     id: 'full',
     title: '完全访问权限',
     shortLabel: '完全访问',
-    description: '可不受限制地访问互联网和电脑上的任何文件',
+    description: '不受限制地访问网络和电脑上的任何文件',
     icon: ShieldAlert
   }
 ]

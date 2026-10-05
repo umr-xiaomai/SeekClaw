@@ -16,6 +16,8 @@ const props = defineProps<{
   models: string[]
   mode: string
   reasoningLevel: ReasoningLevel
+  maxReasoningLevel?: ReasoningLevel
+  supportsReasoning?: boolean
   supportsImages: boolean
   networkEnabled?: boolean
   optimizePrompt?: (text: string) => Promise<string>
@@ -611,6 +613,8 @@ watch(() => props.supportsImages, async (supported) => {
           :model="model"
           :models="models"
           :reasoning-level="reasoningLevel"
+          :max-reasoning-level="maxReasoningLevel"
+          :supports-reasoning="supportsReasoning"
           :disabled="busy || disabled"
           @update:model="emit('changeModel', $event)"
           @update:reasoning-level="emit('changeReasoningLevel', $event)"

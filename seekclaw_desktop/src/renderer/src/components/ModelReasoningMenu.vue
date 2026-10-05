@@ -7,8 +7,12 @@ const props = withDefaults(defineProps<{
   model: string
   models: string[]
   reasoningLevel: ReasoningLevel
+  maxReasoningLevel?: ReasoningLevel
+  supportsReasoning?: boolean
   disabled?: boolean
 }>(), {
+  maxReasoningLevel: ReasoningLevel.Max,
+  supportsReasoning: true,
   disabled: false
 })
 
@@ -20,6 +24,23 @@ const emit = defineEmits<{
 interface ReasoningStep {
   value: ReasoningLevel
   label: string
+  detailLabel: string
+  rank: number
+}
+
+const ALL_STEPS: ReasoningStep[] = [
+  { value: ReasoningLevel.Low, label: '低', detailLabel: '低强度 (Low)', rank: 1 },
+  { value: ReasoningLevel.Medium, label: '中', detailLabel: '中等强度 (Medium)', rank: 2 },
+  { value: ReasoningLevel.High, label: '高', detailLabel: '高强度 (High)', rank: 3 },
+  { value: ReasoningLevel.Max, label: '最大', detailLabel: '最大强度 (Max)', rank: 4 },
+  { value: ReasoningLevel.XHigh, label: '极高', detailLabel: '极高强度 (X-High)', rank: 5 },
+  { value: ReasoningLevel.Ultra, label: '超级', detailLabel: '超级强度 (Ultra)', rank: 6 }
+]
+
+function getLevelRank(level: ReasoningLevel): number {
+  if (level === ReasoningLevel.None) return 0
+  const found = ALL_STEPS.find((s) => s.value === level)
+  return found ? found.rank : 3
 }
 
 const open = ref(false)
@@ -32,31 +53,28 @@ const popoverStyle = ref<Record<string, string>>({})
 const isDragging = ref(false)
 
 const steps = computed<ReasoningStep[]>(() => {
+  const maxRank = Math.max(
+    getLevelRank(props.maxReasoningLevel ?? ReasoningLevel.Max),
+    getLevelRank(props.reasoningLevel)
+  )
+
+  const effectiveMaxRank =
+    props.maxReasoningLevel === ReasoningLevel.High && getLevelRank(props.reasoningLevel) <= 3
+      ? 3
+      : Math.max(4, maxRank)
+
+  const result = ALL_STEPS.filter((s) => s.rank <= effectiveMaxRank).map((s) => ({ ...s }))
+
   if (props.reasoningLevel === ReasoningLevel.None) {
-    return [
-      { value: ReasoningLevel.None, label: '关闭' },
-      { value: ReasoningLevel.Low, label: '低' },
-      { value: ReasoningLevel.Medium, label: '中' },
-      { value: ReasoningLevel.High, label: '高' }
-    ]
+    result.unshift({
+      value: ReasoningLevel.None,
+      label: '关闭',
+      detailLabel: '已关闭思考 (None)',
+      rank: 0
+    })
   }
-  if (
-    props.reasoningLevel === ReasoningLevel.Max ||
-    props.reasoningLevel === ReasoningLevel.XHigh ||
-    props.reasoningLevel === ReasoningLevel.Ultra
-  ) {
-    return [
-      { value: ReasoningLevel.Low, label: '低' },
-      { value: ReasoningLevel.Medium, label: '中' },
-      { value: ReasoningLevel.High, label: '高' },
-      { value: ReasoningLevel.Max, label: '最大' }
-    ]
-  }
-  return [
-    { value: ReasoningLevel.Low, label: '低' },
-    { value: ReasoningLevel.Medium, label: '中' },
-    { value: ReasoningLevel.High, label: '高' }
-  ]
+
+  return result
 })
 
 const currentStepIndex = computed(() => {
@@ -66,6 +84,10 @@ const currentStepIndex = computed(() => {
 
 const currentLabel = computed(() => {
   return steps.value[currentStepIndex.value]?.label ?? '高'
+})
+
+const currentDetailLabel = computed(() => {
+  return steps.value[currentStepIndex.value]?.detailLabel ?? '高强度 (High)'
 })
 
 const fillPercentNumber = computed(() => {
@@ -94,6 +116,7 @@ const triggerLabel = computed(() => {
     return '选择强度'
   }
   if (!props.model) return '未配置模型'
+  if (!props.supportsReasoning) return displayModel.value
   return `${displayModel.value} ${currentLabel.value}`
 })
 
@@ -108,7 +131,7 @@ function positionPopover(): void {
   const rect = trigger.value.getBoundingClientRect()
   const edge = 10
   const gap = 8
-  const width = Math.min(236, window.innerWidth - edge * 2)
+  const width = Math.min(264, window.innerWidth - edge * 2)
   const right = Math.min(window.innerWidth - edge, rect.right)
   const left = Math.max(edge, right - width)
   const placeAbove = window.innerHeight - rect.bottom < 260
@@ -120,7 +143,11 @@ function positionPopover(): void {
 function show(): void {
   if (props.disabled) return
   open.value = true
-  currentView.value = 'intensity'
+  if (!props.supportsReasoning) {
+    currentView.value = 'model'
+  } else {
+    currentView.value = 'intensity'
+  }
   searchQuery.value = ''
   void nextTick(() => {
     positionPopover()
@@ -140,14 +167,21 @@ function toggle(): void {
 
 function selectModel(m: string): void {
   emit('update:model', m)
-  currentView.value = 'intensity'
+  if (props.supportsReasoning) {
+    currentView.value = 'intensity'
+  } else {
+    hide()
+  }
 }
 
 function updateLevelFromClientX(clientX: number): void {
   if (!sliderTrack.value) return
   const rect = sliderTrack.value.getBoundingClientRect()
   if (rect.width <= 0) return
-  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+  const padding = 12
+  const effectiveWidth = rect.width - padding * 2
+  const offset = clientX - rect.left - padding
+  const ratio = effectiveWidth > 0 ? Math.max(0, Math.min(1, offset / effectiveWidth)) : 0
   const stepCount = steps.value.length
   if (stepCount <= 1) return
   const nearestIndex = Math.round(ratio * (stepCount - 1))
@@ -258,7 +292,7 @@ onBeforeUnmount(removeListeners)
           <!-- View 1: Reasoning Intensity View (Codex Style) -->
           <div v-if="currentView === 'intensity'" class="intensity-view">
             <div class="intensity-header">
-              <div class="intensity-title">{{ currentLabel }}</div>
+              <div class="intensity-title">{{ currentDetailLabel }}</div>
               <button
                 type="button"
                 class="intensity-model-link"
@@ -280,7 +314,7 @@ onBeforeUnmount(removeListeners)
               :aria-valuenow="currentStepIndex"
               :aria-valuemin="0"
               :aria-valuemax="steps.length - 1"
-              :aria-valuetext="currentLabel"
+              :aria-valuetext="currentDetailLabel"
               tabindex="0"
               @pointerdown="handleTrackPointerDown"
               @pointermove="handleTrackPointerMove"
@@ -288,7 +322,14 @@ onBeforeUnmount(removeListeners)
               @pointercancel="handleTrackPointerUp"
             >
               <!-- Filled Blue Portion -->
-              <div class="slider-bar-fill" :style="{ width: fillPercent }" />
+              <div
+                class="slider-bar-fill"
+                :style="{
+                  width: currentStepIndex === steps.length - 1
+                    ? '100%'
+                    : `calc(12px + (100% - 24px) * (${currentStepIndex} / ${steps.length - 1}))`
+                }"
+              />
 
               <!-- Intermediate Step Dots -->
               <div
@@ -301,7 +342,7 @@ onBeforeUnmount(removeListeners)
                   last: index === steps.length - 1
                 }"
                 :style="{
-                  left: `calc(7px + (100% - 14px) * (${index} / ${steps.length - 1}))`
+                  left: `calc(12px + (100% - 24px) * (${index} / ${steps.length - 1}))`
                 }"
               />
 
@@ -309,7 +350,7 @@ onBeforeUnmount(removeListeners)
               <div
                 class="slider-bar-thumb"
                 :style="{
-                  left: `calc(7px + (100% - 14px) * (${currentStepIndex} / ${steps.length - 1}))`
+                  left: `calc(12px + (100% - 24px) * (${currentStepIndex} / ${steps.length - 1}))`
                 }"
               />
             </div>
@@ -430,7 +471,7 @@ onBeforeUnmount(removeListeners)
   position: fixed;
   z-index: 1000;
   box-sizing: border-box;
-  padding: 12px 14px 14px;
+  padding: 14px 16px 16px;
   border-radius: 16px;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -454,11 +495,11 @@ onBeforeUnmount(removeListeners)
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .intensity-title {
-  font-size: 15px;
+  font-size: 15.5px;
   font-weight: 600;
   color: #1677ff;
   line-height: 1.2;
@@ -472,8 +513,8 @@ onBeforeUnmount(removeListeners)
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-top: 2px;
-  padding: 1px 5px;
+  margin-top: 3px;
+  padding: 2px 6px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -497,8 +538,8 @@ onBeforeUnmount(removeListeners)
 .slider-bar-track {
   position: relative;
   width: 100%;
-  height: 14px;
-  border-radius: 7px;
+  height: 20px;
+  border-radius: 10px;
   background: #e2e8f0;
   cursor: pointer;
   user-select: none;
@@ -515,7 +556,7 @@ onBeforeUnmount(removeListeners)
   top: 0;
   left: 0;
   height: 100%;
-  border-radius: 7px;
+  border-radius: 10px;
   background: #1677ff;
   pointer-events: none;
   transition: width 130ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -534,8 +575,8 @@ onBeforeUnmount(removeListeners)
 .slider-step-dot {
   position: absolute;
   top: 50%;
-  width: 3px;
-  height: 3px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
   background: rgba(0, 0, 0, 0.22);
@@ -544,7 +585,7 @@ onBeforeUnmount(removeListeners)
 }
 
 .slider-step-dot.active {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.85);
 }
 
 :root[data-theme="dark"] .slider-step-dot {
@@ -559,11 +600,11 @@ onBeforeUnmount(removeListeners)
 .slider-bar-thumb {
   position: absolute;
   top: -2px;
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.1);
   transform: translateX(-50%);
   pointer-events: none;
   transition: left 130ms cubic-bezier(0.4, 0, 0.2, 1);
