@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, Check, ChevronDown, Hand, ShieldCheck } from '@lucide/vue'
+import { Check, Hand, ShieldAlert, ShieldCheck } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 export type ApprovalMode = 'manual' | 'guardrail' | 'full'
@@ -52,8 +52,8 @@ const options: ModeOption[] = [
     id: 'full',
     title: '完全访问权限',
     shortLabel: '完全访问',
-    description: '可不受限制地访问互联网和你电脑上的任何文件',
-    icon: AlertTriangle
+    description: '可不受限制地访问互联网和电脑上的任何文件',
+    icon: ShieldAlert
   }
 ]
 
@@ -135,64 +135,32 @@ onBeforeUnmount(removeListeners)
 
 <template>
   <div class="composer-approval-wrap">
-    <button
-      ref="trigger"
-      type="button"
-      class="composer-approval-pill"
-      :class="[
-        `mode-${normalizedMode}`,
-        { open, disabled }
-      ]"
-      :disabled="disabled"
-      aria-haspopup="dialog"
-      :aria-expanded="open"
-      :title="`操作批准模式：${currentOption.title} - ${currentOption.description}`"
-      @click="toggle"
-      @keydown="handleKeydown"
-    >
-      <component :is="currentOption.icon" :size="14" class="pill-icon" />
+    <button ref="trigger" type="button" class="composer-approval-pill" :class="[
+      `mode-${normalizedMode}`,
+      { open, disabled }
+    ]" :disabled="disabled" aria-haspopup="dialog" :aria-expanded="open"
+      :title="`操作批准模式：${currentOption.title} - ${currentOption.description}`" @click="toggle" @keydown="handleKeydown">
+      <component :is="currentOption.icon" :size="15" class="pill-icon" />
       <span class="pill-label">{{ currentOption.shortLabel }}</span>
-      <ChevronDown :size="12" class="pill-chevron" :class="{ rotated: open }" />
     </button>
 
     <Teleport to="body">
       <Transition name="select-popover">
-        <section
-          v-if="open"
-          ref="menu"
-          class="approval-popover-card"
-          role="dialog"
-          aria-label="选择操作批准模式"
-          :style="menuStyle"
-          @keydown="handleKeydown"
-        >
+        <section v-if="open" ref="menu" class="approval-popover-card" role="dialog" aria-label="选择操作批准模式"
+          :style="menuStyle" @keydown="handleKeydown">
           <header class="approval-popover-header">
             <span class="approval-header-title">应如何批准 SeekClaw 操作？</span>
-            <a
-              href="https://seekclaw.hoilai.com/doc/daemon/#agent-mode"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="approval-learn-more"
-              title="查看操作批准模式说明"
-            >
+            <a href="https://seekclaw.hoilai.com/doc/daemon/#agent-mode" target="_blank" rel="noopener noreferrer"
+              class="approval-learn-more" title="查看操作批准模式说明">
               了解更多
             </a>
           </header>
 
           <div class="approval-options-list" role="radiogroup" aria-label="批准模式选项">
-            <button
-              v-for="opt in options"
-              :key="opt.id"
-              type="button"
-              class="approval-option-item"
-              :class="[
-                `item-${opt.id}`,
-                { active: normalizedMode === opt.id }
-              ]"
-              role="radio"
-              :aria-checked="normalizedMode === opt.id"
-              @click="selectMode(opt.id)"
-            >
+            <button v-for="opt in options" :key="opt.id" type="button" class="approval-option-item" :class="[
+              `item-${opt.id}`,
+              { active: normalizedMode === opt.id }
+            ]" role="radio" :aria-checked="normalizedMode === opt.id" @click="selectMode(opt.id)">
               <div class="option-icon-box">
                 <component :is="opt.icon" :size="18" />
               </div>
@@ -221,15 +189,15 @@ onBeforeUnmount(removeListeners)
 .composer-approval-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
+  padding: 0 6px;
+  font-size: 13px;
   font-weight: 500;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
   transition: all 140ms ease;
@@ -238,7 +206,7 @@ onBeforeUnmount(removeListeners)
 
 .composer-approval-pill:hover:not(:disabled) {
   background: var(--surface-hover);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--text);
 }
 
 .composer-approval-pill:disabled {
@@ -246,22 +214,18 @@ onBeforeUnmount(removeListeners)
   cursor: not-allowed;
 }
 
-/* Full Access Warning Orange Accent */
+/* Full Access Warning Orange Accent (as shown in Codex screenshot) */
 .composer-approval-pill.mode-full {
-  background: color-mix(in srgb, #f97316 11%, transparent);
-  border-color: color-mix(in srgb, #f97316 38%, var(--border));
+  background: transparent;
   color: #ea580c;
 }
 
 :root[data-theme="dark"] .composer-approval-pill.mode-full {
-  background: color-mix(in srgb, #ea580c 18%, transparent);
-  border-color: color-mix(in srgb, #ea580c 45%, var(--border));
   color: #fb923c;
 }
 
 .composer-approval-pill.mode-full:hover:not(:disabled) {
-  background: color-mix(in srgb, #f97316 18%, transparent);
-  border-color: #ea580c;
+  background: color-mix(in srgb, #f97316 12%, transparent);
 }
 
 .pill-icon {
@@ -269,7 +233,7 @@ onBeforeUnmount(removeListeners)
 }
 
 .pill-label {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
 }
 

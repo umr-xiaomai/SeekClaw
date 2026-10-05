@@ -2146,17 +2146,23 @@ body.is-resizing-sidebar .app-body {
   min-width: 0;
   width: min(100%, 940px);
   margin: 0 auto;
-  padding: 13px 13px 10px;
+  padding: 13px 15px 10px;
   background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 18px;
-  box-shadow: var(--composer-shadow);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02);
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
+:root[data-theme="dark"] .composer-shell {
+  background: var(--surface-raised);
+  border-color: var(--border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+
 .composer-shell:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent), var(--composer-shadow);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), 0 4px 20px rgba(0, 0, 0, 0.06);
 }
 
 .composer-shell.drag-over {
@@ -2400,9 +2406,10 @@ body.is-resizing-sidebar .app-body {
   display: block;
   width: 100%;
   max-height: 176px;
-  padding: 2px 7px 9px;
+  padding: 2px 4px 8px;
   overflow-y: auto;
-  line-height: 1.5;
+  font-size: 14.5px;
+  line-height: 1.55;
   resize: none;
   background: transparent;
   border: 0;
@@ -2419,8 +2426,96 @@ body.is-resizing-sidebar .app-body {
 }
 
 .composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   min-width: 0;
-  gap: 5px;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.composer-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.composer-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.composer-plus-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 130ms ease, background 130ms ease;
+}
+
+.composer-plus-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.composer-plus-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.composer-plus-popover {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme="dark"] .composer-plus-popover {
+  background: var(--surface-raised);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.plus-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+
+.plus-popover-item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.plus-popover-item:disabled,
+.plus-popover-item.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .composer-icon {
@@ -2698,27 +2793,58 @@ body.is-resizing-sidebar .app-body {
 
 .send-button {
   display: grid;
-  width: 33px;
-  height: 33px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   place-items: center;
   color: #ffffff;
-  background: var(--accent);
+  background: #8e8e93;
+  border: none;
   border-radius: 50%;
-  transition: background-color 140ms ease, transform 120ms ease;
+  cursor: pointer;
+  transition: background-color 140ms ease, transform 120ms ease, opacity 140ms ease;
 }
 
-.send-button:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 86%, #000);
+:root[data-theme="dark"] .send-button {
+  background: #636366;
+  color: #ffffff;
 }
 
-.send-button:not(:disabled):active {
-  transform: scale(.95);
+.send-button.active {
+  background: #18181b;
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .send-button.active {
+  background: #ffffff;
+  color: #18181b;
+}
+
+.send-button.active:hover {
+  transform: scale(1.05);
+  background: #000000;
+}
+
+:root[data-theme="dark"] .send-button.active:hover {
+  background: #f4f4f5;
+}
+
+.send-button.active:active {
+  transform: scale(0.95);
 }
 
 .send-button:disabled {
-  color: var(--text-muted);
-  background: var(--surface-hover);
+  background: #8e8e93;
+  color: #ffffff;
+  opacity: 0.9;
+  cursor: not-allowed;
+  transform: none;
+}
+
+:root[data-theme="dark"] .send-button:disabled {
+  background: #636366;
+  color: #ffffff;
+  opacity: 0.8;
 }
 
 .composer-caption {

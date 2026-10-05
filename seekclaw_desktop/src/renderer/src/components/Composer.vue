@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { ArrowUp, LoaderCircle, Paperclip, Sparkles, Square, X } from '@lucide/vue'
-import { nextTick, ref, watch } from 'vue'
+import { ArrowUp, Image as ImageIcon, LoaderCircle, Paperclip, Plus, Sparkles, Square, X } from '@lucide/vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { FileAttachment, ImageAttachment, ReasoningLevel } from '../types'
 import { confirmAction } from '../confirmation'
 import { fileBadgeText, fileExtClass, getFileExtension } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import ApprovalModeMenu from './ApprovalModeMenu.vue'
-import ReasoningDepthMenu from './ReasoningDepthMenu.vue'
-import SelectMenu from './SelectMenu.vue'
+import ModelReasoningMenu from './ModelReasoningMenu.vue'
 
 const props = defineProps<{
   busy: boolean
@@ -212,6 +211,91 @@ async function selectFiles(): Promise<void> {
     selectingFiles.value = false
   }
 }
+
+async function selectImages(): Promise<void> {
+  if (props.disabled || selectingFiles.value) return
+  selectingFiles.value = true
+  try {
+    const selection = await window.seekclaw.selectImages()
+    if (selection) {
+      if (selection.images && selection.images.length > 0) {
+        addImages(selection.images)
+      }
+      if (selection.warning) {
+        imageNotice.value = selection.warning
+      }
+    }
+  } catch (error) {
+    imageNotice.value = error instanceof Error ? error.message : '选择图片失败。'
+  } finally {
+    selectingFiles.value = false
+  }
+}
+
+const plusMenuOpen = ref(false)
+const plusTrigger = ref<HTMLButtonElement | null>(null)
+const plusMenu = ref<HTMLElement | null>(null)
+const plusMenuStyle = ref<Record<string, string>>({})
+
+function positionPlusMenu(): void {
+  if (!plusTrigger.value || !plusMenuOpen.value) return
+  const rect = plusTrigger.value.getBoundingClientRect()
+  const edge = 10
+  const gap = 8
+  const width = 160
+  const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge))
+  const placeAbove = window.innerHeight - rect.bottom < 170
+  plusMenuStyle.value = placeAbove
+    ? { width: `${width}px`, left: `${left}px`, bottom: `${window.innerHeight - rect.top + gap}px` }
+    : { width: `${width}px`, left: `${left}px`, top: `${rect.bottom + gap}px` }
+}
+
+function togglePlusMenu(): void {
+  if (plusMenuOpen.value) {
+    plusMenuOpen.value = false
+  } else {
+    plusMenuOpen.value = true
+    void nextTick(positionPlusMenu)
+  }
+}
+
+function handlePlusSelectFiles(): void {
+  plusMenuOpen.value = false
+  void selectFiles()
+}
+
+function handlePlusSelectImages(): void {
+  plusMenuOpen.value = false
+  void selectImages()
+}
+
+function handlePlusOptimizePrompt(): void {
+  plusMenuOpen.value = false
+  void optimizeCurrentPrompt()
+}
+
+function handlePlusOutsidePointer(event: MouseEvent): void {
+  const target = event.target as Node | null
+  if (!target) return
+  if (plusTrigger.value?.contains(target)) return
+  if (plusMenu.value?.contains(target)) return
+  plusMenuOpen.value = false
+}
+
+function addPlusListeners(): void {
+  document.addEventListener('mousedown', handlePlusOutsidePointer, true)
+  window.addEventListener('resize', positionPlusMenu)
+  window.addEventListener('scroll', positionPlusMenu, true)
+}
+
+function removePlusListeners(): void {
+  document.removeEventListener('mousedown', handlePlusOutsidePointer, true)
+  window.removeEventListener('resize', positionPlusMenu)
+  window.removeEventListener('scroll', positionPlusMenu, true)
+}
+
+watch(plusMenuOpen, (isOpen) => isOpen ? addPlusListeners() : removePlusListeners())
+onBeforeUnmount(removePlusListeners)
 
 async function handlePaste(event: ClipboardEvent): Promise<void> {
   const clipboardFiles = Array.from(event.clipboardData?.files ?? [])
@@ -495,38 +579,110 @@ watch(() => props.supportsImages, async (supported) => {
     </div>
     <p v-if="imageNotice" class="composer-image-notice">{{ imageNotice }}</p>
     <textarea ref="textarea" v-model="value" :disabled="disabled" rows="1"
-      :placeholder="disabled ? '恢复任务后可继续对话' : '交给 SeekClaw'" aria-label="消息" @keydown="handleKeydown"
+      :placeholder="disabled ? '恢复任务后可继续对话' : '随心输入'" aria-label="消息" @keydown="handleKeydown"
       @paste="handlePaste" />
     <div class="composer-toolbar">
-      <button class="icon-button composer-icon" type="button" title="添加文件附件（可直接拖拽任意文件或文件夹）"
-        :disabled="disabled || selectingFiles" @click="selectFiles">
-        <Paperclip :size="17" />
-      </button>
-      <button class="icon-button composer-icon" type="button" :title="optimizing ? '正在优化提示词' : '优化提示词'"
-        :disabled="disabled || busy || optimizing || !value.trim()" @click="optimizeCurrentPrompt">
-        <LoaderCircle v-if="optimizing" class="spin" :size="16" />
-        <Sparkles v-else :size="16" />
-      </button>
-      <ApprovalModeMenu :model-value="mode" :disabled="busy || disabled"
-        @update:model-value="emit('changeMode', $event)" />
-      <SelectMenu class="composer-select model-control" :model-value="model"
-        :options="models.length > 0 ? models.map((item) => ({ value: item, label: item })) : [{ value: '', label: '未配置模型' }]"
-        label="模型" :disabled="busy || disabled || models.length === 0" :menu-min-width="300" searchable
-        @update:model-value="emit('changeModel', $event)" />
+      <div class="composer-toolbar-left">
+        <!-- + Action Button -->
+        <button
+          ref="plusTrigger"
+          class="composer-plus-btn"
+          type="button"
+          title="添加附件或优化提示词"
+          :disabled="disabled || selectingFiles"
+          @click="togglePlusMenu"
+        >
+          <Plus :size="18" />
+        </button>
+
+        <!-- Approval Mode Selector -->
+        <ApprovalModeMenu
+          :model-value="mode"
+          :disabled="busy || disabled"
+          @update:model-value="emit('changeMode', $event)"
+        />
+      </div>
+
       <span class="toolbar-spacer" />
-      <ReasoningDepthMenu :model-value="reasoningLevel" :disabled="busy || disabled"
-        @update:model-value="emit('changeReasoningLevel', $event)" />
-      <button v-if="busy && !value.trim() && images.length === 0 && attachedFiles.length === 0" class="send-button"
-        title="停止" @click="emit('stop')">
-        <Square :size="14" fill="currentColor" />
-      </button>
-      <button v-else class="send-button" :title="busy ? '排队发送（本轮结束后自动发送）' : '发送'"
-        :disabled="disabled || (!value.trim() && images.length === 0 && attachedFiles.length === 0) || (images.length > 0 && !supportsImages)"
-        @click="submit">
-        <ArrowUp :size="19" />
-      </button>
+
+      <div class="composer-toolbar-right">
+        <!-- Unified Model & Reasoning Depth Menu -->
+        <ModelReasoningMenu
+          :model="model"
+          :models="models"
+          :reasoning-level="reasoningLevel"
+          :disabled="busy || disabled"
+          @update:model="emit('changeModel', $event)"
+          @update:reasoning-level="emit('changeReasoningLevel', $event)"
+        />
+
+        <!-- Send / Stop Button -->
+        <button
+          v-if="busy && !value.trim() && images.length === 0 && attachedFiles.length === 0"
+          class="send-button active"
+          title="停止"
+          @click="emit('stop')"
+        >
+          <Square :size="13" fill="currentColor" />
+        </button>
+        <button
+          v-else
+          class="send-button"
+          :class="{ active: Boolean(value.trim() || images.length > 0 || attachedFiles.length > 0) }"
+          :title="busy ? '排队发送（本轮结束后自动发送）' : '发送'"
+          :disabled="disabled || (!value.trim() && images.length === 0 && attachedFiles.length === 0) || (images.length > 0 && !supportsImages)"
+          @click="submit"
+        >
+          <ArrowUp :size="18" />
+        </button>
+      </div>
     </div>
   </div>
+
+  <!-- Plus Context Popover -->
+  <Teleport to="body">
+    <Transition name="select-popover">
+      <section
+        v-if="plusMenuOpen"
+        ref="plusMenu"
+        class="composer-plus-popover"
+        role="menu"
+        aria-label="添加附件与操作"
+        :style="plusMenuStyle"
+      >
+        <button
+          type="button"
+          class="plus-popover-item"
+          role="menuitem"
+          @click="handlePlusSelectFiles"
+        >
+          <Paperclip :size="15" />
+          <span>附加文件</span>
+        </button>
+        <button
+          type="button"
+          class="plus-popover-item"
+          role="menuitem"
+          @click="handlePlusSelectImages"
+        >
+          <ImageIcon :size="15" />
+          <span>添加图片</span>
+        </button>
+        <button
+          type="button"
+          class="plus-popover-item"
+          :class="{ disabled: !value.trim() || busy || optimizing }"
+          :disabled="!value.trim() || busy || optimizing"
+          role="menuitem"
+          @click="handlePlusOptimizePrompt"
+        >
+          <LoaderCircle v-if="optimizing" class="spin" :size="15" />
+          <Sparkles v-else :size="15" />
+          <span>优化提示词</span>
+        </button>
+      </section>
+    </Transition>
+  </Teleport>
 
   <ImagePreviewDialog :src="previewImage ? imageUrl(previewImage) : undefined" :name="previewImage?.name"
     @close="previewImage = null" />
