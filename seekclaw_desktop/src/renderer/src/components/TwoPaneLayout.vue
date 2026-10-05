@@ -144,6 +144,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: transparent;
 }
 
 .two-pane-sidebar {

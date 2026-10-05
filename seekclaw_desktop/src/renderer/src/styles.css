@@ -323,6 +323,7 @@ select:focus-visible {
   height: 100%;
   position: relative;
   overflow: hidden;
+  background: var(--sidebar);
 }
 
 .app-workspace-container > .app-body {

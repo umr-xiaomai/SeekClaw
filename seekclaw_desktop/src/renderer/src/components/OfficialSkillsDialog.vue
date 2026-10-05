@@ -500,7 +500,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  background: var(--bg);
+  background: transparent;
   overflow: hidden;
   position: relative;
 }

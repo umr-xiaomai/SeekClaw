@@ -1347,7 +1347,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  background: var(--bg);
+  background: transparent;
   overflow: hidden;
   position: relative;
 }
@@ -2391,8 +2391,12 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   z-index: 50;
-  background: var(--bg);
+  background: var(--sidebar);
   display: flex;
   flex-direction: column;
+}
+
+:root[data-material="mica"] .official-market-modal-overlay {
+  background: color-mix(in srgb, var(--sidebar) 75%, transparent);
 }
 </style>
