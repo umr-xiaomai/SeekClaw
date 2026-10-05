@@ -721,10 +721,15 @@ internal sealed class DaemonAdminApi(
             if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                 path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
-                tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
                 using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
                 var response = httpClient.GetAsync(path).GetAwaiter().GetResult();
                 response.EnsureSuccessStatusCode();
+
+                var fileName = GetDownloadedFileName(response, path);
+                var tempDir = Path.Combine(Path.GetTempPath(), $"seekclaw-import-{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+                tempFile = Path.Combine(tempDir, fileName);
+
                 using var fs = File.Create(tempFile);
                 response.Content.CopyTo(fs, null, CancellationToken.None);
                 fullPath = tempFile;
@@ -732,11 +737,15 @@ internal sealed class DaemonAdminApi(
             else if (!File.Exists(path) && !path.Contains('/') && !path.Contains('\\'))
             {
                 var officialUrl = $"https://seekclaw.hoilai.com/api/skills/{Uri.EscapeDataString(path)}/download";
-                tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
                 using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
                 var response = httpClient.GetAsync(officialUrl).GetAwaiter().GetResult();
                 if (response.IsSuccessStatusCode)
                 {
+                    var fileName = GetDownloadedFileName(response, path);
+                    var tempDir = Path.Combine(Path.GetTempPath(), $"seekclaw-import-{Guid.NewGuid():N}");
+                    Directory.CreateDirectory(tempDir);
+                    tempFile = Path.Combine(tempDir, fileName);
+
                     using var fs = File.Create(tempFile);
                     response.Content.CopyTo(fs, null, CancellationToken.None);
                     fullPath = tempFile;
@@ -755,7 +764,14 @@ internal sealed class DaemonAdminApi(
         {
             if (tempFile != null && File.Exists(tempFile))
             {
-                try { File.Delete(tempFile); } catch { }
+                try
+                {
+                    File.Delete(tempFile);
+                    var dir = Path.GetDirectoryName(tempFile);
+                    if (dir != null && Directory.Exists(dir) && dir.Contains("seekclaw-import-"))
+                        Directory.Delete(dir, true);
+                }
+                catch { }
             }
             throw new DaemonRequestException($"Invalid skill import path or failed to download: {ex.Message}");
         }
@@ -773,9 +789,44 @@ internal sealed class DaemonAdminApi(
         {
             if (tempFile != null && File.Exists(tempFile))
             {
-                try { File.Delete(tempFile); } catch { }
+                try
+                {
+                    File.Delete(tempFile);
+                    var dir = Path.GetDirectoryName(tempFile);
+                    if (dir != null && Directory.Exists(dir) && dir.Contains("seekclaw-import-"))
+                        Directory.Delete(dir, true);
+                }
+                catch { }
             }
         }
+    }
+
+    private static string GetDownloadedFileName(HttpResponseMessage response, string fallbackUrlOrSlug)
+    {
+        var disposition = response.Content.Headers.ContentDisposition?.FileNameStar
+            ?? response.Content.Headers.ContentDisposition?.FileName;
+        if (!string.IsNullOrWhiteSpace(disposition))
+        {
+            disposition = disposition.Trim('\"', '\'');
+            if (!string.IsNullOrWhiteSpace(disposition))
+                return Path.GetFileName(disposition);
+        }
+
+        var mediaType = response.Content.Headers.ContentType?.MediaType;
+        var ext = mediaType switch
+        {
+            "text/markdown" or "text/plain" => ".md",
+            "application/zip" or "application/x-zip-compressed" => ".zip",
+            _ => ".md"
+        };
+
+        var slug = fallbackUrlOrSlug;
+        if (slug.Contains('/'))
+        {
+            var segments = slug.TrimEnd('/').Split('/');
+            slug = segments.Length > 0 ? segments[^1] : "skill";
+        }
+        return $"{slug}{ext}";
     }
 
     public string ToggleSkill(JsonObject parameters)

@@ -129,13 +129,41 @@ public sealed class SkillManager : ISkillManager
         Directory.CreateDirectory(_globalSkillsDir);
         var extension = Path.GetExtension(fullPath);
         if (extension.Equals(".md", StringComparison.OrdinalIgnoreCase))
+        {
             ImportMarkdown(fullPath, overwrite);
+        }
         else if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
-            ImportZip(fullPath, overwrite);
+        {
+            if (IsZipArchive(fullPath))
+                ImportZip(fullPath, overwrite);
+            else
+                ImportMarkdown(fullPath, overwrite);
+        }
         else
-            throw new InvalidDataException("Only .md and .zip skill files can be imported.");
+        {
+            if (IsZipArchive(fullPath))
+                ImportZip(fullPath, overwrite);
+            else
+                ImportMarkdown(fullPath, overwrite);
+        }
 
         return Discover(workspace);
+    }
+
+    private static bool IsZipArchive(string filePath)
+    {
+        try
+        {
+            using var fs = File.OpenRead(filePath);
+            if (fs.Length < 4) return false;
+            var header = new byte[4];
+            if (fs.Read(header, 0, 4) != 4) return false;
+            return header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void ImportMarkdown(string markdownFile, bool overwrite = false)
@@ -155,7 +183,17 @@ public sealed class SkillManager : ISkillManager
 
         try
         {
-            ZipFile.ExtractToDirectory(zipFile, extractionRoot);
+            try
+            {
+                ZipFile.ExtractToDirectory(zipFile, extractionRoot);
+            }
+            catch (InvalidDataException)
+            {
+                // Fallback: If zip extraction fails, treat as markdown file
+                ImportMarkdown(zipFile, overwrite);
+                return;
+            }
+
             var imported = false;
 
             if (LooksLikeSkillDirectory(extractionRoot))

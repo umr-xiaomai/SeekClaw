@@ -724,4 +724,46 @@ public sealed class ToolAndAgentTests
         Assert.NotNull(tool);
         Assert.True(tool.RequiresVision);
     }
+
+    [Fact]
+    public void SkillManager_ImportsMarkdownFile_Successfully()
+    {
+        using var runtime = SeekClawRuntime.Create();
+        var tempFile = Path.Combine(Path.GetTempPath(), $"test-skill-{Guid.NewGuid():N}.md");
+        try
+        {
+            File.WriteAllText(tempFile, "# Test Skill\nDescription of skill");
+            var skills = runtime.Skills.ImportGlobal(tempFile, runtime.Workspace, overwrite: true);
+            Assert.NotEmpty(skills);
+            var imported = skills.FirstOrDefault(s => s.Name.StartsWith("test-skill-"));
+            Assert.NotNull(imported);
+            Assert.True(imported.Enabled);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void SkillManager_ImportsTextFileWithZipExtension_FallsBackToMarkdown()
+    {
+        using var runtime = SeekClawRuntime.Create();
+        // Even if named .zip, a markdown content file shouldn't throw "End of Central Directory" error
+        var tempFile = Path.Combine(Path.GetTempPath(), $"test-pseudo-zip-{Guid.NewGuid():N}.zip");
+        try
+        {
+            File.WriteAllText(tempFile, "# Pseudo Zip Markdown Skill\nSome content");
+            var skills = runtime.Skills.ImportGlobal(tempFile, runtime.Workspace, overwrite: true);
+            Assert.NotEmpty(skills);
+            var imported = skills.FirstOrDefault(s => s.Name.StartsWith("test-pseudo-zip-"));
+            Assert.NotNull(imported);
+            Assert.True(imported.Enabled);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
 }
+
