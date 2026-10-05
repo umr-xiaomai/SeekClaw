@@ -4,12 +4,13 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin({ include: ['electron'] })]
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ include: ['electron'] })],
     build: {
       rollupOptions: {
+        external: ['electron'],
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs'
