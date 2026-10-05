@@ -601,14 +601,14 @@ onBeforeUnmount(removeListeners)
 .slider-bar-fill.max-energy {
   background: linear-gradient(90deg, #1d4ed8, #2563eb, #0284c7, #38bdf8, #2563eb);
   background-size: 200% 100%;
-  animation: max-bar-flow 3.2s linear infinite;
+  animation: max-bar-flow 2.4s linear infinite;
   box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
 }
 
 :root[data-theme="dark"] .slider-bar-fill.max-energy {
   background: linear-gradient(90deg, #0369a1, #0284c7, #38bdf8, #60a5fa, #0284c7);
   background-size: 200% 100%;
-  animation: max-bar-flow 3.2s linear infinite;
+  animation: max-bar-flow 2.4s linear infinite;
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
 }
 
@@ -648,17 +648,17 @@ onBeforeUnmount(removeListeners)
   opacity: 0;
 }
 
-.stream-line.l-1 { top: 20%; height: 2px; width: 36px; animation-duration: 1.6s; animation-delay: 0s; }
-.stream-line.l-2 { top: 42%; height: 1.5px; width: 24px; animation-duration: 1.35s; animation-delay: 0.35s; }
-.stream-line.l-3 { top: 65%; height: 2px; width: 42px; animation-duration: 1.85s; animation-delay: 0.75s; }
-.stream-line.l-4 { top: 82%; height: 1.5px; width: 28px; animation-duration: 1.5s; animation-delay: 0.18s; }
-.stream-line.l-5 { top: 30%; height: 2px; width: 44px; animation-duration: 1.75s; animation-delay: 1.05s; }
-.stream-line.l-6 { top: 55%; height: 1.5px; width: 32px; animation-duration: 1.4s; animation-delay: 0.55s; }
+.stream-line.l-1 { top: 20%; height: 2px; width: 36px; animation-duration: 1.05s; animation-delay: 0s; }
+.stream-line.l-2 { top: 42%; height: 1.5px; width: 24px; animation-duration: 0.85s; animation-delay: 0.22s; }
+.stream-line.l-3 { top: 65%; height: 2px; width: 42px; animation-duration: 1.15s; animation-delay: 0.48s; }
+.stream-line.l-4 { top: 82%; height: 1.5px; width: 28px; animation-duration: 0.95s; animation-delay: 0.12s; }
+.stream-line.l-5 { top: 30%; height: 2px; width: 44px; animation-duration: 1.10s; animation-delay: 0.65s; }
+.stream-line.l-6 { top: 55%; height: 1.5px; width: 32px; animation-duration: 0.88s; animation-delay: 0.35s; }
 
-.stream-spark.s-1 { top: 36%; width: 3px; height: 3px; animation-duration: 1.55s; animation-delay: 0.25s; }
-.stream-spark.s-2 { top: 62%; width: 2.5px; height: 2.5px; animation-duration: 1.3s; animation-delay: 0.65s; }
-.stream-spark.s-3 { top: 22%; width: 3px; height: 3px; animation-duration: 1.45s; animation-delay: 0.95s; }
-.stream-spark.s-4 { top: 76%; width: 2px; height: 2px; animation-duration: 1.7s; animation-delay: 0.1s; }
+.stream-spark.s-1 { top: 36%; width: 3px; height: 3px; animation-duration: 0.98s; animation-delay: 0.16s; }
+.stream-spark.s-2 { top: 62%; width: 2.5px; height: 2.5px; animation-duration: 0.82s; animation-delay: 0.42s; }
+.stream-spark.s-3 { top: 22%; width: 3px; height: 3px; animation-duration: 0.92s; animation-delay: 0.60s; }
+.stream-spark.s-4 { top: 76%; width: 2px; height: 2px; animation-duration: 1.08s; animation-delay: 0.06s; }
 
 @keyframes stream-rush {
   0% {
