@@ -375,14 +375,14 @@ onBeforeUnmount(removeListeners)
 .model-reasoning-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   height: 28px;
-  padding: 0 10px;
-  font-size: 12.5px;
-  font-weight: 500;
-  border-radius: 14px;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 450;
+  border-radius: 6px;
   border: none;
-  background: var(--surface-hover, rgba(0, 0, 0, 0.05));
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
@@ -390,18 +390,20 @@ onBeforeUnmount(removeListeners)
   white-space: nowrap;
 }
 
-:root[data-theme="dark"] .model-reasoning-trigger {
-  background: var(--surface-hover, rgba(255, 255, 255, 0.07));
-}
-
 .model-reasoning-trigger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-hover));
   color: var(--text);
+  background: var(--surface-hover);
 }
 
 .model-reasoning-trigger.open {
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface-hover));
+  background: var(--surface-hover, rgba(0, 0, 0, 0.06));
   color: var(--text);
+  border-radius: 14px;
+  padding: 0 10px;
+}
+
+:root[data-theme="dark"] .model-reasoning-trigger.open {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
 }
 
 .model-reasoning-trigger:disabled {

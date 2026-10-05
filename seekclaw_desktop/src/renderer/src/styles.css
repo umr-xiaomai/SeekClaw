@@ -2414,6 +2414,18 @@ body.is-resizing-sidebar .app-body {
   background: transparent;
   border: 0;
   outline: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.composer-shell textarea::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.composer-shell textarea::-webkit-resizer {
+  display: none;
 }
 
 .composer-shell textarea::placeholder {
