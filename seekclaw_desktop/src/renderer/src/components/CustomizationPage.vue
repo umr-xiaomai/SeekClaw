@@ -2388,9 +2388,9 @@ onBeforeUnmount(() => {
 
 /* Fullscreen Overlay for OfficialSkillsDialog */
 .official-market-modal-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 1000;
+  z-index: 50;
   background: var(--bg);
   display: flex;
   flex-direction: column;

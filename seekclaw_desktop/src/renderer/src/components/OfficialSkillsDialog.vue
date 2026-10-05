@@ -270,9 +270,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
       <template #sidebar>
         <div class="skills-nav">
           <div class="skills-nav-header">
-            <button class="page-back-button" type="button" title="返回应用" @click="emit('close')">
+            <button class="page-back-button" type="button" title="返回" @click="emit('close')">
               <ArrowLeft :size="16" />
-              <span>返回应用</span>
+              <span>返回</span>
             </button>
           </div>
 
@@ -500,7 +500,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  background: transparent;
+  background: var(--bg);
   overflow: hidden;
   position: relative;
 }
