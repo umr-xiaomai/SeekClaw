@@ -5,6 +5,7 @@ import type { FileAttachment, ImageAttachment, ReasoningLevel } from '../types'
 import { confirmAction } from '../confirmation'
 import { fileBadgeText, fileExtClass, getFileExtension } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
+import ApprovalModeMenu from './ApprovalModeMenu.vue'
 import ReasoningDepthMenu from './ReasoningDepthMenu.vue'
 import SelectMenu from './SelectMenu.vue'
 
@@ -43,12 +44,6 @@ const imageNotice = ref('')
 const optimizing = ref(false)
 const previewImage = ref<ImageAttachment | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
-const modeOptions = [
-  { value: 'edit', label: 'Edit', description: '可读取并修改文件' },
-  { value: 'plan', label: 'Plan', description: '先分析并制定计划' },
-  { value: 'readonly', label: 'Read', description: '仅分析，不修改文件' },
-  { value: 'auto', label: 'Auto', description: '根据任务自动选择' }
-]
 
 function imageUrl(image: ImageAttachment): string {
   return `data:${image.mediaType};base64,${image.data}`
@@ -512,8 +507,8 @@ watch(() => props.supportsImages, async (supported) => {
         <LoaderCircle v-if="optimizing" class="spin" :size="16" />
         <Sparkles v-else :size="16" />
       </button>
-      <SelectMenu class="composer-select mode-control" :model-value="mode" :options="modeOptions" label="Agent 模式"
-        :disabled="busy || disabled" :menu-min-width="220" @update:model-value="emit('changeMode', $event)" />
+      <ApprovalModeMenu :model-value="mode" :disabled="busy || disabled"
+        @update:model-value="emit('changeMode', $event)" />
       <SelectMenu class="composer-select model-control" :model-value="model"
         :options="models.length > 0 ? models.map((item) => ({ value: item, label: item })) : [{ value: '', label: '未配置模型' }]"
         label="模型" :disabled="busy || disabled || models.length === 0" :menu-min-width="300" searchable

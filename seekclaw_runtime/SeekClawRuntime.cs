@@ -178,15 +178,15 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
             return ValueTask.FromResult<string?>(PromptVariables.BuildCapabilityInstruction(vision, imageOutput));
         }));
 
-        // Collaboration mode supplies the behavioral contract for plan/readonly/auto runs.
+        // Collaboration & approval mode supplies the behavioral contract for runs.
         registry.Register(new PromptContribution("collaboration-mode", PromptSlot.System, (ctx, _) =>
         {
-            var mode = ctx.Variables.TryGetValue("mode", out var modeValue) ? modeValue : "edit";
+            var mode = ctx.Variables.TryGetValue("mode", out var modeValue) ? modeValue : "guardrail";
             var key = mode switch
             {
-                "plan" => "system/planner",
+                "manual" or "plan" => "system/planner",
                 "readonly" => "system/readonly",
-                "auto" => "system/auto",
+                "full" or "auto" => "system/auto",
                 _ => null,
             };
             return ValueTask.FromResult(key is null ? null : prompts.TryGet(key));

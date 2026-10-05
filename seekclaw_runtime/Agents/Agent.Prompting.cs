@@ -17,13 +17,7 @@ public sealed partial class Agent
         var agentsMd = workspaceManager.LoadAgentInstructions(workspace);
         var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
         var mode = AgentModeExtensions.Parse(rawMode);
-        var modeName = mode switch
-        {
-            AgentMode.Plan => "plan",
-            AgentMode.ReadOnly => "readonly",
-            AgentMode.Auto => "auto",
-            _ => "edit",
-        };
+        var modeName = mode.ToModeString();
         var personality = workspace.Config?.Personality ?? configStore.Config.Agent.Personality;
         if (string.IsNullOrWhiteSpace(personality)) personality = "pragmatic";
         var autoVerify = ShouldVerify(workspace, configStore.Config.Agent);

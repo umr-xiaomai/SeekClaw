@@ -44,7 +44,7 @@ public static class PromptVariables
             ["mode"] = mode,
             ["network"] = networkEnabled ? "enabled" : "disabled",
             ["approval_policy"] = "never",
-            ["sandbox_mode"] = mode is "plan" or "readonly" ? "read_only" : "workspace_write",
+            ["sandbox_mode"] = mode is "plan" or "readonly" ? "read_only" : (Agents.AgentModeExtensions.Parse(mode) == Agents.AgentMode.Full ? "unrestricted" : "workspace_write"),
             ["auto_verify"] = autoVerify ? "true" : "false",
             ["personality"] = personality,
         };

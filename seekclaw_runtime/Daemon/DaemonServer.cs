@@ -570,7 +570,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         var rawMode = request["params"]?["mode"]?.GetValue<string>();
                         if (!TryNormalizeMode(rawMode, out var mode))
                         {
-                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.mode must be one of: plan, readonly, edit, auto", context.ConnectionCt).ConfigureAwait(false);
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.mode must be one of: manual, guardrail, full, edit, plan, readonly, auto", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         await _adminGate.WaitAsync(context.ConnectionCt).ConfigureAwait(false);
@@ -1358,10 +1358,12 @@ public sealed class DaemonServer : IAsyncDisposable
         public Task? Task { get; set; }
     }
 
-    private string CurrentMode() =>
-        AgentModeExtensions.Parse(
-            _runtime.Workspace.Config?.Mode ?? _runtime.ConfigStore.Config.Agent.Mode)
-        .ToString().ToLowerInvariant();
+    private string CurrentMode()
+    {
+        var raw = _runtime.Workspace.Config?.Mode ?? _runtime.ConfigStore.Config.Agent.Mode;
+        if (string.IsNullOrWhiteSpace(raw)) return "guardrail";
+        return raw.Trim().ToLowerInvariant();
+    }
 
     private void SaveMode(string mode)
     {
@@ -1378,8 +1380,19 @@ public sealed class DaemonServer : IAsyncDisposable
 
     private static bool TryNormalizeMode(string? rawMode, out string mode)
     {
-        mode = rawMode?.Trim().ToLowerInvariant() ?? "";
-        return mode is "plan" or "readonly" or "edit" or "auto";
+        var raw = rawMode?.Trim().ToLowerInvariant() ?? "";
+        if (raw is "manual" or "ask" or "guardrail" or "full" or "full_access" or "full-access" or "plan" or "readonly" or "edit" or "auto")
+        {
+            mode = raw switch
+            {
+                "ask" => "manual",
+                "full_access" or "full-access" => "full",
+                _ => raw,
+            };
+            return true;
+        }
+        mode = "";
+        return false;
     }
 
     private static ReasoningLevel ParseReasoningLevel(JsonNode? node, ReasoningLevel fallback)
