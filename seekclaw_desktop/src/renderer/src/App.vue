@@ -31,6 +31,7 @@ import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
 
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationMessage from './components/ConversationMessage.vue'
+import CustomizationPage from './components/CustomizationPage.vue'
 import EditMessageDialog from './components/EditMessageDialog.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
 
@@ -97,17 +98,19 @@ const appInfo = ref<AppInfo>({
   documentsPath: '',
   userProfilePath: ''
 })
-type AppPage = 'main' | 'settings' | 'extensions' | 'archived' | 'scheduled' | 'official-skills'
+type AppPage = 'main' | 'settings' | 'customization' | 'extensions' | 'archived' | 'scheduled' | 'official-skills'
 
 const sidebarOpen = ref(true)
 const activePage = ref<AppPage>('main')
 
-const currentActivityItem = computed<'chat' | 'archived' | 'scheduled' | 'plugins' | 'skills' | 'settings'>(() => {
+const currentActivityItem = computed<'chat' | 'archived' | 'scheduled' | 'customization' | 'settings'>(() => {
   switch (activePage.value) {
     case 'archived': return 'archived'
     case 'scheduled': return 'scheduled'
-    case 'extensions': return 'plugins'
-    case 'official-skills': return 'skills'
+    case 'customization': return 'customization'
+    case 'extensions':
+    case 'official-skills':
+      return 'customization'
     case 'settings': return 'settings'
     case 'main':
     default:
@@ -638,11 +641,17 @@ function openSettings(section: typeof settingsSection.value = 'general'): void {
   activePage.value = 'settings'
 }
 
-function openExtensions(section: 'mcp' | 'skills' = 'mcp'): void {
+const customizationTab = ref<'plugins' | 'skills'>('plugins')
+
+function openCustomization(tab: 'plugins' | 'skills' = 'plugins'): void {
   activePropertiesProject.value = null
   taskSettingsThreadId.value = ''
-  extensionsSection.value = section
-  activePage.value = 'extensions'
+  customizationTab.value = tab
+  activePage.value = 'customization'
+}
+
+function openExtensions(section: 'mcp' | 'skills' = 'mcp'): void {
+  openCustomization(section === 'skills' ? 'skills' : 'plugins')
 }
 
 function openArchivedTasks(): void {
@@ -658,9 +667,7 @@ function openScheduledTasks(): void {
 }
 
 function openOfficialSkills(): void {
-  activePropertiesProject.value = null
-  taskSettingsThreadId.value = ''
-  activePage.value = 'official-skills'
+  openCustomization('skills')
 }
 
 function closePage(): void {
@@ -1499,8 +1506,7 @@ watch(theme, applyTheme)
         @open-chat="handleActivityChat"
         @open-archived="openArchivedTasks"
         @open-scheduled-tasks="openScheduledTasks"
-        @open-plugins="openExtensions('mcp')"
-        @open-skills="openOfficialSkills"
+        @open-customization="openCustomization('plugins')"
         @open-settings="openSettings('general')"
       />
 
@@ -1697,6 +1703,13 @@ watch(theme, applyTheme)
       </div>
     </div>
 
+
+    <CustomizationPage
+      :open="activePage === 'customization'"
+      :initial-tab="customizationTab"
+      :daemon-connected="daemonState.connected"
+      @close="closePage"
+    />
 
     <SettingsDialog :open="activePage === 'settings' || activePage === 'extensions'"
       :page="activePage === 'extensions' ? 'extensions' : 'settings'" :theme="theme"

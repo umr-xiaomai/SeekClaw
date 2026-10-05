@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import {
   Archive,
-  Blocks,
   CalendarClock,
   Home,
   Settings2,
-  Sparkles
+  SlidersHorizontal
 } from '@lucide/vue'
 
 withDefaults(defineProps<{
-  activeItem?: 'chat' | 'archived' | 'scheduled' | 'plugins' | 'skills' | 'settings'
+  activeItem?: 'chat' | 'archived' | 'scheduled' | 'customization' | 'settings'
   sidebarOpen?: boolean
 }>(), {
   activeItem: 'chat',
@@ -20,8 +19,7 @@ const emit = defineEmits<{
   openChat: []
   openArchived: []
   openScheduledTasks: []
-  openPlugins: []
-  openSkills: []
+  openCustomization: []
   openSettings: []
 }>()
 </script>
@@ -65,23 +63,12 @@ const emit = defineEmits<{
       <button
         type="button"
         class="activity-item"
-        :class="{ active: activeItem === 'plugins' }"
-        title="插件"
-        aria-label="插件"
-        @click="emit('openPlugins')"
+        :class="{ active: activeItem === 'customization' }"
+        title="自定义"
+        aria-label="自定义"
+        @click="emit('openCustomization')"
       >
-        <Blocks :size="19" />
-      </button>
-
-      <button
-        type="button"
-        class="activity-item"
-        :class="{ active: activeItem === 'skills' }"
-        title="技能"
-        aria-label="技能"
-        @click="emit('openSkills')"
-      >
-        <Sparkles :size="19" />
+        <SlidersHorizontal :size="19" />
       </button>
     </div>
 
