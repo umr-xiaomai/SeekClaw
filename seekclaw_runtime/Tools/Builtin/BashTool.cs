@@ -1,17 +1,19 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
-using CliWrap;
-using CliWrap.Buffered;
 using SeekClaw.Runtime.Prompts;
 
 namespace SeekClaw.Runtime.Tools.Builtin;
 
-/// <summary>Runs a shell command (bash when available, cmd.exe otherwise) inside the workspace.</summary>
+/// <summary>
+/// Runs a shell command inside the workspace using an industrial-grade execution engine
+/// with head-tail streaming buffers, automatic stdin closure, and Windows JobObject process tree isolation.
+/// </summary>
 public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
 {
     public override string Name => "bash";
     public override string StatusLabel => "Running command";
-    public override bool Mutating => true; // a shell command may change anything
+    public override bool Mutating => true; // A shell command may change anything
 
     public override JsonObject ParameterSchema => ToolSchema.Object(
         ("command", ToolSchema.String("Shell command to execute"), true),
@@ -35,46 +37,160 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         cts.CancelAfter(timeout);
 
         var (shell, shellArgs) = ResolveShell(command);
+        var buffer = new HeadTailBuffer(maxBytes: 128 * 1024);
+        using var jobScope = new ProcessJobScope();
+
+        Process? process = null;
         try
         {
-            var result = await Cli.Wrap(shell)
-                .WithArguments(shellArgs)
-                .WithWorkingDirectory(cwd)
-                .WithValidation(CommandResultValidation.None)
-                .ExecuteBufferedAsync(cts.Token);
-
-            var output = new StringBuilder();
-            if (result.StandardOutput.Length > 0) output.Append(result.StandardOutput);
-            if (result.StandardError.Length > 0)
+            var psi = new ProcessStartInfo
             {
-                if (output.Length > 0) output.AppendLine();
-                output.Append(result.StandardError);
+                FileName = shell,
+                WorkingDirectory = cwd,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+
+            foreach (var arg in shellArgs)
+            {
+                psi.ArgumentList.Add(arg);
             }
 
-            var text = output.Length == 0 ? "(no output)" : context.Truncate(output.ToString(), "command output");
-            var summary = $"{Shorten(command)} → exit {result.ExitCode}";
-            return result.ExitCode == 0
-                ? ToolResult.Ok(text, summary)
-                : new ToolResult { Success = false, Output = $"Exit code {result.ExitCode}\n{text}", Summary = summary };
+            process = new Process { StartInfo = psi };
+            if (!process.Start())
+            {
+                return ToolResult.Fail($"Failed to launch shell: {shell}");
+            }
+
+            // 1. Assign process to Windows JobObject to guarantee killing entire process tree on exit/timeout
+            jobScope.AssignProcess(process);
+
+            // 2. Immediately close standard input to prevent blocking on interactive stdin prompts (matching Codex)
+            try
+            {
+                process.StandardInput.Close();
+            }
+            catch
+            {
+                // Ignore if stdin already closed
+            }
+
+            // 3. Continuously drain stdout and stderr into HeadTailBuffer to prevent pipe deadlocks
+            var readStdoutTask = Task.Run(async () =>
+            {
+                var byteBuffer = new byte[8192];
+                var stream = process.StandardOutput.BaseStream;
+                try
+                {
+                    int read;
+                    while ((read = await stream.ReadAsync(byteBuffer, cts.Token).ConfigureAwait(false)) > 0)
+                    {
+                        buffer.PushChunk(byteBuffer, 0, read);
+                    }
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception) { }
+            }, CancellationToken.None);
+
+            var readStderrTask = Task.Run(async () =>
+            {
+                var byteBuffer = new byte[8192];
+                var stream = process.StandardError.BaseStream;
+                try
+                {
+                    int read;
+                    while ((read = await stream.ReadAsync(byteBuffer, cts.Token).ConfigureAwait(false)) > 0)
+                    {
+                        buffer.PushChunk(byteBuffer, 0, read);
+                    }
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception) { }
+            }, CancellationToken.None);
+
+            // Wait for the process to exit or cancellation/timeout
+            await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            await Task.WhenAll(readStdoutTask, readStderrTask).ConfigureAwait(false);
+
+            var outputText = buffer.GetFormattedText(Encoding.UTF8);
+            if (string.IsNullOrWhiteSpace(outputText))
+            {
+                outputText = "(no output)";
+            }
+
+            var summary = $"{Shorten(command)} → exit {process.ExitCode}";
+            return process.ExitCode == 0
+                ? ToolResult.Ok(outputText, summary)
+                : new ToolResult
+                {
+                    Success = false,
+                    Output = $"Exit code {process.ExitCode}\n{outputText}",
+                    Summary = summary
+                };
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            TryKillProcessTree(process);
             return ToolResult.Fail($"Command timed out after {timeout.TotalSeconds:0}s: {Shorten(command)}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            TryKillProcessTree(process);
+            return ToolResult.Fail($"Command execution error: {ex.Message}");
+        }
+        finally
+        {
+            if (process != null)
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    TryKillProcessTree(process);
+                }
+                process.Dispose();
+            }
         }
     }
 
+    private static void TryKillProcessTree(Process? process)
+    {
+        if (process == null) return;
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+            // Process may already be dead
+        }
+    }
+
+    /// <summary>
+    /// Resolves the shell executable and arguments for the current OS.
+    /// On Windows, prefers pwsh/powershell with UTF-8 prefix and non-interactive flags,
+    /// avoiding unintentional invocation of MSYS2/Git bash on Windows command strings.
+    /// </summary>
     private static (string Shell, string[] Args) ResolveShell(string command)
     {
         if (!OperatingSystem.IsWindows())
-            return ("/bin/bash", ["-c", command]);
-
-        var bash = FindOnPath("bash.exe");
-        if (bash is not null)
-            return (bash, ["-c", command]);
+        {
+            var bashPath = File.Exists("/bin/bash") ? "/bin/bash" : "/bin/sh";
+            return (bashPath, ["-c", command]);
+        }
 
         var pwsh = FindOnPath("pwsh.exe") ?? FindOnPath("powershell.exe");
         if (pwsh is not null)
-            return (pwsh, ["-NoProfile", "-NonInteractive", "-Command", command]);
+        {
+            var utf8Script = $"try {{ [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 }} catch {{ }}; {command}";
+            return (pwsh, ["-NoProfile", "-NonInteractive", "-NoLogo", "-Command", utf8Script]);
+        }
 
         return ("cmd.exe", ["/d", "/s", "/c", command]);
     }

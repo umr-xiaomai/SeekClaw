@@ -65,7 +65,8 @@ public sealed partial class Agent(
             // Reserve one extra step per allowed repair so long multi-step tasks are
             // not cut short by their own repair loop.
             var maxSteps = agentConfig.MaxSteps + Math.Clamp(agentConfig.MaxRepairAttempts, 0, 128);
-            var compactedThisTurn = false;
+            var lastCompactedCount = 0;
+            var isContinuation = false;
             var truncatedSteps = 0;
             var reachedMaxSteps = false;
             var step = 0;
@@ -98,16 +99,15 @@ public sealed partial class Agent(
                     workspace, model, tools, effectiveNetworkEnabled, ct).ConfigureAwait(false);
                 var source = requiresVision ? session.Messages : WithoutImages(session.Messages);
                 var history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
-                // Context compaction: when plain trimming would have to drop history, first
-                // summarize the old part so long turns keep their memory and can finish.
-                // A failed compaction never aborts the turn — it falls back to the trim.
+                // Context compaction: when plain trimming would have to drop history, summarize the
+                // older messages in-turn (MidTurn compaction) so long multi-step turns never lose their memory.
                 if (agentConfig.EnableContextCompaction
-                    && !compactedThisTurn
-                    && history.Count + 4 <= source.Count)
+                    && history.Count + 4 <= source.Count
+                    && source.Count != lastCompactedCount)
                 {
                     PublishWorkflow(step, "compact", "压缩记忆");
                     await CompactContextAsync(session, workspace, model, source, systemPrompt, ct).ConfigureAwait(false);
-                    compactedThisTurn = true;
+                    lastCompactedCount = session.Messages.Count;
                     source = requiresVision ? session.Messages : WithoutImages(session.Messages);
                     history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
                 }
@@ -137,7 +137,7 @@ public sealed partial class Agent(
                 sessionStore.Append(session, assistant);
                 if (completion.Text.Length > 0)
                 {
-                    finalText = completion.Text;
+                    finalText = isContinuation ? finalText + completion.Text : completion.Text;
                     events.Publish(new AssistantMessageCompletedEvent(completion.Text));
                 }
 
@@ -202,7 +202,7 @@ public sealed partial class Agent(
                     continue;
                 }
 
-                // The model ran out of output tokens mid-answer (finish_reason length/max_tokens).
+                // The model ran out of output tokens mid-answer (finish_reason length/max_tokens/incomplete).
                 // That is not "done" — keep the turn going so long generations and long thinking
                 // phases can finish instead of silently ending with partial (or empty) output.
                 if (IsOutputTruncated(completion.FinishReason))
@@ -214,18 +214,28 @@ public sealed partial class Agent(
                             $"输出连续 {agentConfig.MaxOutputContinuations} 次达到长度上限，回合已停止。可在模型配置中调大 maxOutput 或拆分任务。"));
                         break;
                     }
+
                     if (completion.Text.Length == 0)
                     {
                         var continuationNote = ChatMessage.User(
-                            ">>> [output truncated] 上一轮输出因达到单次长度上限被截断，且没有产出任何内容。请直接给出最终回答或调用工具开始执行，不要再进行超长思考。");
+                            ">>> [output truncated] [System Directive: 上一轮输出因达到单次长度上限被截断，且没有产出正文内容。请直接给出最终回答或调用工具开始执行，不要再进行长篇思考。]");
                         sessionStore.Append(session, continuationNote);
                     }
-                    events.Publish(new StatusEvent("Output truncated; continuing"));
-                    PublishWorkflow(step, "think", "续写");
+                    else
+                    {
+                        var continuationNote = ChatMessage.User(
+                            ">>> [output truncated] [System Directive: 你的上一轮输出因达到模型单次 Output Token 长度上限被截断。请紧接着截断处的最后一个字符继续往下写，严禁重复前文已经写出的内容。]");
+                        sessionStore.Append(session, continuationNote);
+                    }
+
+                    isContinuation = true;
+                    events.Publish(new StatusEvent("Output truncated; auto-continuing"));
+                    PublishWorkflow(step, "think", "自动续写");
                     PublishSteering(guidance);
                     continue;
                 }
                 truncatedSteps = 0;
+                isContinuation = false;
 
                 // Model believes it is done. If it changed files, prove the project still builds.
                 if (mutated && ShouldVerify(workspace, agentConfig) && repairAttempts < agentConfig.MaxRepairAttempts)

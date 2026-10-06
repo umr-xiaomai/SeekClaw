@@ -250,6 +250,64 @@ public sealed class ContextCompactionTests
         }
     }
 
+    [Fact]
+    public async Task AgentTurn_TruncatedTextOutput_AutoContinuesAndAccumulatesFinalText()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "seekclaw_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Clear();
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "deepseek",
+                Kind = "openai",
+                BaseUrl = "https://api.deepseek.com",
+                Models =
+                [
+                    new ModelConfig
+                    {
+                        Id = "coder",
+                        ContextWindow = 64_000,
+                        MaxOutput = 4000,
+                        Capabilities = new ModelCapabilities { ToolCalling = true },
+                    },
+                ],
+            });
+            store.Config.Provider = "deepseek";
+            store.Config.Model = "coder";
+            store.Config.Routing.Fallback = ["deepseek/coder"];
+
+            var capture = new SequenceClientFactory(
+                new LlmCompletion { Text = "public class Calculator {\n", FinishReason = "length" },
+                new LlmCompletion { Text = "    public int Add(int a, int b) => a + b;\n}", FinishReason = "stop" });
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            var session = runtime.Sessions.Create(globalWorkspace);
+            var result = await runtime.Agent.RunTurnAsync(session, globalWorkspace, "write calculator", CancellationToken.None);
+
+            Assert.Null(result.Error);
+            Assert.Equal("public class Calculator {\n    public int Add(int a, int b) => a + b;\n}", result.Text);
+            Assert.Equal(2, capture.Requests.Count);
+            Assert.Contains(session.Messages, message =>
+                message.Role == ChatRole.User && message.Text.Contains("[output truncated]"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private sealed class SequenceClientFactory(params LlmCompletion[] completions) : ILlmClientFactory
