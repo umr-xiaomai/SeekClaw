@@ -84,14 +84,16 @@ Checks cover the workspace, metadata directory, Provider configuration, Memory, 
 
 ## Release notes {#release-notes}
 
-### Desktop 0.1.0
+### Desktop 2.0.x / CLI 1.3.x
 
-- Added the Electron / Vue Windows Desktop client.
-- Added projects, directory-free global tasks, persistent sessions, and archives.
-- Added starter prompts plus model and Agent-mode switching.
-- Added Provider / API key, MCP, Skills, diagnostics, and usage administration.
-- Integrated project terminal, Git changes, and Git history.
-- Bundled a self-contained Runtime managed automatically by Desktop.
-- Model requests now expose complete Provider and HTTP errors.
+- **Desktop Client Upgrade**: Built on Electron + Vite + Vue 3, bundling a self-contained Windows x64 .NET 10 Runtime requiring zero SDK pre-requisites.
+- **Three-Tier Approval Modes**: Integrates Ask for approval (`manual`), Approve for me (`guardrail`), and Full access (`full`) safety tiers.
+- **Computer Use & Ambient Halo**: Adds OS automation tools (`computer`, `computer_inspect`) with volumetric screen-edge breathing halo lighting.
+- **Structured Task Planner**: Unfolds interactive real-time subtask checklists (`update_plan`).
+- **Scheduled Tasks & Background Automation**: Built-in Cron scheduling engine with dedicated Desktop dialog for task management.
+- **Official Skills Hub**: Direct marketplace integration for discovering, downloading, and hot-reloading official and community skills via UI or `seekclaw skill install`.
+- **Consolidated SQLite Storage**: Migrated conversation history and project metadata to centralized `seekclaw.db` with automatic legacy JSONL migration.
+- **Mid-turn Steering**: Allows queuing supplemental instructions mid-stream without interrupting the current tool turn.
+- **Multi-Provider Failover**: Automatic retries, circuit breaking, and candidate chains across OpenAI- and Anthropic-compatible providers.
 
 The Runtime IPC protocol version is `2.1`. See the [Daemon documentation](/en/doc/daemon) for the full method contract.

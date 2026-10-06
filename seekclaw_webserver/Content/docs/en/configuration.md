@@ -19,22 +19,16 @@ This example uses the current field names:
 
 ```json
 {
-  "activeProfile": "default",
-  "profiles": {
-    "default": {
-      "provider": "openai",
-      "model": "gpt-5.5",
-      "strategy": "balanced",
-      "temperature": 0.2,
-      "mode": "edit"
-    }
-  },
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "temperature": 0.2,
   "providers": [
     {
       "id": "openai",
       "name": "OpenAI",
       "kind": "openai",
       "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-...",
       "proxy": null,
       "timeoutSeconds": 120,
       "headers": null,
@@ -66,7 +60,8 @@ This example uses the current field names:
     }
   ],
   "routing": {
-    "strategies": { "balanced": ["openai/gpt-5.5"] },
+    "failoverEnabled": true,
+    "deepSeekOptimizationEnabled": false,
     "fallback": ["openai/gpt-5.5"],
     "loadBalance": "priority",
     "retry": {
@@ -89,7 +84,8 @@ This example uses the current field names:
     "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
     "bashTimeoutSeconds": 180,
-    "scheduledTurnTimeoutSeconds": 1800
+    "scheduledTurnTimeoutSeconds": 1800,
+    "networkEnabled": true
   },
   "mcp": { "servers": {} }
 }
@@ -109,11 +105,13 @@ This example uses the current field names:
 
 ### Routing
 
-`loadBalance` supports `priority`, `roundRobin`, `leastUsed`, `lowestCost`, `fastest`, and `sticky`. Every item in `strategies` and `fallback` must be a `provider/model` reference.
+`loadBalance` supports `priority`, `roundRobin`, `leastUsed`, `lowestCost`, `fastest`, and `sticky`. Every item in `fallback` must be a `provider/model` reference.
+
+`failoverEnabled` (default `true`) controls automatic failover across candidates in the fallback chain. When disabled, failure stops immediately and surfaces the raw provider error.
 
 ### Agent modes
 
-`mode` supports `edit`, `plan`, `readonly`, and `auto`. A Profile can override the Agent default, and a workspace can override it again.
+`mode` supports `edit`, `plan`, `readonly`, and `auto`. Workspace configurations can override the global Agent default.
 
 ## Workspace overrides
 

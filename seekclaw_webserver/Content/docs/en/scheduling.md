@@ -36,20 +36,28 @@ Scheduled tasks are persisted in the database with the following fields:
 
 ---
 
-## 3. CLI Schedule Commands
+## 3. Managing Scheduled Tasks
 
-```bash
-# List all registered schedules and next run timestamps
-seekclaw schedule list
+Scheduled tasks are executed automatically in the background by the Daemon process. You can manage them through the **Desktop graphical UI** or the **Daemon IPC protocol**:
 
-# Register a recurring hourly formatting task
-seekclaw schedule add --name "Format Check" --cron "0 * * * *" --prompt "Verify code formatting"
+### Desktop GUI Management (Recommended)
 
-# Toggle a schedule on/off
-seekclaw schedule toggle <task-id>
+1. Open the **"Scheduled Tasks"** dialog from the top header or sidebar in SeekClaw Desktop;
+2. **Create Task**: Set a descriptive name, 5-part cron expression, target workspace directory, and prompt;
+3. **Toggle Status**: Instantly enable or pause any task;
+4. **Trigger Immediately**: Click "Run Now" to immediately create a dedicated session and execute the task in the background without waiting for the next cron tick;
+5. **Execution Logs**: View timestamps, duration, status (success, error, timeout), and truncated output summaries.
 
-# View execution history logs
-seekclaw schedule logs <task-id>
+### Daemon IPC Protocol
+
+Automation pipelines and external tools can send JSONL IPC requests directly to the Daemon:
+
+```json
+{"id":1,"method":"schedule.list","params":{}}
+{"id":2,"method":"schedule.create","params":{"name":"Nightly Check","prompt":"Run unit tests","cron":"0 2 * * *","workspace":"/var/projects/seekclaw"}}
+{"id":3,"method":"schedule.toggle","params":{"id":"task-123","enabled":false}}
+{"id":4,"method":"schedule.run","params":{"id":"task-123"}}
+{"id":5,"method":"schedule.delete","params":{"id":"task-123"}}
 ```
 
 ---

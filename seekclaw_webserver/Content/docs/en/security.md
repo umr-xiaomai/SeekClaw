@@ -4,15 +4,15 @@ As an industrial-grade AI Agent Runtime, SeekClaw treats safety and defense-in-d
 
 ---
 
-## 1. Tool Approval Policies
+## 1. Approval Modes
 
-SeekClaw offers configurable approval policies to prevent unintended destructive actions:
+SeekClaw Desktop and Runtime provide multi-tiered approval modes to safeguard against unintended external modifications or destructive operations:
 
-| Policy | Behavior | Best For |
-| :--- | :--- | :--- |
-| `never` | Fully automated execution within safe workspace scope | Daily local development, CI/CD pipelines |
-| `ask_destructive` | Auto-executes standard tools; prompts for approval before destructive operations | Production codebases, team repos (Recommended) |
-| `always` | Prompts for manual user confirmation before every tool call | High-security environments, demonstrations |
+| Mode ID | Desktop Label | Behavior | Best For |
+| :--- | :--- | :--- | :--- |
+| `guardrail` | **Approve for me** | Default mode. Only requests explicit confirmation for detected destructive/high-risk actions (system file edits, git force resets) | Daily software development (Recommended) |
+| `manual` | **Ask for approval** | Always requires user confirmation before modifying external files or querying the internet | Sensitive codebases, exploration |
+| `full` | **Full access** | Grants unrestricted permissions for tools to execute without interactive confirmations | CI/CD pipelines, trusted sandboxes |
 
 ---
 

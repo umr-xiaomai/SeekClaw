@@ -25,20 +25,19 @@ Desktop 在任务顶栏显示完整工作区目录，并把打开位置、终端
 ```text
 <workspace>/
 └── .seekclaw/
-    ├── config.json          # 可选的工作区覆盖
-    ├── prompts/             # 项目 Prompt
+    ├── config.json          # 可选的工作区配置覆盖
+    ├── prompts/             # 项目专用 Prompt 模板
     ├── memory/
-    │   └── MEMORY.md        # 项目长期约定
-    ├── cache/
-    ├── sessions/            # JSONL Session
-    ├── logs/
-    ├── skills/
+    │   └── MEMORY.md        # 项目长期架构与开发约定
+    ├── cache/               # 工作区临时缓存
+    ├── logs/                # 诊断与运行日志
+    ├── skills/              # 本地专属技能定义
     ├── mcp/
-    │   └── servers.json
+    │   └── servers.json     # 项目级 MCP 服务器配置
     └── docs/
 ```
 
-为了兼容旧工作区，如果根目录已经存在 `.session/`、`skills/`、`mcp/` 或 `docs/`，Runtime 会继续使用这些目录。初始化也会给 `.gitignore` 补充 SeekClaw 状态目录条目。
+会话数据和任务历史统一持久化在全局 SQLite 数据库 `~/.seekclaw/seekclaw.db` 中。首次升级访问工作区时，旧的 `.seekclaw/sessions/*.jsonl` 会自动导入数据库，原文件保留为安全备份。初始化也会给 `.gitignore` 自动补充 SeekClaw 忽略项。
 
 ## 不绑定项目的任务
 

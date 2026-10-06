@@ -36,20 +36,28 @@ SeekClaw Runtime 内核内置了基于 SQLite 的持久化调度引擎（`Schedu
 
 ---
 
-## 3. CLI 任务调度管理
+## 3. 计划任务管理方式
 
-```bash
-# 查看当前所有调度任务与下一次触发时间
-seekclaw schedule list
+计划任务由后台 Daemon 进程自动常驻执行，管理方式包括 **Desktop 图形化界面** 与 **Daemon IPC 协议接口**：
 
-# 添加一个每小时运行一次的代码格式检查任务
-seekclaw schedule add --name "代码格式检查" --cron "0 * * * *" --prompt "检查代码格式规范并自动修复"
+### Desktop 桌面端管理（推荐）
 
-# 暂停或恢复指定调度任务
-seekclaw schedule toggle <task-id>
+1. 在 Desktop 客户端点击顶栏或侧边栏的 **“计划任务”** 图标打开管理对话框；
+2. **新建任务**：填写任务名称、Cron 表达式（5 段式）、目标工作区目录与执行提示词；
+3. **状态开关**：一键切换任务的“启用/暂停”状态；
+4. **立即触发**：点击“立即运行”可不必等待到期时间，后台立即为该任务生成独立 Session 并启动执行；
+5. **历史日志**：查看每次执行的开始时间、耗时、状态（成功/失败/超时）及截断输出摘要。
 
-# 查看历史执行日志与结果
-seekclaw schedule logs <task-id>
+### Daemon IPC 协议管理
+
+客户端或自动化运维程序可通过 JSONL IPC 管道直接向 Daemon 发送调度指令：
+
+```json
+{"id":1,"method":"schedule.list","params":{}}
+{"id":2,"method":"schedule.create","params":{"name":"代码巡检","prompt":"运行单元测试","cron":"0 2 * * *","workspace":"D:\\Projects\\App"}}
+{"id":3,"method":"schedule.toggle","params":{"id":"task-123","enabled":false}}
+{"id":4,"method":"schedule.run","params":{"id":"task-123"}}
+{"id":5,"method":"schedule.delete","params":{"id":"task-123"}}
 ```
 
 ---

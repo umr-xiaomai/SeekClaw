@@ -25,7 +25,7 @@ DeepSeek、Azure OpenAI、企业网关或其他兼容服务可以通过新增 `k
 
 ## 在 Desktop 中配置
 
-进入“设置 → 模型与 Provider”，可以管理 Provider、Profile 与模型目录：
+进入“设置 → 模型与 Provider”，可以管理 Provider 与模型目录：
 
 ![Desktop 模型与 Provider 管理](/screenshots/desktop/providers-and-models.png)
 
@@ -45,10 +45,8 @@ Provider 是数组，模型属于对应 Provider：
 
 ```json
 {
-  "activeProfile": "default",
-  "profiles": {
-    "default": { "provider": "deepseek", "model": "deepseek-chat", "strategy": "balanced" }
-  },
+  "provider": "deepseek",
+  "model": "deepseek-chat",
   "providers": [
     {
       "id": "deepseek",
@@ -77,17 +75,14 @@ Provider 是数组，模型属于对应 Provider：
 
 `promptCaching` 默认启用。OpenAI-compatible 服务使用服务端的自动前缀缓存；Anthropic 协议还会在稳定的 System Prompt 和工具定义后写入 `cache_control` 检查点。若某个旧的 Anthropic-compatible 网关不接受该字段，可在 Desktop 中关闭此项或设置 `"promptCaching": false`。默认 Prompt 不包含动态时间，工具定义也会按名称稳定排序，避免每轮请求改变缓存前缀。
 
-## Profile 与路由
+## 候选链与故障转移（Failover）
 
-Profile 可固定 Provider / 模型，也可以只指定策略让 Runtime 构建候选链。默认策略为：
+Runtime 自动构建有序的候选模型链（Candidates）：
+1. **工作区覆盖**：若当前项目配置了 `provider` 或 `model`，优先作为首选；
+2. **全局活动模型**：使用配置中的 `provider` 与 `model`；
+3. **全局 Fallback 链**：依次尝试 `routing.fallback` 中指定的候选模型。
 
-- `fast`：低延迟；
-- `balanced`：质量、速度和成本的平衡；
-- `quality`：优先高能力模型；
-- `cheap`：优先低成本模型；
-- `offline`：优先 Ollama 或 LM Studio。
-
-默认负载方式是 `priority`。候选请求支持指数退避、最大尝试次数、熔断阈值和冷却时间。首个流式 Token 到达后，Runtime 不会在同一回答中途切换 Provider，以避免拼接两个模型的输出。
+当开启 `routing.failoverEnabled`（默认开启）时，首选模型若出现网络超时或服务不可用（如 5xx、熔断或超限），系统会自动切换至 Fallback 候选链中的下一个模型继续重试，避免中断任务；若关闭该开关，模型请求失败时会立即停止并抛出真实错误。首个流式 Token 到达后，Runtime 绝不在同一回答中途切换 Provider，以避免拼接两个不同模型的输出。
 
 ## CLI 管理
 

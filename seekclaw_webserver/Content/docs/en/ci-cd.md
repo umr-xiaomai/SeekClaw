@@ -4,16 +4,16 @@ In addition to desktop and interactive terminal workflows, SeekClaw is built for
 
 ---
 
-## 1. Headless Execution Commands
+## 1. One-Shot CLI Execution
 
-Run tasks directly inside automated scripts with `seekclaw run` in non-interactive mode:
+In automated pipelines or shell scripts, provide a prompt directly to `seekclaw` to run a non-interactive task (returns exit code 0 on success, non-zero on failure):
 
 ```bash
-# Execute a task headlessly and return an exit code (0 for success)
-seekclaw run "Format changed files and fix compiler warnings" --headless
+# Execute a one-shot task headlessly and return an exit code
+seekclaw "Format changed files and fix compiler warnings"
 
-# Run in read-only mode for pull request auditing
-seekclaw run "Review git diff and output security audit findings" --mode readonly --headless
+# Override the active model for a single run
+seekclaw --model "openai/gpt-5.5" "Review current git diff and output security audit findings"
 ```
 
 ---
@@ -31,28 +31,29 @@ on:
 
 jobs:
   review:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          dotnet-version: '10.0.x'
+          node-version: 20
 
       - name: Install SeekClaw CLI
-        run: dotnet tool install -g seekclaw-cli || npm install -g seekclaw-cli
+        run: npm install -g seekclaw-cli
+
+      - name: Configure Provider
+        run: |
+          seekclaw provider add --id deepseek --kind openai --base-url "https://api.deepseek.com/v1" --api-key "${{ secrets.DEEPSEEK_API_KEY }}" --model "deepseek-chat"
+          seekclaw model use "deepseek/deepseek-chat"
 
       - name: Run SeekClaw Code Audit
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          seekclaw run "Analyze the latest commit for concurrency and memory risks; format as Markdown" \
-            --mode readonly \
-            --headless > review-report.md
+          seekclaw "Analyze changed files in this git diff for concurrency and memory leaks; format as Markdown" > review-report.md
 
       - name: Post PR Comment
         uses: actions/github-script@v7
@@ -72,7 +73,7 @@ jobs:
 
 ## 3. Docker Containerization
 
-Deploy SeekClaw as an independent worker container in Kubernetes or cloud environments:
+Deploy SeekClaw as an independent worker container or persistent Daemon in container environments:
 
 ```dockerfile
 FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
@@ -84,6 +85,16 @@ FROM mcr.microsoft.com/dotnet/runtime:10.0-alpine
 WORKDIR /seekclaw
 COPY --from=build /out .
 ENTRYPOINT ["./seekclaw", "daemon"]
+```
+
+Mount persistent configuration and workspace directories:
+
+```bash
+docker run -d \
+  --name seekclaw-worker \
+  -v ~/.seekclaw:/root/.seekclaw \
+  -v /var/repos/project:/workspace \
+  seekclaw-worker
 ```
 
 ---

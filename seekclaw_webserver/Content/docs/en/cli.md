@@ -61,7 +61,7 @@ seekclaw provider remove deepseek
 
 Omit the ID from `provider test` to probe all enabled Providers.
 
-## Models and Profiles
+## Models and Model Switching
 
 ```bash
 seekclaw model list
@@ -71,12 +71,7 @@ seekclaw model test "openai/gpt-5.5"
 seekclaw model use "openai/gpt-5.5"
 seekclaw model stats
 
-seekclaw profile list
-seekclaw profile create work --provider openai --model gpt-5.5 --strategy quality --temperature 0.2
-seekclaw profile use work
-seekclaw profile delete work
-
-# Interactively select Provider, model, and route
+# Interactively select Provider and model
 seekclaw switch
 ```
 
@@ -96,15 +91,43 @@ seekclaw doctor
 # Initialize .seekclaw directories and .gitignore entries
 seekclaw init
 
+# List discovered skills
 seekclaw skill list
+
+# Install skill from official marketplace, URL, or local file
+seekclaw skill install code-review
+seekclaw skill install https://example.com/my-skill.zip
+
+# Enable or disable skills
 seekclaw skill enable code-review
 seekclaw skill disable code-review
 
+# MCP server management and testing
 seekclaw mcp list
 seekclaw mcp test
 ```
 
-`mcp test` connects to every enabled server and reports the number of discovered tools.
+`mcp test` connects to every enabled server and reports the number of discovered tools. `skill install` accepts official marketplace skill slugs, remote HTTP/HTTPS zip URLs, or local archive paths.
+
+## Interactive REPL Slash Commands
+
+In `seekclaw` or `seekclaw chat` interactive terminal mode, type `/` to bring up autocomplete suggestions:
+
+| Command | Argument | Description |
+| --- | --- | --- |
+| `/model` | `[provider/model]` | Show or switch the active model |
+| `/mode` | `[plan\|auto\|readonly\|edit]` | Show or switch agent execution mode |
+| `/cd` | `<directory>` | Change working directory and re-detect project |
+| `/mcp` | None | List connected MCP servers and tools |
+| `/skills` | None | List available skills in the workspace |
+| `/doctor` | None | Run environment and provider health diagnostics |
+| `/clear` | None | Clear current context and start a new session |
+| `/usage` | None | Display token and latency statistics |
+| `/session` | None | Show current session ID and state |
+| `/copy` | None | Copy the last assistant reply to clipboard |
+| `/print` | `config` | Print effective configuration |
+| `/help` | None | Show available slash commands |
+| `/exit` | None | Exit SeekClaw |
 
 ## Daemon
 

@@ -4,23 +4,23 @@ SeekClaw 不仅支持图形化桌面和交互式终端，还支持在持续集�
 
 ---
 
-## 1. 无头运行命令（Headless CLI）
+## 1. 单次非交互运行指令（One-Shot CLI）
 
-在自动化流水线中，通过 `seekclaw run` 配合非交互参数直接执行目标指令：
+在自动化流水线或脚本中，直接向 `seekclaw` 传入提示词即可进入单次执行模式，执行完成后输出结果并退出（0 表示成功，非 0 表示失败）：
 
 ```bash
-# 单次无头执行指令并返回退出码（0 表示成功，非 0 表示失败）
-seekclaw run "检查本次变更的代码格式并修复编译警告" --headless
+# 单次执行指令并自动返回退出码
+seekclaw "检查本次变更的代码格式并修复编译警告"
 
-# 指定只读模式进行 PR 代码审查
-seekclaw run "审查当前 git diff 并输出安全风险审查意见" --mode readonly --headless
+# 临时覆盖使用指定模型进行审查
+seekclaw --model "openai/gpt-5.5" "审查当前代码并输出安全风险建议"
 ```
 
 ---
 
 ## 2. GitHub Actions 集成实战
 
-在 GitHub 仓库的 `.github/workflows/ai-review.yml` 中添加自动化 PR 评审与修复工作流：
+在 GitHub 仓库的 `.github/workflows/ai-review.yml` 中添加自动化 PR 评审工作流：
 
 ```yaml
 name: SeekClaw AI Code Review
@@ -31,28 +31,29 @@ on:
 
 jobs:
   review:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          dotnet-version: '10.0.x'
+          node-version: 20
 
       - name: Install SeekClaw CLI
-        run: dotnet tool install -g seekclaw-cli || npm install -g seekclaw-cli
+        run: npm install -g seekclaw-cli
+
+      - name: Configure Provider
+        run: |
+          seekclaw provider add --id deepseek --kind openai --base-url "https://api.deepseek.com/v1" --api-key "${{ secrets.DEEPSEEK_API_KEY }}" --model "deepseek-chat"
+          seekclaw model use "deepseek/deepseek-chat"
 
       - name: Run SeekClaw Code Audit
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          seekclaw run "分析最近一次 commit 的改动，检查潜在并发与内存泄漏隐患，以 Markdown 格式输出审查报告" \
-            --mode readonly \
-            --headless > review-report.md
+          seekclaw "分析当前 git diff 涉及的代码变更，检查潜在并发与内存泄漏隐患，以 Markdown 格式输出审查报告" > review-report.md
 
       - name: Post PR Comment
         uses: actions/github-script@v7
@@ -72,7 +73,7 @@ jobs:
 
 ## 3. Docker 容器化部署
 
-SeekClaw 支持打包为极简容器镜像，作为独立 Worker 节点运行于 Kubernetes 集群或云原生环境中：
+SeekClaw 可作为独立 Worker 节点或常驻 Daemon 运行于容器环境中：
 
 ```dockerfile
 FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
@@ -86,13 +87,13 @@ COPY --from=build /out .
 ENTRYPOINT ["./seekclaw", "daemon"]
 ```
 
-启动并挂载代码目录：
+挂载持久化目录与代码工作区：
 
 ```bash
 docker run -d \
   --name seekclaw-worker \
+  -v ~/.seekclaw:/root/.seekclaw \
   -v /var/repos/project:/workspace \
-  -e SEEKCLAW_PROVIDER_APIKEY=sk-xxx \
   seekclaw-worker
 ```
 

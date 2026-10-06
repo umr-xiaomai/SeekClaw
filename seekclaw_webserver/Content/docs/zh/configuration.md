@@ -19,22 +19,16 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 
 ```json
 {
-  "activeProfile": "default",
-  "profiles": {
-    "default": {
-      "provider": "openai",
-      "model": "gpt-5.5",
-      "strategy": "balanced",
-      "temperature": 0.2,
-      "mode": "edit"
-    }
-  },
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "temperature": 0.2,
   "providers": [
     {
       "id": "openai",
       "name": "OpenAI",
       "kind": "openai",
       "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-...",
       "proxy": null,
       "timeoutSeconds": 120,
       "headers": null,
@@ -67,9 +61,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
   ],
   "routing": {
     "failoverEnabled": true,
-    "strategies": {
-      "balanced": ["openai/gpt-5.5"]
-    },
+    "deepSeekOptimizationEnabled": false,
     "fallback": ["openai/gpt-5.5"],
     "loadBalance": "priority",
     "retry": {
@@ -92,7 +84,8 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
     "reasoningLevel": "High",
     "maxToolOutputChars": 60000,
     "bashTimeoutSeconds": 180,
-    "scheduledTurnTimeoutSeconds": 1800
+    "scheduledTurnTimeoutSeconds": 1800,
+    "networkEnabled": true
   },
   "mcp": {
     "servers": {}
@@ -114,13 +107,13 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 
 ### 路由
 
-`loadBalance` 支持 `priority`、`roundRobin`、`leastUsed`、`lowestCost`、`fastest` 与 `sticky`。`strategies` 和 `fallback` 中的每个项目必须是 `provider/model` 引用。
+`loadBalance` 支持 `priority`、`roundRobin`、`leastUsed`、`lowestCost`、`fastest` 与 `sticky`。`fallback` 中的每个项目必须是 `provider/model` 引用。
 
-`failoverEnabled`（默认 `true`）控制失败转移：开启时激活模型请求失败后会自动按路由链尝试其他候选模型；关闭时只使用激活模型，失败即停止并直接返回该模型的真实错误，不会静默切换到其他 Provider/模型（适合只使用本地模型的场景）。
+`failoverEnabled`（默认 `true`）控制失败转移：开启时激活模型请求失败后会自动按候选链尝试其他候选模型；关闭时只使用激活模型，失败即停止并直接返回该模型的真实错误，不会静默切换到其他 Provider/模型（适合只使用本地模型的场景）。
 
 ### Agent 模式
 
-`mode` 支持 `edit`、`plan`、`readonly` 与 `auto`。Profile 中的值可以覆盖 Agent 默认值，工作区还可以再次覆盖。
+`mode` 支持 `edit`、`plan`、`readonly` 与 `auto`。工作区配置可覆盖全局 Agent 默认值。
 
 ## 工作区覆盖
 

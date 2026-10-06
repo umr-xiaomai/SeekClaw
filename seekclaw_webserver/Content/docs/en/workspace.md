@@ -26,19 +26,18 @@ After `seekclaw init` or Desktop workspace initialization, the default layout is
 <workspace>/
 └── .seekclaw/
     ├── config.json          # optional workspace overrides
-    ├── prompts/             # project prompts
+    ├── prompts/             # project prompt templates
     ├── memory/
     │   └── MEMORY.md        # durable project conventions
-    ├── cache/
-    ├── sessions/            # JSONL Sessions
-    ├── logs/
-    ├── skills/
+    ├── cache/               # transient workspace cache
+    ├── logs/                # runtime diagnostic logs
+    ├── skills/              # local skill definitions
     ├── mcp/
-    │   └── servers.json
+    │   └── servers.json     # project-level MCP servers
     └── docs/
 ```
 
-For compatibility with older workspaces, the Runtime continues to use root-level `.session/`, `skills/`, `mcp/`, or `docs/` directories when they already exist. Initialization also adds SeekClaw state entries to `.gitignore`.
+Session history and project metadata are consolidated inside the central SQLite database at `~/.seekclaw/seekclaw.db`. On first access after upgrading, legacy `.seekclaw/sessions/*.jsonl` files are automatically imported into SQLite and preserved as safety backups. Initialization also appends SeekClaw state paths to `.gitignore`.
 
 ## Global tasks
 

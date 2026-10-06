@@ -25,7 +25,7 @@ DeepSeek, Azure OpenAI, enterprise gateways, and other compatible services can b
 
 ## Configure Providers in Desktop
 
-Open “Settings → Models & Providers” to manage Providers, Profiles, and the model catalog:
+Open “Settings → Models & Providers” to manage Providers and the model catalog:
 
 ![Desktop model and Provider management](/screenshots/desktop/providers-and-models.png)
 
@@ -45,10 +45,8 @@ Providers are stored as an array, with models nested under their Provider:
 
 ```json
 {
-  "activeProfile": "default",
-  "profiles": {
-    "default": { "provider": "deepseek", "model": "deepseek-chat", "strategy": "balanced" }
-  },
+  "provider": "deepseek",
+  "model": "deepseek-chat",
   "providers": [
     {
       "id": "deepseek",
@@ -77,17 +75,14 @@ Use `"apiKey": "sk-..."` to store a key directly, but never commit a personal gl
 
 `promptCaching` is enabled by default. OpenAI-compatible services keep using their automatic prefix caches; the Anthropic protocol additionally places `cache_control` checkpoints after the stable system prompt and tool definitions. Disable it in Desktop or set `"promptCaching": false` when an older Anthropic-compatible gateway rejects that field. The default prompts contain no dynamic timestamp, and tool definitions are sorted by name so the cached prefix remains byte-stable across steps.
 
-## Profiles and routing
+## Candidate Chain & Failover
 
-A Profile can pin a Provider and model or specify only a strategy and let the Runtime build a candidate chain. Seed strategies are:
+The Runtime builds an ordered candidate chain:
+1. **Workspace Override**: When the active workspace defines `provider` or `model`, it takes top priority;
+2. **Global Active Model**: Uses `provider` and `model` from global configuration;
+3. **Global Fallback Chain**: Tries candidates listed in `routing.fallback` in order.
 
-- `fast`: prioritize low latency;
-- `balanced`: balance quality, speed, and cost;
-- `quality`: prioritize high-capability models;
-- `cheap`: prioritize low cost;
-- `offline`: prioritize Ollama or LM Studio.
-
-The default load-balancing mode is `priority`. Candidate attempts support exponential backoff, a maximum attempt count, circuit-break thresholds, and cooldowns. Once the first streamed token arrives, the Runtime does not switch Providers midway through an answer, preventing output from two models from being combined.
+When `routing.failoverEnabled` is true (default), if the primary candidate encounters timeouts, 5xx server errors, or circuit-breaker thresholds, the Runtime automatically falls over to the next candidate in the fallback chain. When disabled, it aborts immediately and surfaces the raw provider error. Once the first streaming token arrives, the Runtime commits to that provider and never switches mid-turn.
 
 ## CLI administration
 

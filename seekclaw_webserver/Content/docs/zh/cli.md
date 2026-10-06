@@ -61,7 +61,7 @@ seekclaw provider remove deepseek
 
 `provider test` 省略 ID 时测试所有启用的 Provider。
 
-## Model 与 Profile
+## Model 与模型切换
 
 ```bash
 seekclaw model list
@@ -71,12 +71,7 @@ seekclaw model test "openai/gpt-5.5"
 seekclaw model use "openai/gpt-5.5"
 seekclaw model stats
 
-seekclaw profile list
-seekclaw profile create work --provider openai --model gpt-5.5 --strategy quality --temperature 0.2
-seekclaw profile use work
-seekclaw profile delete work
-
-# 交互式选择 Provider、模型和路由策略
+# 交互式选择 Provider 与模型
 seekclaw switch
 ```
 
@@ -96,15 +91,43 @@ seekclaw doctor
 # 初始化 .seekclaw 目录和 .gitignore 条目
 seekclaw init
 
+# 查看已发现技能
 seekclaw skill list
+
+# 从官方技能市场、URL 或本地文件安装技能
+seekclaw skill install code-review
+seekclaw skill install https://example.com/my-skill.zip
+
+# 启用或禁用技能
 seekclaw skill enable code-review
 seekclaw skill disable code-review
 
+# MCP Server 管理与测试
 seekclaw mcp list
 seekclaw mcp test
 ```
 
-`mcp test` 会连接每个已启用的 Server 并报告发现的工具数量。
+`mcp test` 会连接每个已启用的 Server 并报告发现的工具数量。`skill install` 支持传入官方市场技能 slug、远程 HTTP/HTTPS zip 链接或本地文件路径。
+
+## 交互模式斜杠命令
+
+在 `seekclaw` 或 `seekclaw chat` 交互终端中，可直接输入 `/` 触发命令提示与补全：
+
+| 命令 | 参数 | 说明 |
+| --- | --- | --- |
+| `/model` | `[provider/model]` | 查看或快速切换活动模型 |
+| `/mode` | `[plan\|auto\|readonly\|edit]` | 查看或切换 Agent 执行模式 |
+| `/cd` | `<directory>` | 切换工作区目录并重新识别项目 |
+| `/mcp` | 无 | 查看已连接的 MCP 服务器与工具列表 |
+| `/skills` | 无 | 列出当前工作区可用的技能 |
+| `/doctor` | 无 | 实时运行环境与 Provider 健康诊断 |
+| `/clear` | 无 | 清空当前上下文并开始新会话 |
+| `/usage` | 无 | 查看当前 Token 与延迟统计表 |
+| `/session` | 无 | 查看当前会话 ID 与状态信息 |
+| `/copy` | 无 | 将上一条 Assistant 回答复制到剪贴板 |
+| `/print` | `config` | 打印当前合并配置 |
+| `/help` | 无 | 显示命令帮助 |
+| `/exit` | 无 | 退出 SeekClaw |
 
 ## Daemon
 

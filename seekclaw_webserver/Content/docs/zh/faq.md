@@ -84,14 +84,16 @@ seekclaw doctor
 
 ## 发布说明 {#release-notes}
 
-### Desktop 0.1.0
+### Desktop 2.0.x / CLI 1.3.x
 
-- 新增 Electron / Vue Windows Desktop；
-- 支持项目与无目录任务、会话持久化和归档；
-- 新增预提示词、模型与模式切换；
-- 新增 Provider / API Key、MCP、Skills、诊断与用量管理；
-- 集成项目终端、Git 变更与历史；
-- 发布包内置自包含 Runtime，并由 Desktop 自动管理其生命周期；
-- 模型请求显示完整 Provider / HTTP 错误。
+- **Desktop 桌面端架构升级**：基于 Electron + Vite + Vue 3 构建，发布包内置自包含 Windows x64 .NET 10 Runtime，开箱即用免安装 SDK；
+- **操作批准模式（Approval Modes）**：集成请求批准（manual）、帮我批准（guardrail）与完全访问（full）三级安全防线；
+- **全屏 Computer Use 光环**：新增桌面级计算机交互扩展工具（`computer` / `computer_inspect`）与体积光呼吸覆盖层；
+- **结构化任务规划卡片（Task Planner）**：支持多步骤子任务实时清单跟踪（`update_plan`）；
+- **计划任务与后台自动化**：内置 Cron 定时任务调度器与桌面端可视化管理对话框；
+- **官方技能市场中心**：支持通过桌面端弹窗或 CLI `seekclaw skill install` 一键浏览与下载安装官方技能；
+- **SQLite 集中持久化**：会话与项目列表统一迁移至全局 SQLite 数据库 `seekclaw.db`，支持旧版本 JSONL 自动导入与数据自愈；
+- **实时插话（Mid-turn Steering）**：输出中途可平滑追加附加指导指令，不打断模型当前执行；
+- **多模型与故障转移**：支持 OpenAI / Anthropic 兼容协议、模型候选链自动重试与熔断降级。
 
 Runtime IPC 协议版本为 `2.1`。详细方法见 [Daemon 文档](/doc/daemon)。

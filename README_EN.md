@@ -97,14 +97,26 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 - **Verification**: Automatic build/check/repair cycle after code modifications
 - **Hot Reload**: Prompt files and configurations reload without restart
 
-## 📦 Installation
+## 📦 Installation & Getting Started
 
-### Install the CLI via npm (recommended)
+### Option 1: Use Desktop Client (Recommended)
 
-The published `seekclaw-cli` package is a self-contained .NET binary. It can be used immediately after installation without a separate .NET SDK. The npm package currently provides the Windows x64 platform binary.
+SeekClaw Desktop is a full-featured graphical client (built on Electron + Vue 3) that bundles a self-contained .NET Runtime — **no separate .NET SDK installation is required**.
+
+* **Using the pre-built release**: Extract the `SeekClaw-win-x64` folder and run `SeekClaw.exe`.
+* **Building from source**:
+  ```powershell
+  git clone https://github.com/umr-xiaomai/SeekClaw.git
+  cd SeekClaw
+  build.cmd
+  ```
+  `build.cmd` automatically installs frontend dependencies, publishes the self-contained Runtime, builds the Electron app, and places the final release at `publish\SeekClaw-win-x64\SeekClaw.exe`.
+
+### Option 2: Install CLI via npm
+
+The `seekclaw-cli` package published to npm is a self-contained .NET binary package ready to run without installing a .NET SDK (currently providing Windows x64 binaries):
 
 Prerequisites:
-
 - Node.js 18 or later
 - Git (for workspace detection)
 
@@ -114,11 +126,11 @@ npm install -g seekclaw-cli
 # Verify the installation
 seekclaw --version
 
-# Start interactive chat
+# Enter interactive chat
 seekclaw
 ```
 
-You can also run one-shot tasks and administration commands:
+You can also run one-shot tasks or resume sessions:
 
 ```powershell
 seekclaw "Explain the architecture of this project"
@@ -126,22 +138,15 @@ seekclaw --continue
 seekclaw doctor
 ```
 
-### Build from Source
+### Option 3: Run CLI from Source
 
-Building from source requires:
-
-- .NET 10.0 SDK or later
-- Git (for workspace detection)
+Requires .NET 10.0 SDK and Git:
 
 ```bash
 git clone https://github.com/umr-xiaomai/SeekClaw.git
 cd SeekClaw
 dotnet build
-```
 
-### Run from Source
-
-```bash
 # Interactive chat mode
 dotnet run --project seekclaw_cli
 
@@ -162,15 +167,17 @@ dotnet run --project seekclaw_cli -- --model "openai/gpt-5.5"
 
 ```mermaid
 flowchart TD
-    subgraph Frontends[Frontends]
-        CLI[seekclaw_cli<br/>System.CommandLine + Rendering Engine]
-        GUI[GUI / Web / IDE<br/>Future]
+    subgraph Frontends[Frontend Layer]
+        Desktop[seekclaw_desktop<br/>Electron + Vue 3 Desktop]
+        CLI[seekclaw_cli<br/>System.CommandLine + Terminal Engine]
+        Web[seekclaw_webserver<br/>Blazor Docs & Skills Hub]
     end
 
     subgraph Runtime[seekclaw_runtime]
         Facade[SeekClawRuntime<br/>Composition Root / Facade]
         Agent[Agent Main Loop]
         Bus[(EventBus)]
+        DMN[DaemonServer<br/>Named Pipe / Unix Socket]
         subgraph Provider[Provider Layer]
             PM[ProviderManager<br/>Routing·Retry·Failover·Circuit Breaker]
             MR[ModelRegistry]
@@ -179,22 +186,22 @@ flowchart TD
             HC[HealthChecker]
             UT[UsageTracker]
         end
-        subgraph Plugins[Plugin System]
-            TR[ToolRegistry]
+        subgraph Plugins[Plugins & Extensions]
+            TR[ToolRegistry<br/>12+ Built-in Tools / Computer Use]
             PR[PromptRegistry]
             SK[SkillManager]
             MCP[McpManager<br/>stdio / SSE]
         end
         PP[PromptProvider<br/>File-based·Hot-reload·Variables]
         WS[WorkspaceManager]
-        SS[SessionStore]
+        SS[SessionStore<br/>SQLite seekclaw.db]
         VF[BuildVerifier]
         CFG[ConfigStore<br/>~/.seekclaw/config.json]
-        DMN[DaemonServer<br/>Named Pipe / Unix Socket]
     end
 
+    Desktop -->|"JSONL IPC 2.1"| DMN
+    Web -. Official Skills API .-> SK
     CLI --> Facade
-    GUI -. daemon protocol .-> DMN
     DMN --> Agent
     Facade --> Agent
     Agent --> PM
@@ -213,33 +220,43 @@ flowchart TD
     PP --> PR
     WS --> CFG
     Bus --> CLI
+    Bus --> DMN
 ```
 
 ## 📁 Project Structure
 
-```
+```text
 SeekClaw/
-├── seekclaw_cli/           # CLI frontend
-│   ├── Commands/           # CLI commands (provider, model, profile, etc.)
-│   ├── Ui/                 # Terminal rendering engine
+├── seekclaw_desktop/       # Desktop client (Electron + Vue 3)
+│   ├── src/main/           # Electron main process, Daemon IPC client, Computer Use overlay
+│   ├── src/renderer/       # Vue 3 renderer (chat, projects, task planner, settings)
+│   └── package.json
+├── seekclaw_cli/           # CLI terminal frontend
+│   ├── Commands/           # CLI commands (provider, model, switch, doctor, skill, mcp, etc.)
+│   ├── Ui/                 # Terminal rendering engine & double-buffered ANSI region
 │   └── Program.cs          # Entry point
-├── seekclaw_runtime/       # Core runtime
+├── seekclaw_runtime/       # Core runtime engine
 │   ├── Agents/             # Agent loop and context planning
-│   ├── Configuration/      # Config management
+│   ├── ComputerUse/        # Computer Use extensions (screen capture & actions)
+│   ├── Configuration/      # Config management and migration
+│   ├── Coordination/       # File lock coordinator for concurrent tasks
+│   ├── Daemon/             # Local IPC server (Named Pipe / Unix Socket)
 │   ├── Events/             # Event bus system
-│   ├── Mcp/                # MCP client implementation
-│   ├── Prompts/            # Prompt loading and composition
-│   ├── Providers/          # LLM provider integrations
-│   ├── Sessions/           # Session persistence
-│   ├── Skills/             # Skill management
-│   ├── Tools/              # Tool registry and implementations
-│   ├── Verification/       # Build verification
-│   └── Workspaces/         # Workspace detection and management
-├── seekclaw_tests/         # Unit tests
-├── docs/                   # Documentation
-├── prompts/                # Prompt templates (future)
-├── skills/                 # Skill definitions (future)
-└── mcp/                    # MCP server configurations (future)
+│   ├── Mcp/                # MCP client implementation (stdio / SSE / Streamable HTTP)
+│   ├── Prompts/            # Prompt loading, template composition & hot reloading
+│   ├── Providers/          # LLM provider integration & failover
+│   ├── Sessions/           # Session persistence (SQLite seekclaw.db)
+│   ├── Skills/             # Skill loading & marketplace installer
+│   ├── SubAgents/          # Subagent orchestration
+│   ├── Tools/              # Builtin tools (files, search, plan, bash, web, etc.)
+│   ├── Verification/       # Automated build verification & self-healing loop
+│   └── Workspaces/         # Workspace detection & project type analysis
+├── seekclaw_webserver/     # Official website, online docs & skills marketplace (Blazor)
+├── seekclaw_tests/         # Runtime unit tests
+├── seekclaw_cli_tests/     # CLI unit tests
+├── packaging/              # npm & installer packaging configurations
+├── build.cmd / build.py    # Cross-platform one-click build script (Runtime + Desktop)
+└── SeekClaw.slnx           # .NET solution file
 ```
 
 ## ⚙️ Configuration
@@ -250,25 +267,44 @@ Located at `~/.seekclaw/config.json`:
 
 ```json
 {
-  "providers": {
-    "openai": {
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "temperature": 0.2,
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "kind": "openai",
+      "baseUrl": "https://api.openai.com/v1",
       "apiKey": "sk-...",
-      "baseUrl": "https://api.openai.com/v1"
+      "enabled": true,
+      "priority": 1,
+      "models": [
+        {
+          "id": "gpt-5.5",
+          "contextWindow": 128000,
+          "maxOutput": 8192
+        }
+      ]
     },
-    "anthropic": {
-      "apiKey": "sk-ant-..."
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "kind": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKey": "sk-ant-...",
+      "enabled": true,
+      "priority": 2
     }
-  },
-  "profiles": {
-    "default": {
-      "provider": "openai",
-      "model": "gpt-5.5"
-    }
+  ],
+  "routing": {
+    "failoverEnabled": true
   },
   "agent": {
-    "maxSteps": 10,
+    "maxSteps": 40,
     "maxRepairAttempts": 3,
-    "autoVerify": true
+    "autoVerify": true,
+    "mode": "edit"
   }
 }
 ```
@@ -277,10 +313,10 @@ Located at `~/.seekclaw/config.json`:
 
 Each project can have `.seekclaw/config.json` to override:
 
-- Provider and model selection
-- Temperature and context settings
-- Tool permissions
-- Skill configurations
+- Provider and model selection (`provider`, `model`, `temperature`)
+- Agent mode and system prompt (`mode`, `systemPrompt`)
+- Disabled skills and tools (`disabledSkills`, `disabledTools`)
+- Build verification command (`autoVerify`, `verifyCommand`)
 - MCP server settings
 
 ## 🎯 Usage Examples
@@ -288,9 +324,9 @@ Each project can have `.seekclaw/config.json` to override:
 ### Interactive Chat
 
 ```bash
-seekclaw chat
-# or simply
 seekclaw
+# or
+seekclaw chat
 ```
 
 ### One-shot Tasks
@@ -301,38 +337,66 @@ seekclaw "Write unit tests for the UserService class"
 seekclaw "Fix the build errors in the project"
 ```
 
+### Switch Model and Provider
+
+```bash
+# Interactively switch Provider and model
+seekclaw switch
+
+# Or activate directly
+seekclaw model use openai/gpt-5.5
+seekclaw provider use anthropic
+```
+
 ### Provider Management
 
 ```bash
 seekclaw provider list
-seekclaw provider add openai --api-key sk-...
-seekclaw provider test openai
-seekclaw provider use anthropic
+seekclaw provider add --id deepseek --kind openai --base-url "https://api.deepseek.com/v1" --api-key "sk-..." --model "deepseek-chat"
+seekclaw provider test deepseek
 ```
 
 ### Model Management
 
 ```bash
 seekclaw model list
-seekclaw model use openai/gpt-5.5
 seekclaw model info claude-opus
 seekclaw model search "fast coding model"
+seekclaw model test openai/gpt-5.5
 ```
 
 ### Session Management
 
 ```bash
-seekclaw session list
-seekclaw session resume <session-id>
-seekclaw session export <session-id> --format json
+# List sessions for the current workspace
+seekclaw sessions
+
+# Continue recent session or resume by ID
+seekclaw --continue
+seekclaw --resume <session-id>
 ```
 
-Sessions and the Desktop project list are stored in `~/.seekclaw/seekclaw.db`. On first access after upgrading, legacy `.session/*.jsonl`, `.seekclaw/sessions/*.jsonl`, and global `~/.seekclaw/sessions/*.jsonl` files are imported automatically and retained as backups. Provider, model, profile, MCP, skill, and workspace configuration remains in the existing JSON/text files; usage records remain in `~/.seekclaw/usage.jsonl`.
+Sessions and the Desktop project list are stored in `~/.seekclaw/seekclaw.db`. On first access after upgrading, legacy JSONL session files are imported automatically and retained as backups. Provider, model, MCP, skill, and workspace configuration remains in JSON files; usage records remain in `~/.seekclaw/usage.jsonl`.
 
-### Health Check
+### Skills and MCP Management
+
+```bash
+# Manage skills (supports installing from official marketplace or URL)
+seekclaw skill list
+seekclaw skill install code-review
+seekclaw skill enable code-review
+
+# Manage MCP servers
+seekclaw mcp list
+seekclaw mcp test
+```
+
+### Health Check & Usage
 
 ```bash
 seekclaw doctor
+seekclaw usage
+seekclaw usage --days 7
 ```
 
 ## 🔌 Extending SeekClaw

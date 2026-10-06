@@ -1,6 +1,6 @@
 # Built-in Tools and Extensions
 
-The Runtime currently registers nine built-in tools. File and command tools require a concrete workspace, while web tools remain available in directory-free global tasks.
+The Runtime registers 12 core built-in tools by default, with system-level capabilities provided through extensions like Computer Use. File and command tools require a concrete workspace, while web and planning tools remain available in directory-free global tasks.
 
 ## Built-in tools
 
@@ -12,11 +12,20 @@ The Runtime currently registers nine built-in tools. File and command tools requ
 | `list_dir` | Lists a directory tree to a requested depth | no | yes |
 | `glob` | Matches file paths and returns up to 200 recent entries | no | yes |
 | `grep` | Searches file content with regex and optional Glob filtering | no | yes |
-| `bash` | Runs a shell command in the workspace | yes | yes |
-| `web_search` | Searches Google, Bing, or Baidu | no | no |
+| `bash` | Runs a shell command in the workspace (timeout-protected) | yes | yes |
+| `web_search` | Searches Google, Bing, or Baidu for external references | no | no |
 | `web_fetch` | Extracts text from an HTTP or HTTPS page | no | no |
+| `update_plan` | Structured task planning; manages multi-step execution checklists | no | no |
+| `capture_screen` | Captures the desktop display for multimodal visual inspection | no | no |
+| `invoke_subagent` | Delegates specialized subtasks to subagents (Coder/Researcher/Tester) | yes | yes |
 
-Descriptions are loaded from `prompts/tool/<name>.txt`, while arguments are validated through JSON Schema. Output budgets adapt to the model context window and remain capped by `agent.maxToolOutputChars`.
+### Computer Use Extension Tools
+
+When the `ComputerUse` module is enabled in configuration, the Runtime registers OS interaction tools:
+- `computer_inspect`: Inspects screen resolution and UI elements;
+- `computer`: Performs mouse movement, clicks, keystrokes, and screenshots (accompanied by a volumetric ambient halo in Desktop).
+
+Descriptions are loaded from `prompts/tool/<name>.txt` and support hot-reloading; arguments are validated through JSON Schema. Output budgets adapt to the model context window and remain capped by `agent.maxToolOutputChars`.
 
 ## `edit_file` arguments
 
