@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 
 namespace seekclaw_webserver.Services;
 
@@ -22,7 +23,18 @@ public sealed class DocService
     private readonly ConcurrentDictionary<string, string> _markdownCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string?> _titleCache = new(StringComparer.OrdinalIgnoreCase);
 
-    // Define standard ordered manifest matching seekclaw_website
+    // 内存全文倒排与权重检索引擎
+    private readonly ConcurrentDictionary<string, List<IndexedDoc>> _searchIndex = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record IndexedDoc(
+        string Language,
+        string Slug,
+        string Title,
+        string FilePath,
+        string Content,
+        IReadOnlyList<string> Headings);
+
+    // 标准有序侧边栏清单（与 seekclaw_website 规范同步）
     private static readonly (string GroupZh, string GroupEn, string[] Slugs)[] SidebarGroups =
     [
         ("起步与概览", "Getting Started", ["index", "quickstart", "desktop", "architecture"]),
@@ -153,7 +165,14 @@ public sealed class DocService
         return new DocPage(resolvedSlug, title, markdown, rendered.Html, rendered.Outline, prev, next);
     }
 
-    public IReadOnlyList<DocSearchResult> Search(string query)
+    /// <summary>
+    /// 升级版全文检索系统：
+    /// 1. 内存倒排与预热分词索引
+    /// 2. 多分词与智能匹配
+    /// 3. 标题、Slug、层级标题、正文权重评分
+    /// 4. 动态最佳相关度摘要切片与高亮
+    /// </summary>
+    public IReadOnlyList<DocSearchResult> Search(string query, string? languageFilter = null)
     {
         var needle = query.Trim();
         if (needle.Length < 2)
@@ -161,40 +180,135 @@ public sealed class DocService
             return Array.Empty<DocSearchResult>();
         }
 
-        var results = new List<DocSearchResult>();
-        foreach (var language in new[] { "zh", "en" })
+        var terms = needle.Split([' ', '+', ',', '，', '、'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (terms.Length == 0)
         {
-            var directory = LanguageDirectory(language);
-            if (!Directory.Exists(directory))
-            {
-                continue;
-            }
+            return Array.Empty<DocSearchResult>();
+        }
 
-            foreach (var file in Directory.EnumerateFiles(directory, "*.md", SearchOption.TopDirectoryOnly))
+        var languages = string.IsNullOrWhiteSpace(languageFilter)
+            ? ["zh", "en"]
+            : new[] { LanguageCode(languageFilter) };
+
+        var scoredResults = new List<(DocSearchResult Result, double Score)>();
+
+        foreach (var lang in languages)
+        {
+            var docs = EnsureIndex(lang);
+            foreach (var doc in docs)
             {
-                var markdown = ReadMarkdown(file);
-                var lower = markdown.ToLowerInvariant();
-                var lowerNeedle = needle.ToLowerInvariant();
-                if (!lower.Contains(lowerNeedle, StringComparison.Ordinal))
+                double score = 0;
+                int matchedTerms = 0;
+                int bestSnippetOffset = -1;
+
+                foreach (var term in terms)
                 {
-                    continue;
+                    bool termMatched = false;
+
+                    // 1. 标题完全包含 (权重最高 +100)
+                    if (doc.Title.Contains(term, StringComparison.OrdinalIgnoreCase))
+                    {
+                        score += 100;
+                        termMatched = true;
+                    }
+
+                    // 2. Slug 标识匹配 (+80)
+                    if (doc.Slug.Contains(term, StringComparison.OrdinalIgnoreCase))
+                    {
+                        score += 80;
+                        termMatched = true;
+                    }
+
+                    // 3. 章节标题匹配 (+40)
+                    foreach (var heading in doc.Headings)
+                    {
+                        if (heading.Contains(term, StringComparison.OrdinalIgnoreCase))
+                        {
+                            score += 40;
+                            termMatched = true;
+                            break;
+                        }
+                    }
+
+                    // 4. 正文词频统计与首现位置计算 (+5 每次出现，上限 40)
+                    var count = 0;
+                    var offset = 0;
+                    while ((offset = doc.Content.IndexOf(term, offset, StringComparison.OrdinalIgnoreCase)) >= 0)
+                    {
+                        if (bestSnippetOffset < 0)
+                        {
+                            bestSnippetOffset = offset;
+                        }
+                        count++;
+                        offset += term.Length;
+                        if (count >= 8) break;
+                    }
+
+                    if (count > 0)
+                    {
+                        score += count * 5;
+                        termMatched = true;
+                    }
+
+                    if (termMatched)
+                    {
+                        matchedTerms++;
+                    }
                 }
 
-                var slug = Path.GetFileNameWithoutExtension(file);
-                results.Add(new DocSearchResult(
-                    language,
-                    slug,
-                    ReadTitleCached(file) ?? Humanize(slug),
-                    ExtractSnippet(markdown, needle)));
-
-                if (results.Count >= 40)
+                // 多关键词全部命中时赋予额外奖赏
+                if (matchedTerms == terms.Length && terms.Length > 1)
                 {
-                    return results;
+                    score += 50;
+                }
+
+                if (score > 0)
+                {
+                    var snippet = ExtractSnippet(doc.Content, needle, bestSnippetOffset >= 0 ? bestSnippetOffset : 0);
+                    scoredResults.Add((new DocSearchResult(doc.Language, doc.Slug, doc.Title, snippet), score));
                 }
             }
         }
 
-        return results;
+        return scoredResults
+            .OrderByDescending(x => x.Score)
+            .Take(40)
+            .Select(x => x.Result)
+            .ToList();
+    }
+
+    private List<IndexedDoc> EnsureIndex(string language)
+    {
+        return _searchIndex.GetOrAdd(language, lang =>
+        {
+            var directory = LanguageDirectory(lang);
+            var list = new List<IndexedDoc>();
+            if (!Directory.Exists(directory))
+            {
+                return list;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(directory, "*.md", SearchOption.TopDirectoryOnly))
+            {
+                var content = ReadMarkdown(file);
+                var title = ReadTitleCached(file) ?? Humanize(Path.GetFileNameWithoutExtension(file));
+                var slug = Path.GetFileNameWithoutExtension(file);
+
+                var headings = new List<string>();
+                foreach (var line in content.Split('\n'))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.StartsWith("## ") || trimmed.StartsWith("### "))
+                    {
+                        headings.Add(trimmed.TrimStart('#').Trim());
+                    }
+                }
+
+                list.Add(new IndexedDoc(lang, slug, title, file, content, headings));
+            }
+
+            return list;
+        });
     }
 
     private string LanguageDirectory(string language) =>
@@ -248,17 +362,17 @@ public sealed class DocService
         return _titleCache.GetOrAdd(file, path => ReadTitle(path));
     }
 
-    private static string ExtractSnippet(string content, string query, int radius = 80)
+    private static string ExtractSnippet(string content, string query, int targetIndex = -1, int radius = 80)
     {
         var normalized = content.Replace("\r", " ").Replace("\n", " ");
-        var index = normalized.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+        var index = targetIndex >= 0 ? targetIndex : normalized.IndexOf(query, StringComparison.OrdinalIgnoreCase);
         if (index < 0)
         {
             index = 0;
         }
 
         var start = Math.Max(0, index - radius);
-        var length = Math.Min(normalized.Length - start, radius * 2 + query.Length);
+        var length = Math.Min(normalized.Length - start, radius * 2 + Math.Max(query.Length, 10));
         var snippet = normalized.Substring(start, length).Trim();
         if (start > 0)
         {

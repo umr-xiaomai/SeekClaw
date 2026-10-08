@@ -31,6 +31,14 @@
                     <i class="bi bi-search me-1"></i><span>@(_isEnglish ? "Search" : "搜索")</span>
                 </NavLink>
 
+                <AuthorizeView>
+                    <Authorized>
+                        <NavLink class="vp-nav-link" href="/profile">
+                            <i class="bi bi-person-badge me-1"></i><span>@(_isEnglish ? "Profile" : "个人中心")</span>
+                        </NavLink>
+                    </Authorized>
+                </AuthorizeView>
+
                 <AuthorizeView Roles="SuperAdmin">
                     <Authorized>
                         <NavLink class="vp-nav-link text-success fw-bold" href="/admin">
@@ -89,8 +97,11 @@
             <AuthorizeView>
                 <Authorized>
                     <div class="vp-nav-divider"></div>
-                    <span class="auth-badge"><i class="bi bi-person-circle"></i> @context.User.Identity?.Name</span>
-                    <button class="btn-signout" @onclick="LogoutAsync" title="退出登录"><i class="bi bi-box-arrow-right"></i></button>
+                    <a class="auth-badge text-decoration-none" href="/profile" title="@(_isEnglish ? "Personal Center" : "个人中心")">
+                        <i class="bi bi-person-circle"></i>
+                        <span>@context.User.Identity?.Name</span>
+                    </a>
+                    <button class="btn-signout" @onclick="LogoutAsync" title="@(_isEnglish ? "Sign Out" : "退出登录")"><i class="bi bi-box-arrow-right"></i></button>
                 </Authorized>
                 <NotAuthorized>
                     <div class="vp-nav-divider"></div>
@@ -187,3 +198,4 @@
         await JS.InvokeVoidAsync("SeekClaw.logout");
     }
 }
+

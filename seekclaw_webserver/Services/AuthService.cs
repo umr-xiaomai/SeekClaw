@@ -1,15 +1,20 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using seekclaw_webserver.Data;
 using seekclaw_webserver.Models;
 
 namespace seekclaw_webserver.Services;
 
-public sealed class AuthService(AppDbContext db)
+public sealed class AuthService(AppDbContext db, IMemoryCache? cache = null)
 {
     public const string AllowRegistrationKey = "allow_registration";
     public const string SiteNameKey = "site_name";
     public const string InitializedKey = "system_initialized";
+
+    private const string InitializedCacheKey = "auth:initialized";
+    private const string RegistrationCacheKey = "auth:registration_enabled";
+    private const string SiteNameCacheKey = "auth:site_name";
 
     private static readonly PasswordHasher<User> PasswordHasher = new();
 
@@ -20,10 +25,18 @@ public sealed class AuthService(AppDbContext db)
 
     public async Task<bool> IsInitializedAsync()
     {
+        if (cache != null && cache.TryGetValue(InitializedCacheKey, out bool cached))
+        {
+            return cached;
+        }
+
         var hasInitializedSetting = await db.SiteSettings
             .AsNoTracking()
             .AnyAsync(x => x.Key == InitializedKey && x.Value == "true");
-        return hasInitializedSetting || await db.Users.AnyAsync(x => x.IsSuperAdmin);
+        var isInit = hasInitializedSetting || await db.Users.AnyAsync(x => x.IsSuperAdmin);
+
+        cache?.Set(InitializedCacheKey, isInit, TimeSpan.FromMinutes(5));
+        return isInit;
     }
 
     public async Task<DatabaseStatusResult> TestDatabaseConnectionAsync()
@@ -97,11 +110,20 @@ public sealed class AuthService(AppDbContext db)
 
         await db.SaveChangesAsync();
 
+        cache?.Remove(InitializedCacheKey);
+        cache?.Remove(RegistrationCacheKey);
+        cache?.Remove(SiteNameCacheKey);
+
         return new AuthResult { Success = true, IsSuperAdmin = true };
     }
 
     public async Task<bool> IsRegistrationEnabledAsync()
     {
+        if (cache != null && cache.TryGetValue(RegistrationCacheKey, out bool cached))
+        {
+            return cached;
+        }
+
         if (!await db.Users.AnyAsync())
         {
             return true;
@@ -110,15 +132,26 @@ public sealed class AuthService(AppDbContext db)
         var setting = await db.SiteSettings
             .AsNoTracking()
             .SingleOrDefaultAsync(x => x.Key == AllowRegistrationKey);
-        return string.Equals(setting?.Value, "true", StringComparison.OrdinalIgnoreCase);
+        var enabled = string.Equals(setting?.Value, "true", StringComparison.OrdinalIgnoreCase);
+
+        cache?.Set(RegistrationCacheKey, enabled, TimeSpan.FromMinutes(5));
+        return enabled;
     }
 
     public async Task<string> GetSiteNameAsync()
     {
+        if (cache != null && cache.TryGetValue(SiteNameCacheKey, out string? cached) && cached is not null)
+        {
+            return cached;
+        }
+
         var setting = await db.SiteSettings
             .AsNoTracking()
             .SingleOrDefaultAsync(x => x.Key == SiteNameKey);
-        return string.IsNullOrWhiteSpace(setting?.Value) ? "SeekClaw" : setting.Value;
+        var siteName = string.IsNullOrWhiteSpace(setting?.Value) ? "SeekClaw" : setting.Value;
+
+        cache?.Set(SiteNameCacheKey, siteName, TimeSpan.FromMinutes(5));
+        return siteName;
     }
 
     public async Task<AuthResult> RegisterAsync(string email, string password)
@@ -142,7 +175,7 @@ public sealed class AuthService(AppDbContext db)
         var hasUsers = await db.Users.AnyAsync();
         if (hasUsers && !await IsRegistrationEnabledAsync())
         {
-            return new AuthResult { Success = false, Error = "管理员当前未开放注册。" };
+            return new AuthResult { Success = false, Error = "公开注册通道已关闭，请联系超级管理员。" };
         }
 
         var user = new User
@@ -155,6 +188,8 @@ public sealed class AuthService(AppDbContext db)
 
         db.Users.Add(user);
         await db.SaveChangesAsync();
+
+        cache?.Remove(InitializedCacheKey);
 
         return new AuthResult { Success = true, IsSuperAdmin = user.IsSuperAdmin };
     }
@@ -190,7 +225,6 @@ public sealed class AuthService(AppDbContext db)
             return false;
         }
 
-        // Prevent deleting the last SuperAdmin
         if (user.IsSuperAdmin)
         {
             var adminCount = await db.Users.CountAsync(x => x.IsSuperAdmin);
@@ -202,6 +236,7 @@ public sealed class AuthService(AppDbContext db)
 
         db.Users.Remove(user);
         await db.SaveChangesAsync();
+        cache?.Remove(InitializedCacheKey);
         return true;
     }
 
@@ -214,6 +249,30 @@ public sealed class AuthService(AppDbContext db)
 
         var user = await db.Users.SingleOrDefaultAsync(x => x.Id == id);
         if (user is null)
+        {
+            return false;
+        }
+
+        user.PasswordHash = PasswordHasher.HashPassword(user, newPassword);
+        await db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> ChangePasswordAsync(int id, string oldPassword, string newPassword)
+    {
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
+        {
+            throw new ArgumentException("新密码至少需要 6 位。", nameof(newPassword));
+        }
+
+        var user = await db.Users.SingleOrDefaultAsync(x => x.Id == id);
+        if (user is null)
+        {
+            return false;
+        }
+
+        var verify = PasswordHasher.VerifyHashedPassword(user, user.PasswordHash, oldPassword);
+        if (verify != PasswordVerificationResult.Success)
         {
             return false;
         }
@@ -242,6 +301,7 @@ public sealed class AuthService(AppDbContext db)
 
         user.IsSuperAdmin = isSuperAdmin;
         await db.SaveChangesAsync();
+        cache?.Remove(InitializedCacheKey);
         return true;
     }
 
@@ -260,18 +320,23 @@ public sealed class AuthService(AppDbContext db)
     {
         await SetSettingInternalAsync(key, value);
         await db.SaveChangesAsync();
+        cache?.Remove(InitializedCacheKey);
+        cache?.Remove(RegistrationCacheKey);
+        cache?.Remove(SiteNameCacheKey);
     }
 
     public async Task SetRegistrationEnabledAsync(bool enabled)
     {
         await SetSettingInternalAsync(AllowRegistrationKey, enabled ? "true" : "false");
         await db.SaveChangesAsync();
+        cache?.Remove(RegistrationCacheKey);
     }
 
     public async Task SetSiteNameAsync(string name)
     {
         await SetSettingInternalAsync(SiteNameKey, string.IsNullOrWhiteSpace(name) ? "SeekClaw" : name.Trim());
         await db.SaveChangesAsync();
+        cache?.Remove(SiteNameCacheKey);
     }
 
     private async Task SetSettingInternalAsync(string key, string value)

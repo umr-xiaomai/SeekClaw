@@ -16,16 +16,28 @@
             </a>
         </div>
 
-        <div class="d-flex justify-content-center gap-2 mt-4">
-            <button class="nav-action-btn @(_filterType == "all" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("all")'>
-                <i class="bi bi-grid-fill"></i> @(Language == "en" ? "All Skills" : "全部技能") (@_skills.Count)
-            </button>
-            <button class="nav-action-btn @(_filterType == "official" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("official")'>
-                <i class="bi bi-shield-fill-check text-success"></i> @(Language == "en" ? "Official" : "官方精选") (@_skills.Count(s => s.IsOfficial))
-            </button>
-            <button class="nav-action-btn @(_filterType == "community" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("community")'>
-                <i class="bi bi-people-fill text-primary"></i> @(Language == "en" ? "Community" : "社区生态") (@_skills.Count(s => !s.IsOfficial))
-            </button>
+        <div class="d-flex flex-wrap justify-content-center align-items-center gap-3 mt-4">
+            <div class="btn-group btn-group-sm">
+                <button class="nav-action-btn @(_filterType == "all" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("all")'>
+                    <i class="bi bi-grid-fill"></i> @(Language == "en" ? "All Skills" : "全部技能") (@_skills.Count)
+                </button>
+                <button class="nav-action-btn @(_filterType == "official" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("official")'>
+                    <i class="bi bi-shield-fill-check text-success"></i> @(Language == "en" ? "Official" : "官方精选") (@_skills.Count(s => s.IsOfficial))
+                </button>
+                <button class="nav-action-btn @(_filterType == "community" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("community")'>
+                    <i class="bi bi-people-fill text-primary"></i> @(Language == "en" ? "Community" : "社区生态") (@_skills.Count(s => !s.IsOfficial))
+                </button>
+            </div>
+
+            <div class="d-flex align-items-center gap-2">
+                <span class="small text-muted"><i class="bi bi-sort-down"></i> @(Language == "en" ? "Sort by:" : "排序：")</span>
+                <select class="form-select form-select-sm" style="width: auto;" @bind="_sortBy" @bind:after="OnSortChanged">
+                    <option value="default">@(Language == "en" ? "Recommended" : "官方推荐")</option>
+                    <option value="downloads">@(Language == "en" ? "Most Downloaded" : "最多下载")</option>
+                    <option value="views">@(Language == "en" ? "Most Viewed" : "最多浏览")</option>
+                    <option value="updated">@(Language == "en" ? "Recently Updated" : "最近更新")</option>
+                </select>
+            </div>
         </div>
     </header>
 
@@ -78,7 +90,15 @@
                     </div>
 
                     <div class="skill-card-footer">
-                        <span><i class="bi bi-person me-1"></i>@skill.Author</span>
+                        <div class="d-flex align-items-center gap-3">
+                            <span class="small text-muted"><i class="bi bi-person me-1"></i>@skill.Author</span>
+                            <span class="small text-secondary" title="@(Language == "en" ? "Downloads" : "累计下载")">
+                                <i class="bi bi-download me-1 text-muted"></i>@skill.DownloadCount
+                            </span>
+                            <span class="small text-secondary" title="@(Language == "en" ? "Views" : "累计浏览")">
+                                <i class="bi bi-eye me-1 text-muted"></i>@skill.ViewCount
+                            </span>
+                        </div>
                         <div class="d-flex align-items-center gap-2">
                             @if (skill.HasPackage)
                             {
@@ -127,6 +147,7 @@
     private List<SkillSummary> _skills = new();
     private string _query = string.Empty;
     private string _filterType = "all";
+    private string _sortBy = "default";
     private bool _loading = true;
     private int _currentPage = 1;
     private int _pageSize = 12;
@@ -169,8 +190,24 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _skills = await SkillCatalog.ListAsync(includeDisabled: false);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        // 仅在公开市场展示已审核通过 (Approved) 的技能
+        _skills = await SkillCatalog.ListAsync(
+            includeDisabled: false,
+            reviewStatus: SkillReviewStatus.Approved,
+            sortBy: _sortBy);
         _loading = false;
+    }
+
+    private async Task OnSortChanged()
+    {
+        _currentPage = 1;
+        await LoadAsync();
     }
 
     private void SetFilter(string type)

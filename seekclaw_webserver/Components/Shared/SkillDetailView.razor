@@ -32,6 +32,27 @@ else
         <meta property="og:type" content="article" />
     </HeadContent>
     <div class="skill-detail-shell">
+        @if (_skill.ReviewStatus == SkillReviewStatus.Pending)
+        {
+            <div class="alert alert-warning mb-3 d-flex align-items-center gap-2">
+                <i class="bi bi-hourglass-split fs-4 text-warning"></i>
+                <div>
+                    <strong>@(Language == "en" ? "Pending Review:" : "待审核状态：")</strong>
+                    @(Language == "en" ? " This skill is awaiting administrator review and is currently only visible to the author and administrators." : " 该技能当前处于待审核状态，目前仅作者与管理员可见。审核通过后将正式向全市场公开。")
+                </div>
+            </div>
+        }
+        else if (_skill.ReviewStatus == SkillReviewStatus.Rejected)
+        {
+            <div class="alert alert-danger mb-3 d-flex align-items-center gap-2">
+                <i class="bi bi-x-circle fs-4 text-danger"></i>
+                <div>
+                    <strong>@(Language == "en" ? "Review Rejected:" : "审核未通过：")</strong>
+                    @(Language == "en" ? $" This submission was rejected. Reason: {_skill.ReviewComment ?? "No specific comments provided."}" : $" 该技能申请已被管理员驳回。审核意见：{_skill.ReviewComment ?? "暂无具体审核意见，请修改后重新提交。"} ")
+                </div>
+            </div>
+        }
+
         <div class="skill-detail-header">
             <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
                 <div>
@@ -83,12 +104,66 @@ else
                     <span><strong><i class="bi bi-person-badge me-1"></i>@(Language == "en" ? "Published by:" : "发布用户：")</strong> @_skill.AuthorUsername</span>
                 }
                 <span><strong><i class="bi bi-tag me-1"></i>@(Language == "en" ? "Version:" : "版本：")</strong> v@_skill.Version</span>
+                <span><strong><i class="bi bi-download me-1"></i>@(Language == "en" ? "Downloads:" : "下载：")</strong> @_skill.DownloadCount</span>
+                <span><strong><i class="bi bi-eye me-1"></i>@(Language == "en" ? "Views:" : "浏览：")</strong> @_skill.ViewCount</span>
                 @if (!string.IsNullOrWhiteSpace(_skill.Homepage))
                 {
                     <span><strong><i class="bi bi-globe me-1"></i>@(Language == "en" ? "Homepage:" : "主页：")</strong> <a href="@_skill.Homepage" target="_blank" rel="noopener noreferrer">@_skill.Homepage</a></span>
                 }
             </div>
         </div>
+
+        @if (_skill.Versions.Count > 0)
+        {
+            <div class="mt-4 mb-4 p-3 bg-light rounded border">
+                <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h3 class="h6 fw-bold m-0 d-flex align-items-center gap-2">
+                        <i class="bi bi-clock-history text-primary"></i>
+                        @(Language == "en" ? "Version History" : "版本历史与更新记录")
+                    </h3>
+                    <span class="badge text-bg-secondary font-monospace" style="font-size: 0.75rem;">
+                        @_skill.Versions.Count @(Language == "en" ? "releases" : "个版本")
+                    </span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead>
+                            <tr class="text-secondary small">
+                                <th style="width: 130px;">@(Language == "en" ? "Version" : "版本")</th>
+                                <th>@(Language == "en" ? "Changelog" : "更新说明")</th>
+                                <th style="width: 170px;">@(Language == "en" ? "Date" : "发布时间")</th>
+                                <th style="width: 100px;">@(Language == "en" ? "Downloads" : "下载量")</th>
+                                <th class="text-end" style="width: 100px;">@(Language == "en" ? "Action" : "操作")</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var ver in _skill.Versions)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="badge @(ver.Version == _skill.Version ? "text-bg-success" : "text-bg-secondary") font-monospace">
+                                            v@ver.Version
+                                        </span>
+                                        @if (ver.Version == _skill.Version)
+                                        {
+                                            <span class="badge text-bg-light border ms-1" style="font-size: 0.7rem;">@(Language == "en" ? "Latest" : "当前")</span>
+                                        }
+                                    </td>
+                                    <td class="text-secondary small">@(string.IsNullOrWhiteSpace(ver.Changelog) ? "-" : ver.Changelog)</td>
+                                    <td class="text-muted small">@DateTimeOffset.FromUnixTimeMilliseconds(ver.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="text-muted small"><i class="bi bi-download me-1"></i>@ver.DownloadCount</td>
+                                    <td class="text-end">
+                                        <a class="btn btn-sm btn-outline-primary" href="/api/skills/@_skill.Slug/download?version=@ver.Version">
+                                            <i class="bi bi-download"></i> @(Language == "en" ? "Get" : "下载")
+                                        </a>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
 
         <div class="markdown-body">
             @((MarkupString)Markdown.ToHtml(_skill.ReadmeMarkdown))
@@ -129,6 +204,11 @@ else
             _skill = await SkillCatalog.GetDetailAsync(Id.Value);
         }
 
+        if (_skill is not null)
+        {
+            await SkillCatalog.IncrementViewAsync(_skill.Id);
+        }
+
         _loading = false;
     }
 
@@ -147,4 +227,3 @@ else
         StateHasChanged();
     }
 }
-

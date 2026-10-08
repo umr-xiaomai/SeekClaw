@@ -14,6 +14,12 @@ public sealed class RegisterRequest
     public string Password { get; set; } = string.Empty;
 }
 
+public sealed class ChangePasswordRequest
+{
+    public string OldPassword { get; set; } = string.Empty;
+    public string NewPassword { get; set; } = string.Empty;
+}
+
 public sealed class SetupRequest
 {
     public string AdminEmail { get; set; } = "admin@seekclaw.org";

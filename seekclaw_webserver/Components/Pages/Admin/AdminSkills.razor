@@ -11,11 +11,11 @@
         <div>
             <p class="doc-kicker mb-1">Skills Management</p>
             <h1 class="h3 fw-bold m-0">技能与插件管理</h1>
-            <p class="text-secondary small m-0 mt-1">管理官方认证与社区开发者贡献的 SeekClaw 技能插件生态。</p>
+            <p class="text-secondary small m-0 mt-1">管理官方认证与社区开发者贡献的 SeekClaw 技能插件生态，进行审核、发布与版本监控。</p>
         </div>
         <div class="d-flex gap-2">
             <button class="vp-btn-primary" @onclick="OpenCreateModal">
-                <i class="bi bi-plus-lg"></i> 发布新技能
+                <i class="bi bi-plus-lg"></i> 发布官方技能
             </button>
         </div>
     </div>
@@ -37,7 +37,7 @@
 
     <!-- Toolbar: Search, Filters, PageSize -->
     <div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-3">
-        <div class="d-flex align-items-center gap-2 flex-grow-1" style="max-width: 520px;">
+        <div class="d-flex align-items-center gap-2 flex-grow-1" style="max-width: 480px;">
             <div class="input-group">
                 <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search text-muted"></i></span>
                 <input class="form-control border-start-0" @bind="_searchQuery" @bind:event="oninput" placeholder="搜索技能名称、Slug、作者或简介…" />
@@ -48,16 +48,22 @@
             </div>
         </div>
 
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
             <div class="btn-group btn-group-sm">
                 <button type="button" class="btn @(_filterType == "all" ? "btn-success text-white" : "btn-outline-secondary")" @onclick='() => SetFilter("all")'>
                     全部 (@_skills.Count)
+                </button>
+                <button type="button" class="btn @(_filterType == "pending" ? "btn-warning text-dark fw-bold" : "btn-outline-secondary")" @onclick='() => SetFilter("pending")'>
+                    <i class="bi bi-clock-history"></i> 待审核 (@_skills.Count(s => s.ReviewStatus == SkillReviewStatus.Pending))
                 </button>
                 <button type="button" class="btn @(_filterType == "official" ? "btn-success text-white" : "btn-outline-secondary")" @onclick='() => SetFilter("official")'>
                     <i class="bi bi-shield-check"></i> 官方 (@_skills.Count(s => s.IsOfficial))
                 </button>
                 <button type="button" class="btn @(_filterType == "community" ? "btn-success text-white" : "btn-outline-secondary")" @onclick='() => SetFilter("community")'>
-                    <i class="bi bi-people"></i> 社区 (@_skills.Count(s => !s.IsOfficial))
+                    <i class="bi bi-people"></i> 社区已上架 (@_skills.Count(s => !s.IsOfficial && s.ReviewStatus == SkillReviewStatus.Approved))
+                </button>
+                <button type="button" class="btn @(_filterType == "rejected" ? "btn-danger text-white" : "btn-outline-secondary")" @onclick='() => SetFilter("rejected")'>
+                    <i class="bi bi-x-circle"></i> 已驳回 (@_skills.Count(s => s.ReviewStatus == SkillReviewStatus.Rejected))
                 </button>
             </div>
 
@@ -74,24 +80,23 @@
         <table class="table mb-0 align-middle">
             <thead>
                 <tr>
-                    <th style="width: 70px;">ID</th>
-                    <th>技能名称</th>
-                    <th>Slug</th>
+                    <th style="width: 60px;">ID</th>
+                    <th>技能名称 / Slug</th>
                     <th>类型</th>
+                    <th>审核状态</th>
+                    <th>热度统计</th>
                     <th>作者</th>
                     <th>版本</th>
-                    <th>状态</th>
-                    <th>包</th>
                     <th>更新时间</th>
-                    <th class="text-end" style="width: 250px;">操作</th>
+                    <th class="text-end" style="width: 260px;">操作</th>
                 </tr>
             </thead>
             <tbody>
                 @if (_loading)
                 {
                     <tr>
-                        <td colspan="10" class="text-center py-5 text-muted">
-                            <div class="spinner-border spinner-border-sm text-success me-2"></div>
+                        <td colspan="9" class="text-center py-4 text-muted">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
                             正在加载技能列表…
                         </td>
                     </tr>
@@ -99,9 +104,9 @@
                 else if (PagedSkills.Count == 0)
                 {
                     <tr>
-                        <td colspan="10" class="text-center py-5 text-muted">
-                            <i class="bi bi-inbox fs-3 d-block mb-2 text-secondary"></i>
-                            未找到符合条件的技能插件
+                        <td colspan="9" class="text-center py-5 text-muted">
+                            <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                            未找到符合条件的技能插件。
                         </td>
                     </tr>
                 }
@@ -110,64 +115,71 @@
                     @foreach (var skill in PagedSkills)
                     {
                         <tr>
-                            <td><span class="badge text-bg-light border">#@skill.Id</span></td>
-                            <td><strong>@skill.Name</strong></td>
-                            <td><code class="small">@skill.Slug</code></td>
+                            <td><span class="badge text-bg-light border font-monospace">#@skill.Id</span></td>
+                            <td>
+                                <div class="fw-bold">@skill.Name</div>
+                                <div class="small text-muted font-monospace">@skill.Slug</div>
+                            </td>
                             <td>
                                 @if (skill.IsOfficial)
                                 {
-                                    <span class="badge text-bg-success">
-                                        <i class="bi bi-shield-fill-check me-1"></i>官方
-                                    </span>
+                                    <span class="badge text-bg-success"><i class="bi bi-shield-check me-1"></i>官方</span>
                                 }
                                 else
                                 {
-                                    <span class="badge text-bg-light border text-secondary">
-                                        <i class="bi bi-people me-1"></i>社区
-                                    </span>
-                                }
-                            </td>
-                            <td>@skill.Author</td>
-                            <td><span class="skill-version-badge">v@skill.Version</span></td>
-                            <td>
-                                @if (skill.Enabled)
-                                {
-                                    <span class="badge text-bg-success">已发布</span>
-                                }
-                                else
-                                {
-                                    <span class="badge text-bg-secondary">已关闭</span>
+                                    <span class="badge text-bg-info text-white"><i class="bi bi-people me-1"></i>社区</span>
                                 }
                             </td>
                             <td>
-                                @if (skill.HasPackage)
+                                @if (skill.ReviewStatus == SkillReviewStatus.Approved)
                                 {
-                                    <span class="badge text-bg-info"><i class="bi bi-file-zip"></i> 包含</span>
+                                    <span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i>已上架</span>
                                 }
-                                else
+                                else if (skill.ReviewStatus == SkillReviewStatus.Pending)
                                 {
-                                    <span class="text-muted small">无</span>
+                                    <span class="badge text-bg-warning text-dark"><i class="bi bi-clock-history me-1"></i>待审核</span>
+                                }
+                                else if (skill.ReviewStatus == SkillReviewStatus.Rejected)
+                                {
+                                    <span class="badge text-bg-danger"><i class="bi bi-x-circle me-1"></i>已驳回</span>
                                 }
                             </td>
-                            <td>@DateTimeOffset.FromUnixTimeMilliseconds(skill.UpdatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>
+                                <div class="small text-secondary">
+                                    <span title="下载次数"><i class="bi bi-download text-muted me-1"></i>@skill.DownloadCount</span>
+                                    <span class="ms-2" title="浏览次数"><i class="bi bi-eye text-muted me-1"></i>@skill.ViewCount</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="small fw-semibold">@skill.Author</div>
+                                @if (!string.IsNullOrWhiteSpace(skill.AuthorUsername))
+                                {
+                                    <div class="small text-muted">@@@skill.AuthorUsername</div>
+                                }
+                            </td>
+                            <td>
+                                <span class="badge text-bg-light border font-monospace">v@skill.Version</span>
+                                <span class="small text-muted d-block" style="font-size: 0.72rem;">@skill.VersionCount 个版本</span>
+                            </td>
+                            <td>
+                                <span class="small text-muted">@DateTimeOffset.FromUnixTimeMilliseconds(skill.UpdatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                            </td>
                             <td class="text-end">
                                 <div class="btn-group btn-group-sm">
-                                    <a class="btn btn-outline-secondary" href="/skills/@skill.Slug" target="_blank" title="前台预览"><i class="bi bi-eye"></i></a>
-                                    @if (skill.HasPackage)
+                                    @if (skill.ReviewStatus != SkillReviewStatus.Approved)
                                     {
-                                        <a class="btn btn-outline-secondary" href="/api/skills/@skill.Id/download" title="下载技能包"><i class="bi bi-download"></i></a>
+                                        <button class="btn btn-outline-warning" @onclick="() => OpenReviewModal(skill)" title="审核技能">
+                                            <i class="bi bi-clipboard-check"></i> 审核
+                                        </button>
                                     }
-                                    <button class="btn btn-outline-info" @onclick="() => ToggleOfficialAsync(skill)" title="@(skill.IsOfficial ? "降级为社区技能" : "升级为官方认证技能")">
-                                        <i class="bi bi-patch-check"></i>
+                                    <button class="btn btn-outline-secondary" @onclick="() => OpenEditModalAsync(skill.Id)" title="编辑技能">
+                                        <i class="bi bi-pencil"></i>
                                     </button>
-                                    <button class="btn btn-outline-primary" @onclick="() => OpenEditModalAsync(skill.Id)" title="编辑技能">
-                                        <i class="bi bi-pencil-square"></i>
+                                    <button class="btn @(skill.Enabled ? "btn-outline-warning" : "btn-outline-success")" @onclick="() => ToggleEnabledAsync(skill)" title="@(skill.Enabled ? "下线隐藏" : "重新上线")">
+                                        <i class="bi @(skill.Enabled ? "bi-eye-slash" : "bi-eye")"></i>
                                     </button>
-                                    <button class="btn btn-outline-warning" @onclick="() => ToggleEnabledAsync(skill)" title="切换上下线状态">
-                                        <i class="bi @(skill.Enabled ? "bi-toggle-on" : "bi-toggle-off")"></i>
-                                    </button>
-                                    <button class="btn btn-outline-danger" @onclick="() => _deleteTarget = skill" title="删除技能">
-                                        <i class="bi bi-trash3"></i>
+                                    <button class="btn btn-outline-danger" @onclick="() => ConfirmDelete(skill)" title="删除技能">
+                                        <i class="bi bi-trash"></i>
                                     </button>
                                 </div>
                             </td>
@@ -179,14 +191,11 @@
     </div>
 
     <!-- Pagination -->
-    @if (FilteredSkills.Count > 0)
+    @if (TotalPages > 1)
     {
-        <div class="admin-pagination">
-            <div class="text-muted small">
-                显示第 @((_currentPage - 1) * _pageSize + 1) 到 @(Math.Min(_currentPage * _pageSize, FilteredSkills.Count)) 条，共 @FilteredSkills.Count 条记录（第 @_currentPage / @TotalPages 页）
-            </div>
-
-            <div class="admin-page-nav">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mt-3">
+            <span class="small text-muted">共 @_skills.Count 条记录，当前第 @_currentPage / @TotalPages 页</span>
+            <div class="admin-pagination">
                 <button class="admin-page-btn" disabled="@(_currentPage <= 1)" @onclick="() => GoToPage(1)" title="首页">
                     <i class="bi bi-chevron-double-left"></i>
                 </button>
@@ -194,7 +203,7 @@
                     <i class="bi bi-chevron-left"></i>
                 </button>
 
-                @for (int p = StartPage; p <= EndPage; p++)
+                @for (var p = StartPage; p <= EndPage; p++)
                 {
                     var pageNum = p;
                     <button class="admin-page-btn @(pageNum == _currentPage ? "active" : "")" @onclick="() => GoToPage(pageNum)">
@@ -212,6 +221,62 @@
         </div>
     }
 
+    <!-- Modal Dialog for Reviewing Skill -->
+    @if (_showReviewModal && _reviewTarget != null)
+    {
+        <div class="admin-modal-backdrop" @onclick="() => _showReviewModal = false"></div>
+        <div class="admin-modal-dialog">
+            <div class="admin-modal-content">
+                <div class="admin-modal-header">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-clipboard-check text-warning fs-5"></i>
+                        <h3 class="h5 fw-bold m-0 text-dark-emphasis">审核技能插件【@_reviewTarget.Name】</h3>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="() => _showReviewModal = false"></button>
+                </div>
+                <div class="admin-modal-body">
+                    <div class="mb-3 p-3 bg-light rounded border">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-bold">@_reviewTarget.Name (v@_reviewTarget.Version)</span>
+                            <span class="badge text-bg-secondary font-monospace">@_reviewTarget.Slug</span>
+                        </div>
+                        <p class="small text-secondary m-0">@_reviewTarget.Summary</p>
+                        <div class="small text-muted mt-2">作者：@_reviewTarget.Author (@@@_reviewTarget.AuthorUsername)</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">审核结论 *</label>
+                        <div class="d-flex gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="reviewStatusRadio" id="revApproved" value="@SkillReviewStatus.Approved" checked="@(_reviewStatusChoice == SkillReviewStatus.Approved)" @onchange='() => _reviewStatusChoice = SkillReviewStatus.Approved' />
+                                <label class="form-check-label text-success fw-bold" for="revApproved">
+                                    <i class="bi bi-check-circle me-1"></i> 通过审核并上架
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="reviewStatusRadio" id="revRejected" value="@SkillReviewStatus.Rejected" checked="@(_reviewStatusChoice == SkillReviewStatus.Rejected)" @onchange='() => _reviewStatusChoice = SkillReviewStatus.Rejected' />
+                                <label class="form-check-label text-danger fw-bold" for="revRejected">
+                                    <i class="bi bi-x-circle me-1"></i> 驳回该技能
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">审核意见 / 驳回理由</label>
+                        <textarea class="form-control" rows="3" @bind="_reviewComment" placeholder="如驳回，请向开发者说明原因或改进建议…"></textarea>
+                    </div>
+                </div>
+                <div class="admin-modal-footer">
+                    <button class="vp-btn-secondary" type="button" @onclick="() => _showReviewModal = false">取消</button>
+                    <button class="vp-btn-primary" disabled="@_reviewing" @onclick="SubmitReviewAsync">
+                        <i class="bi bi-send"></i> @(_reviewing ? "正在提交…" : "确认审核结果")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+
     <!-- Modal Dialog for Create/Edit Skill -->
     @if (_showModal)
     {
@@ -221,7 +286,7 @@
                 <div class="admin-modal-header">
                     <div class="d-flex align-items-center gap-2">
                         <i class="bi @(_editingId is null ? "bi-plus-circle" : "bi-pencil-square") text-success fs-5"></i>
-                        <h3 class="h5 fw-bold m-0 text-dark-emphasis">@(_editingId is null ? "发布新技能插件" : $"编辑技能插件 (#{_editingId})")</h3>
+                        <h3 class="h5 fw-bold m-0 text-dark-emphasis">@(_editingId is null ? "发布官方技能插件" : $"编辑技能插件 (#{_editingId})")</h3>
                     </div>
                     <button type="button" class="btn-close" @onclick="CloseModal" aria-label="Close"></button>
                 </div>
@@ -298,23 +363,23 @@
         </div>
     }
 
+    <!-- Delete Confirmation Modal -->
     @if (_deleteTarget is not null)
     {
         <div class="admin-modal-backdrop" @onclick="CancelDelete"></div>
-        <div class="admin-modal-dialog">
+        <div class="admin-modal-dialog" style="max-width: 480px;">
             <div class="admin-modal-content">
                 <div class="admin-modal-header">
-                    <h3 class="h5 fw-bold m-0 text-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>确认删除技能</h3>
-                    <button type="button" class="btn-close" @onclick="CancelDelete" aria-label="Close"></button>
+                    <h5 class="modal-title fw-bold text-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i> 确认删除技能？</h5>
+                    <button type="button" class="btn-close" @onclick="CancelDelete"></button>
                 </div>
                 <div class="admin-modal-body">
-                    <p class="mb-0">确认删除技能“<strong>@_deleteTarget.Name</strong>”吗？此操作不可恢复。</p>
+                    <p class="mb-2">您确定要彻底删除技能 <strong>@_deleteTarget.Name</strong> (<code>@_deleteTarget.Slug</code>) 吗？</p>
+                    <p class="text-danger small mb-0"><i class="bi bi-info-circle me-1"></i> 该操作不可逆，所有关联历史版本和包文件都将被移除。</p>
                 </div>
                 <div class="admin-modal-footer">
-                    <button class="vp-btn-secondary" type="button" @onclick="CancelDelete">取消</button>
-                    <button class="btn btn-danger" type="button" @onclick="ConfirmDeleteAsync">
-                        <i class="bi bi-trash3"></i> 确认删除
-                    </button>
+                    <button class="btn btn-secondary btn-sm" type="button" @onclick="CancelDelete">取消</button>
+                    <button class="btn btn-danger btn-sm" type="button" @onclick="ExecuteDeleteAsync">确认彻底删除</button>
                 </div>
             </div>
         </div>
@@ -322,9 +387,9 @@
 </section>
 
 @code {
-    private List<SkillSummary> _skills = new();
-    private SkillInput _model = new();
+    private List<SkillSummary> _skills = [];
     private int? _editingId;
+    private SkillInput _model = new();
     private byte[]? _packageData;
     private string? _packageFileName;
     private string? _packageContentType;
@@ -337,6 +402,13 @@
     private string? _modalError;
     private SkillSummary? _deleteTarget;
 
+    // Review Modal
+    private bool _showReviewModal;
+    private SkillSummary? _reviewTarget;
+    private string _reviewStatusChoice = SkillReviewStatus.Approved;
+    private string _reviewComment = "";
+    private bool _reviewing;
+
     private string _searchQuery = string.Empty;
     private string _filterType = "all";
     private int _currentPage = 1;
@@ -347,13 +419,21 @@
         get
         {
             var query = _skills.AsEnumerable();
-            if (_filterType == "official")
+            if (_filterType == "pending")
+            {
+                query = query.Where(s => s.ReviewStatus == SkillReviewStatus.Pending);
+            }
+            else if (_filterType == "official")
             {
                 query = query.Where(s => s.IsOfficial);
             }
             else if (_filterType == "community")
             {
-                query = query.Where(s => !s.IsOfficial);
+                query = query.Where(s => !s.IsOfficial && s.ReviewStatus == SkillReviewStatus.Approved);
+            }
+            else if (_filterType == "rejected")
+            {
+                query = query.Where(s => s.ReviewStatus == SkillReviewStatus.Rejected);
             }
 
             if (!string.IsNullOrWhiteSpace(_searchQuery))
@@ -385,7 +465,7 @@
     private async Task LoadAsync()
     {
         _loading = true;
-        _skills = await Skills.ListAsync(includeDisabled: true);
+        _skills = await Skills.ListAsync(includeDisabled: true, reviewStatus: "all");
         _loading = false;
     }
 
@@ -406,6 +486,35 @@
         if (page < 1) page = 1;
         if (page > TotalPages) page = TotalPages;
         _currentPage = page;
+    }
+
+    private void OpenReviewModal(SkillSummary skill)
+    {
+        _reviewTarget = skill;
+        _reviewStatusChoice = SkillReviewStatus.Approved;
+        _reviewComment = skill.ReviewComment ?? "";
+        _showReviewModal = true;
+    }
+
+    private async Task SubmitReviewAsync()
+    {
+        if (_reviewTarget == null) return;
+        _reviewing = true;
+        try
+        {
+            await Skills.ReviewSkillAsync(_reviewTarget.Id, _reviewStatusChoice, _reviewComment);
+            _message = $"技能【{_reviewTarget.Name}】审核操作已成功更新为：{(_reviewStatusChoice == SkillReviewStatus.Approved ? "审核通过已上架" : "已驳回")}";
+            _showReviewModal = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = "审核操作失败：" + ex.Message;
+        }
+        finally
+        {
+            _reviewing = false;
+        }
     }
 
     private void OpenCreateModal()
@@ -430,7 +539,7 @@
         var detail = await Skills.GetDetailAsync(id);
         if (detail is null)
         {
-            _error = "未找到该技能。";
+            _error = "未找到指定技能。";
             return;
         }
 
@@ -457,52 +566,53 @@
     private void CloseModal()
     {
         _showModal = false;
+        _editingId = null;
         _modalError = null;
     }
 
     private async Task OnPackageSelected(InputFileChangeEventArgs e)
     {
+        _modalError = null;
         var file = e.File;
         if (file is null) return;
 
-        if (file.Size > 10 * 1024 * 1024)
+        if (file.Size > SkillService.MaxPackageSizeBytes)
         {
-            _modalError = "技能包大小不能超过 10MB。";
+            _modalError = "文件大小不能超过 10MB。";
             return;
         }
 
-        _modalError = null;
-        _packageFileName = file.Name;
-        _packageContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
-
-        using var memoryStream = new MemoryStream();
-        await file.OpenReadStream(10 * 1024 * 1024).CopyToAsync(memoryStream);
-        _packageData = memoryStream.ToArray();
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: SkillService.MaxPackageSizeBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            _packageData = memory.ToArray();
+            _packageFileName = file.Name;
+            _packageContentType = file.ContentType;
+        }
+        catch (Exception ex)
+        {
+            _modalError = "读取上传文件失败：" + ex.Message;
+        }
     }
 
     private async Task SaveAsync()
     {
+        _modalError = null;
         if (string.IsNullOrWhiteSpace(_model.Name))
         {
             _modalError = "技能名称不能为空。";
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(_model.Summary))
-        {
-            _modalError = "一句话简介不能为空。";
-            return;
-        }
-
         if (string.IsNullOrWhiteSpace(_model.ReadmeMarkdown))
         {
-            _modalError = "README Markdown 文档不能为空。";
+            _modalError = "README 说明文档不能为空。";
             return;
         }
 
         _saving = true;
-        _modalError = null;
-
         try
         {
             if (_editingId is null)
@@ -512,31 +622,20 @@
                     _packageData,
                     _packageFileName,
                     _packageContentType,
-                    isOfficial: _model.IsOfficial,
+                    _model.IsOfficial,
                     authorUserId: null,
-                    authorUsername: "SuperAdmin");
-                _message = "技能插件已成功创建！";
+                    authorUsername: null);
+                _message = $"官方技能【{_model.Name}】创建成功并已上架！";
             }
             else
             {
-                var updated = await Skills.UpdateAsync(
+                await Skills.UpdateAsync(
                     _editingId.Value,
                     _model,
                     _packageData,
                     _packageFileName,
-                    _packageContentType,
-                    replacePackage: _packageData is not null,
-                    isOfficial: _model.IsOfficial,
-                    currentUserId: null,
-                    isSuperAdmin: true);
-
-                if (updated is null)
-                {
-                    _modalError = "未找到要编辑的技能。";
-                    return;
-                }
-
-                _message = $"技能“{_model.Name}”已成功更新！";
+                    _packageContentType);
+                _message = $"技能【{_model.Name}】已更新！";
             }
 
             CloseModal();
@@ -544,7 +643,7 @@
         }
         catch (Exception ex)
         {
-            _modalError = $"保存失败：{ex.Message}";
+            _modalError = ex.Message;
         }
         finally
         {
@@ -552,18 +651,18 @@
         }
     }
 
-    private async Task ToggleOfficialAsync(SkillSummary skill)
+    private async Task ToggleEnabledAsync(SkillSummary skill)
     {
-        await Skills.SetOfficialAsync(skill.Id, !skill.IsOfficial);
-        _message = skill.IsOfficial ? $"已将“{skill.Name}”设为社区技能。" : $"已将“{skill.Name}”认证为官方精选技能！";
+        var newStatus = !skill.Enabled;
+        await Skills.SetEnabledAsync(skill.Id, newStatus);
+        skill = skill with { Enabled = newStatus };
+        _message = $"技能【{skill.Name}】已成功{(newStatus ? "恢复上线展示" : "下线隐藏")}。";
         await LoadAsync();
     }
 
-    private async Task ToggleEnabledAsync(SkillSummary skill)
+    private void ConfirmDelete(SkillSummary skill)
     {
-        await Skills.SetEnabledAsync(skill.Id, !skill.Enabled);
-        _message = skill.Enabled ? $"已将“{skill.Name}”下线。" : $"已将“{skill.Name}”发布上线！";
-        await LoadAsync();
+        _deleteTarget = skill;
     }
 
     private void CancelDelete()
@@ -571,28 +670,13 @@
         _deleteTarget = null;
     }
 
-    private async Task ConfirmDeleteAsync()
+    private async Task ExecuteDeleteAsync()
     {
-        var skill = _deleteTarget;
-        if (skill is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await Skills.DeleteAsync(skill.Id, isSuperAdmin: true);
-            _message = $"技能“{skill.Name}”已被删除。";
-        }
-        catch (Exception ex)
-        {
-            _error = $"删除失败：{ex.Message}";
-        }
-        finally
-        {
-            _deleteTarget = null;
-        }
-
+        if (_deleteTarget is null) return;
+        var name = _deleteTarget.Name;
+        await Skills.DeleteAsync(_deleteTarget.Id);
+        _deleteTarget = null;
+        _message = $"技能【{name}】已被彻底删除。";
         await LoadAsync();
     }
 }

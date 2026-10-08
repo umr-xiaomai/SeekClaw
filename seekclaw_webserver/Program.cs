@@ -17,7 +17,9 @@ var databasePath = Path.Combine(builder.Environment.ContentRootPath, "App_Data",
 Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite($"Data Source={databasePath}"));
+    options.UseSqlite($"Data Source={databasePath};Mode=ReadWriteCreate;Cache=Shared;"));
+
+builder.Services.AddMemoryCache();
 
 builder.Services.AddCors(options =>
 {
@@ -106,7 +108,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    db.EnsureSchemaUpdated();
 }
 
 if (!app.Environment.IsDevelopment())
@@ -226,13 +228,39 @@ app.MapPost("/api/auth/logout", async (HttpContext context) =>
     return Results.Json(new { success = true });
 });
 
+app.MapPost("/api/auth/change-password", async (HttpContext context, ChangePasswordRequest request, AuthService auth) =>
+{
+    var user = context.User;
+    if (user.Identity?.IsAuthenticated != true)
+    {
+        return Results.Unauthorized();
+    }
+
+    if (!int.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+    {
+        return Results.Unauthorized();
+    }
+
+    var success = await auth.ChangePasswordAsync(userId, request.OldPassword, request.NewPassword);
+    if (!success)
+    {
+        return Results.Json(new { success = false, error = "原密码不正确或新密码不符合要求（至少 6 位）。" });
+    }
+
+    return Results.Json(new { success = true });
+}).RequireAuthorization();
+
 app.MapGet("/api/auth/registration", async (AuthService auth) =>
     Results.Json(new { enabled = await auth.IsRegistrationEnabledAsync() }));
 
 // Skill Marketplace REST APIs
-app.MapGet("/api/skills", async (string? type, string? q, SkillService skills) =>
+app.MapGet("/api/skills", async (string? type, string? q, string? sort, string? status, HttpContext context, SkillService skills) =>
 {
-    var list = await skills.ListAsync(includeDisabled: false, typeFilter: type, search: q);
+    var isSuperAdmin = context.User.IsInRole("SuperAdmin");
+    var reviewStatus = isSuperAdmin && !string.IsNullOrWhiteSpace(status)
+        ? status
+        : SkillReviewStatus.Approved;
+    var list = await skills.ListAsync(includeDisabled: false, typeFilter: type, search: q, reviewStatus: reviewStatus, sortBy: sort);
     return Results.Json(list);
 });
 
@@ -250,12 +278,13 @@ app.MapGet("/api/skills/{slugOrId}", async (string slugOrId, SkillService skills
         return Results.NotFound(new { error = "技能不存在或已下线" });
     }
 
+    await skills.IncrementViewAsync(detail.Id);
     return Results.Json(detail);
 });
 
-app.MapGet("/api/skills/{slugOrId}/download", async (string slugOrId, SkillService skills) =>
+app.MapGet("/api/skills/{slugOrId}/download", async (string slugOrId, string? version, SkillService skills) =>
 {
-    var package = await skills.GetDownloadPackageAsync(slugOrId);
+    var package = await skills.GetDownloadPackageAsync(slugOrId, version);
     if (package is null)
     {
         return Results.NotFound();
@@ -266,6 +295,29 @@ app.MapGet("/api/skills/{slugOrId}/download", async (string slugOrId, SkillServi
         package.ContentType,
         package.FileName);
 });
+
+app.MapGet("/api/skills/{slugOrId}/versions", async (string slugOrId, SkillService skills) =>
+{
+    SkillDetailModel? detail = null;
+    if (int.TryParse(slugOrId, out var id))
+    {
+        detail = await skills.GetDetailAsync(id);
+    }
+    detail ??= await skills.GetDetailBySlugAsync(slugOrId);
+
+    if (detail is null)
+    {
+        return Results.NotFound(new { error = "技能不存在" });
+    }
+
+    return Results.Json(detail.Versions);
+});
+
+app.MapPost("/api/skills/{id:int}/review", async (int id, ReviewSkillRequest request, SkillService skills) =>
+{
+    await skills.ReviewSkillAsync(id, request.Status, request.Comment);
+    return Results.Json(new { success = true });
+}).RequireAuthorization("SuperAdminOnly");
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

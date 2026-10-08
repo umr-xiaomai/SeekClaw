@@ -1,0 +1,554 @@
+@page "/profile"
+@page "/en/profile"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject SkillService Skills
+@inject AuthService Auth
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>@(IsEnglish ? "Personal Center — SeekClaw" : "个人中心 — SeekClaw")</PageTitle>
+
+<section class="skills-shell" style="max-width: 1040px;">
+    <!-- Profile Header -->
+    <header class="skills-header mb-4 text-start">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+            <div class="d-flex align-items-center gap-3">
+                <div class="admin-stat-icon" style="width: 58px; height: 58px; font-size: 1.8rem; background: var(--vp-c-brand-soft, rgba(16,185,129,0.12)); color: var(--vp-c-brand, #10b981); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                    <i class="bi bi-person-badge"></i>
+                </div>
+                <div>
+                    <h1 class="h3 fw-bold m-0 d-flex align-items-center gap-2">
+                        @_username
+                        @if (_isSuperAdmin)
+                        {
+                            <span class="badge text-bg-danger" style="font-size: 0.72rem;"><i class="bi bi-shield-fill-check me-1"></i>超级管理员</span>
+                        }
+                        else
+                        {
+                            <span class="badge text-bg-secondary" style="font-size: 0.72rem;">认证开发者</span>
+                        }
+                    </h1>
+                    <p class="text-secondary small m-0 mt-1">
+                        <i class="bi bi-envelope me-1"></i> @_username
+                        <span class="ms-3"><i class="bi bi-calendar-check me-1"></i> 注册时间：@_joinTime</span>
+                    </p>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <a class="vp-btn-primary" href="/skills/submit">
+                    <i class="bi bi-plus-lg"></i> @(IsEnglish ? "Publish Skill" : "发布新技能")
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Overview Stats -->
+    <div class="admin-stats-grid mb-4">
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon"><i class="bi bi-stars"></i></div>
+            <div>
+                <div class="admin-stat-number">@_mySkills.Count</div>
+                <div class="admin-stat-label">我发布的技能</div>
+            </div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon"><i class="bi bi-download"></i></div>
+            <div>
+                <div class="admin-stat-number">@_totalDownloads</div>
+                <div class="admin-stat-label">累计下载量</div>
+            </div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon"><i class="bi bi-eye"></i></div>
+            <div>
+                <div class="admin-stat-number">@_totalViews</div>
+                <div class="admin-stat-label">累计浏览量</div>
+            </div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon"><i class="bi bi-clock-history"></i></div>
+            <div>
+                <div class="admin-stat-number">@_pendingCount</div>
+                <div class="admin-stat-label">审核中技能</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab navigation -->
+    <div class="d-flex align-items-center gap-2 mb-3 border-bottom pb-2">
+        <button class="btn @(_activeTab == "skills" ? "btn-success text-white" : "btn-outline-secondary") btn-sm px-3" @onclick='() => _activeTab = "skills"'>
+            <i class="bi bi-collection me-1"></i> @(IsEnglish ? "My Published Skills" : "我的技能管理") (@_mySkills.Count)
+        </button>
+        <button class="btn @(_activeTab == "security" ? "btn-success text-white" : "btn-outline-secondary") btn-sm px-3" @onclick='() => _activeTab = "security"'>
+            <i class="bi bi-shield-lock me-1"></i> @(IsEnglish ? "Security Settings" : "账号安全设置")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_statusMessage))
+    {
+        <div class="alert alert-success alert-dismissible fade show mb-3" role="alert">
+            <i class="bi bi-check-circle-fill me-2"></i> @_statusMessage
+            <button type="button" class="btn-close" @onclick="() => _statusMessage = null"></button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i> @_errorMessage
+            <button type="button" class="btn-close" @onclick="() => _errorMessage = null"></button>
+        </div>
+    }
+
+    <!-- TAB 1: My Skills -->
+    @if (_activeTab == "skills")
+    {
+        @if (_mySkills.Count == 0)
+        {
+            <div class="setup-card text-center py-5">
+                <i class="bi bi-box-seam text-muted" style="font-size: 3rem;"></i>
+                <h3 class="h5 fw-bold mt-3 mb-2">@(IsEnglish ? "No Skills Published Yet" : "暂未发布任何技能插件")</h3>
+                <p class="text-secondary mb-4">@(IsEnglish ? "Share your custom Prompt SOPs, tool workflows, and coding helpers with the SeekClaw community!" : "将您精心编写的 Prompt SOP、工具协同流与编码辅助技能分享给 SeekClaw 社区开发者！")</p>
+                <a class="vp-btn-primary" href="/skills/submit">
+                    <i class="bi bi-plus-lg"></i> @(IsEnglish ? "Publish First Skill" : "立即发布第一个技能")
+                </a>
+            </div>
+        }
+        else
+        {
+            <div class="admin-table">
+                <table class="table mb-0 align-middle">
+                    <thead>
+                        <tr>
+                            <th>技能名称 / Slug</th>
+                            <th>当前版本</th>
+                            <th>审核状态</th>
+                            <th>热度统计</th>
+                            <th>更新时间</th>
+                            <th class="text-end" style="width: 230px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var skill in _mySkills)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="fw-bold">@skill.Name</div>
+                                    <div class="small text-muted font-monospace">@skill.Slug</div>
+                                </td>
+                                <td>
+                                    <span class="badge text-bg-light border font-monospace">v@skill.Version</span>
+                                    <span class="small text-muted d-block">@skill.VersionCount 个历史版本</span>
+                                </td>
+                                <td>
+                                    @if (skill.ReviewStatus == SkillReviewStatus.Approved)
+                                    {
+                                        <span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i>已上架</span>
+                                    }
+                                    else if (skill.ReviewStatus == SkillReviewStatus.Pending)
+                                    {
+                                        <span class="badge text-bg-warning text-dark"><i class="bi bi-clock-history me-1"></i>待审核</span>
+                                        <div class="small text-muted mt-1" style="font-size: 0.72rem;">等待管理员审核通过</div>
+                                    }
+                                    else if (skill.ReviewStatus == SkillReviewStatus.Rejected)
+                                    {
+                                        <span class="badge text-bg-danger"><i class="bi bi-x-circle me-1"></i>已驳回</span>
+                                        @if (!string.IsNullOrWhiteSpace(skill.ReviewComment))
+                                        {
+                                            <div class="small text-danger mt-1" style="font-size: 0.75rem;" title="@skill.ReviewComment">
+                                                原因：@skill.ReviewComment
+                                            </div>
+                                        }
+                                    }
+                                </td>
+                                <td>
+                                    <div class="small text-secondary">
+                                        <span><i class="bi bi-download text-muted me-1"></i>@skill.DownloadCount</span>
+                                        <span class="ms-2"><i class="bi bi-eye text-muted me-1"></i>@skill.ViewCount</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="small text-muted">@DateTimeOffset.FromUnixTimeMilliseconds(skill.UpdatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                                </td>
+                                <td class="text-end">
+                                    <div class="btn-group btn-group-sm">
+                                        <a class="btn btn-outline-secondary" href="@($"/skills/{skill.Slug}")" target="_blank" title="查看详情页">
+                                            <i class="bi bi-box-arrow-up-right"></i> 查看
+                                        </a>
+                                        <button class="btn btn-outline-primary" @onclick="() => OpenAddVersionModal(skill)" title="发布新版本">
+                                            <i class="bi bi-cloud-arrow-up"></i> 新版本
+                                        </button>
+                                        <button class="btn btn-outline-secondary" @onclick="() => OpenEditSkillModal(skill)" title="编辑元信息">
+                                            <i class="bi bi-pencil"></i> 编辑
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+    else if (_activeTab == "security")
+    {
+        <!-- TAB 2: Change Password -->
+        <div class="setup-card" style="max-width: 580px; margin: 0;">
+            <h3 class="h5 fw-bold mb-3"><i class="bi bi-shield-lock me-1"></i> 修改登录密码</h3>
+            <div class="mb-3">
+                <label class="form-label">原密码 *</label>
+                <input type="password" class="form-control" @bind="_oldPassword" placeholder="请输入当前登录密码" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">新密码 *（至少 6 位）</label>
+                <input type="password" class="form-control" @bind="_newPassword" placeholder="请输入新密码" />
+            </div>
+            <div class="mb-4">
+                <label class="form-label">确认新密码 *</label>
+                <input type="password" class="form-control" @bind="_confirmPassword" placeholder="请再次输入新密码" />
+            </div>
+            <button class="vp-btn-primary" disabled="@_savingPassword" @onclick="ChangePasswordAsync">
+                <i class="bi bi-check-lg"></i> @(_savingPassword ? "正在保存…" : "确认修改密码")
+            </button>
+        </div>
+    }
+
+    <!-- Modal: Add New Version -->
+    @if (_showVersionModal && _targetSkill != null)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title fw-bold"><i class="bi bi-cloud-arrow-up me-2"></i> 为【@_targetSkill.Name】发布新版本</h5>
+                        <button type="button" class="btn-close" @onclick="() => _showVersionModal = false"></button>
+                    </div>
+                    <div class="modal-body">
+                        @if (!string.IsNullOrWhiteSpace(_modalError))
+                        {
+                            <div class="alert alert-danger mb-3 small">@_modalError</div>
+                        }
+                        <div class="mb-3">
+                            <label class="form-label">新版本号 *</label>
+                            <input class="form-control font-monospace" @bind="_versionInput.Version" placeholder="例如：1.1.0" />
+                            <div class="form-text">当前线上版本为 v@_targetSkill.Version</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">版本更新日志 (Changelog) *</label>
+                            <textarea class="form-control" rows="3" @bind="_versionInput.Changelog" placeholder="简要描述本次版本的升级内容与修复项…"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">上传新版本技能包（.zip / .md / .json，最大 10MB）</label>
+                            <InputFile class="form-control" OnChange="OnVersionPackageSelected" accept=".zip,.md,.txt,.json" />
+                            @if (_versionPackageData != null)
+                            {
+                                <div class="form-text text-success"><i class="bi bi-check-circle"></i> 已选定：@_versionPackageFileName (@((_versionPackageData.Length / 1024.0).ToString("F1")) KB)</div>
+                            }
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _showVersionModal = false">取消</button>
+                        <button type="button" class="btn btn-success btn-sm text-white" disabled="@_submittingVersion" @onclick="SubmitNewVersionAsync">
+                            @(_submittingVersion ? "正在提交…" : "确认发布版本")
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Modal: Edit Skill Info -->
+    @if (_showEditModal && _targetSkill != null)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title fw-bold"><i class="bi bi-pencil me-2"></i> 编辑技能基本信息</h5>
+                        <button type="button" class="btn-close" @onclick="() => _showEditModal = false"></button>
+                    </div>
+                    <div class="modal-body">
+                        @if (!string.IsNullOrWhiteSpace(_modalError))
+                        {
+                            <div class="alert alert-danger mb-3 small">@_modalError</div>
+                        }
+                        <div class="mb-3">
+                            <label class="form-label">技能名称 *</label>
+                            <input class="form-control" @bind="_editInput.Name" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">一句话简介 *</label>
+                            <textarea class="form-control" rows="2" @bind="_editInput.Summary"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">主页或仓库链接</label>
+                            <input class="form-control" @bind="_editInput.Homepage" placeholder="https://github.com/..." />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">README Markdown 使用说明 *</label>
+                            <textarea class="form-control font-monospace" rows="8" @bind="_editInput.ReadmeMarkdown"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _showEditModal = false">取消</button>
+                        <button type="button" class="btn btn-success btn-sm text-white" disabled="@_submittingEdit" @onclick="SubmitEditSkillAsync">
+                            @(_submittingEdit ? "正在保存…" : "保存修改")
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    private bool IsEnglish => Navigation.Uri.Contains("/en/");
+    private int _userId;
+    private string _username = "";
+    private bool _isSuperAdmin;
+    private string _joinTime = "";
+    private string _activeTab = "skills";
+
+    private List<SkillSummary> _mySkills = [];
+    private int _totalDownloads => _mySkills.Sum(s => s.DownloadCount);
+    private int _totalViews => _mySkills.Sum(s => s.ViewCount);
+    private int _pendingCount => _mySkills.Count(s => s.ReviewStatus == SkillReviewStatus.Pending);
+
+    private string? _statusMessage;
+    private string? _errorMessage;
+
+    // Security password change form
+    private string _oldPassword = "";
+    private string _newPassword = "";
+    private string _confirmPassword = "";
+    private bool _savingPassword;
+
+    // Modals
+    private bool _showVersionModal;
+    private bool _showEditModal;
+    private SkillSummary? _targetSkill;
+    private string? _modalError;
+
+    private SkillVersionInput _versionInput = new();
+    private byte[]? _versionPackageData;
+    private string? _versionPackageFileName;
+    private bool _submittingVersion;
+
+    private UserSkillUpdateInput _editInput = new();
+    private bool _submittingEdit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            _username = user.Identity.Name ?? "";
+            _isSuperAdmin = user.IsInRole("SuperAdmin");
+            if (int.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var id))
+            {
+                _userId = id;
+                var dbUser = await Auth.GetByIdAsync(_userId);
+                if (dbUser != null)
+                {
+                    _joinTime = DateTimeOffset.FromUnixTimeMilliseconds(dbUser.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd");
+                }
+                await LoadSkillsAsync();
+            }
+        }
+    }
+
+    private async Task LoadSkillsAsync()
+    {
+        if (_userId > 0)
+        {
+            _mySkills = await Skills.ListUserSkillsAsync(_userId);
+        }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        _statusMessage = null;
+        _errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(_oldPassword))
+        {
+            _errorMessage = "请输入原密码。";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_newPassword) || _newPassword.Length < 6)
+        {
+            _errorMessage = "新密码长度至少需要 6 位。";
+            return;
+        }
+
+        if (_newPassword != _confirmPassword)
+        {
+            _errorMessage = "两次输入的新密码不一致。";
+            return;
+        }
+
+        _savingPassword = true;
+        try
+        {
+            var success = await Auth.ChangePasswordAsync(_userId, _oldPassword, _newPassword);
+            if (!success)
+            {
+                _errorMessage = "原密码不正确，请重新输入。";
+            }
+            else
+            {
+                _statusMessage = "密码已成功修改！";
+                _oldPassword = "";
+                _newPassword = "";
+                _confirmPassword = "";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = "修改密码失败：" + ex.Message;
+        }
+        finally
+        {
+            _savingPassword = false;
+        }
+    }
+
+    private void OpenAddVersionModal(SkillSummary skill)
+    {
+        _targetSkill = skill;
+        _modalError = null;
+        _versionInput = new SkillVersionInput
+        {
+            Version = BumpVersion(skill.Version),
+            Changelog = ""
+        };
+        _versionPackageData = null;
+        _versionPackageFileName = null;
+        _showVersionModal = true;
+    }
+
+    private async Task OnVersionPackageSelected(InputFileChangeEventArgs e)
+    {
+        _modalError = null;
+        var file = e.File;
+        if (file is null) return;
+
+        if (file.Size > SkillService.MaxPackageSizeBytes)
+        {
+            _modalError = "文件大小不能超过 10MB。";
+            return;
+        }
+
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: SkillService.MaxPackageSizeBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            _versionPackageData = memory.ToArray();
+            _versionPackageFileName = file.Name;
+        }
+        catch (Exception ex)
+        {
+            _modalError = "读取文件失败：" + ex.Message;
+        }
+    }
+
+    private async Task SubmitNewVersionAsync()
+    {
+        if (_targetSkill == null) return;
+        _modalError = null;
+
+        if (string.IsNullOrWhiteSpace(_versionInput.Version))
+        {
+            _modalError = "请输入新版本号。";
+            return;
+        }
+
+        _submittingVersion = true;
+        try
+        {
+            await Skills.AddVersionAsync(
+                _targetSkill.Id,
+                _versionInput,
+                _versionPackageData,
+                _versionPackageFileName,
+                _isSuperAdmin,
+                _userId);
+
+            _statusMessage = $"技能【{_targetSkill.Name}】成功发布新版本 v{_versionInput.Version}！";
+            _showVersionModal = false;
+            await LoadSkillsAsync();
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _submittingVersion = false;
+        }
+    }
+
+    private async Task OpenEditSkillModal(SkillSummary skill)
+    {
+        _targetSkill = skill;
+        _modalError = null;
+        var detail = await Skills.GetDetailAsync(skill.Id);
+        if (detail != null)
+        {
+            _editInput = new UserSkillUpdateInput
+            {
+                Name = detail.Name,
+                Summary = detail.Summary,
+                ReadmeMarkdown = detail.ReadmeMarkdown,
+                Homepage = detail.Homepage
+            };
+            _showEditModal = true;
+        }
+    }
+
+    private async Task SubmitEditSkillAsync()
+    {
+        if (_targetSkill == null) return;
+        _modalError = null;
+
+        if (string.IsNullOrWhiteSpace(_editInput.Name))
+        {
+            _modalError = "技能名称不能为空。";
+            return;
+        }
+
+        _submittingEdit = true;
+        try
+        {
+            var success = await Skills.UpdateUserSkillAsync(_targetSkill.Id, _userId, _editInput);
+            if (success)
+            {
+                _statusMessage = $"技能【{_editInput.Name}】基本信息已更新。";
+                _showEditModal = false;
+                await LoadSkillsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _modalError = ex.Message;
+        }
+        finally
+        {
+            _submittingEdit = false;
+        }
+    }
+
+    private static string BumpVersion(string current)
+    {
+        var parts = current.Trim().TrimStart('v').Split('.');
+        if (parts.Length == 3 && int.TryParse(parts[2], out var patch))
+        {
+            return $"{parts[0]}.{parts[1]}.{patch + 1}";
+        }
+        return $"{current}.1";
+    }
+}

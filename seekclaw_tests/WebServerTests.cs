@@ -211,4 +211,227 @@ public sealed class WebServerTests
         Assert.Contains("vp-callout-note", html);
         Assert.Contains("Note", html, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static byte[] CreateZipPackage(params (string Name, string Content)[] files)
+    {
+        using var ms = new MemoryStream();
+        using (var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+        {
+            foreach (var (name, content) in files)
+            {
+                var entry = archive.CreateEntry(name);
+                using var writer = new StreamWriter(entry.Open());
+                writer.Write(content);
+            }
+        }
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public async Task SkillService_ReviewWorkflow_PendingToApprovedOrRejected()
+    {
+        var (db, connection) = CreateInMemoryDbContext();
+        using (connection)
+        using (db)
+        {
+            var skillService = new SkillService(db);
+
+            // 1. Community user creates a skill -> should be Pending
+            var input = new SkillInput
+            {
+                Name = "Code Refactor Tool",
+                Slug = "code-refactor",
+                Summary = "Automated refactoring",
+                ReadmeMarkdown = "# Refactor",
+                Author = "bob",
+                Version = "1.0.0",
+                Changelog = "Initial release"
+            };
+
+            var created = await skillService.CreateAsync(
+                input,
+                packageData: null,
+                packageFileName: null,
+                packageContentType: null,
+                isOfficial: false,
+                authorUserId: 101,
+                authorUsername: "bob");
+
+            Assert.Equal(SkillReviewStatus.Pending, created.ReviewStatus);
+
+            // 2. Default public list (Approved only) should NOT contain pending skill
+            var publicSkills = await skillService.ListAsync(includeDisabled: false, reviewStatus: SkillReviewStatus.Approved);
+            Assert.DoesNotContain(publicSkills, s => s.Slug == "code-refactor");
+
+            // 3. User's own skills list SHOULD contain it
+            var userSkills = await skillService.ListUserSkillsAsync(101);
+            Assert.Contains(userSkills, s => s.Slug == "code-refactor" && s.ReviewStatus == SkillReviewStatus.Pending);
+
+            // 4. Admin rejects with comments
+            await skillService.ReviewSkillAsync(created.Id, SkillReviewStatus.Rejected, "需要更详细的 README 示例");
+            
+            var rejectedDetail = await skillService.GetDetailAsync(created.Id);
+            Assert.NotNull(rejectedDetail);
+            Assert.Equal(SkillReviewStatus.Rejected, rejectedDetail.ReviewStatus);
+            Assert.Equal("需要更详细的 README 示例", rejectedDetail.ReviewComment);
+
+            // 5. Admin approves
+            await skillService.ReviewSkillAsync(created.Id, SkillReviewStatus.Approved, "审核通过");
+            
+            var approvedDetail = await skillService.GetDetailAsync(created.Id);
+            Assert.NotNull(approvedDetail);
+            Assert.Equal(SkillReviewStatus.Approved, approvedDetail.ReviewStatus);
+
+            // 6. Now visible in public marketplace
+            publicSkills = await skillService.ListAsync(includeDisabled: false, reviewStatus: SkillReviewStatus.Approved);
+            Assert.Contains(publicSkills, s => s.Slug == "code-refactor");
+        }
+    }
+
+    [Fact]
+    public async Task SkillService_MultiVersion_And_DownloadCounting()
+    {
+        var (db, connection) = CreateInMemoryDbContext();
+        using (connection)
+        using (db)
+        {
+            var skillService = new SkillService(db);
+
+            var v1Pkg = CreateZipPackage(("prompt.txt", "v1 prompt"));
+            var input = new SkillInput
+            {
+                Name = "Multi Version Skill",
+                Slug = "multi-ver",
+                Summary = "Testing multiple versions",
+                ReadmeMarkdown = "# Multi Version",
+                Author = "alice",
+                Version = "1.0.0",
+                Changelog = "Initial 1.0.0 release"
+            };
+
+            var skill = await skillService.CreateAsync(
+                input,
+                packageData: v1Pkg,
+                packageFileName: "multi-ver-1.0.0.zip",
+                packageContentType: "application/zip",
+                isOfficial: true,
+                authorUserId: 1,
+                authorUsername: "admin");
+
+            // Verify initial version was created
+            var detail = await skillService.GetDetailAsync(skill.Id);
+            Assert.NotNull(detail);
+            Assert.Single(detail.Versions);
+            Assert.Equal("1.0.0", detail.Versions[0].Version);
+            Assert.Equal("Initial 1.0.0 release", detail.Versions[0].Changelog);
+
+            // Publish version 1.1.0
+            var v2Pkg = CreateZipPackage(("prompt.txt", "v2 prompt"));
+            var addedVer = await skillService.AddVersionAsync(
+                skill.Id,
+                new SkillVersionInput
+                {
+                    Version = "1.1.0",
+                    Changelog = "Added new features and optimized prompts"
+                },
+                packageData: v2Pkg,
+                packageFileName: "multi-ver-1.1.0.zip",
+                isSuperAdmin: true,
+                currentUserId: 1);
+
+            Assert.NotNull(addedVer);
+
+            // Verify both versions exist and skill's latest version is updated
+            detail = await skillService.GetDetailAsync(skill.Id);
+            Assert.NotNull(detail);
+            Assert.Equal("1.1.0", detail.Version);
+            Assert.Equal(2, detail.Versions.Count);
+
+            // Download v1.0.0 specifically
+            var pkgV1 = await skillService.GetDownloadPackageAsync("multi-ver", "1.0.0");
+            Assert.NotNull(pkgV1);
+            Assert.Equal("multi-ver-1.0.0.zip", pkgV1.FileName);
+
+            // Download latest version
+            var pkgLatest = await skillService.GetDownloadPackageAsync("multi-ver");
+            Assert.NotNull(pkgLatest);
+
+            // Check download counts
+            detail = await skillService.GetDetailAsync(skill.Id);
+            Assert.NotNull(detail);
+            Assert.Equal(2, detail.DownloadCount);
+            var v1Record = detail.Versions.First(v => v.Version == "1.0.0");
+            Assert.Equal(1, v1Record.DownloadCount);
+        }
+    }
+
+    [Fact]
+    public async Task SkillService_PackageValidation_SecurityChecks()
+    {
+        // 1. Valid package passes
+        var validZip = CreateZipPackage(("prompt.txt", "valid prompt"), ("skill.yaml", "name: test"));
+        var mime = SkillService.ValidateAndSanitizePackage(validZip, "skill.zip");
+        Assert.Equal("application/zip", mime);
+
+        // 2. Size limit (> 10MB)
+        var oversizedData = new byte[SkillService.MaxPackageSizeBytes + 1];
+        Assert.Throws<InvalidOperationException>(() =>
+            SkillService.ValidateAndSanitizePackage(oversizedData, "large.zip"));
+
+        // 3. Zip Slip traversal defense
+        var zipSlipData = CreateZipPackage(("../evil.txt", "malicious payload"));
+        var exSlip = Assert.Throws<InvalidOperationException>(() =>
+            SkillService.ValidateAndSanitizePackage(zipSlipData, "slip.zip"));
+        Assert.Contains("目录穿越", exSlip.Message);
+
+        // 4. Dangerous executable blacklist (.exe)
+        var exeData = CreateZipPackage(("malware.exe", "MZ..."));
+        var exExe = Assert.Throws<InvalidOperationException>(() =>
+            SkillService.ValidateAndSanitizePackage(exeData, "exe.zip"));
+        Assert.Contains("高危可执行文件", exExe.Message);
+    }
+
+    [Fact]
+    public async Task AuthService_ChangePassword_And_Caching()
+    {
+        var (db, connection) = CreateInMemoryDbContext();
+        using (connection)
+        using (db)
+        {
+            var memoryCache = new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+            var auth = new AuthService(db, memoryCache);
+
+            // 1. Setup admin
+            await auth.InitializeSystemAsync(new SetupRequest
+            {
+                AdminEmail = "user1@seekclaw.org",
+                AdminPassword = "OldPassword123"
+            });
+
+            var user = await auth.ValidateAsync("user1@seekclaw.org", "OldPassword123");
+            Assert.NotNull(user);
+
+            // 2. Reject short password (< 6 chars)
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                auth.ChangePasswordAsync(user.Id, "OldPassword123", "123"));
+
+            // 3. Reject wrong old password
+            var wrongOld = await auth.ChangePasswordAsync(user.Id, "WrongOldPass", "NewPassword456");
+            Assert.False(wrongOld);
+
+            // 4. Successfully change password
+            var changeOk = await auth.ChangePasswordAsync(user.Id, "OldPassword123", "NewPassword456");
+            Assert.True(changeOk);
+
+            // Verify old password no longer works
+            Assert.Null(await auth.ValidateAsync("user1@seekclaw.org", "OldPassword123"));
+            // Verify new password works
+            Assert.NotNull(await auth.ValidateAsync("user1@seekclaw.org", "NewPassword456"));
+
+            // 5. Verify caching behavior
+            Assert.True(await auth.IsInitializedAsync());
+            await auth.SetSiteNameAsync("Custom Claws");
+            Assert.Equal("Custom Claws", await auth.GetSiteNameAsync());
+        }
+    }
 }

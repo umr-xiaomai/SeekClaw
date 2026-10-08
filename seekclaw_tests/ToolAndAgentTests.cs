@@ -729,16 +729,25 @@ public sealed class ToolAndAgentTests
     [Fact]
     public void SkillManager_ImportsMarkdownFile_Successfully()
     {
-        using var runtime = SeekClawRuntime.Create();
-        var tempSkillsDir = Path.Combine(Path.GetTempPath(), $"skills-{Guid.NewGuid():N}");
+        var tempBase = Path.Combine(Path.GetTempPath(), $"seekclaw-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempBase);
+        var tempSkillsDir = Path.Combine(tempBase, "skills");
         Directory.CreateDirectory(tempSkillsDir);
-        var manager = new SkillManager(runtime.ConfigStore, runtime.PromptRegistry, tempSkillsDir);
-        manager.Attach(runtime.Workspace);
-        var tempFile = Path.Combine(Path.GetTempPath(), $"test-skill-{Guid.NewGuid():N}.md");
+        var configStore = new ConfigStore(
+            Path.Combine(tempBase, "config.json"),
+            Path.Combine(tempBase, "state.json"));
+        var workspace = new WorkspaceInfo
+        {
+            Root = tempBase,
+            ProjectKinds = []
+        };
+        var manager = new SkillManager(configStore, new PromptRegistry(), tempSkillsDir);
+        manager.Attach(workspace);
+        var tempFile = Path.Combine(tempBase, $"test-skill-{Guid.NewGuid():N}.md");
         try
         {
             File.WriteAllText(tempFile, "# Test Skill\nDescription of skill");
-            var skills = manager.ImportGlobal(tempFile, runtime.Workspace, overwrite: true);
+            var skills = manager.ImportGlobal(tempFile, workspace, overwrite: true);
             Assert.NotEmpty(skills);
             var imported = skills.FirstOrDefault(s => s.Name.StartsWith("test-skill-"));
             Assert.NotNull(imported);
@@ -746,25 +755,33 @@ public sealed class ToolAndAgentTests
         }
         finally
         {
-            if (File.Exists(tempFile)) File.Delete(tempFile);
-            if (Directory.Exists(tempSkillsDir)) Directory.Delete(tempSkillsDir, recursive: true);
+            try { if (Directory.Exists(tempBase)) Directory.Delete(tempBase, recursive: true); } catch { }
         }
     }
 
     [Fact]
     public void SkillManager_ImportsTextFileWithZipExtension_FallsBackToMarkdown()
     {
-        using var runtime = SeekClawRuntime.Create();
-        var tempSkillsDir = Path.Combine(Path.GetTempPath(), $"skills-{Guid.NewGuid():N}");
+        var tempBase = Path.Combine(Path.GetTempPath(), $"seekclaw-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempBase);
+        var tempSkillsDir = Path.Combine(tempBase, "skills");
         Directory.CreateDirectory(tempSkillsDir);
-        var manager = new SkillManager(runtime.ConfigStore, runtime.PromptRegistry, tempSkillsDir);
-        manager.Attach(runtime.Workspace);
+        var configStore = new ConfigStore(
+            Path.Combine(tempBase, "config.json"),
+            Path.Combine(tempBase, "state.json"));
+        var workspace = new WorkspaceInfo
+        {
+            Root = tempBase,
+            ProjectKinds = []
+        };
+        var manager = new SkillManager(configStore, new PromptRegistry(), tempSkillsDir);
+        manager.Attach(workspace);
         // Even if named .zip, a markdown content file shouldn't throw "End of Central Directory" error
-        var tempFile = Path.Combine(Path.GetTempPath(), $"test-pseudo-zip-{Guid.NewGuid():N}.zip");
+        var tempFile = Path.Combine(tempBase, $"test-pseudo-zip-{Guid.NewGuid():N}.zip");
         try
         {
             File.WriteAllText(tempFile, "# Pseudo Zip Markdown Skill\nSome content");
-            var skills = manager.ImportGlobal(tempFile, runtime.Workspace, overwrite: true);
+            var skills = manager.ImportGlobal(tempFile, workspace, overwrite: true);
             Assert.NotEmpty(skills);
             var imported = skills.FirstOrDefault(s => s.Name.StartsWith("test-pseudo-zip-"));
             Assert.NotNull(imported);
@@ -772,8 +789,7 @@ public sealed class ToolAndAgentTests
         }
         finally
         {
-            if (File.Exists(tempFile)) File.Delete(tempFile);
-            if (Directory.Exists(tempSkillsDir)) Directory.Delete(tempSkillsDir, recursive: true);
+            try { if (Directory.Exists(tempBase)) Directory.Delete(tempBase, recursive: true); } catch { }
         }
     }
 }

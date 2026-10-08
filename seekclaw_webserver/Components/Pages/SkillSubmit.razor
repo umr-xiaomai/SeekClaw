@@ -35,6 +35,19 @@
             </div>
         </NotAuthorized>
         <Authorized>
+            <AuthorizeView Roles="SuperAdmin" Context="auditNoticeContext">
+                <NotAuthorized>
+                    <div class="alert alert-info d-flex align-items-center gap-2 mb-3">
+                        <i class="bi bi-info-circle-fill text-primary fs-5"></i>
+                        <div class="small">
+                            @(IsEnglish
+                                ? "Community submissions will enter the audit queue and will be published after administrator approval. You can track progress in your Profile."
+                                : "社区开发者提交的技能插件将自动进入审核队列。经管理员审核通过后，将正式在技能市场公开展示。您可以在个人中心查看审核进度。")
+                        </div>
+                    </div>
+                </NotAuthorized>
+            </AuthorizeView>
+
             @if (!string.IsNullOrWhiteSpace(_error))
             {
                 <div class="alert alert-danger mb-3"><i class="bi bi-exclamation-triangle"></i> @_error</div>
@@ -50,15 +63,19 @@
                         <label class="form-label">@(IsEnglish ? "Slug (Unique Identifier)" : "Slug 标识（留空自动根据名称生成）")</label>
                         <input class="form-control" @bind="_model.Slug" placeholder="@(IsEnglish ? "e.g. python-fastapi" : "例如：python-fastapi")" />
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">@(IsEnglish ? "Author Name" : "作者署名")</label>
                         <input class="form-control" @bind="_model.Author" placeholder="@(context.User.Identity?.Name ?? "Community Developer")" />
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">@(IsEnglish ? "Version" : "版本号")</label>
                         <input class="form-control" @bind="_model.Version" placeholder="1.0.0" />
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-6">
+                        <label class="form-label">@(IsEnglish ? "Version Changelog" : "版本更新说明")</label>
+                        <input class="form-control" @bind="_model.Changelog" placeholder="@(IsEnglish ? "e.g. Initial public release" : "例如：初始公开发布")" />
+                    </div>
+                    <div class="col-12">
                         <label class="form-label">@(IsEnglish ? "Homepage / Repo" : "主页或开源仓库")</label>
                         <input class="form-control" @bind="_model.Homepage" placeholder="https://github.com/..." />
                     </div>
@@ -181,8 +198,15 @@
                 authorUserId: authorUserId,
                 authorUsername: username);
 
-            var targetUrl = IsEnglish ? $"/en/skills/{created.Slug}" : $"/skills/{created.Slug}";
-            Navigation.NavigateTo(targetUrl);
+            if (!isOfficial && created.ReviewStatus == SkillReviewStatus.Pending)
+            {
+                Navigation.NavigateTo("/profile");
+            }
+            else
+            {
+                var targetUrl = IsEnglish ? $"/en/skills/{created.Slug}" : $"/skills/{created.Slug}";
+                Navigation.NavigateTo(targetUrl);
+            }
         }
         catch (Exception ex)
         {
