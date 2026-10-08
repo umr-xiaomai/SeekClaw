@@ -9,95 +9,106 @@
 
 <PageTitle>@(IsEnglish ? "Personal Center — SeekClaw" : "个人中心 — SeekClaw")</PageTitle>
 
-<section class="skills-shell" style="max-width: 1040px;">
+<section class="skills-shell" style="max-width: 1100px;">
     <!-- Profile Header -->
     <header class="skills-header mb-4 text-start">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
             <div class="d-flex align-items-center gap-3">
-                <div class="admin-stat-icon" style="width: 58px; height: 58px; font-size: 1.8rem; background: var(--vp-c-brand-soft, rgba(16,185,129,0.12)); color: var(--vp-c-brand, #10b981); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
-                    <i class="bi bi-person-badge"></i>
+                <div class="skill-icon-modern" style="width: 52px; height: 52px; font-size: 1.6rem; border-radius: 12px;">
+                    <i class="bi bi-person-circle"></i>
                 </div>
                 <div>
-                    <h1 class="h3 fw-bold m-0 d-flex align-items-center gap-2">
-                        @_username
+                    <h1 class="h4 fw-bold m-0 d-flex align-items-center gap-2">
+                        <span>@_username</span>
                         @if (_isSuperAdmin)
                         {
-                            <span class="badge text-bg-danger" style="font-size: 0.72rem;"><i class="bi bi-shield-fill-check me-1"></i>超级管理员</span>
+                            <span class="badge-subtle badge-subtle-danger"><span class="dot"></span>超级管理员</span>
                         }
                         else
                         {
-                            <span class="badge text-bg-secondary" style="font-size: 0.72rem;">认证开发者</span>
+                            <span class="badge-subtle badge-subtle-neutral"><span class="dot"></span>认证开发者</span>
                         }
                     </h1>
-                    <p class="text-secondary small m-0 mt-1">
-                        <i class="bi bi-envelope me-1"></i> @_username
-                        <span class="ms-3"><i class="bi bi-calendar-check me-1"></i> 注册时间：@_joinTime</span>
-                    </p>
+                    <div class="text-muted small mt-1 font-monospace d-flex align-items-center gap-3">
+                        <span><i class="bi bi-person me-1"></i>UID: @_userId</span>
+                        <span><i class="bi bi-calendar3 me-1"></i>注册：@_joinTime</span>
+                    </div>
                 </div>
             </div>
 
             <div class="d-flex gap-2">
-                <a class="vp-btn-primary" href="/skills/submit">
-                    <i class="bi bi-plus-lg"></i> @(IsEnglish ? "Publish Skill" : "发布新技能")
+                <a class="btn-modern btn-modern-primary" href="/skills/submit">
+                    <i class="bi bi-cloud-arrow-up"></i>
+                    <span>@(IsEnglish ? "Publish Skill" : "发布新技能")</span>
                 </a>
             </div>
         </div>
     </header>
 
-    <!-- Overview Stats -->
-    <div class="admin-stats-grid mb-4">
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon"><i class="bi bi-stars"></i></div>
-            <div>
-                <div class="admin-stat-number">@_mySkills.Count</div>
-                <div class="admin-stat-label">我发布的技能</div>
+    <!-- Overview Stats (Linear Metric Grid) -->
+    <div class="metric-grid-modern">
+        <div class="metric-card-modern">
+            <div class="metric-card-header">
+                <span>@(IsEnglish ? "Published Skills" : "我发布的技能")</span>
+                <i class="bi bi-box-seam"></i>
             </div>
+            <div class="metric-card-value">@_mySkills.Count</div>
         </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon"><i class="bi bi-download"></i></div>
-            <div>
-                <div class="admin-stat-number">@_totalDownloads</div>
-                <div class="admin-stat-label">累计下载量</div>
+
+        <div class="metric-card-modern">
+            <div class="metric-card-header">
+                <span>@(IsEnglish ? "Total Downloads" : "累计下载总量")</span>
+                <i class="bi bi-download"></i>
             </div>
+            <div class="metric-card-value">@_totalDownloads</div>
         </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon"><i class="bi bi-eye"></i></div>
-            <div>
-                <div class="admin-stat-number">@_totalViews</div>
-                <div class="admin-stat-label">累计浏览量</div>
+
+        <div class="metric-card-modern">
+            <div class="metric-card-header">
+                <span>@(IsEnglish ? "Total Pageviews" : "累计页面浏览")</span>
+                <i class="bi bi-eye"></i>
             </div>
+            <div class="metric-card-value">@_totalViews</div>
         </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon"><i class="bi bi-clock-history"></i></div>
-            <div>
-                <div class="admin-stat-number">@_pendingCount</div>
-                <div class="admin-stat-label">审核中技能</div>
+
+        <div class="metric-card-modern">
+            <div class="metric-card-header">
+                <span>@(IsEnglish ? "Under Review" : "审核中技能")</span>
+                <i class="bi bi-clock-history"></i>
             </div>
+            <div class="metric-card-value" style="color: @(_pendingCount > 0 ? "#f59e0b" : "inherit");">@_pendingCount</div>
         </div>
     </div>
 
-    <!-- Tab navigation -->
-    <div class="d-flex align-items-center gap-2 mb-3 border-bottom pb-2">
-        <button class="btn @(_activeTab == "skills" ? "btn-success text-white" : "btn-outline-secondary") btn-sm px-3" @onclick='() => _activeTab = "skills"'>
-            <i class="bi bi-collection me-1"></i> @(IsEnglish ? "My Published Skills" : "我的技能管理") (@_mySkills.Count)
-        </button>
-        <button class="btn @(_activeTab == "security" ? "btn-success text-white" : "btn-outline-secondary") btn-sm px-3" @onclick='() => _activeTab = "security"'>
-            <i class="bi bi-shield-lock me-1"></i> @(IsEnglish ? "Security Settings" : "账号安全设置")
-        </button>
+    <!-- Segmented Tab Navigation -->
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <div class="segmented-bar">
+            <button class="segmented-item @(_activeTab == "skills" ? "active" : "")" type="button" @onclick='() => _activeTab = "skills"'>
+                <i class="bi bi-collection"></i>
+                <span>@(IsEnglish ? "My Published Skills" : "我的技能管理")</span>
+                <span class="small font-monospace opacity-75">(@_mySkills.Count)</span>
+            </button>
+            <button class="segmented-item @(_activeTab == "security" ? "active" : "")" type="button" @onclick='() => _activeTab = "security"'>
+                <i class="bi bi-shield-lock"></i>
+                <span>@(IsEnglish ? "Security Settings" : "账号安全设置")</span>
+            </button>
+        </div>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(_statusMessage))
     {
-        <div class="alert alert-success alert-dismissible fade show mb-3" role="alert">
-            <i class="bi bi-check-circle-fill me-2"></i> @_statusMessage
-            <button type="button" class="btn-close" @onclick="() => _statusMessage = null"></button>
+        <div class="alert-modern alert-modern-info mb-3">
+            <i class="bi bi-check-circle-fill fs-5 flex-shrink-0 text-success"></i>
+            <div class="flex-grow-1">@_statusMessage</div>
+            <button type="button" class="btn-close" style="font-size: 0.75rem;" @onclick="() => _statusMessage = null"></button>
         </div>
     }
     @if (!string.IsNullOrWhiteSpace(_errorMessage))
     {
-        <div class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
-            <i class="bi bi-exclamation-triangle-fill me-2"></i> @_errorMessage
-            <button type="button" class="btn-close" @onclick="() => _errorMessage = null"></button>
+        <div class="alert-modern alert-modern-danger mb-3">
+            <i class="bi bi-exclamation-triangle-fill fs-5 flex-shrink-0"></i>
+            <div class="flex-grow-1">@_errorMessage</div>
+            <button type="button" class="btn-close" style="font-size: 0.75rem;" @onclick="() => _errorMessage = null"></button>
         </div>
     }
 
@@ -106,27 +117,27 @@
     {
         @if (_mySkills.Count == 0)
         {
-            <div class="setup-card text-center py-5">
-                <i class="bi bi-box-seam text-muted" style="font-size: 3rem;"></i>
-                <h3 class="h5 fw-bold mt-3 mb-2">@(IsEnglish ? "No Skills Published Yet" : "暂未发布任何技能插件")</h3>
-                <p class="text-secondary mb-4">@(IsEnglish ? "Share your custom Prompt SOPs, tool workflows, and coding helpers with the SeekClaw community!" : "将您精心编写的 Prompt SOP、工具协同流与编码辅助技能分享给 SeekClaw 社区开发者！")</p>
-                <a class="vp-btn-primary" href="/skills/submit">
+            <div class="empty-state bg-transparent border rounded p-5 text-center">
+                <i class="bi bi-box-seam text-muted fs-1 mb-2"></i>
+                <h3 class="h5 fw-bold mb-2">@(IsEnglish ? "No Skills Published Yet" : "暂未发布任何技能插件")</h3>
+                <p class="text-secondary small mb-3">@(IsEnglish ? "Share your custom Prompt SOPs, tool workflows, and coding helpers with the SeekClaw community!" : "将您编写的 Prompt SOP、工具协同流与编码辅助技能分享给 SeekClaw 社区开发者！")</p>
+                <a class="btn-modern btn-modern-primary" href="/skills/submit">
                     <i class="bi bi-plus-lg"></i> @(IsEnglish ? "Publish First Skill" : "立即发布第一个技能")
                 </a>
             </div>
         }
         else
         {
-            <div class="admin-table">
-                <table class="table mb-0 align-middle">
+            <div class="table-modern-wrapper">
+                <table class="table-modern">
                     <thead>
                         <tr>
                             <th>技能名称 / Slug</th>
-                            <th>当前版本</th>
-                            <th>审核状态</th>
-                            <th>热度统计</th>
-                            <th>更新时间</th>
-                            <th class="text-end" style="width: 230px;">操作</th>
+                            <th style="width: 120px;">当前版本</th>
+                            <th style="width: 140px;">审核状态</th>
+                            <th style="width: 140px;">热度度量</th>
+                            <th style="width: 160px;">更新时间</th>
+                            <th class="text-end" style="width: 220px;">操作</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -134,53 +145,47 @@
                         {
                             <tr>
                                 <td>
-                                    <div class="fw-bold">@skill.Name</div>
-                                    <div class="small text-muted font-monospace">@skill.Slug</div>
+                                    <div class="fw-semibold text-truncate" style="max-width: 260px;" title="@skill.Name">@skill.Name</div>
+                                    <div class="small text-muted font-monospace" style="font-size: 0.75rem;">@skill.Slug</div>
                                 </td>
                                 <td>
-                                    <span class="badge text-bg-light border font-monospace">v@skill.Version</span>
-                                    <span class="small text-muted d-block">@skill.VersionCount 个历史版本</span>
+                                    <span class="skill-version-pill">v@skill.Version</span>
+                                    <div class="text-muted small mt-1 font-monospace" style="font-size: 0.72rem;">@skill.VersionCount 个版本</div>
                                 </td>
                                 <td>
                                     @if (skill.ReviewStatus == SkillReviewStatus.Approved)
                                     {
-                                        <span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i>已上架</span>
+                                        <span class="badge-subtle badge-subtle-success"><span class="dot"></span>已上架</span>
                                     }
                                     else if (skill.ReviewStatus == SkillReviewStatus.Pending)
                                     {
-                                        <span class="badge text-bg-warning text-dark"><i class="bi bi-clock-history me-1"></i>待审核</span>
-                                        <div class="small text-muted mt-1" style="font-size: 0.72rem;">等待管理员审核通过</div>
+                                        <span class="badge-subtle badge-subtle-warning"><span class="dot"></span>审核中</span>
                                     }
                                     else if (skill.ReviewStatus == SkillReviewStatus.Rejected)
                                     {
-                                        <span class="badge text-bg-danger"><i class="bi bi-x-circle me-1"></i>已驳回</span>
-                                        @if (!string.IsNullOrWhiteSpace(skill.ReviewComment))
-                                        {
-                                            <div class="small text-danger mt-1" style="font-size: 0.75rem;" title="@skill.ReviewComment">
-                                                原因：@skill.ReviewComment
-                                            </div>
-                                        }
+                                        <span class="badge-subtle badge-subtle-danger" title="@skill.ReviewComment"><span class="dot"></span>已驳回</span>
                                     }
                                 </td>
                                 <td>
-                                    <div class="small text-secondary">
-                                        <span><i class="bi bi-download text-muted me-1"></i>@skill.DownloadCount</span>
-                                        <span class="ms-2"><i class="bi bi-eye text-muted me-1"></i>@skill.ViewCount</span>
+                                    <div class="small text-secondary font-monospace">
+                                        <span title="累计下载"><i class="bi bi-download me-1 text-muted"></i>@skill.DownloadCount</span>
+                                        <span class="ms-2" title="累计浏览"><i class="bi bi-eye me-1 text-muted"></i>@skill.ViewCount</span>
                                     </div>
                                 </td>
                                 <td>
-                                    <span class="small text-muted">@DateTimeOffset.FromUnixTimeMilliseconds(skill.UpdatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                                    <span class="small text-muted font-monospace">@DateTimeOffset.FromUnixTimeMilliseconds(skill.UpdatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
                                 </td>
                                 <td class="text-end">
-                                    <div class="btn-group btn-group-sm">
-                                        <a class="btn btn-outline-secondary" href="@($"/skills/{skill.Slug}")" target="_blank" title="查看详情页">
-                                            <i class="bi bi-box-arrow-up-right"></i> 查看
+                                    <div class="d-inline-flex align-items-center gap-1">
+                                        <a class="btn-modern btn-modern-sm" href="@($"/skills/{skill.Slug}")" target="_blank" title="在新标签页预览">
+                                            <i class="bi bi-box-arrow-up-right"></i>
                                         </a>
-                                        <button class="btn btn-outline-primary" @onclick="() => OpenAddVersionModal(skill)" title="发布新版本">
-                                            <i class="bi bi-cloud-arrow-up"></i> 新版本
+                                        <button class="btn-modern btn-modern-sm btn-modern-primary" @onclick="() => OpenAddVersionModal(skill)" title="发布新版本">
+                                            <i class="bi bi-cloud-arrow-up"></i>
+                                            <span>发版</span>
                                         </button>
-                                        <button class="btn btn-outline-secondary" @onclick="() => OpenEditSkillModal(skill)" title="编辑元信息">
-                                            <i class="bi bi-pencil"></i> 编辑
+                                        <button class="btn-modern btn-modern-sm" @onclick="() => OpenEditSkillModal(skill)" title="编辑元信息">
+                                            <i class="bi bi-pencil"></i>
                                         </button>
                                     </div>
                                 </td>
@@ -194,22 +199,26 @@
     else if (_activeTab == "security")
     {
         <!-- TAB 2: Change Password -->
-        <div class="setup-card" style="max-width: 580px; margin: 0;">
-            <h3 class="h5 fw-bold mb-3"><i class="bi bi-shield-lock me-1"></i> 修改登录密码</h3>
-            <div class="mb-3">
-                <label class="form-label">原密码 *</label>
-                <input type="password" class="form-control" @bind="_oldPassword" placeholder="请输入当前登录密码" />
+        <div class="aside-card" style="max-width: 520px;">
+            <div class="aside-card-title">
+                <i class="bi bi-shield-lock"></i>
+                <span>修改账户安全密码</span>
             </div>
             <div class="mb-3">
-                <label class="form-label">新密码 *（至少 6 位）</label>
-                <input type="password" class="form-control" @bind="_newPassword" placeholder="请输入新密码" />
+                <label class="form-label small text-muted">原密码 *</label>
+                <input type="password" class="form-control form-control-sm" @bind="_oldPassword" placeholder="请输入当前密码" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label small text-muted">新密码 *（至少 6 位）</label>
+                <input type="password" class="form-control form-control-sm" @bind="_newPassword" placeholder="请输入新密码" />
             </div>
             <div class="mb-4">
-                <label class="form-label">确认新密码 *</label>
-                <input type="password" class="form-control" @bind="_confirmPassword" placeholder="请再次输入新密码" />
+                <label class="form-label small text-muted">确认新密码 *</label>
+                <input type="password" class="form-control form-control-sm" @bind="_confirmPassword" placeholder="请再次输入新密码" />
             </div>
-            <button class="vp-btn-primary" disabled="@_savingPassword" @onclick="ChangePasswordAsync">
-                <i class="bi bi-check-lg"></i> @(_savingPassword ? "正在保存…" : "确认修改密码")
+            <button class="btn-modern btn-modern-primary" disabled="@_savingPassword" @onclick="ChangePasswordAsync">
+                <i class="bi bi-check-lg"></i>
+                <span>@(_savingPassword ? "正在验证保存…" : "确认修改密码")</span>
             </button>
         </div>
     }
@@ -217,40 +226,43 @@
     <!-- Modal: Add New Version -->
     @if (_showVersionModal && _targetSkill != null)
     {
-        <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
             <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title fw-bold"><i class="bi bi-cloud-arrow-up me-2"></i> 为【@_targetSkill.Name】发布新版本</h5>
+                <div class="modal-content" style="background: var(--seek-card-bg); border: 1px solid var(--seek-card-border); border-radius: 12px; box-shadow: var(--shadow-flyout);">
+                    <div class="modal-header border-bottom" style="border-color: var(--seek-card-border) !important;">
+                        <h5 class="modal-title fw-semibold h6 m-0 d-flex align-items-center gap-2">
+                            <i class="bi bi-cloud-arrow-up text-success"></i>
+                            <span>发布新版本 · @_targetSkill.Name</span>
+                        </h5>
                         <button type="button" class="btn-close" @onclick="() => _showVersionModal = false"></button>
                     </div>
                     <div class="modal-body">
                         @if (!string.IsNullOrWhiteSpace(_modalError))
                         {
-                            <div class="alert alert-danger mb-3 small">@_modalError</div>
+                            <div class="alert-modern alert-modern-danger mb-3">@_modalError</div>
                         }
                         <div class="mb-3">
-                            <label class="form-label">新版本号 *</label>
-                            <input class="form-control font-monospace" @bind="_versionInput.Version" placeholder="例如：1.1.0" />
-                            <div class="form-text">当前线上版本为 v@_targetSkill.Version</div>
+                            <label class="form-label small text-muted">新版本号 *</label>
+                            <input class="form-control form-control-sm font-monospace" @bind="_versionInput.Version" placeholder="例如：1.1.0" />
+                            <div class="form-text small">当前线上版本为 v@_targetSkill.Version</div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">版本更新日志 (Changelog) *</label>
-                            <textarea class="form-control" rows="3" @bind="_versionInput.Changelog" placeholder="简要描述本次版本的升级内容与修复项…"></textarea>
+                            <label class="form-label small text-muted">版本更新日志 (Changelog) *</label>
+                            <textarea class="form-control form-control-sm" rows="3" @bind="_versionInput.Changelog" placeholder="简要说明本次版本更新的功能或缺陷修复…"></textarea>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">上传新版本技能包（.zip / .md / .json，最大 10MB）</label>
-                            <InputFile class="form-control" OnChange="OnVersionPackageSelected" accept=".zip,.md,.txt,.json" />
+                            <label class="form-label small text-muted">上传技能包（.zip / .md / .json，最大 10MB）</label>
+                            <InputFile class="form-control form-control-sm" OnChange="OnVersionPackageSelected" accept=".zip,.md,.txt,.json" />
                             @if (_versionPackageData != null)
                             {
-                                <div class="form-text text-success"><i class="bi bi-check-circle"></i> 已选定：@_versionPackageFileName (@((_versionPackageData.Length / 1024.0).ToString("F1")) KB)</div>
+                                <div class="form-text text-success small mt-1"><i class="bi bi-check-circle me-1"></i>已就绪：@_versionPackageFileName (@((_versionPackageData.Length / 1024.0).ToString("F1")) KB)</div>
                             }
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _showVersionModal = false">取消</button>
-                        <button type="button" class="btn btn-success btn-sm text-white" disabled="@_submittingVersion" @onclick="SubmitNewVersionAsync">
-                            @(_submittingVersion ? "正在提交…" : "确认发布版本")
+                    <div class="modal-footer border-top" style="border-color: var(--seek-card-border) !important;">
+                        <button type="button" class="btn-modern" @onclick="() => _showVersionModal = false">取消</button>
+                        <button type="button" class="btn-modern btn-modern-primary" disabled="@_submittingVersion" @onclick="SubmitNewVersionAsync">
+                            @(_submittingVersion ? "正在打包提交…" : "确认发布版本")
                         </button>
                     </div>
                 </div>
@@ -261,39 +273,42 @@
     <!-- Modal: Edit Skill Info -->
     @if (_showEditModal && _targetSkill != null)
     {
-        <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);">
             <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title fw-bold"><i class="bi bi-pencil me-2"></i> 编辑技能基本信息</h5>
+                <div class="modal-content" style="background: var(--seek-card-bg); border: 1px solid var(--seek-card-border); border-radius: 12px; box-shadow: var(--shadow-flyout);">
+                    <div class="modal-header border-bottom" style="border-color: var(--seek-card-border) !important;">
+                        <h5 class="modal-title fw-semibold h6 m-0 d-flex align-items-center gap-2">
+                            <i class="bi bi-pencil"></i>
+                            <span>编辑技能元信息 · @_targetSkill.Name</span>
+                        </h5>
                         <button type="button" class="btn-close" @onclick="() => _showEditModal = false"></button>
                     </div>
                     <div class="modal-body">
                         @if (!string.IsNullOrWhiteSpace(_modalError))
                         {
-                            <div class="alert alert-danger mb-3 small">@_modalError</div>
+                            <div class="alert-modern alert-modern-danger mb-3">@_modalError</div>
                         }
                         <div class="mb-3">
-                            <label class="form-label">技能名称 *</label>
-                            <input class="form-control" @bind="_editInput.Name" />
+                            <label class="form-label small text-muted">技能显示名称 *</label>
+                            <input class="form-control form-control-sm" @bind="_editInput.Name" />
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">一句话简介 *</label>
-                            <textarea class="form-control" rows="2" @bind="_editInput.Summary"></textarea>
+                            <label class="form-label small text-muted">一句话简介</label>
+                            <input class="form-control form-control-sm" @bind="_editInput.Summary" />
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">主页或仓库链接</label>
-                            <input class="form-control" @bind="_editInput.Homepage" placeholder="https://github.com/..." />
+                            <label class="form-label small text-muted">项目主页或文档外链</label>
+                            <input class="form-control form-control-sm" @bind="_editInput.Homepage" placeholder="https://github.com/..." />
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">README Markdown 使用说明 *</label>
-                            <textarea class="form-control font-monospace" rows="8" @bind="_editInput.ReadmeMarkdown"></textarea>
+                            <label class="form-label small text-muted">README 使用说明（Markdown）</label>
+                            <textarea class="form-control form-control-sm font-monospace" rows="8" @bind="_editInput.ReadmeMarkdown" placeholder="# 技能文档..."></textarea>
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary btn-sm" @onclick="() => _showEditModal = false">取消</button>
-                        <button type="button" class="btn btn-success btn-sm text-white" disabled="@_submittingEdit" @onclick="SubmitEditSkillAsync">
-                            @(_submittingEdit ? "正在保存…" : "保存修改")
+                    <div class="modal-footer border-top" style="border-color: var(--seek-card-border) !important;">
+                        <button type="button" class="btn-modern" @onclick="() => _showEditModal = false">取消</button>
+                        <button type="button" class="btn-modern btn-modern-primary" disabled="@_submittingEdit" @onclick="SubmitEditSkillAsync">
+                            @(_submittingEdit ? "正在保存…" : "保存更新")
                         </button>
                     </div>
                 </div>

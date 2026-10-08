@@ -1,58 +1,72 @@
 @rendermode InteractiveServer
 @inject SkillService SkillCatalog
 
-<section class="skills-shell">
-    <header class="skills-header mb-4">
-        <p class="doc-kicker">Skills Hub</p>
-        <h1>@(Language == "en" ? "Skills Marketplace" : "技能生态市场")</h1>
-        <p>@(Language == "en" ? "Discover, install, and share domain-specific official & community skills for SeekClaw runtime." : "探索、安装与复用面向特定工程领域的 SeekClaw 官方精选与社区扩展技能。")</p>
+<section class="skills-shell" style="max-width: 1200px;">
+    <header class="skills-header mb-4 text-center">
+        <p class="doc-kicker">ECOSYSTEM MARKETPLACE</p>
+        <h1 class="fw-bold mb-2">@(Language == "en" ? "Skills Marketplace" : "技能生态市场")</h1>
+        <p class="text-secondary mx-auto" style="max-width: 620px; font-size: 0.95rem;">@(Language == "en" ? "Discover, install, and share domain-specific official & community skills for SeekClaw runtime." : "探索、复用并一键安装面向特定专业领域的 SeekClaw 官方精选与社区扩展技能。")</p>
+    </header>
 
-        <div class="d-flex flex-wrap align-items-center justify-content-center gap-3 mt-3">
-            <div class="skills-search-bar m-0" style="max-width: 480px; width: 100%;">
-                <input class="form-control" @bind="_query" @bind:event="oninput" placeholder="@(Language == "en" ? "Search skills by name, summary or slug..." : "搜索技能名称、简介或标识…")" />
-            </div>
-            <a class="vp-btn-primary" href="@($"{Prefix}/submit")">
-                <i class="bi bi-cloud-arrow-up"></i> @(Language == "en" ? "Submit Skill" : "发布技能")
+    <!-- Modern Integrated Toolbar -->
+    <div class="skills-toolbar-modern">
+        <div class="skills-search-wrapper">
+            <i class="bi bi-search search-icon"></i>
+            <input @bind="_query" @bind:event="oninput" placeholder="@(Language == "en" ? "Search by name, slug or author..." : "搜索技能名称、Slug 或作者…")" />
+            @if (!string.IsNullOrWhiteSpace(_query))
+            {
+                <button class="clear-btn" type="button" @onclick="() => _query = string.Empty">
+                    <i class="bi bi-x-circle-fill"></i>
+                </button>
+            }
+        </div>
+
+        <div class="segmented-bar">
+            <button class="segmented-item @(_filterType == "all" ? "active" : "")" type="button" @onclick='() => SetFilter("all")'>
+                <i class="bi bi-grid-fill"></i>
+                <span>@(Language == "en" ? "All" : "全部")</span>
+                <span class="small font-monospace opacity-75">(@_skills.Count)</span>
+            </button>
+            <button class="segmented-item @(_filterType == "official" ? "active" : "")" type="button" @onclick='() => SetFilter("official")'>
+                <i class="bi bi-shield-fill-check text-success"></i>
+                <span>@(Language == "en" ? "Official" : "官方精选")</span>
+                <span class="small font-monospace opacity-75">(@_skills.Count(s => s.IsOfficial))</span>
+            </button>
+            <button class="segmented-item @(_filterType == "community" ? "active" : "")" type="button" @onclick='() => SetFilter("community")'>
+                <i class="bi bi-stars" style="color: var(--vp-c-brand-1);"></i>
+                <span>@(Language == "en" ? "Community" : "社区生态")</span>
+                <span class="small font-monospace opacity-75">(@_skills.Count(s => !s.IsOfficial))</span>
+            </button>
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+            <select class="form-select form-select-sm" style="width: auto; height: 34px; font-size: 0.83rem;" @bind="_sortBy" @bind:after="OnSortChanged">
+                <option value="default">@(Language == "en" ? "Recommended" : "综合排序")</option>
+                <option value="downloads">@(Language == "en" ? "Most Downloaded" : "最多下载")</option>
+                <option value="views">@(Language == "en" ? "Most Viewed" : "最多浏览")</option>
+                <option value="updated">@(Language == "en" ? "Recently Updated" : "最近更新")</option>
+            </select>
+
+            <a class="btn-modern btn-modern-primary" href="@($"{Prefix}/submit")">
+                <i class="bi bi-cloud-arrow-up"></i>
+                <span>@(Language == "en" ? "Submit" : "发布技能")</span>
             </a>
         </div>
-
-        <div class="d-flex flex-wrap justify-content-center align-items-center gap-3 mt-4">
-            <div class="btn-group btn-group-sm">
-                <button class="nav-action-btn @(_filterType == "all" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("all")'>
-                    <i class="bi bi-grid-fill"></i> @(Language == "en" ? "All Skills" : "全部技能") (@_skills.Count)
-                </button>
-                <button class="nav-action-btn @(_filterType == "official" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("official")'>
-                    <i class="bi bi-shield-fill-check text-success"></i> @(Language == "en" ? "Official" : "官方精选") (@_skills.Count(s => s.IsOfficial))
-                </button>
-                <button class="nav-action-btn @(_filterType == "community" ? "border-success text-success fw-bold" : "")" type="button" @onclick='() => SetFilter("community")'>
-                    <i class="bi bi-people-fill text-primary"></i> @(Language == "en" ? "Community" : "社区生态") (@_skills.Count(s => !s.IsOfficial))
-                </button>
-            </div>
-
-            <div class="d-flex align-items-center gap-2">
-                <span class="small text-muted"><i class="bi bi-sort-down"></i> @(Language == "en" ? "Sort by:" : "排序：")</span>
-                <select class="form-select form-select-sm" style="width: auto;" @bind="_sortBy" @bind:after="OnSortChanged">
-                    <option value="default">@(Language == "en" ? "Recommended" : "官方推荐")</option>
-                    <option value="downloads">@(Language == "en" ? "Most Downloaded" : "最多下载")</option>
-                    <option value="views">@(Language == "en" ? "Most Viewed" : "最多浏览")</option>
-                    <option value="updated">@(Language == "en" ? "Recently Updated" : "最近更新")</option>
-                </select>
-            </div>
-        </div>
-    </header>
+    </div>
 
     @if (_loading)
     {
         <div class="text-center text-muted py-5">
-            <div class="spinner-border text-success mb-2"></div>
-            <div>@(Language == "en" ? "Loading skills catalog..." : "正在加载技能列表…")</div>
+            <div class="spinner-border text-success mb-2" style="width: 2rem; height: 2rem;"></div>
+            <div class="small">@(Language == "en" ? "Loading skills catalog..." : "正在载入技能生态库…")</div>
         </div>
     }
     else if (FilteredSkills.Count == 0)
     {
         <div class="empty-state">
-            <h2>@(Language == "en" ? "No matching skills" : "未找到匹配技能")</h2>
-            <p>@(Language == "en" ? "Try adjusting your filter or search query." : "请尝试更换筛选条件或搜索关键词。")</p>
+            <i class="bi bi-inbox text-muted fs-1 mb-2"></i>
+            <h2 class="h5 fw-bold">@(Language == "en" ? "No matching skills found" : "未找到匹配技能")</h2>
+            <p class="small text-secondary">@(Language == "en" ? "Try adjusting your search terms or category filter." : "请尝试更换关键词或重置筛选类别。")</p>
         </div>
     }
     else
@@ -60,51 +74,55 @@
         <div class="skills-grid">
             @foreach (var skill in PagedSkills)
             {
-                <a class="skill-card" href="@($"{Prefix}/{skill.Slug}")">
+                <a class="skill-card-modern" href="@($"{Prefix}/{skill.Slug}")">
                     <div>
-                        <div class="skill-card-top">
-                            <div class="skill-icon">
+                        <div class="d-flex align-items-start gap-3 mb-2">
+                            <div class="skill-icon-modern">
                                 <i class="bi @(skill.IsOfficial ? "bi-shield-check" : "bi-stars")"></i>
                             </div>
-                            <div class="skill-title-area flex-grow-1">
+                            <div class="flex-grow-1 min-w-0">
                                 <div class="d-flex align-items-center justify-content-between gap-2">
-                                    <h3 class="m-0">@skill.Name</h3>
+                                    <h3 class="h6 fw-semibold text-truncate m-0" title="@skill.Name">@skill.Name</h3>
                                     @if (skill.IsOfficial)
                                     {
-                                        <span class="badge text-bg-success flex-shrink-0" style="font-size: 0.75rem;">
-                                            <i class="bi bi-shield-fill-check me-1"></i>@(Language == "en" ? "Official" : "官方")
+                                        <span class="badge-subtle badge-subtle-success flex-shrink-0">
+                                            <span class="dot"></span>@(Language == "en" ? "Official" : "官方")
                                         </span>
                                     }
                                     else
                                     {
-                                        <span class="badge text-bg-light border text-secondary flex-shrink-0" style="font-size: 0.75rem;">
-                                            <i class="bi bi-people me-1"></i>@(Language == "en" ? "Community" : "社区")
+                                        <span class="badge-subtle badge-subtle-neutral flex-shrink-0">
+                                            <span class="dot"></span>@(Language == "en" ? "Community" : "社区")
                                         </span>
                                     }
                                 </div>
-                                <div class="skill-slug">@skill.Slug</div>
+                                <div class="font-monospace text-muted small" style="font-size: 0.76rem;">@skill.Slug</div>
                             </div>
                         </div>
 
-                        <p class="skill-summary">@skill.Summary</p>
+                        <p class="skill-card-desc">@skill.Summary</p>
                     </div>
 
-                    <div class="skill-card-footer">
-                        <div class="d-flex align-items-center gap-3">
-                            <span class="small text-muted"><i class="bi bi-person me-1"></i>@skill.Author</span>
-                            <span class="small text-secondary" title="@(Language == "en" ? "Downloads" : "累计下载")">
-                                <i class="bi bi-download me-1 text-muted"></i>@skill.DownloadCount
+                    <div class="skill-card-meta-line">
+                        <div class="skill-meta-tags">
+                            <span class="skill-meta-item" title="@(Language == "en" ? "Author" : "作者")">
+                                <i class="bi bi-person"></i>@skill.Author
                             </span>
-                            <span class="small text-secondary" title="@(Language == "en" ? "Views" : "累计浏览")">
-                                <i class="bi bi-eye me-1 text-muted"></i>@skill.ViewCount
+                            <span class="text-muted" style="opacity: 0.4;">·</span>
+                            <span class="skill-meta-item" title="@(Language == "en" ? "Downloads" : "累计下载")">
+                                <i class="bi bi-download"></i>@skill.DownloadCount
+                            </span>
+                            <span class="text-muted" style="opacity: 0.4;">·</span>
+                            <span class="skill-meta-item" title="@(Language == "en" ? "Views" : "累计浏览")">
+                                <i class="bi bi-eye"></i>@skill.ViewCount
                             </span>
                         </div>
                         <div class="d-flex align-items-center gap-2">
                             @if (skill.HasPackage)
                             {
-                                <span class="badge text-bg-light border text-secondary"><i class="bi bi-box-seam me-1"></i>Zip</span>
+                                <span class="badge-subtle badge-subtle-info">Zip</span>
                             }
-                            <span class="skill-version-badge">v@skill.Version</span>
+                            <span class="skill-version-pill">v@skill.Version</span>
                         </div>
                     </div>
                 </a>
@@ -196,7 +214,6 @@
     private async Task LoadAsync()
     {
         _loading = true;
-        // 仅在公开市场展示已审核通过 (Approved) 的技能
         _skills = await SkillCatalog.ListAsync(
             includeDisabled: false,
             reviewStatus: SkillReviewStatus.Approved,

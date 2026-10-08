@@ -1853,3 +1853,639 @@ html[data-theme="dark"] .admin-topbar {
         display: none;
     }
 }
+
+/* ==========================================================================
+   Modernized SeekClaw UI System (Linear/VitePress/Vercel Engineering Style)
+   ========================================================================== */
+
+/* Modern Button Styles */
+.btn-modern {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    height: 34px;
+    padding: 0 0.9rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    border-radius: 6px;
+    border: 1px solid var(--seek-card-border);
+    background: var(--seek-card-bg);
+    color: var(--seek-text-primary);
+    cursor: pointer;
+    transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    text-decoration: none;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.btn-modern:hover {
+    background: var(--vp-c-bg-soft);
+    border-color: var(--seek-text-muted);
+    color: var(--seek-text-primary);
+    text-decoration: none;
+}
+
+.btn-modern-sm {
+    height: 28px;
+    padding: 0 0.65rem;
+    font-size: 0.78rem;
+    border-radius: 5px;
+}
+
+.btn-modern-primary {
+    background: var(--vp-c-brand-1);
+    color: #ffffff !important;
+    border-color: transparent;
+    box-shadow: 0 1px 3px rgba(5, 150, 105, 0.25);
+}
+
+.btn-modern-primary:hover {
+    background: var(--vp-c-brand-2);
+    border-color: transparent;
+    color: #ffffff !important;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(5, 150, 105, 0.35);
+}
+
+.btn-modern-secondary {
+    background: var(--vp-c-bg-soft);
+    border-color: var(--seek-card-border);
+    color: var(--seek-text-primary);
+}
+
+.btn-modern-danger {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.2);
+    color: #dc2626;
+}
+
+.btn-modern-danger:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+    color: #ffffff !important;
+}
+
+/* Modern Segmented Control */
+.segmented-bar {
+    display: inline-flex;
+    align-items: center;
+    background: var(--vp-c-bg-soft);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid var(--seek-card-border);
+    gap: 3px;
+}
+
+.segmented-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    font-size: 0.83rem;
+    font-weight: 500;
+    color: var(--seek-text-secondary);
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    text-decoration: none;
+    line-height: 1.2;
+}
+
+.segmented-item:hover {
+    color: var(--seek-text-primary);
+    background: rgba(0, 0, 0, 0.03);
+}
+
+html.dark .segmented-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.segmented-item.active {
+    background: var(--seek-card-bg);
+    color: var(--seek-text-primary);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* Modern Subtle Badges */
+.badge-subtle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 0.74rem;
+    font-weight: 500;
+    line-height: 1.2;
+    border: 1px solid transparent;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+}
+
+.badge-subtle .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.badge-subtle-success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #059669;
+    border-color: rgba(16, 185, 129, 0.22);
+}
+
+html.dark .badge-subtle-success {
+    background: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+    border-color: rgba(16, 185, 129, 0.25);
+}
+
+.badge-subtle-success .dot { background: #10b981; }
+
+.badge-subtle-neutral {
+    background: var(--vp-c-bg-soft);
+    color: var(--seek-text-secondary);
+    border-color: var(--seek-card-border);
+}
+
+.badge-subtle-neutral .dot { background: var(--seek-text-muted); }
+
+.badge-subtle-warning {
+    background: rgba(245, 158, 11, 0.1);
+    color: #d97706;
+    border-color: rgba(245, 158, 11, 0.25);
+}
+
+html.dark .badge-subtle-warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.badge-subtle-warning .dot { background: #f59e0b; }
+
+.badge-subtle-danger {
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+    border-color: rgba(239, 68, 68, 0.25);
+}
+
+html.dark .badge-subtle-danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.badge-subtle-danger .dot { background: #ef4444; }
+
+.badge-subtle-info {
+    background: rgba(14, 165, 233, 0.1);
+    color: #0284c7;
+    border-color: rgba(14, 165, 233, 0.25);
+}
+
+html.dark .badge-subtle-info {
+    background: rgba(14, 165, 233, 0.15);
+    color: #38bdf8;
+    border-color: rgba(14, 165, 233, 0.3);
+}
+
+.badge-subtle-info .dot { background: #0ea5e9; }
+
+/* Skills Marketplace Integrated Toolbar */
+.skills-toolbar-modern {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    background: var(--seek-card-bg);
+    border: 1px solid var(--seek-card-border);
+    padding: 0.85rem 1.15rem;
+    border-radius: 12px;
+    box-shadow: var(--seek-card-shadow);
+    margin-bottom: 2rem;
+}
+
+.skills-search-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 260px;
+    max-width: 440px;
+}
+
+.skills-search-wrapper .search-icon {
+    position: absolute;
+    left: 0.85rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--seek-text-muted);
+    pointer-events: none;
+    font-size: 0.95rem;
+}
+
+.skills-search-wrapper input {
+    width: 100%;
+    height: 36px;
+    padding: 0 2rem 0 2.4rem;
+    background: var(--vp-c-bg-alt);
+    border: 1px solid var(--seek-card-border);
+    border-radius: 6px;
+    font-size: 0.88rem;
+    color: var(--seek-text-primary);
+    transition: all 0.15s ease;
+}
+
+.skills-search-wrapper input:focus {
+    outline: none;
+    border-color: var(--vp-c-brand-1);
+    background: var(--seek-card-bg);
+    box-shadow: 0 0 0 2px var(--vp-c-brand-soft);
+}
+
+.skills-search-wrapper .clear-btn {
+    position: absolute;
+    right: 0.65rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--seek-text-muted);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.skills-search-wrapper .clear-btn:hover {
+    color: var(--seek-text-primary);
+}
+
+/* Modern Skill Card */
+.skill-card-modern {
+    background: var(--seek-card-bg);
+    border: 1px solid var(--seek-card-border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    text-decoration: none;
+    color: inherit;
+    position: relative;
+}
+
+.skill-card-modern:hover {
+    border-color: var(--vp-c-brand-1);
+    transform: translateY(-2px);
+    box-shadow: var(--seek-card-shadow-hover);
+    color: inherit;
+}
+
+.skill-icon-modern {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background: var(--vp-c-bg-soft);
+    border: 1px solid var(--seek-card-border);
+    color: var(--vp-c-brand-1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    flex-shrink: 0;
+}
+
+.skill-card-modern:hover .skill-icon-modern {
+    background: var(--vp-c-brand-soft);
+    border-color: var(--vp-c-brand-1);
+}
+
+.skill-card-meta-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--seek-card-border);
+    font-size: 0.8rem;
+    color: var(--seek-text-muted);
+}
+
+.skill-meta-tags {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+
+.skill-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--seek-text-muted);
+}
+
+.skill-meta-item i {
+    font-size: 0.85rem;
+}
+
+.skill-version-pill {
+    font-family: var(--vp-font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--seek-text-secondary);
+    background: var(--vp-c-bg-soft);
+    border: 1px solid var(--seek-card-border);
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+/* Two-Column Modern Skill Detail Layout */
+.skill-detail-shell-modern {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+}
+
+.skill-detail-top-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+}
+
+.skill-detail-header-card {
+    background: var(--seek-card-bg);
+    border: 1px solid var(--seek-card-border);
+    border-radius: 12px;
+    padding: 1.75rem 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--seek-card-shadow);
+}
+
+.skill-detail-layout-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+    align-items: start;
+}
+
+@media (min-width: 992px) {
+    .skill-detail-layout-grid {
+        grid-template-columns: minmax(0, 1fr) 340px;
+    }
+}
+
+.skill-detail-main-col {
+    min-width: 0;
+}
+
+.skill-detail-aside-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+@media (min-width: 992px) {
+    .skill-detail-aside-col {
+        position: sticky;
+        top: calc(var(--vp-nav-height) + 1.5rem);
+    }
+}
+
+.aside-card {
+    background: var(--seek-card-bg);
+    border: 1px solid var(--seek-card-border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    box-shadow: var(--seek-card-shadow);
+}
+
+.aside-card-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--seek-text-muted);
+    margin-bottom: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.meta-kv-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--seek-card-border);
+    font-size: 0.85rem;
+}
+
+.meta-kv-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.meta-kv-label {
+    color: var(--seek-text-muted);
+}
+
+.meta-kv-val {
+    color: var(--seek-text-primary);
+    font-weight: 500;
+}
+
+.meta-kv-val.mono {
+    font-family: var(--vp-font-mono);
+}
+
+/* Modern CLI Terminal Box */
+.terminal-command-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #0d1117;
+    color: #f0f6fc;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 0.65rem 0.85rem;
+    font-family: var(--vp-font-mono);
+    font-size: 0.82rem;
+    gap: 0.5rem;
+}
+
+.terminal-command-box code {
+    color: #34d399;
+    user-select: all;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: transparent;
+    padding: 0;
+}
+
+.terminal-command-box .copy-icon-btn {
+    background: transparent;
+    border: none;
+    color: #8b949e;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.terminal-command-box .copy-icon-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+/* Modern Metric Stats Grid (Linear Style) */
+.metric-grid-modern {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 2rem;
+}
+
+.metric-card-modern {
+    background: var(--seek-card-bg);
+    border: 1px solid var(--seek-card-border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    box-shadow: var(--seek-card-shadow);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: all 0.15s ease;
+}
+
+.metric-card-modern:hover {
+    border-color: var(--vp-c-brand-1);
+}
+
+.metric-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--seek-text-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.metric-card-header i {
+    font-size: 1.15rem;
+    color: var(--vp-c-brand-1);
+}
+
+.metric-card-value {
+    font-size: 1.85rem;
+    font-weight: 700;
+    font-family: var(--vp-font-mono);
+    color: var(--seek-text-primary);
+    margin-top: 0.5rem;
+    line-height: 1.1;
+}
+
+/* Modern Clean Table */
+.table-modern-wrapper {
+    background: var(--seek-card-bg);
+    border: 1px solid var(--seek-card-border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--seek-card-shadow);
+}
+
+.table-modern {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0;
+}
+
+.table-modern th {
+    background: var(--vp-c-bg-alt);
+    color: var(--seek-text-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.8rem 1.1rem;
+    border-bottom: 1px solid var(--seek-card-border);
+    text-align: left;
+}
+
+.table-modern td {
+    padding: 0.85rem 1.1rem;
+    border-bottom: 1px solid var(--seek-card-border);
+    color: var(--seek-text-primary);
+    font-size: 0.88rem;
+    vertical-align: middle;
+}
+
+.table-modern tr:last-child td {
+    border-bottom: none;
+}
+
+.table-modern tbody tr:hover td {
+    background: var(--vp-c-bg-soft);
+}
+
+/* Clean Alert Banners */
+.alert-modern {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.85rem;
+    padding: 0.9rem 1.15rem;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    margin-bottom: 1.5rem;
+    border: 1px solid transparent;
+}
+
+.alert-modern-warning {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.25);
+    color: #b45309;
+}
+
+html.dark .alert-modern-warning {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.3);
+    color: #fbbf24;
+}
+
+.alert-modern-danger {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.25);
+    color: #b91c1c;
+}
+
+html.dark .alert-modern-danger {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #f87171;
+}
+
+.alert-modern-info {
+    background: rgba(14, 165, 233, 0.08);
+    border-color: rgba(14, 165, 233, 0.25);
+    color: #0369a1;
+}
+
+html.dark .alert-modern-info {
+    background: rgba(14, 165, 233, 0.12);
+    border-color: rgba(14, 165, 233, 0.3);
+    color: #38bdf8;
+}

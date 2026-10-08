@@ -7,18 +7,19 @@
 {
     <PageTitle>@(Language == "en" ? "Loading Skill — SeekClaw" : "正在加载技能 — SeekClaw")</PageTitle>
     <div class="skills-shell text-center text-muted py-5">
-        <div class="spinner-border text-success mb-2"></div>
-        <div>@(Language == "en" ? "Loading skill details..." : "正在加载技能详情…")</div>
+        <div class="spinner-border text-success mb-2" style="width: 2rem; height: 2rem;"></div>
+        <div class="small">@(Language == "en" ? "Loading skill details..." : "正在加载技能详情…")</div>
     </div>
 }
 else if (_skill is null)
 {
     <PageTitle>@(Language == "en" ? "Skill Not Found — SeekClaw" : "技能不存在 — SeekClaw 技能市场")</PageTitle>
     <div class="empty-state">
-        <h1>@(Language == "en" ? "Skill Not Found" : "技能不存在")</h1>
-        <p>@(Language == "en" ? "The requested skill may have been disabled or deleted." : "该技能可能已被管理员下线或删除。")</p>
-        <a class="vp-btn-primary mt-3" href="@(Language == "en" ? "/en/skills" : "/skills")">
-            @(Language == "en" ? "Back to Skills Marketplace" : "返回技能市场")
+        <i class="bi bi-exclamation-circle text-muted fs-1 mb-2"></i>
+        <h1 class="h4 fw-bold">@(Language == "en" ? "Skill Not Found" : "技能不存在")</h1>
+        <p class="small text-secondary">@(Language == "en" ? "The requested skill may have been disabled or deleted." : "该技能可能已被管理员下线或删除。")</p>
+        <a class="btn-modern btn-modern-primary mt-3" href="@(Language == "en" ? "/en/skills" : "/skills")">
+            <i class="bi bi-arrow-left"></i> @(Language == "en" ? "Back to Marketplace" : "返回技能市场")
         </a>
     </div>
 }
@@ -31,11 +32,35 @@ else
         <meta property="og:description" content="@_skill.Summary" />
         <meta property="og:type" content="article" />
     </HeadContent>
-    <div class="skill-detail-shell">
+
+    <div class="skill-detail-shell-modern">
+        <!-- Top Nav & Breadcrumbs -->
+        <div class="skill-detail-top-nav">
+            <a class="text-secondary small text-decoration-none d-inline-flex align-items-center gap-1" href="@(Language == "en" ? "/en/skills" : "/skills")">
+                <i class="bi bi-arrow-left"></i>
+                <span>@(Language == "en" ? "Back to Skills Marketplace" : "返回技能市场")</span>
+            </a>
+            <div class="d-flex align-items-center gap-2">
+                @if (_skill.IsOfficial)
+                {
+                    <span class="badge-subtle badge-subtle-success">
+                        <span class="dot"></span>@(Language == "en" ? "Official Certified" : "SeekClaw 官方认证")
+                    </span>
+                }
+                else
+                {
+                    <span class="badge-subtle badge-subtle-neutral">
+                        <span class="dot"></span>@(Language == "en" ? "Community Contributed" : "社区开发者贡献")
+                    </span>
+                }
+                <span class="skill-version-pill">v@_skill.Version</span>
+            </div>
+        </div>
+
         @if (_skill.ReviewStatus == SkillReviewStatus.Pending)
         {
-            <div class="alert alert-warning mb-3 d-flex align-items-center gap-2">
-                <i class="bi bi-hourglass-split fs-4 text-warning"></i>
+            <div class="alert-modern alert-modern-warning">
+                <i class="bi bi-hourglass-split fs-5 flex-shrink-0"></i>
                 <div>
                     <strong>@(Language == "en" ? "Pending Review:" : "待审核状态：")</strong>
                     @(Language == "en" ? " This skill is awaiting administrator review and is currently only visible to the author and administrators." : " 该技能当前处于待审核状态，目前仅作者与管理员可见。审核通过后将正式向全市场公开。")
@@ -44,8 +69,8 @@ else
         }
         else if (_skill.ReviewStatus == SkillReviewStatus.Rejected)
         {
-            <div class="alert alert-danger mb-3 d-flex align-items-center gap-2">
-                <i class="bi bi-x-circle fs-4 text-danger"></i>
+            <div class="alert-modern alert-modern-danger">
+                <i class="bi bi-x-circle fs-5 flex-shrink-0"></i>
                 <div>
                     <strong>@(Language == "en" ? "Review Rejected:" : "审核未通过：")</strong>
                     @(Language == "en" ? $" This submission was rejected. Reason: {_skill.ReviewComment ?? "No specific comments provided."}" : $" 该技能申请已被管理员驳回。审核意见：{_skill.ReviewComment ?? "暂无具体审核意见，请修改后重新提交。"} ")
@@ -53,120 +78,149 @@ else
             </div>
         }
 
-        <div class="skill-detail-header">
-            <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
-                <div>
-                    <div class="d-flex align-items-center gap-2 mb-2">
-                        @if (_skill.IsOfficial)
-                        {
-                            <span class="badge text-bg-success px-2 py-1" style="font-size: 0.82rem;">
-                                <i class="bi bi-shield-fill-check me-1"></i>@(Language == "en" ? "Official Certified" : "SeekClaw 官方认证")
-                            </span>
-                        }
-                        else
-                        {
-                            <span class="badge text-bg-light border text-secondary px-2 py-1" style="font-size: 0.82rem;">
-                                <i class="bi bi-people me-1"></i>@(Language == "en" ? "Community Contributed" : "社区开发者贡献")
-                            </span>
-                        }
-                        <span class="skill-version-badge">v@_skill.Version</span>
-                    </div>
-                    <h1 class="h2 fw-bold text-dark-emphasis mb-1">@_skill.Name</h1>
-                    <div class="text-muted small font-monospace">@_skill.Slug</div>
+        <!-- 2-Column Responsive Layout -->
+        <div class="skill-detail-layout-grid">
+            <!-- Left Main Column: Description, Readme & Version History -->
+            <div class="skill-detail-main-col">
+                <div class="skill-detail-header-card">
+                    <h1 class="h2 fw-bold mb-1">@_skill.Name</h1>
+                    <div class="font-monospace text-muted small mb-3">@_skill.Slug</div>
+                    <p class="text-secondary m-0" style="line-height: 1.6; font-size: 0.95rem;">@_skill.Summary</p>
                 </div>
 
-                <div class="d-flex align-items-center gap-2">
+                <!-- Markdown Documentation -->
+                <div class="markdown-body p-4 bg-transparent border-0" style="background: var(--seek-card-bg); border: 1px solid var(--seek-card-border); border-radius: 12px;">
+                    @((MarkupString)Markdown.ToHtml(_skill.ReadmeMarkdown))
+                </div>
+
+                <!-- Version History -->
+                @if (_skill.Versions.Count > 0)
+                {
+                    <div class="mt-4">
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <h3 class="h6 fw-bold m-0 d-flex align-items-center gap-2">
+                                <i class="bi bi-clock-history text-muted"></i>
+                                <span>@(Language == "en" ? "Version History" : "版本历史与更新日志")</span>
+                            </h3>
+                            <span class="text-muted small font-monospace">@_skill.Versions.Count @(Language == "en" ? "releases" : "个版本")</span>
+                        </div>
+                        <div class="table-modern-wrapper">
+                            <table class="table-modern">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 120px;">@(Language == "en" ? "Version" : "版本")</th>
+                                        <th>@(Language == "en" ? "Changelog" : "更新说明")</th>
+                                        <th style="width: 160px;">@(Language == "en" ? "Date" : "发布时间")</th>
+                                        <th style="width: 90px;">@(Language == "en" ? "Downloads" : "下载量")</th>
+                                        <th class="text-end" style="width: 90px;">@(Language == "en" ? "Package" : "离线包")</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var ver in _skill.Versions)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <span class="skill-version-pill">v@ver.Version</span>
+                                                @if (ver.Version == _skill.Version)
+                                                {
+                                                    <span class="badge-subtle badge-subtle-success ms-1" style="font-size: 0.68rem;">@(Language == "en" ? "Latest" : "当前")</span>
+                                                }
+                                            </td>
+                                            <td class="text-secondary small">@(string.IsNullOrWhiteSpace(ver.Changelog) ? "-" : ver.Changelog)</td>
+                                            <td class="text-muted small">@DateTimeOffset.FromUnixTimeMilliseconds(ver.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                            <td class="text-muted small font-monospace"><i class="bi bi-download me-1"></i>@ver.DownloadCount</td>
+                                            <td class="text-end">
+                                                <a class="btn-modern btn-modern-sm" href="/api/skills/@_skill.Slug/download?version=@ver.Version" title="下载离线包">
+                                                    <i class="bi bi-download"></i>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- Right Sticky Sidebar Column -->
+            <aside class="skill-detail-aside-col">
+                <!-- CLI Install Card -->
+                <div class="aside-card">
+                    <div class="aside-card-title">
+                        <i class="bi bi-terminal"></i>
+                        <span>@(Language == "en" ? "Install in SeekClaw" : "一键终端安装")</span>
+                    </div>
+
+                    <div class="terminal-command-box">
+                        <code>$ seekclaw skill install @_skill.Slug</code>
+                        <button class="copy-icon-btn" type="button" @onclick='() => CopyCommand($"seekclaw skill install {_skill.Slug}")' title="复制安装命令">
+                            <i class="bi @(_copied ? "bi-check2 text-success" : "bi-clipboard")"></i>
+                        </button>
+                    </div>
+
                     @if (_skill.HasPackage)
                     {
-                        <a class="vp-btn-primary" href="/api/skills/@_skill.Id/download">
-                            <i class="bi bi-download"></i> @(Language == "en" ? "Download Zip Package" : "下载技能安装包")
+                        <a class="btn-modern btn-modern-primary w-100 justify-content-center mt-3" href="/api/skills/@_skill.Id/download">
+                            <i class="bi bi-file-earmark-zip"></i>
+                            <span>@(Language == "en" ? "Download .zip Package" : "下载离线插件包")</span>
                         </a>
                     }
-                    <a class="vp-btn-secondary" href="@(Language == "en" ? "/en/skills" : "/skills")">
-                        <i class="bi bi-arrow-left"></i> @(Language == "en" ? "Marketplace" : "返回市场")
-                    </a>
                 </div>
-            </div>
 
-            <p class="text-secondary mt-3 mb-0">@_skill.Summary</p>
+                <!-- Metadata Properties Card -->
+                <div class="aside-card">
+                    <div class="aside-card-title">
+                        <i class="bi bi-info-circle"></i>
+                        <span>@(Language == "en" ? "Details & Metadata" : "元数据与属性")</span>
+                    </div>
 
-            <div class="skill-install-banner">
-                <span>$ <code>seekclaw skill install @_skill.Slug</code></span>
-                <button class="copy-icon-btn" type="button" @onclick='() => CopyCommand($"seekclaw skill install {_skill.Slug}")' title="复制安装命令">
-                    <i class="bi @(_copied ? "bi-check2 text-success" : "bi-clipboard")"></i>
-                </button>
-            </div>
+                    <div class="meta-kv-row">
+                        <span class="meta-kv-label">@(Language == "en" ? "Author" : "作者署名")</span>
+                        <span class="meta-kv-val">@_skill.Author</span>
+                    </div>
 
-            <div class="skill-detail-meta">
-                <span><strong><i class="bi bi-person me-1"></i>@(Language == "en" ? "Author:" : "作者：")</strong> @_skill.Author</span>
-                @if (!string.IsNullOrWhiteSpace(_skill.AuthorUsername) && !_skill.IsOfficial)
-                {
-                    <span><strong><i class="bi bi-person-badge me-1"></i>@(Language == "en" ? "Published by:" : "发布用户：")</strong> @_skill.AuthorUsername</span>
-                }
-                <span><strong><i class="bi bi-tag me-1"></i>@(Language == "en" ? "Version:" : "版本：")</strong> v@_skill.Version</span>
-                <span><strong><i class="bi bi-download me-1"></i>@(Language == "en" ? "Downloads:" : "下载：")</strong> @_skill.DownloadCount</span>
-                <span><strong><i class="bi bi-eye me-1"></i>@(Language == "en" ? "Views:" : "浏览：")</strong> @_skill.ViewCount</span>
-                @if (!string.IsNullOrWhiteSpace(_skill.Homepage))
-                {
-                    <span><strong><i class="bi bi-globe me-1"></i>@(Language == "en" ? "Homepage:" : "主页：")</strong> <a href="@_skill.Homepage" target="_blank" rel="noopener noreferrer">@_skill.Homepage</a></span>
-                }
-            </div>
-        </div>
+                    @if (!string.IsNullOrWhiteSpace(_skill.AuthorUsername) && !_skill.IsOfficial)
+                    {
+                        <div class="meta-kv-row">
+                            <span class="meta-kv-label">@(Language == "en" ? "Publisher" : "发布账户")</span>
+                            <span class="meta-kv-val">@_skill.AuthorUsername</span>
+                        </div>
+                    }
 
-        @if (_skill.Versions.Count > 0)
-        {
-            <div class="mt-4 mb-4 p-3 bg-light rounded border">
-                <div class="d-flex align-items-center justify-content-between mb-3">
-                    <h3 class="h6 fw-bold m-0 d-flex align-items-center gap-2">
-                        <i class="bi bi-clock-history text-primary"></i>
-                        @(Language == "en" ? "Version History" : "版本历史与更新记录")
-                    </h3>
-                    <span class="badge text-bg-secondary font-monospace" style="font-size: 0.75rem;">
-                        @_skill.Versions.Count @(Language == "en" ? "releases" : "个版本")
-                    </span>
+                    <div class="meta-kv-row">
+                        <span class="meta-kv-label">@(Language == "en" ? "Current Version" : "当前版本")</span>
+                        <span class="meta-kv-val mono">v@_skill.Version</span>
+                    </div>
+
+                    <div class="meta-kv-row">
+                        <span class="meta-kv-label">@(Language == "en" ? "Total Downloads" : "累计下载")</span>
+                        <span class="meta-kv-val mono">@_skill.DownloadCount</span>
+                    </div>
+
+                    <div class="meta-kv-row">
+                        <span class="meta-kv-label">@(Language == "en" ? "Total Views" : "累计浏览")</span>
+                        <span class="meta-kv-val mono">@_skill.ViewCount</span>
+                    </div>
+
+                    <div class="meta-kv-row">
+                        <span class="meta-kv-label">@(Language == "en" ? "Category" : "生态归属")</span>
+                        <span class="meta-kv-val">@(_skill.IsOfficial ? (Language == "en" ? "Official" : "官方认证") : (Language == "en" ? "Community" : "社区开源"))</span>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(_skill.Homepage))
+                    {
+                        <div class="meta-kv-row">
+                            <span class="meta-kv-label">@(Language == "en" ? "Homepage" : "主页外链")</span>
+                            <span class="meta-kv-val text-truncate" style="max-width: 180px;">
+                                <a href="@_skill.Homepage" target="_blank" rel="noopener noreferrer" class="text-decoration-none">
+                                    <i class="bi bi-box-arrow-up-right me-1"></i>Link
+                                </a>
+                            </span>
+                        </div>
+                    }
                 </div>
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover align-middle mb-0">
-                        <thead>
-                            <tr class="text-secondary small">
-                                <th style="width: 130px;">@(Language == "en" ? "Version" : "版本")</th>
-                                <th>@(Language == "en" ? "Changelog" : "更新说明")</th>
-                                <th style="width: 170px;">@(Language == "en" ? "Date" : "发布时间")</th>
-                                <th style="width: 100px;">@(Language == "en" ? "Downloads" : "下载量")</th>
-                                <th class="text-end" style="width: 100px;">@(Language == "en" ? "Action" : "操作")</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var ver in _skill.Versions)
-                            {
-                                <tr>
-                                    <td>
-                                        <span class="badge @(ver.Version == _skill.Version ? "text-bg-success" : "text-bg-secondary") font-monospace">
-                                            v@ver.Version
-                                        </span>
-                                        @if (ver.Version == _skill.Version)
-                                        {
-                                            <span class="badge text-bg-light border ms-1" style="font-size: 0.7rem;">@(Language == "en" ? "Latest" : "当前")</span>
-                                        }
-                                    </td>
-                                    <td class="text-secondary small">@(string.IsNullOrWhiteSpace(ver.Changelog) ? "-" : ver.Changelog)</td>
-                                    <td class="text-muted small">@DateTimeOffset.FromUnixTimeMilliseconds(ver.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                                    <td class="text-muted small"><i class="bi bi-download me-1"></i>@ver.DownloadCount</td>
-                                    <td class="text-end">
-                                        <a class="btn btn-sm btn-outline-primary" href="/api/skills/@_skill.Slug/download?version=@ver.Version">
-                                            <i class="bi bi-download"></i> @(Language == "en" ? "Get" : "下载")
-                                        </a>
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        }
-
-        <div class="markdown-body">
-            @((MarkupString)Markdown.ToHtml(_skill.ReadmeMarkdown))
+            </aside>
         </div>
     </div>
 }
@@ -219,7 +273,7 @@ else
 
     private async Task CopyCommand(string text)
     {
-        await JS.InvokeVoidAsync("SeekClaw.copyText", text);
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
         _copied = true;
         StateHasChanged();
         await Task.Delay(2000);
