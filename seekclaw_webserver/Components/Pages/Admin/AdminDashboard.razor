@@ -5,85 +5,159 @@
 @inject SkillService Skills
 @inject AuthService Auth
 
-<PageTitle>控制台 — SeekClaw 后台管理</PageTitle>
+<PageTitle>平台概览 — SeekClaw 控制台</PageTitle>
 
-<section class="admin-shell">
-    <header class="skills-header mb-4 text-start">
-        <p class="doc-kicker">Administration Dashboard</p>
-        <h1 class="text-start">平台管理控制台</h1>
-        <p class="text-start m-0">集中监控 SeekClaw 文档站、技能市场生态、用户权限与站点全局策略。</p>
-    </header>
+<!-- 4 Left-Border Accent Metric Cards -->
+<div class="admin-metric-strip-grid mb-3">
+    <!-- Card 1: 已收录技能 (Blue) -->
+    <div class="metric-strip-card border-blue">
+        <div class="metric-strip-label">已收录技能插件</div>
+        <div class="metric-strip-val">@_skillsCount</div>
+        <div class="metric-strip-sub">官方认证与社区开发者提交总计</div>
+    </div>
 
-    <div class="admin-stats-grid">
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon"><i class="bi bi-stars"></i></div>
-            <div>
-                <div class="admin-stat-number">@_skillsCount</div>
-                <div class="admin-stat-label">已收录技能插件</div>
+    <!-- Card 2: 注册用户 (Green) -->
+    <div class="metric-strip-card border-green">
+        <div class="metric-strip-label">系统注册用户数</div>
+        <div class="metric-strip-val">@_usersCount</div>
+        <div class="metric-strip-sub">已激活开发者与管理员账号</div>
+    </div>
+
+    <!-- Card 3: 待审核队列 (Orange) -->
+    <div class="metric-strip-card border-orange">
+        <div class="metric-strip-label">待审核技能队列</div>
+        <div class="metric-strip-val" style="color: @(_pendingSkills.Count > 0 ? "#fa8c16" : "inherit");">@_pendingSkills.Count</div>
+        <div class="metric-strip-sub">等待管理员审核上架的社区申请</div>
+    </div>
+
+    <!-- Card 4: 数据库运行模式 (Red) -->
+    <div class="metric-strip-card border-red">
+        <div class="metric-strip-label">SQLite 引擎状态</div>
+        <div class="metric-strip-val">WAL</div>
+        <div class="metric-strip-sub">并发写优化与高吞吐持久化模式</div>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <!-- Left: 待审核社区技能快捷处理 -->
+    <div class="col-lg-8">
+        <div class="admin-card-container h-100">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div>
+                    <h3 class="h6 fw-bold m-0 d-flex align-items-center gap-2">
+                        <i class="bi bi-clock-history text-warning"></i>
+                        <span>待审核技能插件</span>
+                    </h3>
+                    <div class="small text-muted">来自社区开发者的最新上架申请</div>
+                </div>
+                <a class="btn-modern btn-modern-sm" href="/admin/skills">
+                    <span>查看全部技能</span> <i class="bi bi-arrow-right"></i>
+                </a>
             </div>
-        </div>
 
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon"><i class="bi bi-people"></i></div>
-            <div>
-                <div class="admin-stat-number">@_usersCount</div>
-                <div class="admin-stat-label">已注册用户总数</div>
-            </div>
-        </div>
-
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon"><i class="bi bi-shield-check"></i></div>
-            <div>
-                <div class="admin-stat-number">@(_registrationAllowed ? "已开放" : "已关闭")</div>
-                <div class="admin-stat-label">公开注册状态</div>
-            </div>
-        </div>
-
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon"><i class="bi bi-database"></i></div>
-            <div>
-                <div class="admin-stat-number">SQLite</div>
-                <div class="admin-stat-label">本地数据存储</div>
-            </div>
+            @if (_pendingSkills.Count == 0)
+            {
+                <div class="p-4 text-center text-muted">
+                    <i class="bi bi-check-circle fs-3 text-success d-block mb-1"></i>
+                    <div class="small">暂无待审核技能，所有社区提交已处理完毕。</div>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table-admin-modern">
+                        <thead>
+                            <tr>
+                                <th>技能名称</th>
+                                <th>作者</th>
+                                <th>版本</th>
+                                <th>提交时间</th>
+                                <th class="text-end">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var s in _pendingSkills.Take(5))
+                            {
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">@s.Name</div>
+                                        <div class="text-muted small font-monospace" style="font-size: 0.72rem;">@s.Slug</div>
+                                    </td>
+                                    <td>
+                                        <div class="small">@s.Author</div>
+                                        @if (!string.IsNullOrWhiteSpace(s.AuthorUsername))
+                                        {
+                                            <div class="text-muted small font-monospace" style="font-size: 0.72rem;">@@@s.AuthorUsername</div>
+                                        }
+                                    </td>
+                                    <td><span class="skill-version-pill">v@s.Version</span></td>
+                                    <td class="small text-muted font-monospace">@DateTimeOffset.FromUnixTimeMilliseconds(s.UpdatedAt).ToLocalTime().ToString("MM-dd HH:mm")</td>
+                                    <td class="text-end">
+                                        <a class="admin-action-btn-pill btn-pill-orange" href="/admin/skills">
+                                            <i class="bi bi-clipboard-check"></i> 立即审核
+                                        </a>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
         </div>
     </div>
 
-    <div class="vp-feature-grid mb-4">
-        <a class="vp-feature-card text-decoration-none" href="/admin/skills">
-            <div class="vp-feature-icon"><i class="bi bi-stars"></i></div>
-            <h3>技能管理 &rarr;</h3>
-            <p>发布、在线编辑 Markdown 文档、上传 Zip 技能包、下线或删除技能。</p>
-        </a>
+    <!-- Right: 系统运维状态 & 快捷操作 -->
+    <div class="col-lg-4">
+        <div class="admin-card-container h-100">
+            <h3 class="h6 fw-bold mb-3 d-flex align-items-center gap-2">
+                <i class="bi bi-cpu"></i>
+                <span>系统基础运维指标</span>
+            </h3>
 
-        <a class="vp-feature-card text-decoration-none" href="/admin/users">
-            <div class="vp-feature-icon"><i class="bi bi-people"></i></div>
-            <h3>用户与权限 &rarr;</h3>
-            <p>查看注册用户列表、重置密码、切换超级管理员角色及清理用户。</p>
-        </a>
+            <div class="d-flex flex-column gap-2">
+                <div class="meta-kv-row">
+                    <span class="meta-kv-label">公开注册通道</span>
+                    <span class="meta-kv-val">@(_registrationAllowed ? "已开放" : "已关闭")</span>
+                </div>
+                <div class="meta-kv-row">
+                    <span class="meta-kv-label">SQLite 日志模式</span>
+                    <span class="meta-kv-val mono text-success">PRAGMA journal_mode=WAL</span>
+                </div>
+                <div class="meta-kv-row">
+                    <span class="meta-kv-label">单包上传硬限</span>
+                    <span class="meta-kv-val mono">10 MB (Hard Check)</span>
+                </div>
+                <div class="meta-kv-row">
+                    <span class="meta-kv-label">运行架构</span>
+                    <span class="meta-kv-val mono">.NET 10.0 AOT-Ready</span>
+                </div>
+            </div>
 
-        <a class="vp-feature-card text-decoration-none" href="/admin/settings">
-            <div class="vp-feature-icon"><i class="bi bi-sliders"></i></div>
-            <h3>站点全局设置 &rarr;</h3>
-            <p>修改站点名称、配置是否允许公开注册与维护模式策略。</p>
-        </a>
+            <hr style="border-color: var(--admin-border); margin: 1rem 0;" />
 
-        <a class="vp-feature-card text-decoration-none" href="/setup">
-            <div class="vp-feature-icon"><i class="bi bi-wrench-adjustable"></i></div>
-            <h3>环境诊断与向导 &rarr;</h3>
-            <p>查看数据库文件大小、路径、SQLite 读写连通性诊断报告。</p>
-        </a>
+            <div class="d-grid gap-2">
+                <a class="btn-modern btn-modern-primary justify-content-center" href="/admin/skills">
+                    <i class="bi bi-stars"></i> 进入技能插件库
+                </a>
+                <a class="btn-modern justify-content-center" href="/setup">
+                    <i class="bi bi-wrench-adjustable"></i> 运行环境完整性诊断
+                </a>
+            </div>
+        </div>
     </div>
-</section>
+</div>
 
 @code {
     private int _skillsCount;
     private int _usersCount;
     private bool _registrationAllowed;
+    private List<SkillSummary> _pendingSkills = new();
 
     protected override async Task OnInitializedAsync()
     {
         var skills = await Skills.ListAsync(includeDisabled: true);
         _skillsCount = skills.Count;
+        _pendingSkills = skills.Where(s => s.ReviewStatus == SkillReviewStatus.Pending).ToList();
 
         var users = await Auth.ListUsersAsync();
         _usersCount = users.Count;
@@ -91,4 +165,3 @@
         _registrationAllowed = await Auth.IsRegistrationAllowedAsync();
     }
 }
-

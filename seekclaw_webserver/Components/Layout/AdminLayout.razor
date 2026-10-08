@@ -1,76 +1,169 @@
 @inherits LayoutComponentBase
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@implements IDisposable
 
-<div class="admin-app-shell">
-    <header class="admin-topbar">
-        <div class="admin-topbar-inner">
-            <div class="d-flex align-items-center gap-3">
-                <a class="admin-brand" href="/admin">
-                    <img src="/logo.png" alt="SeekClaw Admin" />
-                    <span>SeekClaw <strong>Admin</strong></span>
-                </a>
-                <span class="badge text-bg-success" style="font-size: 0.75rem;">控制台</span>
+<div class="admin-layout-shell">
+    <!-- LEFT SIDEBAR -->
+    <aside class="admin-sidebar">
+        <!-- Brand Header -->
+        <div class="admin-sidebar-brand">
+            <div class="admin-brand-icon-box">
+                <i class="bi bi-terminal"></i>
+            </div>
+            <div class="admin-brand-info">
+                <span class="admin-brand-title">SeekClaw Admin</span>
+                <span class="admin-brand-role">超级管理员控制台</span>
+            </div>
+        </div>
 
-                <nav class="admin-nav-menu ms-3">
-                    <NavLink class="admin-nav-item" href="/admin" Match="NavLinkMatch.All">
-                        <i class="bi bi-speedometer2"></i> 概览
-                    </NavLink>
-                    <NavLink class="admin-nav-item" href="/admin/skills">
-                        <i class="bi bi-stars"></i> 技能管理
-                    </NavLink>
-                    <NavLink class="admin-nav-item" href="/admin/users">
-                        <i class="bi bi-people"></i> 用户与权限
-                    </NavLink>
-                    <NavLink class="admin-nav-item" href="/admin/settings">
-                        <i class="bi bi-sliders"></i> 站点配置
-                    </NavLink>
-                    <NavLink class="admin-nav-item" href="/setup">
-                        <i class="bi bi-wrench-adjustable"></i> 环境诊断
-                    </NavLink>
-                </nav>
+        <!-- Grouped Navigation Menu -->
+        <div class="admin-sidebar-menu">
+            <!-- GROUP 1: 数据中心 -->
+            <div class="admin-menu-group-title">数据中心</div>
+            <NavLink class="admin-menu-item" href="/admin" Match="NavLinkMatch.All">
+                <i class="bi bi-speedometer2"></i>
+                <span>平台概览</span>
+            </NavLink>
+            <NavLink class="admin-menu-item" href="/admin/metrics">
+                <i class="bi bi-graph-up-arrow"></i>
+                <span>流量与度量</span>
+            </NavLink>
+
+            <!-- GROUP 2: 生态与内容 -->
+            <div class="admin-menu-group-title">生态与内容</div>
+            <NavLink class="admin-menu-item" href="/admin/skills">
+                <i class="bi bi-stars"></i>
+                <span>技能插件管理</span>
+            </NavLink>
+
+            <!-- GROUP 3: 用户与权限 -->
+            <div class="admin-menu-group-title">用户管理</div>
+            <NavLink class="admin-menu-item" href="/admin/users">
+                <i class="bi bi-people"></i>
+                <span>用户权限管理</span>
+            </NavLink>
+
+            <!-- GROUP 4: 系统运维 -->
+            <div class="admin-menu-group-title">系统设置</div>
+            <NavLink class="admin-menu-item" href="/admin/settings">
+                <i class="bi bi-sliders"></i>
+                <span>站点全局设置</span>
+            </NavLink>
+            <NavLink class="admin-menu-item" href="/setup">
+                <i class="bi bi-wrench-adjustable"></i>
+                <span>系统环境诊断</span>
+            </NavLink>
+            <a class="admin-menu-item" href="/" target="_blank">
+                <i class="bi bi-box-arrow-up-right"></i>
+                <span>访问前台门户</span>
+            </a>
+        </div>
+    </aside>
+
+    <!-- RIGHT MAIN WRAPPER -->
+    <div class="admin-main-wrapper">
+        <!-- Topbar: Breadcrumbs + Subtitle & Profile -->
+        <header class="admin-topbar-modern">
+            <div class="admin-topbar-left">
+                <div class="admin-breadcrumbs">
+                    <span class="crumb-home">首页</span>
+                    <span class="crumb-sep">/</span>
+                    <span class="crumb-current">@CurrentPageTitle</span>
+                </div>
+                <div class="admin-page-subtitle">@CurrentPageDescription</div>
             </div>
 
-            <div class="d-flex align-items-center gap-2">
-                <a class="admin-return-btn" href="/" target="_blank" title="在新标签页中打开前台门户">
-                    <i class="bi bi-box-arrow-up-right"></i> 访问前台
-                </a>
-
-                <button class="vp-switch-appearance ms-2 me-2" type="button" role="switch" @onclick="ToggleThemeAsync" title="切换深浅主题">
-                    <span class="vp-switch-check">
-                        <i class="bi @(_theme == "dark" ? "bi-moon-stars" : "bi-sun")"></i>
-                    </span>
+            <div class="admin-topbar-right">
+                <!-- Theme Switch -->
+                <button class="admin-icon-btn" type="button" @onclick="ToggleThemeAsync" title="切换深浅主题">
+                    <i class="bi @(_theme == "dark" ? "bi-moon-stars" : "bi-sun")"></i>
                 </button>
 
+                <!-- User Capsule -->
                 <AuthorizeView>
                     <Authorized>
-                        <div class="admin-user-tag">
-                            <i class="bi bi-person-fill-gear"></i>
+                        <div class="admin-user-capsule">
+                            <div class="admin-avatar-circle">
+                                @(context.User.Identity?.Name?.Length > 0 ? context.User.Identity.Name.Substring(0, 1).ToUpper() : "A")
+                            </div>
                             <span>@context.User.Identity?.Name</span>
+                            <i class="bi bi-chevron-down" style="font-size: 0.65rem; opacity: 0.6;"></i>
                         </div>
-                        <button class="admin-logout-btn" @onclick="LogoutAsync" title="退出管理登录">
+                        <button class="admin-icon-btn text-danger ms-1" type="button" @onclick="LogoutAsync" title="退出管理系统">
                             <i class="bi bi-box-arrow-right"></i>
                         </button>
                     </Authorized>
                 </AuthorizeView>
             </div>
-        </div>
-    </header>
+        </header>
 
-    <main class="admin-main-container">
-        @Body
-    </main>
-
-    <footer class="admin-footer">
-        <div class="admin-footer-inner">
-            <span>SeekClaw Administration System &bull; .NET 10 Runtime First</span>
-            <span>&copy; 2026 SeekClaw Team. All rights reserved.</span>
+        <!-- Multi-tab bar (TagsView) -->
+        <div class="admin-tabs-bar">
+            @foreach (var tab in _openTabs)
+            {
+                var isActive = IsTabActive(tab.Url);
+                <div class="admin-tab-pill @(isActive ? "active" : "")" @onclick="() => NavigateTo(tab.Url)">
+                    <span>@tab.Title</span>
+                    @if (tab.Closable)
+                    {
+                        <span class="admin-tab-close" @onclick:stopPropagation="true" @onclick="() => CloseTab(tab)">×</span>
+                    }
+                </div>
+            }
         </div>
-    </footer>
+
+        <!-- Page Body Content -->
+        <main class="admin-content-area">
+            @Body
+        </main>
+    </div>
 </div>
 
 @code {
+    private record AdminTab(string Title, string Url, bool Closable);
+
     private string _theme = "light";
+    private readonly List<AdminTab> _openTabs = new()
+    {
+        new AdminTab("平台概览", "/admin", false)
+    };
+
+    private string CurrentPageTitle
+    {
+        get
+        {
+            var path = Navigation.ToBaseRelativePath(Navigation.Uri).ToLowerInvariant();
+            if (string.IsNullOrEmpty(path) || path == "admin") return "平台概览";
+            if (path.StartsWith("admin/metrics")) return "流量与度量";
+            if (path.StartsWith("admin/skills")) return "技能插件管理";
+            if (path.StartsWith("admin/users")) return "用户权限管理";
+            if (path.StartsWith("admin/settings")) return "站点全局设置";
+            if (path.StartsWith("setup")) return "系统环境诊断";
+            return "管理后台";
+        }
+    }
+
+    private string CurrentPageDescription
+    {
+        get
+        {
+            var path = Navigation.ToBaseRelativePath(Navigation.Uri).ToLowerInvariant();
+            if (string.IsNullOrEmpty(path) || path == "admin") return "集中监控 SeekClaw 文档站、技能生态市场、用户权限与全局运行指标";
+            if (path.StartsWith("admin/metrics")) return "监控全站技能曝光、CLI 安装下载量、日流量趋势与生态转化度量";
+            if (path.StartsWith("admin/skills")) return "管理官方认证与社区开发者贡献的技能生态，处理审核流与多版本生命周期";
+            if (path.StartsWith("admin/users")) return "管理系统注册用户、分配超级管理员权限与密码重置";
+            if (path.StartsWith("admin/settings")) return "配置平台名称、注册策略开关与系统运维规则";
+            if (path.StartsWith("setup")) return "检测本地 SQLite 数据库连通性、WAL 模式与运行时环境状态";
+            return "SeekClaw 系统运行与资源管理控制台";
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+        EnsureCurrentTab();
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -78,6 +171,53 @@
         {
             _theme = await JS.InvokeAsync<string>("SeekClaw.getTheme");
             StateHasChanged();
+        }
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        EnsureCurrentTab();
+        StateHasChanged();
+    }
+
+    private void EnsureCurrentTab()
+    {
+        var relative = "/" + Navigation.ToBaseRelativePath(Navigation.Uri);
+        var baseRelative = relative.Split('?')[0];
+
+        string? title = null;
+        if (baseRelative == "/admin") title = "平台概览";
+        else if (baseRelative == "/admin/metrics") title = "流量与度量";
+        else if (baseRelative == "/admin/skills") title = "技能插件管理";
+        else if (baseRelative == "/admin/users") title = "用户权限管理";
+        else if (baseRelative == "/admin/settings") title = "站点全局设置";
+        else if (baseRelative == "/setup") title = "系统环境诊断";
+
+        if (title != null && !_openTabs.Any(t => t.Url == baseRelative))
+        {
+            _openTabs.Add(new AdminTab(title, baseRelative, baseRelative != "/admin"));
+        }
+    }
+
+    private bool IsTabActive(string url)
+    {
+        var currentRelative = "/" + Navigation.ToBaseRelativePath(Navigation.Uri);
+        var cleanCurrent = currentRelative.Split('?')[0];
+        return string.Equals(cleanCurrent, url, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void NavigateTo(string url)
+    {
+        Navigation.NavigateTo(url);
+    }
+
+    private void CloseTab(AdminTab tab)
+    {
+        _openTabs.Remove(tab);
+        if (IsTabActive(tab.Url))
+        {
+            var next = _openTabs.LastOrDefault() ?? new AdminTab("平台概览", "/admin", false);
+            Navigation.NavigateTo(next.Url);
         }
     }
 
@@ -89,5 +229,10 @@
     private async Task LogoutAsync()
     {
         await JS.InvokeVoidAsync("SeekClaw.logout");
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
     }
 }

@@ -4,50 +4,57 @@
 @rendermode InteractiveServer
 @inject AuthService Auth
 
-<PageTitle>全局设置 — SeekClaw 后台</PageTitle>
+<PageTitle>站点全局设置 — SeekClaw 管理后台</PageTitle>
 
-<section class="admin-shell">
-    <div class="d-flex align-items-center justify-content-between mb-4">
-        <div>
-            <p class="doc-kicker">Site Settings</p>
-            <h1 class="h2 fw-bold m-0">站点全局配置</h1>
+@if (!string.IsNullOrWhiteSpace(_message))
+{
+    <div class="alert-modern alert-modern-info mb-3">
+        <i class="bi bi-check-circle-fill fs-5 flex-shrink-0 text-success"></i>
+        <div class="flex-grow-1">@_message</div>
+        <button type="button" class="btn-close" style="font-size: 0.75rem;" @onclick="() => _message = null"></button>
+    </div>
+}
+
+<div class="admin-card-container" style="max-width: 720px;">
+    <div class="mb-4">
+        <h3 class="h6 fw-bold mb-1 d-flex align-items-center gap-2">
+            <i class="bi bi-gear-wide-connected text-primary"></i>
+            <span>平台基础配置</span>
+        </h3>
+        <p class="small text-muted mb-3">配置 SeekClaw 在前台门户、文档与技能市场展示的基本参数</p>
+
+        <div class="mb-3">
+            <label class="form-label small text-muted">平台全局名称</label>
+            <input class="form-control form-control-sm" @bind="_siteName" placeholder="SeekClaw" />
+            <div class="form-text small">显示在系统导航栏、页面 Title 与页脚版权声明中的主标识。</div>
         </div>
-        <a class="vp-btn-secondary" href="/admin"><i class="bi bi-arrow-left"></i> 返回控制台</a>
     </div>
 
-    <div class="setup-card" style="max-width: 680px; margin: 0;">
-        <div class="mb-4">
-            <h2 class="h5 fw-bold text-dark-emphasis mb-2"><i class="bi bi-gear-wide-connected me-1"></i> 基础信息</h2>
-            <div class="mb-3">
-                <label class="form-label">站点名称</label>
-                <input class="form-control" @bind="_siteName" placeholder="SeekClaw" />
-                <div class="form-text">显示在页面标题、导航栏与页脚的主名称。</div>
-            </div>
+    <div class="mb-4 pt-3 border-top">
+        <h3 class="h6 fw-bold mb-1 d-flex align-items-center gap-2">
+            <i class="bi bi-person-lock text-primary"></i>
+            <span>用户访问与注册策略</span>
+        </h3>
+        <p class="small text-muted mb-3">控制新用户是否可以直接注册加入开发者生态</p>
+
+        <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" id="regSwitch" @bind="_registrationEnabled" />
+            <label class="form-check-label ms-2 small fw-bold" for="regSwitch">
+                @(_registrationEnabled ? "已开放公开注册" : "已关闭公开注册")
+            </label>
         </div>
-
-        <div class="mb-4 pt-3 border-top">
-            <h2 class="h5 fw-bold text-dark-emphasis mb-2"><i class="bi bi-person-lock me-1"></i> 用户访问策略</h2>
-            <div class="form-check form-switch mb-2">
-                <input class="form-check-input" type="checkbox" id="regSwitch" @bind="_registrationEnabled" />
-                <label class="form-check-label ms-2" for="regSwitch">
-                    <strong>@(_registrationEnabled ? "已开放公开注册" : "已关闭公开注册")</strong>
-                </label>
-            </div>
-            <div class="form-text">
-                关闭后，前台用户注册入口将禁用，新用户只能由超级管理员在后台分配创建。
-            </div>
+        <div class="form-text small">
+            关闭后，前台用户注册入口将被禁用，新账号只能由超级管理员在用户管理后台手动分配。
         </div>
+    </div>
 
-        @if (!string.IsNullOrWhiteSpace(_message))
-        {
-            <div class="alert alert-success mb-3"><i class="bi bi-check2-circle me-1"></i> @_message</div>
-        }
-
-        <button class="vp-btn-primary" disabled="@_saving" @onclick="SaveAsync">
-            <i class="bi bi-save"></i> @(_saving ? "正在保存…" : "保存全局设置")
+    <div class="pt-3 border-top d-flex justify-content-end">
+        <button class="btn-modern btn-modern-primary" disabled="@_saving" @onclick="SaveAsync">
+            <i class="bi bi-save"></i>
+            <span>@(_saving ? "正在保存…" : "保存全局设置")</span>
         </button>
     </div>
-</section>
+</div>
 
 @code {
     private string _siteName = "SeekClaw";

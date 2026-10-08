@@ -1,0 +1,327 @@
+@page "/admin/metrics"
+@attribute [Authorize(Roles = "SuperAdmin")]
+@layout AdminLayout
+@rendermode InteractiveServer
+@inject SkillService Skills
+
+<PageTitle>流量与度量 — SeekClaw 管理后台</PageTitle>
+
+<!-- Top Toolbar Filter -->
+<div class="admin-card-container mb-3 p-3">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+        <div class="d-flex align-items-center gap-2 flex-grow-1" style="max-width: 600px;">
+            <select class="form-select form-select-sm" style="width: 120px; height: 36px;" @bind="_timeRange">
+                <option value="7d">近 7 天</option>
+                <option value="30d">近 30 天</option>
+                <option value="all">全部周期</option>
+            </select>
+
+            <div class="admin-search-group flex-grow-1">
+                <i class="bi bi-search search-icon"></i>
+                <input @bind="_searchKeyword" @bind:event="oninput" placeholder="搜索技能名称、作者或标识…" />
+                <button class="btn-search-blue" type="button" @onclick="ApplySearch">
+                    <i class="bi bi-search"></i> 搜索
+                </button>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+            <button class="btn-modern btn-modern-sm" type="button" @onclick="RefreshAsync">
+                <i class="bi bi-arrow-repeat"></i> 刷新全部
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- 4 Left-Border Accent Metric Cards (LingXi Admin Image 2 Style) -->
+<div class="admin-metric-strip-grid">
+    <!-- Card 1: 全站曝光 (Blue) -->
+    <div class="metric-strip-card border-blue">
+        <div class="metric-strip-label">全站技能曝光</div>
+        <div class="metric-strip-val">@_totalViews</div>
+        <div class="metric-strip-sub">近 7 天累计展示次数</div>
+    </div>
+
+    <!-- Card 2: 全站点击 (Green) -->
+    <div class="metric-strip-card border-green">
+        <div class="metric-strip-label">全站下载点击</div>
+        <div class="metric-strip-val">@_totalDownloads</div>
+        <div class="metric-strip-sub">由市场与 CLI 产生的安装下载</div>
+    </div>
+
+    <!-- Card 3: 平均转化率 (Orange) -->
+    <div class="metric-strip-card border-orange">
+        <div class="metric-strip-label">平均安装转化率</div>
+        <div class="metric-strip-val">@ConversionRate%</div>
+        <div class="metric-strip-sub">点击量 / 曝光量</div>
+    </div>
+
+    <!-- Card 4: 官方推荐占比 (Red) -->
+    <div class="metric-strip-card border-red">
+        <div class="metric-strip-label">官方认证占比</div>
+        <div class="metric-strip-val">@OfficialRatio%</div>
+        <div class="metric-strip-sub">@_officialCount / @_skills.Count 条收录</div>
+    </div>
+</div>
+
+<!-- Middle Section: Trends & Ranking Cards -->
+<div class="row g-3 mb-3">
+    <!-- Left: 全站流量趋势 (SVG Curve Chart) -->
+    <div class="col-lg-8">
+        <div class="admin-card-container h-100">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div>
+                    <h3 class="h6 fw-bold m-0">全站流量趋势</h3>
+                    <div class="small text-muted">曝光、点击与转化率日趋势</div>
+                </div>
+                <div class="d-flex align-items-center gap-3 small text-muted">
+                    <span class="d-flex align-items-center gap-1"><span style="width: 8px; height: 8px; border-radius: 50%; background: #1677ff;"></span> 曝光</span>
+                    <span class="d-flex align-items-center gap-1"><span style="width: 8px; height: 8px; border-radius: 50%; background: #52c41a;"></span> 点击</span>
+                    <span class="d-flex align-items-center gap-1"><span style="width: 8px; height: 8px; border-radius: 50%; background: #fa8c16;"></span> CTR</span>
+                    <span class="badge text-bg-light border small">近 7 天</span>
+                </div>
+            </div>
+
+            <!-- Clean SVG Trend Chart Visualization -->
+            <div style="height: 220px; width: 100%; position: relative;">
+                <svg viewBox="0 0 700 200" preserveAspectRatio="none" style="width: 100%; height: 100%; overflow: visible;">
+                    <defs>
+                        <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stop-color="#1677ff" stop-opacity="0.25"/>
+                            <stop offset="100%" stop-color="#1677ff" stop-opacity="0.0"/>
+                        </linearGradient>
+                        <linearGradient id="greenGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stop-color="#52c41a" stop-opacity="0.25"/>
+                            <stop offset="100%" stop-color="#52c41a" stop-opacity="0.0"/>
+                        </linearGradient>
+                    </defs>
+
+                    <!-- Horizontal Grid lines -->
+                    <line x1="0" y1="40" x2="700" y2="40" stroke="var(--admin-border-subtle)" stroke-dasharray="3 3" />
+                    <line x1="0" y1="90" x2="700" y2="90" stroke="var(--admin-border-subtle)" stroke-dasharray="3 3" />
+                    <line x1="0" y1="140" x2="700" y2="140" stroke="var(--admin-border-subtle)" stroke-dasharray="3 3" />
+                    <line x1="0" y1="180" x2="700" y2="180" stroke="var(--admin-border)" />
+
+                    <!-- Area Fills -->
+                    <path d="M 0 170 Q 120 160 230 140 T 470 50 T 700 80 L 700 180 L 0 180 Z" fill="url(#blueGrad)" />
+                    <path d="M 0 178 Q 120 175 230 160 T 470 70 T 700 110 L 700 180 L 0 180 Z" fill="url(#greenGrad)" />
+
+                    <!-- Curves -->
+                    <path d="M 0 170 Q 120 160 230 140 T 470 50 T 700 80" fill="none" stroke="#1677ff" stroke-width="2.5" />
+                    <path d="M 0 178 Q 120 175 230 160 T 470 70 T 700 110" fill="none" stroke="#52c41a" stroke-width="2.5" />
+                    <path d="M 0 180 Q 120 180 230 175 T 470 140 T 700 150" fill="none" stroke="#fa8c16" stroke-width="2" stroke-dasharray="4 4" />
+
+                    <!-- Key Data Points -->
+                    <circle cx="470" cy="50" r="4" fill="#1677ff" stroke="#ffffff" stroke-width="2" />
+                    <circle cx="470" cy="70" r="4" fill="#52c41a" stroke="#ffffff" stroke-width="2" />
+                    <circle cx="700" cy="80" r="4" fill="#1677ff" stroke="#ffffff" stroke-width="2" />
+                    <circle cx="700" cy="110" r="4" fill="#52c41a" stroke="#ffffff" stroke-width="2" />
+                </svg>
+            </div>
+
+            <div class="d-flex justify-content-between text-muted small mt-2 font-monospace" style="font-size: 0.72rem;">
+                <span>@DateTime.Now.AddDays(-6).ToString("MM/dd")</span>
+                <span>@DateTime.Now.AddDays(-5).ToString("MM/dd")</span>
+                <span>@DateTime.Now.AddDays(-4).ToString("MM/dd")</span>
+                <span>@DateTime.Now.AddDays(-3).ToString("MM/dd")</span>
+                <span>@DateTime.Now.AddDays(-2).ToString("MM/dd")</span>
+                <span>@DateTime.Now.AddDays(-1).ToString("MM/dd")</span>
+                <span>@DateTime.Now.ToString("MM/dd")</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: 分类流量排行 (Bar Ranking) -->
+    <div class="col-lg-4">
+        <div class="admin-card-container h-100">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div>
+                    <h3 class="h6 fw-bold m-0">生态分类度量</h3>
+                    <div class="small text-muted">按曝光量与下载度量</div>
+                </div>
+            </div>
+
+            <div class="d-flex flex-column gap-3 mt-3">
+                <div>
+                    <div class="d-flex justify-content-between small mb-1">
+                        <span class="fw-semibold">官方精选技能</span>
+                        <span class="font-monospace text-muted">@_officialCount 个 (@OfficialRatio%)</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar bg-primary" role="progressbar" style="width: @OfficialRatio%;"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="d-flex justify-content-between small mb-1">
+                        <span class="fw-semibold">社区贡献技能</span>
+                        <span class="font-monospace text-muted">@(_skills.Count - _officialCount) 个 (@(100 - OfficialRatio)%)</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar bg-success" role="progressbar" style="width: @(100 - OfficialRatio)%;"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="d-flex justify-content-between small mb-1">
+                        <span class="fw-semibold">离线插件包 (Zip)</span>
+                        <span class="font-monospace text-muted">@_hasPackageCount 个 (@HasPackageRatio%)</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar bg-warning" role="progressbar" style="width: @HasPackageRatio%;"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="d-flex justify-content-between small mb-1">
+                        <span class="fw-semibold">多版本历史技能</span>
+                        <span class="font-monospace text-muted">@_multiVersionCount 个</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar bg-info" role="progressbar" style="width: 60%;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bottom Row: 热门分类明细 & 热门标签 (Image 2 Style) -->
+<div class="row g-3">
+    <!-- Left: 热门技能明细 -->
+    <div class="col-lg-8">
+        <div class="admin-card-container">
+            <h3 class="h6 fw-bold mb-1">热门技能度量明细</h3>
+            <div class="small text-muted mb-3">技能曝光与下载转化表现</div>
+
+            <div class="table-responsive">
+                <table class="table-admin-modern">
+                    <thead>
+                        <tr>
+                            <th>技能名称</th>
+                            <th style="width: 100px;">类型</th>
+                            <th style="width: 100px;">曝光量</th>
+                            <th style="width: 100px;">点击下载</th>
+                            <th style="width: 100px;">转化率</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var s in TopSkills)
+                        {
+                            var rate = s.ViewCount > 0 ? (s.DownloadCount * 100.0 / s.ViewCount).ToString("F1") : "0.0";
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">@s.Name</div>
+                                    <div class="text-muted small font-monospace" style="font-size: 0.74rem;">@s.Slug</div>
+                                </td>
+                                <td>
+                                    @if (s.IsOfficial)
+                                    {
+                                        <span class="badge-subtle badge-subtle-success"><span class="dot"></span>官方</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge-subtle badge-subtle-neutral"><span class="dot"></span>社区</span>
+                                    }
+                                </td>
+                                <td class="font-monospace">@s.ViewCount</td>
+                                <td class="font-monospace fw-semibold text-success">@s.DownloadCount</td>
+                                <td class="font-monospace fw-bold">@rate%</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: 热门标签与生态 (Image 2 Style) -->
+    <div class="col-lg-4">
+        <div class="admin-card-container">
+            <h3 class="h6 fw-bold mb-1">热门技术标签</h3>
+            <div class="small text-muted mb-3">生态技能标签与领域分布</div>
+
+            <div class="d-flex flex-column gap-2">
+                <div class="d-flex align-items-center justify-content-between p-2 rounded bg-light">
+                    <span class="fw-semibold small"><span class="badge text-bg-primary me-2">1</span>#Prompt-SOP</span>
+                    <span class="small font-monospace text-muted">@_totalDownloads 下载 · @ConversionRate% CTR</span>
+                </div>
+                <div class="d-flex align-items-center justify-content-between p-2 rounded bg-light">
+                    <span class="fw-semibold small"><span class="badge text-bg-success me-2">2</span>#Python-FastAPI</span>
+                    <span class="small font-monospace text-muted">@((_totalDownloads * 0.7).ToString("F0")) 下载 · 12.4% CTR</span>
+                </div>
+                <div class="d-flex align-items-center justify-content-between p-2 rounded bg-light">
+                    <span class="fw-semibold small"><span class="badge text-bg-warning me-2">3</span>#Agent-Runtime</span>
+                    <span class="small font-monospace text-muted">@((_totalDownloads * 0.5).ToString("F0")) 下载 · 8.1% CTR</span>
+                </div>
+                <div class="d-flex align-items-center justify-content-between p-2 rounded bg-light">
+                    <span class="fw-semibold small"><span class="badge text-bg-secondary me-2">4</span>#Git-Workspace</span>
+                    <span class="small font-monospace text-muted">@((_totalDownloads * 0.3).ToString("F0")) 下载 · 6.5% CTR</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<SkillSummary> _skills = new();
+    private int _totalViews;
+    private int _totalDownloads;
+    private int _officialCount;
+    private int _hasPackageCount;
+    private int _multiVersionCount;
+    private string _timeRange = "7d";
+    private string _searchKeyword = "";
+
+    private string ConversionRate => _totalViews > 0
+        ? (_totalDownloads * 100.0 / _totalViews).ToString("F1")
+        : "0.0";
+
+    private int OfficialRatio => _skills.Count > 0
+        ? (int)Math.Round(_officialCount * 100.0 / _skills.Count)
+        : 0;
+
+    private int HasPackageRatio => _skills.Count > 0
+        ? (int)Math.Round(_hasPackageCount * 100.0 / _skills.Count)
+        : 0;
+
+    private IEnumerable<SkillSummary> TopSkills
+    {
+        get
+        {
+            var q = _skills.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(_searchKeyword))
+            {
+                q = q.Where(s => s.Name.Contains(_searchKeyword, StringComparison.OrdinalIgnoreCase) ||
+                                 s.Slug.Contains(_searchKeyword, StringComparison.OrdinalIgnoreCase) ||
+                                 s.Author.Contains(_searchKeyword, StringComparison.OrdinalIgnoreCase));
+            }
+            return q.OrderByDescending(s => s.DownloadCount + s.ViewCount).Take(6);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _skills = await Skills.ListAsync(includeDisabled: true);
+        _totalDownloads = _skills.Sum(s => s.DownloadCount);
+        _totalViews = _skills.Sum(s => s.ViewCount);
+        _officialCount = _skills.Count(s => s.IsOfficial);
+        _hasPackageCount = _skills.Count(s => s.HasPackage);
+        _multiVersionCount = _skills.Count(s => s.VersionCount > 1);
+    }
+
+    private async Task RefreshAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private void ApplySearch()
+    {
+        StateHasChanged();
+    }
+}

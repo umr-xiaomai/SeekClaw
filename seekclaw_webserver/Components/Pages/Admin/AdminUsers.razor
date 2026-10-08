@@ -5,35 +5,43 @@
 @inject AuthService Auth
 @inject AuthenticationStateProvider AuthStateProvider
 
-<PageTitle>用户与权限 — SeekClaw 后台</PageTitle>
+<PageTitle>用户权限管理 — SeekClaw 管理后台</PageTitle>
 
-<section class="admin-shell">
-    <div class="d-flex align-items-center justify-content-between mb-4">
+@if (!string.IsNullOrWhiteSpace(_error))
+{
+    <div class="alert-modern alert-modern-danger mb-3">
+        <i class="bi bi-exclamation-triangle-fill fs-5 flex-shrink-0"></i>
+        <div class="flex-grow-1">@_error</div>
+        <button type="button" class="btn-close" style="font-size: 0.75rem;" @onclick="() => _error = null"></button>
+    </div>
+}
+@if (!string.IsNullOrWhiteSpace(_message))
+{
+    <div class="alert-modern alert-modern-info mb-3">
+        <i class="bi bi-check-circle-fill fs-5 flex-shrink-0 text-success"></i>
+        <div class="flex-grow-1">@_message</div>
+        <button type="button" class="btn-close" style="font-size: 0.75rem;" @onclick="() => _message = null"></button>
+    </div>
+}
+
+<div class="admin-card-container">
+    <div class="d-flex align-items-center justify-content-between mb-3">
         <div>
-            <p class="doc-kicker">User Management</p>
-            <h1 class="h2 fw-bold m-0">用户与权限管理</h1>
+            <h3 class="h6 fw-bold m-0">已注册开发者与用户列表</h3>
+            <div class="small text-muted">管理全平台账号凭证、超级管理员分配与安全重置</div>
         </div>
-        <a class="vp-btn-secondary" href="/admin"><i class="bi bi-arrow-left"></i> 返回控制台</a>
+        <span class="badge text-bg-light border font-monospace">共 @_users.Count 位用户</span>
     </div>
 
-    @if (!string.IsNullOrWhiteSpace(_error))
-    {
-        <div class="alert alert-danger mb-3"><i class="bi bi-exclamation-triangle"></i> @_error</div>
-    }
-    @if (!string.IsNullOrWhiteSpace(_message))
-    {
-        <div class="alert alert-success mb-3"><i class="bi bi-check2-circle"></i> @_message</div>
-    }
-
-    <div class="admin-table">
-        <table class="table mb-0 align-middle">
+    <div class="table-responsive">
+        <table class="table-admin-modern">
             <thead>
                 <tr>
-                    <th style="width: 80px;">ID</th>
-                    <th>注册邮箱</th>
-                    <th>角色权限</th>
-                    <th>注册时间</th>
-                    <th class="text-end" style="width: 260px;">操作</th>
+                    <th style="width: 70px;">UID</th>
+                    <th>注册账户 / 邮箱</th>
+                    <th style="width: 140px;">角色权限</th>
+                    <th style="width: 170px;">注册时间</th>
+                    <th class="text-end" style="width: 220px;">操作</th>
                 </tr>
             </thead>
             <tbody>
@@ -41,35 +49,38 @@
                 {
                     var isCurrentUser = string.Equals(user.Username, _currentUsername, StringComparison.OrdinalIgnoreCase);
                     <tr>
-                        <td><span class="badge text-bg-light border">#@user.Id</span></td>
+                        <td class="font-monospace text-muted small">#@user.Id</td>
                         <td>
                             <i class="bi bi-envelope me-1 text-muted"></i>
-                            <strong>@user.Username</strong>
-                            @(isCurrentUser ? " (当前登录)" : "")
+                            <strong class="text-dark-emphasis">@user.Username</strong>
+                            @if (isCurrentUser)
+                            {
+                                <span class="badge-subtle badge-subtle-info ms-1"><span class="dot"></span>当前登录</span>
+                            }
                         </td>
                         <td>
                             @if (user.IsSuperAdmin)
                             {
-                                <span class="badge text-bg-danger"><i class="bi bi-shield-fill-check me-1"></i>超级管理员</span>
+                                <span class="badge-subtle badge-subtle-danger"><span class="dot"></span>超级管理员</span>
                             }
                             else
                             {
-                                <span class="badge text-bg-secondary">普通用户</span>
+                                <span class="badge-subtle badge-subtle-neutral"><span class="dot"></span>开发者用户</span>
                             }
                         </td>
-                        <td>@DateTimeOffset.FromUnixTimeMilliseconds(user.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td class="small text-muted font-monospace">@DateTimeOffset.FromUnixTimeMilliseconds(user.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                         <td class="text-end">
-                            <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-secondary" @onclick="() => OpenResetPasswordModal(user)" title="重置密码">
+                            <div class="d-inline-flex align-items-center gap-1">
+                                <button class="btn-modern btn-modern-sm" @onclick="() => OpenResetPasswordModal(user)" title="重置密码">
                                     <i class="bi bi-key"></i> 改密
                                 </button>
                                 @if (!isCurrentUser)
                                 {
-                                    <button class="btn btn-outline-warning" @onclick="() => ToggleSuperAdminAsync(user)" title="切换角色">
-                                        <i class="bi bi-shield-shaded"></i> @(user.IsSuperAdmin ? "取消超管" : "设为超管")
+                                    <button class="btn-modern btn-modern-sm" @onclick="() => ToggleSuperAdminAsync(user)" title="切换角色权限">
+                                        <i class="bi bi-shield-shaded"></i> @(user.IsSuperAdmin ? "降为普通" : "设为超管")
                                     </button>
-                                    <button class="btn btn-outline-danger" @onclick="() => _deleteTarget = user" title="删除用户">
-                                        <i class="bi bi-trash3"></i> 删除
+                                    <button class="btn-modern btn-modern-sm btn-modern-danger" @onclick="() => ConfirmDelete(user)" title="删除此账户">
+                                        <i class="bi bi-trash"></i>
                                     </button>
                                 }
                             </div>
@@ -79,67 +90,86 @@
             </tbody>
         </table>
     </div>
+</div>
 
-    @if (_passwordTarget is not null)
-    {
-        <div class="admin-modal-backdrop" @onclick="CloseResetPasswordModal"></div>
-        <div class="admin-modal-dialog">
-            <div class="admin-modal-content">
-                <div class="admin-modal-header">
-                    <h3 class="h5 fw-bold m-0"><i class="bi bi-key me-2"></i>重置密码</h3>
-                    <button type="button" class="btn-close" @onclick="CloseResetPasswordModal" aria-label="Close"></button>
+<!-- Modal Dialog for Reset Password -->
+@if (_showResetModal && _targetUser != null)
+{
+    <div class="admin-modal-backdrop" @onclick="() => _showResetModal = false"></div>
+    <div class="admin-modal-dialog">
+        <div class="admin-modal-content" style="max-width: 440px;">
+            <div class="admin-modal-header">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-key text-primary fs-5"></i>
+                    <h3 class="h6 fw-bold m-0">重置用户密码</h3>
                 </div>
-                <div class="admin-modal-body">
-                    <p class="mb-2">为用户 <strong>@_passwordTarget.Username</strong> 设置新密码（至少 6 位）：</p>
-                    <input type="password" class="form-control" @bind="_newPassword" placeholder="请输入新密码" />
-                    @if (!string.IsNullOrWhiteSpace(_modalError))
-                    {
-                        <div class="alert alert-danger mt-2 mb-0 py-2">@_modalError</div>
-                    }
-                </div>
-                <div class="admin-modal-footer">
-                    <button class="vp-btn-secondary" type="button" @onclick="CloseResetPasswordModal">取消</button>
-                    <button class="btn btn-primary" type="button" @onclick="ConfirmResetPasswordAsync">确认重置</button>
+                <button type="button" class="btn-close" @onclick="() => _showResetModal = false" aria-label="Close"></button>
+            </div>
+            <div class="admin-modal-body">
+                <p class="small text-muted mb-3">为用户 <strong>@_targetUser.Username</strong> 设置新的登录密码：</p>
+                <div class="mb-3">
+                    <label class="form-label small text-muted">新密码 *（至少 6 位）</label>
+                    <input type="password" class="form-control form-control-sm" @bind="_newPassword" placeholder="请输入新密码" />
                 </div>
             </div>
-        </div>
-    }
-
-    @if (_deleteTarget is not null)
-    {
-        <div class="admin-modal-backdrop" @onclick="() => _deleteTarget = null"></div>
-        <div class="admin-modal-dialog">
-            <div class="admin-modal-content">
-                <div class="admin-modal-header">
-                    <h3 class="h5 fw-bold m-0 text-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>确认删除用户</h3>
-                    <button type="button" class="btn-close" @onclick="() => _deleteTarget = null" aria-label="Close"></button>
-                </div>
-                <div class="admin-modal-body">
-                    <p class="mb-0">确认删除用户“<strong>@_deleteTarget.Username</strong>”吗？此操作不可逆。</p>
-                </div>
-                <div class="admin-modal-footer">
-                    <button class="vp-btn-secondary" type="button" @onclick="() => _deleteTarget = null">取消</button>
-                    <button class="btn btn-danger" type="button" @onclick="ConfirmDeleteUserAsync">确认删除</button>
-                </div>
+            <div class="admin-modal-footer">
+                <button class="btn-modern" type="button" @onclick="() => _showResetModal = false">取消</button>
+                <button class="btn-modern btn-modern-primary" disabled="@_saving" @onclick="ResetPasswordAsync">
+                    <i class="bi bi-check-lg"></i> 确认重置
+                </button>
             </div>
         </div>
-    }
-</section>
+    </div>
+}
+
+<!-- Modal Dialog for Delete Confirmation -->
+@if (_deleteTarget is not null)
+{
+    <div class="admin-modal-backdrop" @onclick="() => _deleteTarget = null"></div>
+    <div class="admin-modal-dialog">
+        <div class="admin-modal-content" style="max-width: 440px;">
+            <div class="admin-modal-header">
+                <div class="d-flex align-items-center gap-2 text-danger">
+                    <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+                    <h3 class="h6 fw-bold m-0">确认删除用户</h3>
+                </div>
+                <button type="button" class="btn-close" @onclick="() => _deleteTarget = null" aria-label="Close"></button>
+            </div>
+            <div class="admin-modal-body">
+                <p class="mb-2">确定要彻底删除用户 <strong>@_deleteTarget.Username</strong> 吗？</p>
+                <div class="alert-modern alert-modern-danger py-2 mb-0 small">
+                    该操作将注销该账户，且不可逆。
+                </div>
+            </div>
+            <div class="admin-modal-footer">
+                <button class="btn-modern" type="button" @onclick="() => _deleteTarget = null">取消</button>
+                <button class="btn-modern btn-modern-danger" @onclick="ExecuteDeleteAsync">
+                    <i class="bi bi-trash"></i> 确认删除
+                </button>
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     private List<User> _users = new();
-    private string? _currentUsername;
+    private string _currentUsername = "";
     private string? _error;
     private string? _message;
-    private User? _passwordTarget;
+
+    // Reset password modal
+    private bool _showResetModal;
+    private User? _targetUser;
+    private string _newPassword = "";
+    private bool _saving;
+
+    // Delete confirmation
     private User? _deleteTarget;
-    private string _newPassword = string.Empty;
-    private string? _modalError;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        _currentUsername = authState.User.Identity?.Name;
+        _currentUsername = authState.User.Identity?.Name ?? "";
         await LoadUsersAsync();
     }
 
@@ -148,101 +178,94 @@
         _users = await Auth.ListUsersAsync();
     }
 
+    private void OpenResetPasswordModal(User user)
+    {
+        _targetUser = user;
+        _newPassword = "";
+        _showResetModal = true;
+    }
+
+    private async Task ResetPasswordAsync()
+    {
+        if (_targetUser is null) return;
+        if (string.IsNullOrWhiteSpace(_newPassword) || _newPassword.Length < 6)
+        {
+            _error = "密码长度至少需要 6 个字符。";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var success = await Auth.ResetPasswordAsync(_targetUser.Id, _newPassword);
+            if (success)
+            {
+                _message = $"用户【{_targetUser.Username}】的密码已成功重置！";
+                _showResetModal = false;
+            }
+            else
+            {
+                _error = "重置密码失败，未找到该用户。";
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = "重置密码出错：" + ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
     private async Task ToggleSuperAdminAsync(User user)
     {
         _error = null;
         _message = null;
-        var nextVal = !user.IsSuperAdmin;
-        var success = await Auth.SetSuperAdminAsync(user.Id, nextVal);
-        if (success)
-        {
-            _message = $"已将用户 {user.Username} 的权限变更为：{(nextVal ? "超级管理员" : "普通用户")}。";
-            await LoadUsersAsync();
-        }
-        else
-        {
-            _error = "无法更新用户权限。";
-        }
-    }
-
-    private void OpenResetPasswordModal(User user)
-    {
-        _passwordTarget = user;
-        _newPassword = string.Empty;
-        _modalError = null;
-    }
-
-    private void CloseResetPasswordModal()
-    {
-        _passwordTarget = null;
-        _newPassword = string.Empty;
-        _modalError = null;
-    }
-
-    private async Task ConfirmResetPasswordAsync()
-    {
-        var user = _passwordTarget;
-        if (user is null)
-        {
-            return;
-        }
-
-        if (_newPassword.Length < 6)
-        {
-            _modalError = "密码长度至少需要 6 位。";
-            return;
-        }
-
+        var newRole = !user.IsSuperAdmin;
         try
         {
-            var success = await Auth.ResetPasswordAsync(user.Id, _newPassword);
+            var success = await Auth.SetSuperAdminAsync(user.Id, newRole);
             if (success)
             {
-                _message = $"用户 {user.Username} 的密码已成功重置。";
-                CloseResetPasswordModal();
-            }
-            else
-            {
-                _modalError = "重置密码失败。";
+                _message = $"用户【{user.Username}】角色已变更为：{(newRole ? "超级管理员" : "普通用户")}";
+                await LoadUsersAsync();
             }
         }
         catch (Exception ex)
         {
-            _modalError = $"重置密码失败：{ex.Message}";
+            _error = "修改角色失败：" + ex.Message;
         }
     }
 
-    private async Task ConfirmDeleteUserAsync()
+    private void ConfirmDelete(User user)
     {
-        var user = _deleteTarget;
-        if (user is null)
-        {
-            return;
-        }
+        _deleteTarget = user;
+    }
 
+    private async Task ExecuteDeleteAsync()
+    {
+        if (_deleteTarget is null) return;
+        var name = _deleteTarget.Username;
         try
         {
-            var success = await Auth.DeleteUserAsync(user.Id);
+            var success = await Auth.DeleteUserAsync(_deleteTarget.Id);
             if (success)
             {
-                _message = $"用户 {user.Username} 已被删除。";
+                _message = $"用户【{name}】已被删除。";
+                _deleteTarget = null;
+                await LoadUsersAsync();
             }
             else
             {
-                _error = "删除用户失败。";
+                _error = "删除用户失败，系统必须保留至少一个超级管理员账号。";
+                _deleteTarget = null;
             }
         }
         catch (Exception ex)
         {
-            _error = $"删除用户失败：{ex.Message}";
-        }
-        finally
-        {
+            _error = "删除用户出错：" + ex.Message;
             _deleteTarget = null;
         }
-
-        await LoadUsersAsync();
     }
 }
-}
-
