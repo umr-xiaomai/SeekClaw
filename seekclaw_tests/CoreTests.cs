@@ -401,6 +401,47 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void SkillManager_ImportsBareZipWithoutManifest_UsesZipNameAndGeneratesManifest()
+    {
+        var workspace = NewWorkspace("bare-skill-workspace");
+        var globalSkills = Path.Combine(_dir, "bare-global-skills");
+        Directory.CreateDirectory(globalSkills);
+        var configStore = new ConfigStore(
+            Path.Combine(_dir, "bare-config.json"),
+            Path.Combine(_dir, "bare-state.json"));
+        var manager = new SkillManager(configStore, new PromptRegistry(), globalSkills);
+
+        // Create a zip with ONLY prompt.txt and a README.md (no skill.yaml)
+        var sourceDir = Path.Combine(_dir, "bare-source");
+        Directory.CreateDirectory(sourceDir);
+        File.WriteAllText(Path.Combine(sourceDir, "prompt.txt"), "Bare skill prompt instructions.");
+        File.WriteAllText(Path.Combine(sourceDir, "README.md"), "# Documentation\nNot a separate skill.");
+
+        var zipPath = Path.Combine(_dir, "weather-assistant.zip");
+        ZipFile.CreateFromDirectory(sourceDir, zipPath);
+
+        var imported = manager.ImportGlobal(zipPath, workspace, overwrite: true);
+
+        // Verify:
+        // 1. Exactly 1 skill is imported (README is not treated as a rogue skill)
+        var skill = Assert.Single(imported);
+        // 2. The skill name matches the zip file name, NOT a temp GUID
+        Assert.Equal("weather-assistant", skill.Name);
+        Assert.False(skill.Name.StartsWith("seekclaw-skill-import-", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("Bare skill prompt instructions.", File.ReadAllText(skill.PromptFile));
+
+        // 3. skill.yaml was synthesized and contains the right name
+        var yamlPath = Path.Combine(skill.Directory, "skill.yaml");
+        Assert.True(File.Exists(yamlPath));
+        Assert.Contains("name: \"weather-assistant\"", File.ReadAllText(yamlPath));
+
+        // 4. Discover finds it cleanly
+        var discovered = manager.Discover(workspace);
+        var found = Assert.Single(discovered);
+        Assert.Equal("weather-assistant", found.Name);
+    }
+
+    [Fact]
     public void ToolContext_GlobalTask_ResolvesRelativePathFromProcessCwd()
     {
         var workspace = new WorkspaceInfo

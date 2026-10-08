@@ -981,6 +981,49 @@ public sealed class DaemonServerTests : IAsyncDisposable
             => inner.RunChecks(workspace);
     }
 
+    [Fact]
+    public void DaemonAdminApi_GetDownloadedFileName_ResolvesMarketSlugsAndSanitizes()
+    {
+        // 1. Download endpoint URL with /download
+        using var resp1 = new HttpResponseMessage();
+        resp1.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        var fn1 = DaemonAdminApi.GetDownloadedFileName(resp1, "https://seekclaw.hoilai.com/api/skills/dotnet-dev/download");
+        Assert.Equal("dotnet-dev.zip", fn1);
+
+        // 2. Download endpoint URL with query string
+        using var resp2 = new HttpResponseMessage();
+        resp2.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        var fn2 = DaemonAdminApi.GetDownloadedFileName(resp2, "https://seekclaw.hoilai.com/api/skills/dotnet-dev/download?version=1.2.0");
+        Assert.Equal("dotnet-dev.zip", fn2);
+
+        // 3. Fallback when given just a slug
+        using var resp3 = new HttpResponseMessage();
+        resp3.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        var fn3 = DaemonAdminApi.GetDownloadedFileName(resp3, "git-flow");
+        Assert.Equal("git-flow.zip", fn3);
+
+        // 4. Content-Disposition takes precedence if clean
+        using var resp4 = new HttpResponseMessage();
+        resp4.Content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+        {
+            FileName = "\"custom-skill-v2.zip\""
+        };
+        var fn4 = DaemonAdminApi.GetDownloadedFileName(resp4, "https://seekclaw.hoilai.com/api/skills/custom/download");
+        Assert.Equal("custom-skill-v2.zip", fn4);
+
+        // 5. Content-Disposition with invalid Windows path characters is sanitized
+        using var resp5 = new HttpResponseMessage();
+        resp5.Content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+        {
+            FileName = "bad:name?test*.zip"
+        };
+        var fn5 = DaemonAdminApi.GetDownloadedFileName(resp5, "test");
+        Assert.DoesNotContain(":", fn5);
+        Assert.DoesNotContain("?", fn5);
+        Assert.DoesNotContain("*", fn5);
+        Assert.EndsWith(".zip", fn5);
+    }
+
     private sealed class TestConnection(
         NamedPipeClientStream client,
         NamedPipeServerStream server,

@@ -212,6 +212,14 @@ public sealed class SkillManager : ISkillManager
 
                 foreach (var markdown in Directory.EnumerateFiles(extractionRoot, "*.md", SearchOption.TopDirectoryOnly))
                 {
+                    var mdName = Path.GetFileName(markdown);
+                    if (imported && (
+                        mdName.Equals("README.md", StringComparison.OrdinalIgnoreCase) ||
+                        mdName.Equals("CHANGELOG.md", StringComparison.OrdinalIgnoreCase) ||
+                        mdName.Equals("LICENSE.md", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
                     ImportMarkdown(markdown, overwrite);
                     imported = true;
                 }
@@ -236,7 +244,7 @@ public sealed class SkillManager : ISkillManager
     private void CopySkillDirectory(string source, string fallbackName, bool overwrite = false)
     {
         var manifest = LoadManifest(source);
-        var desiredName = !string.IsNullOrWhiteSpace(manifest?.Name)
+        var desiredName = (!string.IsNullOrWhiteSpace(manifest?.Name) && !manifest.Name.StartsWith("seekclaw-skill-import-", StringComparison.OrdinalIgnoreCase))
             ? manifest.Name
             : fallbackName;
         var destination = NewSkillDirectory(SanitizeSkillName(desiredName), overwrite);
@@ -248,6 +256,12 @@ public sealed class SkillManager : ISkillManager
             var target = Path.Combine(destination, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(file, target, overwrite: true);
+        }
+
+        var hasYaml = File.Exists(Path.Combine(destination, "skill.yaml")) || File.Exists(Path.Combine(destination, "skill.yml"));
+        if (!hasYaml)
+        {
+            WriteManifest(destination, desiredName, $"Imported skill {desiredName}");
         }
     }
 
@@ -309,7 +323,13 @@ public sealed class SkillManager : ISkillManager
 
             if (manifest is null) return null;
             if (string.IsNullOrWhiteSpace(manifest.Name))
-                manifest.Name = Path.GetFileName(dir);
+            {
+                var dirName = Path.GetFileName(dir);
+                if (!dirName.StartsWith("seekclaw-skill-import-", StringComparison.OrdinalIgnoreCase))
+                {
+                    manifest.Name = dirName;
+                }
+            }
             return manifest;
         }
         catch (Exception ex) when (ex is IOException or YamlDotNet.Core.YamlException)

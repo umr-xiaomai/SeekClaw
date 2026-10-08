@@ -801,32 +801,71 @@ internal sealed class DaemonAdminApi(
         }
     }
 
-    private static string GetDownloadedFileName(HttpResponseMessage response, string fallbackUrlOrSlug)
+    internal static string GetDownloadedFileName(HttpResponseMessage response, string fallbackUrlOrSlug)
     {
+        var invalidChars = Path.GetInvalidFileNameChars();
+
         var disposition = response.Content.Headers.ContentDisposition?.FileNameStar
             ?? response.Content.Headers.ContentDisposition?.FileName;
         if (!string.IsNullOrWhiteSpace(disposition))
         {
             disposition = disposition.Trim('\"', '\'');
-            if (!string.IsNullOrWhiteSpace(disposition))
-                return Path.GetFileName(disposition);
+            var clean = Path.GetFileName(disposition);
+            clean = new string(clean.Select(c => invalidChars.Contains(c) ? '_' : c).ToArray()).Trim();
+            if (!string.IsNullOrWhiteSpace(clean) &&
+                !clean.Equals("download", StringComparison.OrdinalIgnoreCase) &&
+                !clean.Equals("download.zip", StringComparison.OrdinalIgnoreCase) &&
+                !clean.Equals("download.md", StringComparison.OrdinalIgnoreCase))
+            {
+                return clean;
+            }
         }
 
         var mediaType = response.Content.Headers.ContentType?.MediaType;
         var ext = mediaType switch
         {
             "text/markdown" or "text/plain" => ".md",
-            "application/zip" or "application/x-zip-compressed" => ".zip",
-            _ => ".md"
+            "application/zip" or "application/x-zip-compressed" or "application/octet-stream" => ".zip",
+            _ => ".zip"
         };
 
-        var slug = fallbackUrlOrSlug;
-        if (slug.Contains('/'))
+        var raw = fallbackUrlOrSlug.Split('?')[0].Split('#')[0].TrimEnd('/');
+        var slug = "skill";
+        if (raw.Contains('/'))
         {
-            var segments = slug.TrimEnd('/').Split('/');
-            slug = segments.Length > 0 ? segments[^1] : "skill";
+            var segments = raw.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length > 0)
+            {
+                if (segments[^1].Equals("download", StringComparison.OrdinalIgnoreCase) && segments.Length > 1)
+                {
+                    slug = segments[^2];
+                }
+                else
+                {
+                    slug = segments[^1];
+                }
+            }
         }
-        return $"{slug}{ext}";
+        else if (!string.IsNullOrWhiteSpace(raw))
+        {
+            slug = raw;
+        }
+
+        try
+        {
+            slug = Uri.UnescapeDataString(slug);
+        }
+        catch
+        {
+        }
+
+        var sanitizedSlug = new string(slug.Select(c => invalidChars.Contains(c) ? '_' : c).ToArray()).Trim();
+        if (string.IsNullOrWhiteSpace(sanitizedSlug) || sanitizedSlug.Equals("download", StringComparison.OrdinalIgnoreCase))
+        {
+            sanitizedSlug = "skill";
+        }
+
+        return $"{sanitizedSlug}{ext}";
     }
 
     public string ToggleSkill(JsonObject parameters)

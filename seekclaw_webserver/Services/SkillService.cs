@@ -561,7 +561,7 @@ seekclaw skill install docker-cloud
             skill = await db.Skills.Include(s => s.Versions).SingleOrDefaultAsync(x => x.Slug == normalizedSlug);
         }
 
-        if (skill is null)
+        if (skill is null || !skill.Enabled || skill.ReviewStatus != SkillReviewStatus.Approved)
         {
             return null;
         }

@@ -58,6 +58,8 @@ interface LocalSkillInfo {
   scope: 'workspace' | 'global'
 }
 
+const MARKET_BASE_URL = (import.meta.env.VITE_MARKET_URL as string | undefined)?.replace(/\/+$/, '') || 'https://seekclaw.hoilai.com'
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -116,7 +118,8 @@ function getLocalSkill(skill: RemoteSkill): LocalSkillInfo | undefined {
   const nameLower = skill.name.toLowerCase()
   return localSkills.value.find((item) => {
     const itemLower = item.name.toLowerCase()
-    return itemLower === slugLower || itemLower === nameLower
+    const dirLower = item.directory ? item.directory.replace(/\\/g, '/').split('/').pop()?.toLowerCase() : ''
+    return itemLower === slugLower || itemLower === nameLower || dirLower === slugLower || dirLower === nameLower
   })
 }
 
@@ -141,7 +144,7 @@ async function loadCatalog(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
   try {
-    const res = await fetch('https://seekclaw.hoilai.com/api/skills')
+    const res = await fetch(`${MARKET_BASE_URL}/api/skills`)
     if (!res.ok) {
       throw new Error(`技能市场服务响应异常 (${res.status})`)
     }
@@ -158,7 +161,7 @@ async function loadCatalog(): Promise<void> {
 async function installSkill(skill: RemoteSkill): Promise<void> {
   actionLoadingSlug.value = skill.slug
   try {
-    const downloadUrl = `https://seekclaw.hoilai.com/api/skills/${encodeURIComponent(skill.slug)}/download`
+    const downloadUrl = `${MARKET_BASE_URL}/api/skills/${encodeURIComponent(skill.slug)}/download`
     const updated = await requestDaemon<LocalSkillInfo[]>('skill.import', {
       path: downloadUrl,
       overwrite: true
@@ -215,7 +218,7 @@ async function openDetail(skill: RemoteSkill): Promise<void> {
   selectedSkill.value = { ...skill }
   loadingDetail.value = true
   try {
-    const res = await fetch(`https://seekclaw.hoilai.com/api/skills/${encodeURIComponent(skill.slug)}`)
+    const res = await fetch(`${MARKET_BASE_URL}/api/skills/${encodeURIComponent(skill.slug)}`)
     if (res.ok) {
       const detail = (await res.json()) as RemoteSkillDetail
       if (selectedSkill.value && selectedSkill.value.slug === skill.slug) {

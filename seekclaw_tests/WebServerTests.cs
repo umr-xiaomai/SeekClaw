@@ -434,4 +434,46 @@ public sealed class WebServerTests
             Assert.Equal("Custom Claws", await auth.GetSiteNameAsync());
         }
     }
+
+    [Fact]
+    public async Task SkillService_GetDownloadPackageAsync_FiltersDisabledAndUnapprovedSkills()
+    {
+        var (db, connection) = CreateInMemoryDbContext();
+        using (connection)
+        using (db)
+        {
+            var skillService = new SkillService(db);
+
+            // 1. Create a community skill (defaults to Pending review status)
+            var pendingInput = new SkillInput
+            {
+                Name = "Pending Skill",
+                Slug = "pending-skill",
+                Summary = "A pending community skill",
+                Version = "1.0.0"
+            };
+            var pendingSkill = await skillService.CreateAsync(
+                pendingInput,
+                packageData: null,
+                packageFileName: null,
+                packageContentType: null,
+                isOfficial: false,
+                authorUserId: 2,
+                authorUsername: "bob");
+
+            // Public download should return null because review status is Pending
+            var pendingPkg = await skillService.GetDownloadPackageAsync("pending-skill");
+            Assert.Null(pendingPkg);
+
+            // 2. Approve the skill
+            await skillService.ReviewSkillAsync(pendingSkill.Id, SkillReviewStatus.Approved, "LGTM");
+            var approvedPkg = await skillService.GetDownloadPackageAsync("pending-skill");
+            Assert.NotNull(approvedPkg);
+
+            // 3. Disable the skill
+            await skillService.SetEnabledAsync(pendingSkill.Id, false);
+            var disabledPkg = await skillService.GetDownloadPackageAsync("pending-skill");
+            Assert.Null(disabledPkg);
+        }
+    }
 }

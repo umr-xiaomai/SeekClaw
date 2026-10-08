@@ -61,6 +61,8 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const MARKET_BASE_URL = (import.meta.env.VITE_MARKET_URL as string | undefined)?.replace(/\/+$/, '') || 'https://seekclaw.hoilai.com'
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -574,7 +576,7 @@ async function loadRemoteCatalog(): Promise<void> {
   loadingMarket.value = true
   marketError.value = ''
   try {
-    const res = await fetch('https://seekclaw.hoilai.com/api/skills')
+    const res = await fetch(`${MARKET_BASE_URL}/api/skills`)
     if (!res.ok) {
       throw new Error(`技能市场响应异常 (${res.status})`)
     }
@@ -599,14 +601,15 @@ function isRemoteSkillInstalled(skill: RemoteSkill): boolean {
   const nameLower = skill.name.toLowerCase()
   return localSkills.value.some((local) => {
     const localLower = local.name.toLowerCase()
-    return localLower === slugLower || localLower === nameLower || localLower.includes(slugLower)
+    const dirLower = local.directory ? local.directory.replace(/\\/g, '/').split('/').pop()?.toLowerCase() : ''
+    return localLower === slugLower || localLower === nameLower || localLower.includes(slugLower) || dirLower === slugLower || dirLower === nameLower
   })
 }
 
 async function installRemoteSkill(skill: RemoteSkill): Promise<void> {
   installingSlug.value = skill.slug
   try {
-    const downloadUrl = `https://seekclaw.hoilai.com/api/skills/${encodeURIComponent(skill.slug)}/download`
+    const downloadUrl = `${MARKET_BASE_URL}/api/skills/${encodeURIComponent(skill.slug)}/download`
     const updated = await requestDaemon<LocalSkillInfo[]>('skill.import', {
       path: downloadUrl,
       overwrite: true
@@ -633,7 +636,7 @@ async function openRemoteSkillDetail(skill: RemoteSkill): Promise<void> {
     sopDetails: `正在从服务器加载详细规范文档…`
   }
   try {
-    const res = await fetch(`https://seekclaw.hoilai.com/api/skills/${encodeURIComponent(skill.slug)}`)
+    const res = await fetch(`${MARKET_BASE_URL}/api/skills/${encodeURIComponent(skill.slug)}`)
     if (res.ok) {
       const detail = (await res.json()) as { readmeMarkdown?: string; summary?: string }
       if (selectedSkillDetail.value && selectedSkillDetail.value.name === skill.name) {

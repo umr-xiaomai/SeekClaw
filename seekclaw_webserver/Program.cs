@@ -27,7 +27,8 @@ builder.Services.AddCors(options =>
     {
         policy.AllowAnyOrigin()
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .WithExposedHeaders("Content-Disposition");
     });
 });
 
@@ -117,9 +118,14 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-app.UseHttpsRedirection();
 app.UseCors();
+
+app.UseWhen(ctx => !ctx.Request.Path.StartsWithSegments("/api"), appBuilder =>
+{
+    appBuilder.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
+});
+
+app.UseHttpsRedirection();
 app.UseRateLimiter();
 app.UseAntiforgery();
 
@@ -264,8 +270,9 @@ app.MapGet("/api/skills", async (string? type, string? q, string? sort, string? 
     return Results.Json(list);
 });
 
-app.MapGet("/api/skills/{slugOrId}", async (string slugOrId, SkillService skills) =>
+app.MapGet("/api/skills/{slugOrId}", async (string slugOrId, HttpContext context, SkillService skills) =>
 {
+    var isSuperAdmin = context.User.IsInRole("SuperAdmin");
     SkillDetailModel? detail = null;
     if (int.TryParse(slugOrId, out var id))
     {
@@ -273,7 +280,7 @@ app.MapGet("/api/skills/{slugOrId}", async (string slugOrId, SkillService skills
     }
     detail ??= await skills.GetDetailBySlugAsync(slugOrId);
 
-    if (detail is null || !detail.Enabled)
+    if (detail is null || !detail.Enabled || (!isSuperAdmin && detail.ReviewStatus != SkillReviewStatus.Approved))
     {
         return Results.NotFound(new { error = "技能不存在或已下线" });
     }
@@ -287,7 +294,7 @@ app.MapGet("/api/skills/{slugOrId}/download", async (string slugOrId, string? ve
     var package = await skills.GetDownloadPackageAsync(slugOrId, version);
     if (package is null)
     {
-        return Results.NotFound();
+        return Results.NotFound(new { error = "技能安装包不存在或尚未发布" });
     }
 
     return Results.File(
