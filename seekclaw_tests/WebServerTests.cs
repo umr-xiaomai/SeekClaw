@@ -476,4 +476,57 @@ public sealed class WebServerTests
             Assert.Null(disabledPkg);
         }
     }
+
+    [Fact]
+    public async Task SkillService_DailyMetrics_RealAggregationAndOverview()
+    {
+        var (db, connection) = CreateInMemoryDbContext();
+        using (connection)
+        using (db)
+        {
+            var skillService = new SkillService(db);
+
+            // 1. Seed official skills
+            await skillService.SeedOfficialSkillsAsync();
+
+            var skills = await skillService.ListAsync(includeDisabled: true);
+            Assert.Equal(3, skills.Count);
+
+            var firstSkill = skills[0];
+
+            // 2. Increment views and downloads
+            await skillService.IncrementViewAsync(firstSkill.Id);
+            await skillService.IncrementDownloadAsync(firstSkill.Id);
+
+            // Verify skill daily metric table contains today's record
+            var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var dailyRecords = await db.SkillDailyMetrics.AsNoTracking().Where(m => m.SkillId == firstSkill.Id && m.Date == today).ToListAsync();
+            Assert.NotEmpty(dailyRecords);
+            Assert.True(dailyRecords[0].ViewCount >= 1);
+            Assert.True(dailyRecords[0].DownloadCount >= 1);
+
+            // 3. Test 7d overview
+            var overview7d = await skillService.GetMetricsOverviewAsync("7d");
+            Assert.Equal("7d", overview7d.TimeRange);
+            Assert.Equal(7, overview7d.Trends.Count);
+            Assert.Equal(3, overview7d.TotalSkills);
+            Assert.Equal(3, overview7d.OfficialCount);
+            Assert.Equal(100, overview7d.OfficialRatio);
+            Assert.Equal(0, overview7d.CommunityCount);
+            Assert.Equal(0, overview7d.CommunityRatio);
+            // Multi-version count is 0, so ratio must strictly be 0 (no hardcoded 60%)
+            Assert.Equal(0, overview7d.MultiVersionCount);
+            Assert.Equal(0, overview7d.MultiVersionRatio);
+
+            // Verify real technology domains extracted from seeds
+            Assert.NotEmpty(overview7d.TopTags);
+            Assert.Contains(overview7d.TopTags, t => t.Tag.Contains(".NET") || t.Tag.Contains("Git") || t.Tag.Contains("Docker"));
+            Assert.DoesNotContain(overview7d.TopTags, t => t.Tag == "Prompt-SOP");
+
+            // 4. Test 30d overview
+            var overview30d = await skillService.GetMetricsOverviewAsync("30d");
+            Assert.Equal(30, overview30d.Trends.Count);
+        }
+    }
 }
+

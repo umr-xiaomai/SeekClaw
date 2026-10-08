@@ -139,6 +139,32 @@ public sealed class SkillService(AppDbContext db)
         await db.Skills
             .Where(x => x.Id == skillId)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.ViewCount, x => x.ViewCount + 1));
+
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var updated = await db.SkillDailyMetrics
+            .Where(x => x.SkillId == skillId && x.Date == today)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.ViewCount, x => x.ViewCount + 1));
+
+        if (updated == 0)
+        {
+            try
+            {
+                db.SkillDailyMetrics.Add(new SkillDailyMetric
+                {
+                    SkillId = skillId,
+                    Date = today,
+                    ViewCount = 1,
+                    DownloadCount = 0
+                });
+                await db.SaveChangesAsync();
+            }
+            catch
+            {
+                await db.SkillDailyMetrics
+                    .Where(x => x.SkillId == skillId && x.Date == today)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.ViewCount, x => x.ViewCount + 1));
+            }
+        }
     }
 
     public async Task IncrementDownloadAsync(int skillId, string? version = null)
@@ -154,6 +180,253 @@ public sealed class SkillService(AppDbContext db)
                 .Where(x => x.SkillId == skillId && x.Version == normalizedVer)
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.DownloadCount, x => x.DownloadCount + 1));
         }
+
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var updated = await db.SkillDailyMetrics
+            .Where(x => x.SkillId == skillId && x.Date == today)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.DownloadCount, x => x.DownloadCount + 1));
+
+        if (updated == 0)
+        {
+            try
+            {
+                db.SkillDailyMetrics.Add(new SkillDailyMetric
+                {
+                    SkillId = skillId,
+                    Date = today,
+                    ViewCount = 0,
+                    DownloadCount = 1
+                });
+                await db.SaveChangesAsync();
+            }
+            catch
+            {
+                await db.SkillDailyMetrics
+                    .Where(x => x.SkillId == skillId && x.Date == today)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.DownloadCount, x => x.DownloadCount + 1));
+            }
+        }
+    }
+
+    public async Task EnsureBaselineDailyMetricsAsync()
+    {
+        if (!await db.SkillDailyMetrics.AnyAsync() && await db.Skills.AnyAsync())
+        {
+            var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var skills = await db.Skills.ToListAsync();
+            foreach (var skill in skills)
+            {
+                if (skill.ViewCount > 0 || skill.DownloadCount > 0)
+                {
+                    db.SkillDailyMetrics.Add(new SkillDailyMetric
+                    {
+                        SkillId = skill.Id,
+                        Date = today,
+                        ViewCount = skill.ViewCount,
+                        DownloadCount = skill.DownloadCount
+                    });
+                }
+            }
+            await db.SaveChangesAsync();
+        }
+    }
+
+    public async Task<MetricsOverviewDto> GetMetricsOverviewAsync(string timeRange = "7d", string? search = null)
+    {
+        await EnsureBaselineDailyMetricsAsync();
+
+        var allSkills = await ListAsync(includeDisabled: true);
+
+        var filteredSkills = allSkills;
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            filteredSkills = allSkills.Where(s =>
+                s.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                s.Slug.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                s.Author.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        var skillIds = filteredSkills.Select(s => s.Id).ToHashSet();
+
+        var today = DateTime.UtcNow.Date;
+        var dayCount = timeRange?.ToLowerInvariant() switch
+        {
+            "30d" => 30,
+            "all" => 30,
+            _ => 7
+        };
+
+        var startDate = today.AddDays(-(dayCount - 1));
+        var startDateStr = startDate.ToString("yyyy-MM-dd");
+        var endDateStr = today.ToString("yyyy-MM-dd");
+
+        var query = db.SkillDailyMetrics.AsNoTracking();
+        if (skillIds.Count > 0 && skillIds.Count < allSkills.Count)
+        {
+            query = query.Where(m => skillIds.Contains(m.SkillId));
+        }
+
+        var dailyRecords = timeRange?.ToLowerInvariant() switch
+        {
+            "all" => await query.ToListAsync(),
+            _ => await query.Where(m => string.Compare(m.Date, startDateStr) >= 0 && string.Compare(m.Date, endDateStr) <= 0).ToListAsync()
+        };
+
+        var groupedByDate = dailyRecords
+            .GroupBy(m => m.Date)
+            .ToDictionary(g => g.Key, g => (Views: g.Sum(x => x.ViewCount), Downloads: g.Sum(x => x.DownloadCount)));
+
+        var trends = new List<DailyTrendPoint>();
+        for (int i = 0; i < dayCount; i++)
+        {
+            var date = startDate.AddDays(i);
+            var dateStr = date.ToString("yyyy-MM-dd");
+            var label = date.ToString("MM/dd");
+            if (groupedByDate.TryGetValue(dateStr, out var metrics))
+            {
+                var ctr = metrics.Views > 0 ? Math.Round(metrics.Downloads * 100.0 / metrics.Views, 1) : 0.0;
+                trends.Add(new DailyTrendPoint(dateStr, label, metrics.Views, metrics.Downloads, ctr));
+            }
+            else
+            {
+                trends.Add(new DailyTrendPoint(dateStr, label, 0, 0, 0.0));
+            }
+        }
+
+        int totalViews;
+        int totalDownloads;
+        string rangeDescription;
+
+        if (string.Equals(timeRange, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            totalViews = filteredSkills.Sum(s => s.ViewCount);
+            totalDownloads = filteredSkills.Sum(s => s.DownloadCount);
+            rangeDescription = "平台全生命周期历史累计";
+        }
+        else
+        {
+            totalViews = trends.Sum(t => t.Views);
+            totalDownloads = trends.Sum(t => t.Downloads);
+            rangeDescription = timeRange == "30d" ? "近 30 天每日指标汇总" : "近 7 天每日指标汇总";
+        }
+
+        var conversionRate = totalViews > 0
+            ? Math.Round(totalDownloads * 100.0 / totalViews, 1)
+            : 0.0;
+
+        var totalSkills = allSkills.Count;
+        var officialCount = allSkills.Count(s => s.IsOfficial);
+        var officialRatio = totalSkills > 0 ? (int)Math.Round(officialCount * 100.0 / totalSkills) : 0;
+        var communityCount = totalSkills - officialCount;
+        var communityRatio = totalSkills > 0 ? (int)Math.Round(communityCount * 100.0 / totalSkills) : 0;
+        var hasPackageCount = allSkills.Count(s => s.HasPackage);
+        var hasPackageRatio = totalSkills > 0 ? (int)Math.Round(hasPackageCount * 100.0 / totalSkills) : 0;
+        var multiVersionCount = allSkills.Count(s => s.VersionCount > 1);
+        var multiVersionRatio = totalSkills > 0 ? (int)Math.Round(multiVersionCount * 100.0 / totalSkills) : 0;
+
+        var topSkills = filteredSkills
+            .OrderByDescending(s => s.DownloadCount + s.ViewCount)
+            .Take(8)
+            .Select(s => new TopSkillMetricDto(
+                s.Id,
+                s.Name,
+                s.Slug,
+                s.IsOfficial,
+                s.ViewCount,
+                s.DownloadCount,
+                s.ViewCount > 0 ? Math.Round(s.DownloadCount * 100.0 / s.ViewCount, 1) : 0.0
+            ))
+            .ToList();
+
+        var tagGroups = ExtractTagsFromSkills(allSkills);
+        var topTags = tagGroups
+            .OrderByDescending(t => t.TotalDownloads)
+            .Take(5)
+            .Select((t, index) => new SkillTagMetricDto(
+                index + 1,
+                t.Tag,
+                t.SkillCount,
+                t.TotalDownloads,
+                t.AvgCtr
+            ))
+            .ToList();
+
+        return new MetricsOverviewDto(
+            timeRange ?? "7d",
+            rangeDescription,
+            totalViews,
+            totalDownloads,
+            conversionRate,
+            totalSkills,
+            officialCount,
+            officialRatio,
+            communityCount,
+            communityRatio,
+            hasPackageCount,
+            hasPackageRatio,
+            multiVersionCount,
+            multiVersionRatio,
+            trends,
+            topSkills,
+            topTags
+        );
+    }
+
+    private static List<(string Tag, int SkillCount, int TotalDownloads, double AvgCtr)> ExtractTagsFromSkills(List<SkillSummary> skills)
+    {
+        var categoryMap = new Dictionary<string, (int SkillCount, int TotalDownloads, int TotalViews)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var skill in skills)
+        {
+            var tag = DetectSkillDomain(skill.Slug, skill.Name, skill.Summary);
+            if (!categoryMap.TryGetValue(tag, out var current))
+            {
+                current = (0, 0, 0);
+            }
+            categoryMap[tag] = (
+                current.SkillCount + 1,
+                current.TotalDownloads + skill.DownloadCount,
+                current.TotalViews + skill.ViewCount
+            );
+        }
+
+        var result = new List<(string Tag, int SkillCount, int TotalDownloads, double AvgCtr)>();
+        foreach (var (tag, stat) in categoryMap)
+        {
+            var ctr = stat.TotalViews > 0
+                ? Math.Round(stat.TotalDownloads * 100.0 / stat.TotalViews, 1)
+                : 0.0;
+            result.Add((tag, stat.SkillCount, stat.TotalDownloads, ctr));
+        }
+
+        return result;
+    }
+
+    private static string DetectSkillDomain(string slug, string name, string summary)
+    {
+        var combined = $"{slug} {name} {summary}".ToLowerInvariant();
+        if (combined.Contains("dotnet") || combined.Contains("c#") || combined.Contains(".net"))
+        {
+            return "C# / .NET 10";
+        }
+        if (combined.Contains("git") || combined.Contains("commit") || combined.Contains("flow"))
+        {
+            return "Git 工作流";
+        }
+        if (combined.Contains("docker") || combined.Contains("k8s") || combined.Contains("cloud") || combined.Contains("容器"))
+        {
+            return "Docker / 容器编排";
+        }
+        if (combined.Contains("python") || combined.Contains("fastapi"))
+        {
+            return "Python 自动化";
+        }
+        if (combined.Contains("agent") || combined.Contains("prompt"))
+        {
+            return "Agent 运行时";
+        }
+        return "通用研发助手";
     }
 
     public async Task SeedOfficialSkillsAsync()
@@ -805,3 +1078,4 @@ seekclaw skill install docker-cloud
                     v.CreatedAt))
                 .ToList());
 }
+

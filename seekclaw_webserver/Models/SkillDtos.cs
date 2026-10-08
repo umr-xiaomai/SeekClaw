@@ -90,3 +90,49 @@ public sealed class UserSkillUpdateInput
     public string ReadmeMarkdown { get; set; } = string.Empty;
     public string? Homepage { get; set; }
 }
+
+public sealed record DailyTrendPoint(
+    string Date,
+    string Label,
+    int Views,
+    int Downloads,
+    double Ctr
+);
+
+public sealed record TopSkillMetricDto(
+    int Id,
+    string Name,
+    string Slug,
+    bool IsOfficial,
+    int Views,
+    int Downloads,
+    double Ctr
+);
+
+public sealed record SkillTagMetricDto(
+    int Rank,
+    string Tag,
+    int SkillCount,
+    int TotalDownloads,
+    double AvgCtr
+);
+
+public sealed record MetricsOverviewDto(
+    string TimeRange,
+    string RangeDescription,
+    int TotalViews,
+    int TotalDownloads,
+    double ConversionRate,
+    int TotalSkills,
+    int OfficialCount,
+    int OfficialRatio,
+    int CommunityCount,
+    int CommunityRatio,
+    int HasPackageCount,
+    int HasPackageRatio,
+    int MultiVersionCount,
+    int MultiVersionRatio,
+    List<DailyTrendPoint> Trends,
+    List<TopSkillMetricDto> TopSkills,
+    List<SkillTagMetricDto> TopTags
+);

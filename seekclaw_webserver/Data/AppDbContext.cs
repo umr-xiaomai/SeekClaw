@@ -9,6 +9,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<SiteSetting> SiteSettings => Set<SiteSetting>();
     public DbSet<Skill> Skills => Set<Skill>();
     public DbSet<SkillVersion> SkillVersions => Set<SkillVersion>();
+    public DbSet<SkillDailyMetric> SkillDailyMetrics => Set<SkillDailyMetric>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -64,6 +65,21 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.HasIndex(x => new { x.SkillId, x.Version }).IsUnique();
             entity.HasOne(x => x.Skill)
                   .WithMany(x => x.Versions)
+                  .HasForeignKey(x => x.SkillId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SkillDailyMetric>(entity =>
+        {
+            entity.ToTable("skill_daily_metrics");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Date).IsRequired().HasMaxLength(16);
+            entity.Property(x => x.ViewCount).HasDefaultValue(0);
+            entity.Property(x => x.DownloadCount).HasDefaultValue(0);
+            entity.HasIndex(x => new { x.Date, x.SkillId }).IsUnique();
+            entity.HasIndex(x => x.Date);
+            entity.HasOne(x => x.Skill)
+                  .WithMany()
                   .HasForeignKey(x => x.SkillId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
@@ -144,5 +160,21 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             CREATE UNIQUE INDEX IF NOT EXISTS IX_skill_versions_SkillId_Version ON skill_versions (SkillId, Version);
             """;
         versionTableCmd.ExecuteNonQuery();
+
+        // 确保 skill_daily_metrics 表及索引存在
+        using var dailyMetricTableCmd = conn.CreateCommand();
+        dailyMetricTableCmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS skill_daily_metrics (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Date TEXT NOT NULL,
+                SkillId INTEGER NOT NULL,
+                ViewCount INTEGER NOT NULL DEFAULT 0,
+                DownloadCount INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (SkillId) REFERENCES skills (Id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_skill_daily_metrics_Date_SkillId ON skill_daily_metrics (Date, SkillId);
+            CREATE INDEX IF NOT EXISTS IX_skill_daily_metrics_Date ON skill_daily_metrics (Date);
+            """;
+        dailyMetricTableCmd.ExecuteNonQuery();
     }
 }
