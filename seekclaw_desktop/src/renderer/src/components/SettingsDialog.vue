@@ -166,6 +166,9 @@ const checks = ref<HealthCheck[]>([])
 const usage = ref<UsageInfo[]>([])
 const usageDays = ref<number>(14)
 const timeline = ref<TimelinePoint[]>([])
+const usageLoading = ref(false)
+const diagnosticsChecking = ref(false)
+let usageFetchSequence = 0
 const selectedModel = ref('')
 const providerEditorOpen = ref(false)
 const mcpEditorOpen = ref(false)
@@ -453,19 +456,53 @@ async function loadModels(): Promise<void> {
 }
 
 async function loadDiagnostics(): Promise<void> {
-  const [healthData, usageData, timelineData] = await Promise.all([
-    requestJson<HealthCheck[]>('doctor.run'),
-    requestJson<UsageInfo[]>('usage.get', { days: usageDays.value }),
-    requestJson<TimelinePoint[]>('usage.timeline', { days: usageDays.value })
-  ])
-  checks.value = healthData
-  usage.value = usageData
-  timeline.value = timelineData
+  diagnosticsChecking.value = true
+  const usagePromise = loadUsageOnly()
+  try {
+    const healthData = await requestJson<HealthCheck[]>('doctor.run')
+    checks.value = healthData
+  } catch (err) {
+    fail(err)
+  } finally {
+    diagnosticsChecking.value = false
+  }
+  await usagePromise
+}
+
+async function loadUsageOnly(): Promise<void> {
+  const currentSeq = ++usageFetchSequence
+  usageLoading.value = true
+  try {
+    const days = usageDays.value
+    const [usageData, timelineData] = await Promise.all([
+      requestJson<UsageInfo[]>('usage.get', { days }),
+      requestJson<TimelinePoint[]>('usage.timeline', { days })
+    ])
+    if (currentSeq !== usageFetchSequence) return
+    usage.value = usageData
+    timeline.value = timelineData
+  } catch (err) {
+    if (currentSeq === usageFetchSequence) {
+      fail(err)
+    }
+  } finally {
+    if (currentSeq === usageFetchSequence) {
+      usageLoading.value = false
+    }
+  }
+}
+
+function selectUsageDays(days: number): void {
+  if (usageDays.value === days) {
+    void loadUsageOnly()
+  } else {
+    usageDays.value = days
+  }
 }
 
 watch(usageDays, () => {
   if (section.value === 'diagnostics') {
-    void loadDiagnostics()
+    void loadUsageOnly()
   }
 })
 
@@ -1033,24 +1070,34 @@ onBeforeUnmount(() => {
             </div>
             <div class="row-actions">
               <div class="days-segmented-filter">
-                <button type="button" class="filter-chip" :class="{ active: usageDays === 7 }" @click="usageDays = 7">
+                <button type="button" class="filter-chip" :class="{ active: usageDays === 7 }" @click="selectUsageDays(7)">
                   近 7 天
                 </button>
-                <button type="button" class="filter-chip" :class="{ active: usageDays === 14 }" @click="usageDays = 14">
+                <button type="button" class="filter-chip" :class="{ active: usageDays === 14 }" @click="selectUsageDays(14)">
                   近 14 天
                 </button>
-                <button type="button" class="filter-chip" :class="{ active: usageDays === 30 }" @click="usageDays = 30">
+                <button type="button" class="filter-chip" :class="{ active: usageDays === 30 }" @click="selectUsageDays(30)">
                   近 30 天
                 </button>
               </div>
-              <button class="secondary-button" :disabled="loading" @click="loadDiagnostics">
-                <RefreshCw :size="15" :class="{ spin: loading }" /> 重新检查
+              <button class="secondary-button" :disabled="loading || diagnosticsChecking" @click="loadDiagnostics">
+                <RefreshCw :size="15" :class="{ spin: loading || diagnosticsChecking }" /> 重新检查
               </button>
             </div>
           </div>
 
           <!-- KPI Metric Cards (No Cost) -->
-          <section class="usage-kpi-grid">
+          <div v-if="usageLoading" class="usage-kpi-grid">
+            <div v-for="i in 4" :key="i" class="kpi-card skeleton-card">
+              <div class="skeleton-block skeleton-icon" />
+              <div class="kpi-data">
+                <div class="skeleton-block skeleton-line short" />
+                <div class="skeleton-block skeleton-line title" />
+                <div class="skeleton-block skeleton-line sub" />
+              </div>
+            </div>
+          </div>
+          <section v-else class="usage-kpi-grid">
             <div class="kpi-card">
               <div class="kpi-icon-badge kpi-indigo">
                 <Gauge :size="18" />
@@ -1112,7 +1159,17 @@ onBeforeUnmount(() => {
           </section>
 
           <!-- Visual Charts Dashboard -->
-          <section class="usage-charts-dashboard">
+          <div v-if="usageLoading" class="usage-charts-dashboard skeleton-dashboard">
+            <div class="trend-chart-card skeleton-card">
+              <div class="skeleton-block skeleton-chart-header" />
+              <div class="skeleton-block skeleton-chart-body" />
+            </div>
+            <div class="model-bar-card skeleton-card">
+              <div class="skeleton-block skeleton-chart-header" />
+              <div class="skeleton-block skeleton-chart-body" />
+            </div>
+          </div>
+          <section v-else class="usage-charts-dashboard">
             <UsageTrendChart :data="timeline" />
             <UsageModelBarChart :items="usage" />
           </section>
@@ -1137,14 +1194,18 @@ onBeforeUnmount(() => {
           </section>
 
           <!-- Model Usage Detail Table -->
-          <div v-if="usage.length > 0" class="diagnostics-sub-heading">
-            <div>
-              <h4>模型用量明细</h4>
-              <small>共 {{ usage.length }} 个活跃模型配置记录</small>
-            </div>
+          <div v-if="usageLoading" class="skeleton-table-wrap">
+            <div class="skeleton-block skeleton-table-row" v-for="i in 3" :key="i" />
           </div>
+          <template v-else-if="usage.length > 0">
+            <div class="diagnostics-sub-heading">
+              <div>
+                <h4>模型用量明细</h4>
+                <small>共 {{ usage.length }} 个活跃模型配置记录</small>
+              </div>
+            </div>
 
-          <section v-if="usage.length > 0" class="usage-table-wrap">
+            <section class="usage-table-wrap">
             <table class="usage-table">
               <thead>
                 <tr>
@@ -1186,6 +1247,7 @@ onBeforeUnmount(() => {
               </tbody>
             </table>
           </section>
+          </template>
         </template>
 
         <template v-else-if="section === 'advanced'">

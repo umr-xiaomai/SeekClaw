@@ -5303,6 +5303,80 @@ body.is-resizing-sidebar .app-body {
   font-size: 10px;
 }
 
+/* Usage & Diagnostics Skeleton Screen */
+.skeleton-block {
+  border-radius: 6px;
+  background: linear-gradient(90deg,
+      color-mix(in srgb, var(--text-muted) 6%, transparent) 0%,
+      color-mix(in srgb, var(--text-muted) 16%, transparent) 50%,
+      color-mix(in srgb, var(--text-muted) 6%, transparent) 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+.kpi-card.skeleton-card {
+  min-height: 84px;
+}
+
+.skeleton-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+}
+
+.skeleton-line.short {
+  width: 45%;
+  height: 10px;
+}
+
+.skeleton-line.title {
+  width: 75%;
+  height: 20px;
+  margin: 4px 0;
+}
+
+.skeleton-line.sub {
+  width: 90%;
+  height: 10px;
+}
+
+.skeleton-chart-header {
+  height: 36px;
+  width: 50%;
+  margin-bottom: 16px;
+}
+
+.skeleton-chart-body {
+  height: 200px;
+  width: 100%;
+  border-radius: 8px;
+}
+
+.skeleton-table-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.skeleton-table-row {
+  height: 44px;
+  width: 100%;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block {
+    animation: none;
+  }
+}
+
 .segmented-control {
   display: grid;
   grid-template-columns: 38px 38px;

@@ -222,7 +222,6 @@ onBeforeUnmount(() => {
       </div>
     </nav>
     <div class="drag-fill" />
-    <span v-if="projectPath" class="titlebar-name" :title="projectPath">{{ projectPath }}</span>
     <div class="window-controls-space" />
   </header>
 </template>
