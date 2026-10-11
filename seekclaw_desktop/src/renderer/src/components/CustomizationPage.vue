@@ -52,6 +52,7 @@ const props = withDefaults(defineProps<{
   open: boolean
   initialTab?: 'plugins' | 'skills'
   daemonConnected?: boolean
+  workspacePath?: string
 }>(), {
   initialTab: 'plugins',
   daemonConnected: true
@@ -1332,6 +1333,7 @@ onBeforeUnmount(() => {
 
     <!-- MCP Server Editor Modal -->
     <McpEditorDialog :open="mcpEditorOpen" :server="editingMcpServer" :saving="savingMcp" :error="mcpDialogError"
+      :workspace-path="workspacePath"
       @close="closeMcpEditor" @save="saveMcpServer" />
 
     <!-- Official Remote Skills Market Dialog Overlay -->

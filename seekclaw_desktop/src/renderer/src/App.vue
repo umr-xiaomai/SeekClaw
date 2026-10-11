@@ -249,6 +249,7 @@ const activeProject = computed(() => {
   return projects.value.find((project) => project.id === projectId)
 })
 const globalTaskActive = computed(() => activeThread.value ? !activeThread.value.projectId : !selectedProjectId.value)
+const currentWorkspacePath = computed(() => activeProject.value?.path || runtimeWorkspacePath.value || '')
 
 const composerCaption = computed(() => {
 
@@ -1726,13 +1727,16 @@ watch(theme, applyTheme)
       :open="activePage === 'customization'"
       :initial-tab="customizationTab"
       :daemon-connected="daemonState.connected"
+      :workspace-path="currentWorkspacePath"
       @close="closePage"
     />
 
     <SettingsDialog :open="activePage === 'settings' || activePage === 'extensions'"
       :page="activePage === 'extensions' ? 'extensions' : 'settings'" :theme="theme"
       :daemon-connected="daemonState.connected" :daemon-endpoint="daemonState.endpoint"
-      :initial-section="activePage === 'settings' ? settingsSection : extensionsSection" @close="closePage"
+      :initial-section="activePage === 'settings' ? settingsSection : extensionsSection"
+      :workspace-path="currentWorkspacePath"
+      @close="closePage"
       @change-theme="applyTheme" @reconnect="reconnectDaemon" @open-workspace="openWorkspace"
       @open-official-skills="openOfficialSkills" @runtime-changed="refreshRuntimeState" />
 

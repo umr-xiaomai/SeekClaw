@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MCP_SCOPE_OPTIONS,
   MCP_TRANSPORT_OPTIONS,
+  buildMcpScopeOptions,
   buildMcpServerPayload,
   buildMcpTogglePayload,
   createMcpFormValue,
@@ -30,6 +32,32 @@ const remoteServer: McpServerSummary = {
   toolCount: 0,
   error: 'connection refused'
 }
+
+describe('scope naming', () => {
+  it('formats the workspace option with the resolved workspace path', () => {
+    const options = buildMcpScopeOptions('E:\\Project\\SeekClaw')
+    expect(options[0]).toEqual({
+      value: 'workspace',
+      label: '当前工作区 (E:\\Project\\SeekClaw)',
+      description: '仅在此工作区生效'
+    })
+    expect(options[1]).toEqual({
+      value: 'global',
+      label: '全局',
+      description: '在所有工作区中生效'
+    })
+  })
+
+  it('falls back to default label when no workspace path is provided', () => {
+    const options = buildMcpScopeOptions()
+    expect(options[0]).toEqual({
+      value: 'workspace',
+      label: '当前工作区',
+      description: '仅在此工作区生效'
+    })
+    expect(options).toEqual(MCP_SCOPE_OPTIONS)
+  })
+})
 
 describe('transport naming', () => {
   it('names the remote transports after the MCP specification', () => {

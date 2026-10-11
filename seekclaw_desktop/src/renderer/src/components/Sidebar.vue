@@ -8,6 +8,8 @@ import {
   Info,
   LoaderCircle,
   MoreHorizontal,
+  Pin,
+  PinOff,
   Plus,
   Search,
   SlidersHorizontal,
@@ -121,13 +123,79 @@ watch(() => props.threads.map((thread) => thread.id), (ids) => {
   current.forEach((id) => knownThreadIds.add(id))
 }, { immediate: true })
 
+const PINNED_THREADS_STORAGE_KEY = 'seekclaw-pinned-threads'
+
+function loadPinnedThreadIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(PINNED_THREADS_STORAGE_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? new Set(parsed.filter((item): item is string => typeof item === 'string')) : new Set()
+  } catch {
+    return new Set()
+  }
+}
+
+function savePinnedThreadIds(ids: Set<string>): void {
+  try {
+    localStorage.setItem(PINNED_THREADS_STORAGE_KEY, JSON.stringify(Array.from(ids)))
+  } catch {
+    // ignore
+  }
+}
+
+const pinnedThreadIds = ref<Set<string>>(loadPinnedThreadIds())
+
+function isPinned(thread: ThreadItem): boolean {
+  return thread.pinned === true || pinnedThreadIds.value.has(thread.id)
+}
+
+function togglePin(thread: ThreadItem): void {
+  const next = new Set(pinnedThreadIds.value)
+  if (isPinned(thread)) {
+    next.delete(thread.id)
+    thread.pinned = false
+  } else {
+    next.add(thread.id)
+    thread.pinned = true
+  }
+  pinnedThreadIds.value = next
+  savePinnedThreadIds(next)
+}
+
+watch(() => props.threads, (items) => {
+  let changed = false
+  const next = new Set(pinnedThreadIds.value)
+  items.forEach((thread) => {
+    if (next.has(thread.id)) {
+      thread.pinned = true
+    } else if (thread.pinned) {
+      next.add(thread.id)
+      changed = true
+    }
+  })
+  if (changed) {
+    pinnedThreadIds.value = next
+    savePinnedThreadIds(next)
+  }
+}, { immediate: true })
+
 const normalizedQuery = computed(() => query.value.trim().toLocaleLowerCase())
 
+function sortThreads(threads: ThreadItem[]): ThreadItem[] {
+  return threads.sort((left, right) => {
+    const leftPinned = isPinned(left) ? 1 : 0
+    const rightPinned = isPinned(right) ? 1 : 0
+    if (leftPinned !== rightPinned) return rightPinned - leftPinned
+    return right.updatedAt - left.updatedAt
+  })
+}
+
 function visibleThreads(projectId: string): ThreadItem[] {
-  return props.threads
+  const filtered = props.threads
     .filter((thread) => thread.projectId === projectId && !thread.archived)
     .filter((thread) => !normalizedQuery.value || thread.title.toLocaleLowerCase().includes(normalizedQuery.value))
-    .sort((left, right) => right.updatedAt - left.updatedAt)
+  return sortThreads(filtered)
 }
 
 function projectHasRunningTask(projectId: string): boolean {
@@ -145,10 +213,12 @@ function createTask(projectId?: string): void {
   emit('newTask', projectId)
 }
 
-const visibleGlobalThreads = computed(() => props.threads
-  .filter((thread) => !thread.projectId && !thread.archived)
-  .filter((thread) => !normalizedQuery.value || thread.title.toLocaleLowerCase().includes(normalizedQuery.value))
-  .sort((left, right) => right.updatedAt - left.updatedAt))
+const visibleGlobalThreads = computed(() => {
+  const filtered = props.threads
+    .filter((thread) => !thread.projectId && !thread.archived)
+    .filter((thread) => !normalizedQuery.value || thread.title.toLocaleLowerCase().includes(normalizedQuery.value))
+  return sortThreads(filtered)
+})
 
 function toggleProject(project: ProjectItem): void {
   const next = new Set(expandedProjects.value)
@@ -157,22 +227,30 @@ function toggleProject(project: ProjectItem): void {
   expandedProjects.value = next
 }
 
-function toggleMenu(key: string, event?: MouseEvent): void {
-  if (menuKey.value === key) {
-    menuKey.value = ''
-    return
-  }
-
-  const trigger = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
+function updateMenuPlacement(trigger: HTMLElement | null, menuHeight = 200): void {
   const row = trigger?.closest<HTMLElement>('.thread-heading-row, .project-heading-row')
   const section = trigger?.closest<HTMLElement>('.sidebar-scroll')
   const triggerRect = trigger?.getBoundingClientRect()
   const rowRect = row?.getBoundingClientRect()
   const sectionRect = section?.getBoundingClientRect()
-  const menuHeight = 190
   const spaceBelow = sectionRect && triggerRect ? sectionRect.bottom - triggerRect.bottom : Number.POSITIVE_INFINITY
   const spaceAbove = sectionRect && rowRect ? rowRect.top - sectionRect.top : Number.POSITIVE_INFINITY
   menuPlacement.value = spaceBelow < menuHeight && spaceAbove > spaceBelow ? 'up' : 'down'
+}
+
+function toggleMenu(key: string, event?: MouseEvent): void {
+  if (menuKey.value === key) {
+    menuKey.value = ''
+    return
+  }
+  const trigger = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  updateMenuPlacement(trigger, 190)
+  menuKey.value = key
+}
+
+function openContextMenu(key: string, event: MouseEvent): void {
+  const trigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  updateMenuPlacement(trigger, 220)
   menuKey.value = key
 }
 
@@ -182,9 +260,19 @@ function runAction(action: () => void): void {
 }
 
 function closeMenuWhenFocusLeaves(event: Event): void {
+  if ((event instanceof PointerEvent || event instanceof MouseEvent) && event.button === 2) {
+    return
+  }
   const target = event.target
   if (!(target instanceof Element) || !target.closest('.sidebar-context-menu, .row-menu-button'))
     menuKey.value = ''
+}
+
+function handleDocumentContextMenu(event: MouseEvent): void {
+  const target = event.target
+  if (!(target instanceof Element) || !target.closest('.sidebar-context-menu, .thread-heading-row')) {
+    menuKey.value = ''
+  }
 }
 
 function closeMenuOnEscape(event: KeyboardEvent): void {
@@ -195,6 +283,7 @@ onMounted(() => {
   document.addEventListener('pointerdown', closeMenuWhenFocusLeaves)
   document.addEventListener('focusin', closeMenuWhenFocusLeaves)
   document.addEventListener('keydown', closeMenuOnEscape)
+  document.addEventListener('contextmenu', handleDocumentContextMenu)
   window.addEventListener('blur', closeMenuWhenFocusLeaves)
 })
 
@@ -203,6 +292,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', closeMenuWhenFocusLeaves)
   document.removeEventListener('focusin', closeMenuWhenFocusLeaves)
   document.removeEventListener('keydown', closeMenuOnEscape)
+  document.removeEventListener('contextmenu', handleDocumentContextMenu)
   window.removeEventListener('blur', closeMenuWhenFocusLeaves)
 })
 
@@ -270,18 +360,35 @@ onBeforeUnmount(() => {
 
         <div v-if="taskSectionExpanded" class="task-list">
           <div v-for="thread in visibleGlobalThreads" :key="thread.id" class="thread-heading-row"
-            :class="{ active: thread.id === activeThreadId }">
+            :class="{ active: thread.id === activeThreadId, 'has-menu': menuKey === `thread:${thread.id}` }"
+            @contextmenu.prevent="openContextMenu(`thread:${thread.id}`, $event)">
             <button class="thread-row" @click="emit('selectThread', thread.id)">
               <span>{{ thread.title }}</span>
               <LoaderCircle v-if="thread.running" class="thread-running-spinner" :size="15" aria-label="运行中" />
             </button>
-            <button class="icon-button compact row-menu-button" :aria-label="`${thread.title} 任务菜单`"
-              @click.stop="toggleMenu(`thread:${thread.id}`, $event)">
-              <MoreHorizontal :size="15" />
-            </button>
+            <div class="thread-row-actions">
+              <button class="icon-button compact thread-row-action"
+                :class="{ 'pinned-active': isPinned(thread) }"
+                :title="isPinned(thread) ? '取消置顶' : '置顶'"
+                :aria-label="isPinned(thread) ? '取消置顶' : '置顶'"
+                @click.stop="togglePin(thread)">
+                <Pin :size="14" />
+              </button>
+              <button class="icon-button compact thread-row-action"
+                title="归档任务"
+                aria-label="归档任务"
+                @click.stop="emit('archiveTask', thread)">
+                <Archive :size="14" />
+              </button>
+            </div>
             <Transition name="context-menu">
               <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu"
                 :class="{ 'menu-up': menuPlacement === 'up' }">
+                <button @click="runAction(() => togglePin(thread))">
+                  <Pin v-if="!isPinned(thread)" :size="15" />
+                  <PinOff v-else :size="15" />
+                  {{ isPinned(thread) ? '取消置顶' : '置顶任务' }}
+                </button>
                 <button @click="runAction(() => emit('taskSettings', thread))">
                   <SlidersHorizontal :size="15" />任务设置
                 </button>
@@ -307,7 +414,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-for="project in projects" :key="project.id" class="project-group">
-          <div class="project-heading-row">
+          <div class="project-heading-row" :class="{ 'has-menu': menuKey === `project:${project.id}` }">
             <button class="project-row" :title="project.path" @click="toggleProject(project)">
               <Folder :size="18" />
               <span>{{ project.name }}</span>
@@ -346,18 +453,35 @@ onBeforeUnmount(() => {
           <Transition name="project-collapse">
             <div v-if="expandedProjects.has(project.id)" class="project-tasks">
               <div v-for="thread in visibleThreads(project.id)" :key="thread.id" class="thread-heading-row"
-                :class="{ active: thread.id === activeThreadId }">
+                :class="{ active: thread.id === activeThreadId, 'has-menu': menuKey === `thread:${thread.id}` }"
+                @contextmenu.prevent="openContextMenu(`thread:${thread.id}`, $event)">
                 <button class="thread-row" @click="emit('selectThread', thread.id)">
                   <span>{{ thread.title }}</span>
                   <LoaderCircle v-if="thread.running" class="thread-running-spinner" :size="15" aria-label="运行中" />
                 </button>
-                <button class="icon-button compact row-menu-button" :aria-label="`${thread.title} 任务菜单`"
-                  @click.stop="toggleMenu(`thread:${thread.id}`, $event)">
-                  <MoreHorizontal :size="15" />
-                </button>
+                <div class="thread-row-actions">
+                  <button class="icon-button compact thread-row-action"
+                    :class="{ 'pinned-active': isPinned(thread) }"
+                    :title="isPinned(thread) ? '取消置顶' : '置顶'"
+                    :aria-label="isPinned(thread) ? '取消置顶' : '置顶'"
+                    @click.stop="togglePin(thread)">
+                    <Pin :size="14" />
+                  </button>
+                  <button class="icon-button compact thread-row-action"
+                    title="归档任务"
+                    aria-label="归档任务"
+                    @click.stop="emit('archiveTask', thread)">
+                    <Archive :size="14" />
+                  </button>
+                </div>
                 <Transition name="context-menu">
                   <div v-if="menuKey === `thread:${thread.id}`" class="sidebar-context-menu task-menu"
                     :class="{ 'menu-up': menuPlacement === 'up' }">
+                    <button @click="runAction(() => togglePin(thread))">
+                      <Pin v-if="!isPinned(thread)" :size="15" />
+                      <PinOff v-else :size="15" />
+                      {{ isPinned(thread) ? '取消置顶' : '置顶任务' }}
+                    </button>
                     <button @click="runAction(() => emit('taskSettings', thread))">
                       <SlidersHorizontal :size="15" />任务设置
                     </button>

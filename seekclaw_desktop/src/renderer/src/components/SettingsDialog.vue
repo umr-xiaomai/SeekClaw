@@ -135,6 +135,7 @@ const props = defineProps<{
   daemonConnected: boolean
   daemonEndpoint: string
   initialSection?: SettingsSection
+  workspacePath?: string
 }>()
 
 const emit = defineEmits<{
@@ -983,6 +984,7 @@ onBeforeUnmount(() => {
           </section>
 
           <McpEditorDialog :open="mcpEditorOpen" :server="editingMcpServer" :saving="action === 'mcp.save'"
+            :workspace-path="workspacePath"
             :error="mcpDialogError" @close="closeMcpEditor" @save="saveMcpServer" />
         </template>
 

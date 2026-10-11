@@ -34,10 +34,19 @@ export interface McpOption {
   description: string
 }
 
-export const MCP_SCOPE_OPTIONS: McpOption[] = [
-  { value: 'workspace', label: '当前工作区', description: '仅在此工作区生效' },
-  { value: 'global', label: '全局', description: '在所有工作区中生效' }
-]
+export function buildMcpScopeOptions(workspacePath?: string): McpOption[] {
+  const path = workspacePath?.trim()
+  return [
+    {
+      value: 'workspace',
+      label: path ? `当前工作区 (${path})` : '当前工作区',
+      description: '仅在此工作区生效'
+    },
+    { value: 'global', label: '全局', description: '在所有工作区中生效' }
+  ]
+}
+
+export const MCP_SCOPE_OPTIONS: McpOption[] = buildMcpScopeOptions()
 
 /**
  * `stdio` runs a local subprocess; the two remote transports differ in how the

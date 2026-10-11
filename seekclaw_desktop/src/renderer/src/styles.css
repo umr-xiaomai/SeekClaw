@@ -757,9 +757,43 @@ body.is-resizing-sidebar .app-body {
 }
 
 .project-heading-row:hover .row-menu-button,
+.project-heading-row.has-menu .row-menu-button,
 .thread-heading-row:hover .row-menu-button,
 .row-menu-button:focus-visible {
   opacity: 1;
+}
+
+.thread-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 3px;
+  flex: 0 0 auto;
+}
+
+.thread-row-action {
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.thread-heading-row:hover .thread-row-action,
+.thread-heading-row.has-menu .thread-row-action,
+.thread-row-action:focus-visible {
+  opacity: 1;
+}
+
+.thread-row-action.pinned-active {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.thread-row-action.pinned-active:hover {
+  color: var(--accent);
+}
+
+.thread-heading-row.has-menu,
+.project-heading-row.has-menu {
+  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
 }
 
 .sidebar-context-menu {

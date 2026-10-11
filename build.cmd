@@ -20,7 +20,7 @@ set "BUILD_EXIT_CODE=%ERRORLEVEL%"
 :finish
 echo.
 if "%BUILD_EXIT_CODE%"=="0" (
-  echo SeekClaw build completed successfully.
+  echo SeekClaw build completed successfully. 
 ) else (
   echo SeekClaw build failed. See the error above.
 )

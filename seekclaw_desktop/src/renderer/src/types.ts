@@ -109,6 +109,7 @@ export interface ThreadItem {
   sessionId?: string
   sessionLoaded?: boolean
   archived?: boolean
+  pinned?: boolean
   /** True while this task has an agent turn running, independent of the selected task. */
   running?: boolean
   /** Local request id used to cancel this task without affecting other tasks. */

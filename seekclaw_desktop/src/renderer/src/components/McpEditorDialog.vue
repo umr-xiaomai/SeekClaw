@@ -2,8 +2,8 @@
 import { Save, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import {
-  MCP_SCOPE_OPTIONS,
   MCP_TRANSPORT_OPTIONS,
+  buildMcpScopeOptions,
   buildMcpServerPayload,
   createMcpFormValue,
   isRemoteTransport,
@@ -23,6 +23,8 @@ const props = defineProps<{
   saving?: boolean
   /** Error reported by the runtime for the last save attempt. */
   error?: string
+  /** The currently active workspace path, if any. */
+  workspacePath?: string
 }>()
 
 const emit = defineEmits<{
@@ -33,6 +35,31 @@ const emit = defineEmits<{
 const form = reactive<McpFormValue>(createMcpFormValue())
 const validationError = ref('')
 const firstInput = ref<HTMLInputElement | null>(null)
+const currentWorkspace = ref(props.workspacePath || '')
+
+watch(() => props.workspacePath, (path) => {
+  if (path) currentWorkspace.value = path
+})
+
+async function updateWorkspacePath(): Promise<void> {
+  if (props.workspacePath) {
+    currentWorkspace.value = props.workspacePath
+    return
+  }
+  try {
+    const res = await window.seekclaw?.daemon?.request('workspace.get')
+    if (res?.data) {
+      const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data
+      if (data?.path) {
+        currentWorkspace.value = data.path
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+const scopeOptions = computed(() => buildMcpScopeOptions(currentWorkspace.value))
 
 const editing = computed(() => props.server !== null)
 const remote = computed(() => isRemoteTransport(form.transport))
@@ -69,6 +96,7 @@ function handleKeydown(event: KeyboardEvent): void {
 
 watch(() => props.open, (open) => {
   if (!open) return
+  void updateWorkspacePath()
   Object.assign(form, props.server ? mcpFormFromServer(props.server) : createMcpFormValue())
   validationError.value = ''
   document.addEventListener('keydown', handleKeydown)
@@ -118,7 +146,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                 </label>
                 <label class="form-field">
                   <span>范围</span>
-                  <SelectMenu v-model="form.scope" :options="MCP_SCOPE_OPTIONS" label="MCP 范围" />
+                  <SelectMenu v-model="form.scope" :options="scopeOptions" label="MCP 范围" :menu-min-width="260" />
                 </label>
               </div>
             </section>
