@@ -3,7 +3,7 @@ import { existsSync, statSync, unlinkSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import type { GitCommit, GitHistory, GitOverview, RevertDiffItem, RevertDiffsResult } from '../shared/ipc.js'
+import type { CheckoutBranchResult, CreateBranchResult, GitBranchInfo, GitCommit, GitHistory, GitOverview, RevertDiffItem, RevertDiffsResult } from '../shared/ipc.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -50,9 +50,10 @@ export function parseGitLog(output: string): GitCommit[] {
 export async function getGitOverview(path: string): Promise<GitOverview> {
   const directory = await workspaceDirectory(path)
   try {
-    const [root, branch, status, unstaged, staged] = await Promise.all([
+    const [root, branch, upstream, status, unstaged, staged] = await Promise.all([
       git(directory, ['rev-parse', '--show-toplevel']),
       git(directory, ['branch', '--show-current']),
+      git(directory, ['rev-parse', '--abbrev-ref', '@{u}']).catch(() => ''),
       git(directory, ['status', '--short']),
       git(directory, ['diff', '--no-ext-diff', '--no-color', '--unified=3']),
       git(directory, ['diff', '--cached', '--no-ext-diff', '--no-color', '--unified=3'])
@@ -61,6 +62,7 @@ export async function getGitOverview(path: string): Promise<GitOverview> {
       isRepository: true,
       root,
       branch: branch || 'detached HEAD',
+      upstream: upstream.trim() || undefined,
       status: status ? status.split(/\r?\n/) : [],
       diff: [staged && '# Staged changes\n' + staged, unstaged && '# Working tree changes\n' + unstaged]
         .filter(Boolean).join('\n\n')
@@ -223,3 +225,59 @@ export async function revertFileDiffs(
   return { reverted, failed }
 }
 
+
+export async function getGitBranches(path: string): Promise<GitBranchInfo[]> {
+  const directory = await workspaceDirectory(path)
+  try {
+    const output = await git(directory, [
+      'branch', '-a', '--format=%(refname:short)%09%(refname)%09%(HEAD)%09%(upstream:short)'
+    ])
+    const lines = output.split(/\r?\n/).filter(Boolean)
+    const branches: GitBranchInfo[] = []
+    for (const line of lines) {
+      const [shortName = '', refname = '', head = '', upstream = ''] = line.split('\t')
+      if (refname.endsWith('/HEAD') || !shortName) continue
+      const isRemote = refname.startsWith('refs/remotes/')
+      const current = head.trim() === '*'
+      branches.push({
+        name: shortName,
+        current,
+        isRemote,
+        upstream: upstream.trim() || undefined
+      })
+    }
+    return branches
+  } catch {
+    return []
+  }
+}
+
+export async function checkoutGitBranch(path: string, branch: string): Promise<CheckoutBranchResult> {
+  const directory = await workspaceDirectory(path)
+  try {
+    let target = branch.trim()
+    if (target.startsWith('origin/')) {
+      const localName = target.replace(/^origin\//, '')
+      await git(directory, ['checkout', '--track', target]).catch(async () => {
+        await git(directory, ['checkout', localName])
+      })
+      return { success: true, branch: localName }
+    }
+    await git(directory, ['checkout', target])
+    return { success: true, branch: target }
+  } catch (error) {
+    return { success: false, error: friendlyGitError(error) }
+  }
+}
+
+export async function createGitBranch(path: string, branch: string): Promise<CreateBranchResult> {
+  const directory = await workspaceDirectory(path)
+  const name = branch.trim()
+  if (!name) return { success: false, error: '分支名称不能为空' }
+  try {
+    await git(directory, ['checkout', '-b', name])
+    return { success: true, branch: name }
+  } catch (error) {
+    return { success: false, error: friendlyGitError(error) }
+  }
+}

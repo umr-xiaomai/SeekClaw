@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
 import { toIpcPayload } from '../shared/ipc.js'
 import type { DaemonMessage, DaemonState, DesktopApi } from '../shared/ipc.js'
 
@@ -20,11 +20,29 @@ const api: DesktopApi = {
   closeApp: () => ipcRenderer.invoke('app:close'),
   openDevTools: () => ipcRenderer.invoke('app:open-devtools'),
   setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),
+  setZoomFactor: (factor: number) => {
+    try {
+      webFrame.setZoomFactor(factor)
+    } catch {
+      // ignore
+    }
+    void ipcRenderer.invoke('app:set-zoom-factor', factor)
+  },
+  getZoomFactor: () => {
+    try {
+      return webFrame.getZoomFactor()
+    } catch {
+      return 1.0
+    }
+  },
   notify: (title, body) => ipcRenderer.invoke('app:notify', title, body),
   project: {
     openTerminal: (path) => ipcRenderer.invoke('project:open-terminal', path),
     gitOverview: (path) => ipcRenderer.invoke('project:git-overview', path),
     gitHistory: (path) => ipcRenderer.invoke('project:git-history', path),
+    gitBranches: (path) => ipcRenderer.invoke('project:git-branches', path),
+    checkoutBranch: (path, branch) => ipcRenderer.invoke('project:checkout-branch', path, branch),
+    createBranch: (path, branch) => ipcRenderer.invoke('project:create-branch', path, branch),
     revertFileDiffs: (workspace, patches) => ipcRenderer.invoke('project:revert-file-diffs', workspace, patches)
   },
   daemon: {

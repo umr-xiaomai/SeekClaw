@@ -172,13 +172,23 @@ function handleSidebarResetWidth(): void {
 const aboutOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
-const gitPanelWidth = ref(560)
+const gitPanelWidth = ref(780)
 const toolDiff = ref<{ path: string; diff: string } | null>(null)
 
-const settingsSection = ref<'general' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'>('general')
+const settingsSection = ref<'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'>('general')
 const extensionsSection = ref<'mcp' | 'skills'>('mcp')
 const taskSettingsThreadId = ref('')
 const activePropertiesProject = ref<ProjectItem | null>(null)
+const storedAccentColor = localStorage.getItem('seekclaw-accent-color') || 'default'
+const accentColor = ref<string>(storedAccentColor)
+const storedFontFamily = localStorage.getItem('seekclaw-font-family') || ''
+const fontFamily = ref<string>(storedFontFamily)
+const storedMonoFontFamily = localStorage.getItem('seekclaw-mono-font-family') || ''
+const monoFontFamily = ref<string>(storedMonoFontFamily)
+const storedZoom = localStorage.getItem('seekclaw-zoom-factor')
+const zoomFactor = ref<number>(
+  storedZoom ? Math.max(0.75, Math.min(1.5, parseFloat(storedZoom) || 1.0)) : 1.0
+)
 const storedTheme = localStorage.getItem('seekclaw-theme')
 const theme = ref<AppearanceTheme>(
   storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system' ? storedTheme : 'system')
@@ -403,8 +413,8 @@ function closeGitPanel(): void {
 
 function resizeGitPanel(width: number): void {
   if (!Number.isFinite(width)) return
-  const maxWidth = Math.min(720, Math.max(280, Math.floor(window.innerWidth * 0.66)))
-  gitPanelWidth.value = Math.min(maxWidth, Math.max(280, Math.round(width)))
+  const maxWidth = Math.min(1400, Math.max(340, Math.floor(window.innerWidth * 0.9)))
+  gitPanelWidth.value = Math.min(maxWidth, Math.max(340, Math.round(width)))
 }
 
 async function openProjectTerminal(): Promise<void> {
@@ -417,6 +427,53 @@ function applyTheme(value: AppearanceTheme): void {
   document.documentElement.dataset.theme = value
   localStorage.setItem('seekclaw-theme', value)
   void window.seekclaw.setTheme(value)
+  applyAccentColor(accentColor.value)
+}
+
+function applyAccentColor(color: string): void {
+  accentColor.value = color
+  localStorage.setItem('seekclaw-accent-color', color)
+  if (!color || color === 'default') {
+    document.documentElement.style.removeProperty('--accent')
+    document.documentElement.style.removeProperty('--accent-soft')
+  } else {
+    document.documentElement.style.setProperty('--accent', color)
+    document.documentElement.style.setProperty(
+      '--accent-soft',
+      `color-mix(in srgb, ${color} 16%, var(--surface-raised))`
+    )
+  }
+}
+
+function applyFontFamily(font: string): void {
+  fontFamily.value = font
+  localStorage.setItem('seekclaw-font-family', font)
+  if (!font) {
+    document.documentElement.style.removeProperty('--font-sans')
+  } else {
+    document.documentElement.style.setProperty('--font-sans', font)
+  }
+}
+
+function applyMonoFontFamily(font: string): void {
+  monoFontFamily.value = font
+  localStorage.setItem('seekclaw-mono-font-family', font)
+  if (!font) {
+    document.documentElement.style.removeProperty('--font-mono')
+  } else {
+    document.documentElement.style.setProperty('--font-mono', font)
+  }
+}
+
+function applyZoomFactor(factor: number): void {
+  const clamped = Math.max(0.75, Math.min(1.5, Math.round(factor * 100) / 100))
+  zoomFactor.value = clamped
+  localStorage.setItem('seekclaw-zoom-factor', String(clamped))
+  if (window.seekclaw?.setZoomFactor) {
+    window.seekclaw.setZoomFactor(clamped)
+  } else {
+    (document.documentElement.style as unknown as { zoom: string }).zoom = String(clamped)
+  }
 }
 
 function isNearConversationBottom(element: HTMLElement, threshold = 48): boolean {
@@ -1484,6 +1541,10 @@ function useStarterPrompt(prompt: string): void {
 
 onMounted(async () => {
   applyTheme(theme.value)
+  applyAccentColor(accentColor.value)
+  applyFontFamily(fontFamily.value)
+  applyMonoFontFamily(monoFontFamily.value)
+  applyZoomFactor(zoomFactor.value)
   appInfo.value = await window.seekclaw.getAppInfo()
   document.documentElement.dataset.platform = appInfo.value.platform
   document.documentElement.dataset.material = appInfo.value.supportsMica ? 'mica' : 'solid'
@@ -1733,11 +1794,20 @@ watch(theme, applyTheme)
 
     <SettingsDialog :open="activePage === 'settings' || activePage === 'extensions'"
       :page="activePage === 'extensions' ? 'extensions' : 'settings'" :theme="theme"
+      :accent-color="accentColor"
+      :font-family="fontFamily"
+      :mono-font-family="monoFontFamily"
+      :zoom-factor="zoomFactor"
       :daemon-connected="daemonState.connected" :daemon-endpoint="daemonState.endpoint"
       :initial-section="activePage === 'settings' ? settingsSection : extensionsSection"
       :workspace-path="currentWorkspacePath"
       @close="closePage"
-      @change-theme="applyTheme" @reconnect="reconnectDaemon" @open-workspace="openWorkspace"
+      @change-theme="applyTheme"
+      @change-accent-color="applyAccentColor"
+      @change-font-family="applyFontFamily"
+      @change-mono-font-family="applyMonoFontFamily"
+      @change-zoom-factor="applyZoomFactor"
+      @reconnect="reconnectDaemon" @open-workspace="openWorkspace"
       @open-official-skills="openOfficialSkills" @runtime-changed="refreshRuntimeState" />
 
     <OfficialSkillsDialog :open="activePage === 'official-skills'" @close="closePage" />

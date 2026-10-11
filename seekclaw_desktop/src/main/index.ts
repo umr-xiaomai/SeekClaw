@@ -8,7 +8,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
 import type { DaemonMessage, DaemonRequestOptions, RevertDiffItem } from '../shared/ipc.js'
 import { DaemonClient } from './daemon-client.js'
-import { getGitHistory, getGitOverview, openProjectTerminal, revertFileDiffs } from './project-tools.js'
+import { checkoutGitBranch, createGitBranch, getGitBranches, getGitHistory, getGitOverview, openProjectTerminal, revertFileDiffs } from './project-tools.js'
 import {
   destroyComputerOverlay,
   hideComputerOverlay,
@@ -426,9 +426,18 @@ function registerIpc(): void {
     }
   })
 
+  ipcMain.handle('app:set-zoom-factor', (_event, factor: number) => {
+    if (typeof factor === 'number' && Number.isFinite(factor) && factor >= 0.5 && factor <= 3) {
+      mainWindow?.webContents.setZoomFactor(factor)
+    }
+  })
+
   ipcMain.handle('project:open-terminal', (_event, path: string) => openProjectTerminal(path))
   ipcMain.handle('project:git-overview', (_event, path: string) => getGitOverview(path))
   ipcMain.handle('project:git-history', (_event, path: string) => getGitHistory(path))
+  ipcMain.handle('project:git-branches', (_event, path: string) => getGitBranches(path))
+  ipcMain.handle('project:checkout-branch', (_event, path: string, branch: string) => checkoutGitBranch(path, branch))
+  ipcMain.handle('project:create-branch', (_event, path: string, branch: string) => createGitBranch(path, branch))
   ipcMain.handle('project:revert-file-diffs', (_event, workspace: string, patches: RevertDiffItem[]) =>
     revertFileDiffs(workspace, patches)
   )

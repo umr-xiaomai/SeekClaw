@@ -66,6 +66,7 @@ export interface GitOverview {
   isRepository: boolean
   root: string
   branch: string
+  upstream?: string
   status: string[]
   diff: string
   error?: string
@@ -77,6 +78,26 @@ export interface GitCommit {
   author: string
   authoredAt: string
   subject: string
+}
+
+
+export interface GitBranchInfo {
+  name: string
+  current: boolean
+  isRemote: boolean
+  upstream?: string
+}
+
+export interface CheckoutBranchResult {
+  success: boolean
+  branch?: string
+  error?: string
+}
+
+export interface CreateBranchResult {
+  success: boolean
+  branch?: string
+  error?: string
 }
 
 export interface GitHistory {
@@ -123,11 +144,16 @@ export interface DesktopApi {
   closeApp(): Promise<void>
   openDevTools(): Promise<void>
   setTheme(theme: AppearanceTheme): Promise<void>
+  setZoomFactor?(factor: number): void
+  getZoomFactor?(): number
   notify(title: string, body: string): Promise<void>
   project: {
     openTerminal(path: string): Promise<void>
     gitOverview(path: string): Promise<GitOverview>
     gitHistory(path: string): Promise<GitHistory>
+    gitBranches(path: string): Promise<GitBranchInfo[]>
+    checkoutBranch(path: string, branch: string): Promise<CheckoutBranchResult>
+    createBranch(path: string, branch: string): Promise<CreateBranchResult>
     revertFileDiffs(workspace: string, patches: RevertDiffItem[]): Promise<RevertDiffsResult>
   }
   daemon: {

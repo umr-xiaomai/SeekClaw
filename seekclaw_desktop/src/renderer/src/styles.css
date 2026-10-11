@@ -1,6 +1,8 @@
 :root {
   color-scheme: light;
-  font-family: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-sans: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-sans);
   font-synthesis: none;
   --bg: #fafafa;
   --sidebar: #eceef2;
@@ -16,7 +18,7 @@
   --border: #dedede;
   --border-strong: #cecece;
   --accent: #007acc;
-  --accent-soft: #e8f2fc;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
   --danger: #b6473f;
   --shadow: 0 12px 38px rgb(0 0 0 / 8%);
   --composer-shadow: 0 8px 28px rgb(0 0 0 / 8%);
@@ -39,7 +41,7 @@
   --border: #353535;
   --border-strong: #454545;
   --accent: #388bfd;
-  --accent-soft: #16263d;
+  --accent-soft: color-mix(in srgb, var(--accent) 20%, var(--surface-raised));
   --danger: #df786f;
   --shadow: 0 12px 38px rgb(0 0 0 / 28%);
   --composer-shadow: 0 8px 28px rgb(0 0 0 / 25%);
@@ -63,7 +65,7 @@
     --border: #353535;
     --border-strong: #454545;
     --accent: #388bfd;
-    --accent-soft: #16263d;
+    --accent-soft: color-mix(in srgb, var(--accent) 20%, var(--surface-raised));
     --danger: #df786f;
     --shadow: 0 12px 38px rgb(0 0 0 / 28%);
     --composer-shadow: 0 8px 28px rgb(0 0 0 / 25%);
@@ -326,13 +328,13 @@ select:focus-visible {
   background: var(--sidebar);
 }
 
-.app-workspace-container > .app-body {
+.app-workspace-container>.app-body {
   width: 100%;
   height: 100%;
   flex: 1 1 auto;
 }
 
-.app-workspace-container > .embedded-page {
+.app-workspace-container>.embedded-page {
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1729,7 +1731,7 @@ body.is-resizing-sidebar .app-body {
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2016,7 +2018,7 @@ body.is-resizing-sidebar .app-body {
   min-height: 34px;
   padding: 0 11px 0 14px;
   color: #abb2bf;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
   font-size: 11px;
   border-bottom: 1px solid #2d3139;
 }
@@ -3125,7 +3127,8 @@ body.is-resizing-sidebar .app-body {
 }
 
 .git-panel-title>div {
-  display: grid;
+  display: flex;
+  align-items: center;
   min-width: 0;
   gap: 2px;
 }
@@ -3212,7 +3215,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .tool-diff-summary small {
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
 }
 
 .git-status-list {
@@ -3246,7 +3249,7 @@ body.is-resizing-sidebar .app-body {
 .git-status-row code {
   min-width: 0;
   overflow: hidden;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3258,7 +3261,7 @@ body.is-resizing-sidebar .app-body {
   margin: 0;
   padding: 10px 0 26px;
   color: var(--text-secondary);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
   font-size: 12px;
   line-height: 1.65;
   tab-size: 4;
@@ -3384,7 +3387,7 @@ body.is-resizing-sidebar .app-body {
 
 .git-history-list code {
   color: var(--text-secondary);
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
 }
 
 .git-history-list time {
@@ -3396,18 +3399,35 @@ body.is-resizing-sidebar .app-body {
 .side-panel-enter-active,
 .side-panel-leave-active {
   overflow: hidden;
-  transition: width 240ms cubic-bezier(.2, .8, .2, 1), opacity 180ms ease;
+  transition: opacity 180ms ease, transform 200ms cubic-bezier(.2, .8, .2, 1);
+  will-change: transform, opacity;
+}
+
+.side-panel-leave-active {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  pointer-events: none;
 }
 
 .side-panel-enter-from,
 .side-panel-leave-to {
-  width: 0 !important;
   opacity: 0;
+  transform: translateX(32px);
 }
 
 .is-resizing-git-panel,
 .is-resizing-git-panel * {
   cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.is-resizing-git-panel .git-panel,
+body.is-resizing-git-panel .git-panel *,
+body.is-resizing-git-panel .git-files-tree-panel,
+body.is-resizing-git-panel .diff-file-card {
+  transition: none !important;
 }
 
 .runtime-reconnect-backdrop {
@@ -6027,7 +6047,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .model-row-id {
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
   font-size: 12px;
   font-weight: 500;
   color: var(--text);
@@ -6160,7 +6180,7 @@ body.is-resizing-sidebar .app-body {
 .anomaly-error-detail code {
   color: var(--danger);
   word-break: break-all;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
 }
 
 .anomaly-file-info {
@@ -6182,7 +6202,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .file-row .file-path {
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6204,4 +6224,1355 @@ body.is-resizing-sidebar .app-body {
   padding: 14px 22px;
   background: var(--surface);
   border-top: 1px solid var(--border);
+}
+
+/* ============================================================
+   Appearance Settings Section Styles
+   ============================================================ */
+
+.theme-mode-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.theme-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.theme-mode-pill:hover {
+  color: var(--text);
+}
+
+.theme-mode-pill.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.09);
+  font-weight: 600;
+}
+
+.theme-accent-palette-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.theme-accent-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  max-width: 480px;
+}
+
+.accent-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.accent-swatch:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.accent-swatch.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-raised));
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.accent-swatch-circle {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.accent-check {
+  color: var(--accent);
+  margin-left: 1px;
+}
+
+.theme-accent-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.custom-color-picker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+  padding: 4px 11px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.custom-color-picker-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.custom-color-picker-chip.active {
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-raised));
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.native-color-picker-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.custom-color-swatch-preview {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.font-setting-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.custom-font-input {
+  width: 260px;
+  min-height: 32px;
+  padding: 5px 9px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.custom-font-input:focus {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.custom-font-input.mono-input {
+  font-family: var(--font-mono);
+}
+
+.font-preview-card {
+  margin: -10px 0 14px;
+  padding: 9px 13px;
+  background: color-mix(in srgb, var(--text-muted) 6%, var(--surface-raised));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.font-preview-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.font-preview-text {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.font-preview-card.mono-card {
+  font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--text-muted) 8%, var(--surface));
+}
+
+.zoom-controls-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.zoom-preset-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--surface-hover);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.zoom-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.zoom-chip:hover {
+  color: var(--text);
+}
+
+.zoom-chip.active {
+  background: var(--surface-raised);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+}
+
+.zoom-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoom-range-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 140px;
+  height: 6px;
+  background: var(--border-strong);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.zoom-badge-pill {
+  min-width: 48px;
+  text-align: center;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  user-select: none;
+}
+
+.icon-button-subtle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.icon-button-subtle:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.icon-button-subtle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.compact-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+
+/* ============================================================
+   Codex Git Workbench Styles (Matching Codex UI)
+   ============================================================ */
+
+.git-panel.codex-git-workbench {
+  display: flex !important;
+  flex-direction: column !important;
+  grid-template-rows: none !important;
+  background: var(--surface) !important;
+  border-left: 1px solid var(--border);
+  width: min(var(--git-panel-width, 780px), 100%);
+  position: relative;
+  z-index: 6;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.codex-git-workbench .git-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.codex-git-workbench .git-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-header-title-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.icon-button-badge-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  margin-left: 4px;
+  transition: all 0.12s ease;
+}
+
+.icon-button-badge-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.codex-git-workbench .git-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-button-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.icon-button-mini:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.icon-button-mini.active {
+  background: var(--surface-hover);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.icon-button-mini:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Toolbar Rows */
+.git-workbench-toolbar {
+  position: relative;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.git-toolbar-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.git-branch-stats-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.git-branch-stats-chip:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.git-branch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.git-stats-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stat-add {
+  color: #16a34a;
+}
+
+[data-theme="dark"] .stat-add {
+  color: #4ade80;
+}
+
+.stat-del {
+  color: #dc2626;
+}
+
+[data-theme="dark"] .stat-del {
+  color: #f87171;
+}
+
+.stat-clean {
+  color: var(--text-muted);
+}
+
+.git-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.git-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.git-tool-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.git-tool-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Dropdown Menu Popover */
+.git-more-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 100;
+  width: 220px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.git-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.git-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.git-menu-item .menu-item-check {
+  margin-left: auto;
+  color: var(--text);
+}
+
+.git-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+/* Upstream Tracking Pill */
+.git-toolbar-row-bottom {
+  display: flex;
+  align-items: center;
+}
+
+.git-upstream-tracking-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 11px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  user-select: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.git-upstream-tracking-pill:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.git-upstream-tracking-pill .tracking-current {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.git-upstream-tracking-pill .tracking-arrow {
+  color: var(--text-muted);
+}
+
+.git-upstream-tracking-pill .tracking-remote {
+  color: var(--text-secondary);
+}
+
+.git-upstream-tracking-pill .tracking-chevron {
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+/* Workbench Body */
+.git-panel-workbench-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.git-diff-scrollable {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 12px;
+}
+
+.diff-file-card {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.diff-file-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.diff-file-card.is-collapsed .diff-file-card-header {
+  border-bottom: none;
+}
+
+.diff-file-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  gap: 10px;
+}
+
+.diff-file-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.diff-arrow {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.diff-card-filename {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-card-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.diff-file-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.diff-card-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.diff-card-action-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* Unmodified lines pill */
+.diff-unmodified-pill {
+  margin: 8px 12px;
+  padding: 4px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-muted) 8%, var(--surface-raised));
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+  user-select: none;
+}
+
+/* Diff Code Lines */
+.diff-hunk-lines {
+  display: flex;
+  flex-direction: column;
+}
+
+.diff-hunk-wrap {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
+}
+
+.diff-code-line {
+  display: flex;
+  align-items: stretch;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+  tab-size: 4;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 20px;
+}
+
+.diff-line-gutter {
+  width: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  user-select: none;
+  position: relative;
+  background: color-mix(in srgb, var(--text-muted) 3%, transparent);
+}
+
+.diff-line-gutter .line-num {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.diff-line-gutter .gutter-color-bar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+}
+
+.diff-line-text {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px;
+  white-space: pre;
+  overflow-x: visible;
+  color: var(--text);
+}
+
+.diff-code-line.is-wrapped .diff-line-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Addition Line */
+.diff-code-line.diff-type-addition {
+  background: color-mix(in srgb, #22c55e 9%, transparent);
+}
+
+[data-theme="dark"] .diff-code-line.diff-type-addition {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.diff-type-addition .diff-line-gutter .line-num {
+  color: #16a34a;
+  font-weight: 500;
+}
+
+[data-theme="dark"] .diff-type-addition .diff-line-gutter .line-num {
+  color: #4ade80;
+}
+
+.diff-type-addition .diff-line-gutter .gutter-color-bar {
+  background: #22c55e;
+}
+
+/* Deletion Line with Striped Gutter Bar */
+.diff-code-line.diff-type-deletion {
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+}
+
+[data-theme="dark"] .diff-code-line.diff-type-deletion {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.diff-type-deletion .diff-line-gutter .line-num {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+[data-theme="dark"] .diff-type-deletion .diff-line-gutter .line-num {
+  color: #f87171;
+}
+
+.diff-type-deletion .diff-line-gutter .gutter-color-bar {
+  background: repeating-linear-gradient(45deg, #ef4444, #ef4444 2px, transparent 2px, transparent 4px);
+}
+
+/* Word Diff Highlights */
+.word-diff-highlight.word-add {
+  background: color-mix(in srgb, #22c55e 28%, transparent);
+  border-radius: 2px;
+}
+
+.word-diff-highlight.word-del {
+  background: color-mix(in srgb, #ef4444 28%, transparent);
+  border-radius: 2px;
+}
+
+/* File Tree Resize Handle */
+.git-tree-resize-handle {
+  width: 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  z-index: 10;
+  cursor: col-resize;
+  position: relative;
+  flex-shrink: 0;
+  background: transparent;
+}
+
+.git-tree-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.git-tree-resize-handle:hover::after,
+body.is-resizing-git-panel .git-tree-resize-handle::after {
+  background: var(--accent);
+}
+
+/* File Tree Panel (Right Sidebar) */
+.git-files-tree-panel {
+  width: var(--git-tree-width, 250px);
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface-raised);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.git-file-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.filter-search-icon,
+.filter-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.filter-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 11.5px;
+  outline: none;
+}
+
+.filter-search-input:focus {
+  border-color: var(--accent);
+}
+
+.git-tree-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+
+.git-tree-folder-group {
+  margin-bottom: 2px;
+}
+
+.git-tree-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 25px;
+  padding: 0 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.git-tree-folder-row:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.git-tree-folder-row.nested {
+  padding-left: 16px;
+}
+
+.tree-chevron {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.tree-folder-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.tree-folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-tree-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 25px;
+  padding: 0 8px 0 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  user-select: none;
+  transition: background 0.1s ease;
+}
+
+.git-tree-file-row.root-file {
+  padding-left: 10px;
+}
+
+.git-tree-file-row:hover {
+  background: var(--surface-hover);
+}
+
+.git-tree-file-row.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-hover));
+  font-weight: 500;
+}
+
+.tree-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.tree-file-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.tree-file-status {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.tree-file-status.modified {
+  color: #16a34a;
+}
+
+.tree-file-status.added {
+  color: #16a34a;
+}
+
+.tree-file-status.deleted {
+  color: #dc2626;
+}
+
+/* File Badge Icons (Vue, CSS, TS) */
+.file-badge-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.file-badge-icon.vue-svg {
+  width: 14px;
+  height: 14px;
+}
+
+.file-badge-icon.code-tag {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.file-badge-icon.code-tag.css {
+  background: #8b5cf6;
+  color: #ffffff;
+}
+
+.file-badge-icon.code-tag.ts {
+  background: #3178c6;
+  color: #ffffff;
+}
+
+/* Action Toast */
+.git-action-toast {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  background: var(--text);
+  color: var(--bg);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+/* Branch Switcher Popover */
+.git-branch-menu-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 14px;
+  z-index: 120;
+  width: 320px;
+  max-width: calc(100% - 28px);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.git-branch-menu-header {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+}
+
+.git-branch-search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+.branch-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.branch-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.branch-clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.branch-clear-btn:hover {
+  color: var(--text);
+}
+
+.git-new-branch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 26px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.git-new-branch-btn:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-style: solid;
+}
+
+.git-create-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.new-branch-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.new-branch-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.mini-action-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.mini-action-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.git-branch-menu-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.git-branch-menu-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.branch-group-title {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.branch-group-count {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: var(--surface-hover);
+}
+
+.branch-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  user-select: none;
+}
+
+.branch-menu-item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.branch-menu-item.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-hover));
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.branch-menu-item .branch-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.branch-menu-item.active .branch-icon {
+  color: var(--accent);
+}
+
+.branch-menu-item .remote-icon {
+  color: #0284c7;
+}
+
+.branch-menu-item .branch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.branch-menu-item .branch-upstream {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-menu-item .branch-current-check {
+  color: var(--accent);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.branch-empty-hint {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
 }

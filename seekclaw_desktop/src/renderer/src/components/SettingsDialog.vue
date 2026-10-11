@@ -12,8 +12,9 @@ import {
   GripVertical,
   KeyRound,
   LoaderCircle,
-  Moon,
   Monitor,
+  Moon,
+  Palette,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -27,8 +28,10 @@ import {
   Upload,
   Wrench,
   X,
-  Zap
-} from '@lucide/vue'
+  Zap,
+  ZoomIn,
+  ZoomOut
+} from "@lucide/vue"
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { confirmAction } from '../confirmation'
 import {
@@ -46,7 +49,7 @@ import TwoPaneLayout from './TwoPaneLayout.vue'
 import UsageTrendChart, { type TimelinePoint } from './UsageTrendChart.vue'
 import UsageModelBarChart from './UsageModelBarChart.vue'
 
-type SettingsSection = 'general' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'
+type SettingsSection = 'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'
 
 interface ProviderInfo {
   id: string
@@ -132,6 +135,10 @@ const props = defineProps<{
   open: boolean
   page?: 'settings' | 'extensions'
   theme: 'system' | 'light' | 'dark'
+  accentColor?: string
+  fontFamily?: string
+  monoFontFamily?: string
+  zoomFactor?: number
   daemonConnected: boolean
   daemonEndpoint: string
   initialSection?: SettingsSection
@@ -141,6 +148,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   changeTheme: [theme: 'system' | 'light' | 'dark']
+  changeAccentColor: [color: string]
+  changeFontFamily: [font: string]
+  changeMonoFontFamily: [font: string]
+  changeZoomFactor: [factor: number]
   reconnect: []
   openWorkspace: []
   openOfficialSkills: []
@@ -233,12 +244,161 @@ function cacheHitRate(item: UsageInfo): number {
 
 const sections: Array<{ id: SettingsSection; label: string; icon: typeof Settings2 }> = [
   { id: 'general', label: '常规', icon: Settings2 },
+  { id: 'appearance', label: '外观', icon: Palette },
   { id: 'models', label: '模型与提供商', icon: Bot },
   { id: 'mcp', label: 'MCP', icon: Blocks },
   { id: 'skills', label: '技能', icon: Wrench },
   { id: 'diagnostics', label: '诊断与用量', icon: Activity },
   { id: 'advanced', label: '高级设置', icon: SlidersHorizontal }
 ]
+
+
+// --- Appearance Section State & Logic ---
+const presetColors = [
+  { value: 'default', label: '默认蓝', hex: '#007acc' },
+  { value: '#7c3aed', label: '极光紫', hex: '#7c3aed' },
+  { value: '#0284c7', label: '天穹蓝', hex: '#0284c7' },
+  { value: '#10b981', label: '翡翠绿', hex: '#10b981' },
+  { value: '#f59e0b', label: '暖阳橙', hex: '#f59e0b' },
+  { value: '#f43f5e', label: '珊瑚红', hex: '#f43f5e' },
+  { value: '#ec4899', label: '霓虹粉', hex: '#ec4899' },
+  { value: '#0d9488', label: '皓石青', hex: '#0d9488' },
+  { value: '#6366f1', label: '幽晶紫', hex: '#6366f1' }
+]
+
+const currentAccentColor = computed(() => props.accentColor || 'default')
+const isCustomColor = computed(() => {
+  const current = currentAccentColor.value
+  return current !== 'default' && !presetColors.some((c) => c.value === current)
+})
+const customColorHex = ref(
+  props.accentColor && props.accentColor !== 'default' && props.accentColor.startsWith('#')
+    ? props.accentColor
+    : '#007acc'
+)
+
+function selectAccent(color: string): void {
+  emit('changeAccentColor', color)
+}
+
+function handleCustomColorChange(event: Event): void {
+  const val = (event.target as HTMLInputElement).value
+  customColorHex.value = val
+  emit('changeAccentColor', val)
+}
+
+const fontPresets = [
+  { value: 'default', label: '默认系统字体', description: '跟随操作系统（Segoe UI Variable / 苹方 / 微软雅黑）', font: '' },
+  { value: 'modern', label: '苹方 / 微软雅黑', description: '现代平滑的中西文无衬线', font: '"PingFang SC", "Microsoft YaHei", sans-serif' },
+  { value: 'harmony', label: '鸿蒙字体 / MiSans', description: '高分屏优化的现代排版', font: '"HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", sans-serif' },
+  { value: 'inter', label: 'Inter / 现代无衬线', description: '流行国际化 UI 字体与中文混排', font: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif' },
+  { value: 'serif', label: '宋体 / 典雅衬线', description: '古典文雅的书卷衬线字体', font: '"Songti SC", "SimSun", "Noto Serif CJK SC", Georgia, serif' },
+  { value: 'custom', label: '自定义字体...', description: '手动指定已安装的字体名称', font: '__custom__' }
+]
+
+const monoFontPresets = [
+  { value: 'default', label: '默认等宽字体', description: 'Cascadia Code / Consolas', font: '' },
+  { value: 'jetbrains', label: 'JetBrains Mono', description: '专为代码阅读优化的等宽字体', font: '"JetBrains Mono", Consolas, monospace' },
+  { value: 'fira', label: 'Fira Code', description: '带连字符特性的经典编程字体', font: '"Fira Code", Consolas, monospace' },
+  { value: 'cascadia', label: 'Cascadia Code', description: '微软现代化终端与开发字体', font: '"Cascadia Code", Consolas, monospace' },
+  { value: 'source', label: 'Source Code Pro', description: 'Adobe 优雅可读的等宽字体', font: '"Source Code Pro", Consolas, monospace' },
+  { value: 'consolas', label: 'Consolas', description: '经典 Windows 等宽系统字体', font: 'Consolas, monospace' },
+  { value: 'custom', label: '自定义等宽字体...', description: '手动指定已安装的等宽字体名称', font: '__custom__' }
+]
+
+const selectedFontKey = ref('default')
+const customFontValue = ref('')
+const selectedMonoFontKey = ref('default')
+const customMonoFontValue = ref('')
+
+function initFontKeys(): void {
+  const currentFont = props.fontFamily || ''
+  const matched = fontPresets.find((p) => p.value !== 'custom' && p.font === currentFont)
+  if (matched) {
+    selectedFontKey.value = matched.value
+    customFontValue.value = ''
+  } else if (currentFont) {
+    selectedFontKey.value = 'custom'
+    customFontValue.value = currentFont
+  } else {
+    selectedFontKey.value = 'default'
+    customFontValue.value = ''
+  }
+
+  const currentMono = props.monoFontFamily || ''
+  const matchedMono = monoFontPresets.find((p) => p.value !== 'custom' && p.font === currentMono)
+  if (matchedMono) {
+    selectedMonoFontKey.value = matchedMono.value
+    customMonoFontValue.value = ''
+  } else if (currentMono) {
+    selectedMonoFontKey.value = 'custom'
+    customMonoFontValue.value = currentMono
+  } else {
+    selectedMonoFontKey.value = 'default'
+    customMonoFontValue.value = ''
+  }
+}
+
+watch(() => props.open, (val) => {
+  if (val) initFontKeys()
+}, { immediate: true })
+
+watch(() => [props.fontFamily, props.monoFontFamily], () => {
+  initFontKeys()
+})
+
+function onSelectFontKey(key: string): void {
+  selectedFontKey.value = key
+  if (key === 'custom') {
+    if (customFontValue.value) {
+      emit('changeFontFamily', customFontValue.value)
+    }
+  } else {
+    const item = fontPresets.find((p) => p.value === key)
+    emit('changeFontFamily', item ? item.font : '')
+  }
+}
+
+function onCustomFontInput(event: Event): void {
+  const val = (event.target as HTMLInputElement).value.trim()
+  customFontValue.value = val
+  if (selectedFontKey.value === 'custom') {
+    emit('changeFontFamily', val)
+  }
+}
+
+function onSelectMonoFontKey(key: string): void {
+  selectedMonoFontKey.value = key
+  if (key === 'custom') {
+    if (customMonoFontValue.value) {
+      emit('changeMonoFontFamily', customMonoFontValue.value)
+    }
+  } else {
+    const item = monoFontPresets.find((p) => p.value === key)
+    emit('changeMonoFontFamily', item ? item.font : '')
+  }
+}
+
+function onCustomMonoFontInput(event: Event): void {
+  const val = (event.target as HTMLInputElement).value.trim()
+  customMonoFontValue.value = val
+  if (selectedMonoFontKey.value === 'custom') {
+    emit('changeMonoFontFamily', val)
+  }
+}
+
+const currentZoom = computed(() => props.zoomFactor ?? 1.0)
+const zoomPresets = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5]
+
+function setZoom(factor: number): void {
+  emit('changeZoomFactor', factor)
+}
+
+function stepZoom(direction: 1 | -1): void {
+  const cur = currentZoom.value
+  const next = Math.round((cur + direction * 0.05) * 100) / 100
+  setZoom(Math.max(0.75, Math.min(1.5, next)))
+}
 
 const pageTitle = computed(() => props.page === 'extensions' ? 'MCP 与技能' : '设置')
 const visibleSections = computed(() =>
@@ -900,6 +1060,240 @@ onBeforeUnmount(() => {
                 <LoaderCircle v-if="action === 'factory.reset'" class="spin" :size="15" />
                 <RotateCcw v-else :size="15" /> 恢复出厂设置
               </button>
+            </div>
+          </section>
+        </template>
+
+        <template v-else-if="section === 'appearance'">
+          <div class="settings-section-heading">
+            <div>
+              <h3>外观</h3>
+              <p>定制界面主题模式、主题色彩、字体与显示缩放</p>
+            </div>
+          </div>
+
+          <!-- 界面主题 -->
+          <section class="settings-group">
+            <div class="settings-row">
+              <div>
+                <strong>界面主题</strong>
+                <small>选择界面的明暗显示风格，可跟随系统自动切换</small>
+              </div>
+              <div class="theme-mode-segmented">
+                <button
+                  type="button"
+                  class="theme-mode-pill"
+                  :class="{ active: theme === 'system' }"
+                  title="跟随系统设置"
+                  @click="emit('changeTheme', 'system')"
+                >
+                  <Monitor :size="15" />
+                  <span>跟随系统</span>
+                </button>
+                <button
+                  type="button"
+                  class="theme-mode-pill"
+                  :class="{ active: theme === 'light' }"
+                  title="浅色模式"
+                  @click="emit('changeTheme', 'light')"
+                >
+                  <Sun :size="15" />
+                  <span>浅色</span>
+                </button>
+                <button
+                  type="button"
+                  class="theme-mode-pill"
+                  :class="{ active: theme === 'dark' }"
+                  title="深色模式"
+                  @click="emit('changeTheme', 'dark')"
+                >
+                  <Moon :size="15" />
+                  <span>深色</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 主题色 -->
+          <section class="settings-group">
+            <div class="settings-row">
+              <div>
+                <strong>主题色</strong>
+                <small>自定义按钮、高亮选中态、滑块与重点边框的强调色彩</small>
+              </div>
+              <div class="theme-accent-palette-wrapper">
+                <div class="theme-accent-swatches">
+                  <button
+                    v-for="color in presetColors"
+                    :key="color.value"
+                    type="button"
+                    class="accent-swatch"
+                    :class="{ active: currentAccentColor === color.value }"
+                    :title="color.label"
+                    @click="selectAccent(color.value)"
+                  >
+                    <span class="accent-swatch-circle" :style="{ backgroundColor: color.hex }" />
+                    <span class="accent-swatch-name">{{ color.label }}</span>
+                    <Check v-if="currentAccentColor === color.value" :size="12" class="accent-check" />
+                  </button>
+                </div>
+
+                <div class="theme-accent-custom-row">
+                  <label class="custom-color-picker-chip" :class="{ active: isCustomColor }" title="选取任意自定义颜色">
+                    <input
+                      type="color"
+                      class="native-color-picker-input"
+                      :value="customColorHex"
+                      @input="handleCustomColorChange"
+                    />
+                    <span class="custom-color-swatch-preview" :style="{ backgroundColor: customColorHex }" />
+                    <span>{{ isCustomColor ? customColorHex.toUpperCase() : '自定义颜色' }}</span>
+                  </label>
+
+                  <button
+                    v-if="currentAccentColor !== 'default'"
+                    type="button"
+                    class="secondary-button compact-reset-btn"
+                    title="重置为默认强调色"
+                    @click="selectAccent('default')"
+                  >
+                    <RotateCcw :size="13" /> 恢复默认颜色
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 字体设置 -->
+          <section class="settings-group">
+            <div class="settings-row">
+              <div>
+                <strong>界面字体</strong>
+                <small>调整软件标题、菜单、正文与输入框的字体族</small>
+              </div>
+              <div class="font-setting-control">
+                <SelectMenu
+                  :model-value="selectedFontKey"
+                  class="settings-select font-select"
+                  :options="fontPresets.map(p => ({ value: p.value, label: p.label, description: p.description }))"
+                  label="界面字体"
+                  :menu-min-width="260"
+                  @update:model-value="onSelectFontKey"
+                />
+                <input
+                  v-if="selectedFontKey === 'custom'"
+                  type="text"
+                  class="custom-font-input"
+                  placeholder="例如: 'LXGW WenKai', Inter, sans-serif"
+                  :value="customFontValue"
+                  @input="onCustomFontInput"
+                />
+              </div>
+            </div>
+
+            <!-- 界面字体预览条 -->
+            <div class="font-preview-card" :style="{ fontFamily: props.fontFamily || 'inherit' }">
+              <span class="font-preview-label">界面字体效果预览：</span>
+              <span class="font-preview-text">Seeking clarity in code and thoughts. 探索无界，灵动高效。</span>
+            </div>
+
+            <div class="settings-row">
+              <div>
+                <strong>代码与等宽字体</strong>
+                <small>调整代码块、Diff 对比面板、行号与终端所采用的等宽字体</small>
+              </div>
+              <div class="font-setting-control">
+                <SelectMenu
+                  :model-value="selectedMonoFontKey"
+                  class="settings-select font-select"
+                  :options="monoFontPresets.map(p => ({ value: p.value, label: p.label, description: p.description }))"
+                  label="代码字体"
+                  :menu-min-width="260"
+                  @update:model-value="onSelectMonoFontKey"
+                />
+                <input
+                  v-if="selectedMonoFontKey === 'custom'"
+                  type="text"
+                  class="custom-font-input mono-input"
+                  placeholder="例如: 'JetBrains Mono', 'Fira Code', monospace"
+                  :value="customMonoFontValue"
+                  @input="onCustomMonoFontInput"
+                />
+              </div>
+            </div>
+
+            <!-- 代码字体预览条 -->
+            <div class="font-preview-card mono-card" :style="{ fontFamily: props.monoFontFamily || 'var(--font-mono)' }">
+              <span class="font-preview-label">代码字体效果预览：</span>
+              <span class="font-preview-text">const isReady = status === &quot;active&quot; &amp;&amp; count &gt;= 42; // -&gt; != ==</span>
+            </div>
+          </section>
+
+          <!-- 缩放设置 -->
+          <section class="settings-group">
+            <div class="settings-row">
+              <div>
+                <strong>界面缩放</strong>
+                <small>整体放大或缩小应用界面尺寸（当前比例：{{ Math.round(currentZoom * 100) }}%）</small>
+              </div>
+              <div class="zoom-controls-wrapper">
+                <div class="zoom-preset-chips">
+                  <button
+                    v-for="preset in zoomPresets"
+                    :key="preset"
+                    type="button"
+                    class="filter-chip zoom-chip"
+                    :class="{ active: Math.round(currentZoom * 100) === Math.round(preset * 100) }"
+                    @click="setZoom(preset)"
+                  >
+                    {{ Math.round(preset * 100) }}%
+                  </button>
+                </div>
+
+                <div class="zoom-slider-row">
+                  <button
+                    type="button"
+                    class="icon-button-subtle"
+                    title="缩小 5%"
+                    :disabled="currentZoom <= 0.75"
+                    @click="stepZoom(-1)"
+                  >
+                    <ZoomOut :size="15" />
+                  </button>
+
+                  <input
+                    type="range"
+                    class="zoom-range-slider"
+                    min="75"
+                    max="150"
+                    step="5"
+                    :value="Math.round(currentZoom * 100)"
+                    @input="setZoom(Number(($event.target as HTMLInputElement).value) / 100)"
+                  />
+
+                  <button
+                    type="button"
+                    class="icon-button-subtle"
+                    title="放大 5%"
+                    :disabled="currentZoom >= 1.5"
+                    @click="stepZoom(1)"
+                  >
+                    <ZoomIn :size="15" />
+                  </button>
+
+                  <span class="zoom-badge-pill">{{ Math.round(currentZoom * 100) }}%</span>
+
+                  <button
+                    v-if="Math.round(currentZoom * 100) !== 100"
+                    type="button"
+                    class="secondary-button compact-reset-btn"
+                    title="恢复 100% 默认缩放"
+                    @click="setZoom(1.0)"
+                  >
+                    <RotateCcw :size="13" /> 重置
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
         </template>
