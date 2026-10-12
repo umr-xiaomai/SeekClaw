@@ -28,6 +28,8 @@ public sealed class ConfigTests : IDisposable
         Assert.Empty(store.Config.Providers);
         Assert.Empty(store.Config.Routing.Fallback);
         Assert.Equal(40, store.Config.Agent.MaxSteps);
+        Assert.True(store.Config.Agent.AutoExtendSteps);
+        Assert.Equal(300, store.Config.Agent.MaxTotalSteps);
         Assert.True(store.Config.Routing.FailoverEnabled); // failover default on
         Assert.False(store.Config.Routing.DeepSeekOptimizationEnabled); // DeepSeek optimization default off
     }

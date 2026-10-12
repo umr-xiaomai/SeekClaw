@@ -65,16 +65,42 @@ public sealed partial class Agent(
             // Reserve one extra step per allowed repair so long multi-step tasks are
             // not cut short by their own repair loop.
             var maxSteps = agentConfig.MaxSteps + Math.Clamp(agentConfig.MaxRepairAttempts, 0, 128);
+            var maxTotalSteps = Math.Max(maxSteps, agentConfig.MaxTotalSteps);
             var lastCompactedCount = 0;
             var isContinuation = false;
             var truncatedSteps = 0;
             var reachedMaxSteps = false;
             var step = 0;
+            ModelInfo? activeModel = null;
+            string? activeSystemPrompt = null;
+            bool activeRequiresVision = false;
             events.Publish(new WorkflowEvent(0, "start", "开始任务"));
             while (true)
             {
                 step++;
-                if (step > maxSteps) { reachedMaxSteps = true; break; }
+                if (step > maxSteps)
+                {
+                    if (agentConfig.AutoExtendSteps && maxSteps < maxTotalSteps)
+                    {
+                        var extension = Math.Min(agentConfig.MaxSteps, maxTotalSteps - maxSteps);
+                        if (extension > 0)
+                        {
+                            maxSteps += extension;
+                            events.Publish(new StatusEvent("Auto-extending steps", $"任务步数已自动延展至 {maxSteps} 步，正在继续完成任务..."));
+                            PublishWorkflow(step, "think", "自动续步", $"已执行 {step - 1} 步，自动延展继续执行");
+                        }
+                        else
+                        {
+                            reachedMaxSteps = true;
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        reachedMaxSteps = true;
+                        break;
+                    }
+                }
                 ct.ThrowIfCancellationRequested();
                 PublishSteering(AppendSteering(session, steering));
 
@@ -97,6 +123,10 @@ public sealed partial class Agent(
                 var tools = ActiveTools(workspace, model, effectiveNetworkEnabled);
                 var systemPrompt = await ComposeSystemPromptAsync(
                     workspace, model, tools, effectiveNetworkEnabled, ct).ConfigureAwait(false);
+
+                activeModel = model;
+                activeSystemPrompt = systemPrompt;
+                activeRequiresVision = requiresVision;
                 var source = requiresVision ? session.Messages : WithoutImages(session.Messages);
                 var history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
                 // Context compaction: when plain trimming would have to drop history, summarize the
@@ -259,15 +289,60 @@ public sealed partial class Agent(
                 if (steering is not null && !steering.TryCompleteIfEmpty()) continue;
                 break;
             }
-            events.Publish(new WorkflowEvent(
-                step,
-                error is null && !cancelled ? "done" : "error",
-                error is null && !cancelled ? "任务完成" : "任务失败"));
             if (reachedMaxSteps && error is null && !cancelled)
             {
                 events.Publish(new WarningEvent(
-                    $"已达到最大步数 {maxSteps}，任务可能尚未完成。可在 ~/.seekclaw/config.json 中调大 agent.maxSteps。"));
+                    $"已达到单回合最大步数上限（{maxSteps} 步），本回合执行暂停。可在 ~/.seekclaw/config.json 中调大 agent.maxTotalSteps。"));
+
+                // Graceful wrap-up: if the turn ended after executing tools, allow the model one final
+                // completion with tools disabled so it can summarize completed work and remaining tasks
+                // instead of leaving the conversation stranded on a tool result.
+                if (activeModel is not null && activeSystemPrompt is not null)
+                {
+                    try
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        PublishWorkflow(step, "think", "总结进度");
+                        events.Publish(new StatusEvent("Summarizing progress", "已达到最大步数上限，正在总结当前执行成果..."));
+                        var wrapUpNotice = ChatMessage.User(
+                            $">>> [System Directive: 本回合执行已达到允许的最大步数上限（{maxSteps} 步）。已禁用工具调用。请根据前面执行的所有操作与工具结果，详细总结你已经完成的改动、当前系统状态以及尚未完成的事项。]");
+                        sessionStore.Append(session, wrapUpNotice);
+
+                        var source = activeRequiresVision ? session.Messages : WithoutImages(session.Messages);
+                        var history = ContextPlanner.FitToWindow(source, activeModel.Model, activeSystemPrompt);
+                        var finalCompletion = await StreamOnceAsync(
+                            activeModel, workspace, activeSystemPrompt, history, [],
+                            reasoningLevel ?? agentConfig.ReasoningLevel, false, ct).ConfigureAwait(false);
+
+                        var assistantSummary = new ChatMessage
+                        {
+                            Role = ChatRole.Assistant,
+                            Text = finalCompletion.Text,
+                            Thinking = finalCompletion.Thinking.Length > 0 ? finalCompletion.Thinking : null,
+                            ModelRef = $"{activeModel.Provider.Id}/{activeModel.Model.Id}",
+                        };
+                        sessionStore.Append(session, assistantSummary);
+                        if (finalCompletion.Text.Length > 0)
+                        {
+                            finalText = finalCompletion.Text;
+                            events.Publish(new AssistantMessageCompletedEvent(finalCompletion.Text));
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        if (string.IsNullOrWhiteSpace(finalText))
+                        {
+                            finalText = $"已达到最大步数上限（{maxSteps} 步），本回合已暂停。";
+                            events.Publish(new AssistantMessageCompletedEvent(finalText));
+                        }
+                    }
+                }
             }
+
+            events.Publish(new WorkflowEvent(
+                step,
+                error is null && !cancelled ? (reachedMaxSteps ? "paused" : "done") : "error",
+                error is null && !cancelled ? (reachedMaxSteps ? "达到步数上限已暂停" : "任务完成") : "任务失败"));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

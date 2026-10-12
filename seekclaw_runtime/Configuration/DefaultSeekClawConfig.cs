@@ -31,6 +31,8 @@ public static class DefaultSeekClawConfig
         Agent = new AgentConfig
         {
             MaxSteps = 40,
+            AutoExtendSteps = true,
+            MaxTotalSteps = 300,
             AutoVerify = true,
             MaxRepairAttempts = 3,
             EnableContextCompaction = true,

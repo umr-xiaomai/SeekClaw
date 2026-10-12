@@ -141,6 +141,13 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         thread.phase = phaseLabel(event.data)
         break
       }
+      case 'warning': {
+        const warnText = event.data || '警告'
+        if (message && !message.content.includes(warnText)) {
+          message.content += `${message.content ? '\n\n' : ''}> [!WARNING]\n> ${warnText}`
+        }
+        break
+      }
       case 'image_view': {
         if (!message) break
         const imageId = typeof event.details?.imageId === 'string' ? event.details.imageId : ''

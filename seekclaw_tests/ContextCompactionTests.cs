@@ -308,6 +308,134 @@ public sealed class ContextCompactionTests
         }
     }
 
+    [Fact]
+    public async Task AgentTurn_AutoExtendsSteps_CompletesMultiStepTaskWithoutStopping()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "seekclaw_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Clear();
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "deepseek",
+                Kind = "openai",
+                BaseUrl = "https://api.deepseek.com",
+                Models =
+                [
+                    new ModelConfig
+                    {
+                        Id = "coder",
+                        ContextWindow = 64_000,
+                        MaxOutput = 4000,
+                        Capabilities = new ModelCapabilities { ToolCalling = true },
+                    },
+                ],
+            });
+            store.Config.Provider = "deepseek";
+            store.Config.Model = "coder";
+            store.Config.Routing.Fallback = ["deepseek/coder"];
+            store.Config.Agent.MaxSteps = 2;
+            store.Config.Agent.MaxRepairAttempts = 0;
+            store.Config.Agent.AutoExtendSteps = true;
+            store.Config.Agent.MaxTotalSteps = 10;
+
+            var capture = new SequenceClientFactory(
+                new LlmCompletion { ToolCalls = [new ToolCallRequest("c1", "list_files", "{}")] },
+                new LlmCompletion { ToolCalls = [new ToolCallRequest("c2", "list_files", "{}")] },
+                new LlmCompletion { ToolCalls = [new ToolCallRequest("c3", "list_files", "{}")] },
+                new LlmCompletion { Text = "All files reviewed and done.", FinishReason = "stop" });
+
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            var session = runtime.Sessions.Create(globalWorkspace);
+            var result = await runtime.Agent.RunTurnAsync(session, globalWorkspace, "review files", CancellationToken.None);
+
+            Assert.Null(result.Error);
+            Assert.False(result.Cancelled);
+            Assert.Equal("All files reviewed and done.", result.Text);
+            Assert.Equal(4, capture.Requests.Count);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
+    public async Task AgentTurn_HitsMaxTotalSteps_GracefullyWrapsUpWithSummary()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "seekclaw_test_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new ConfigStore(Path.Combine(dir, "config.json"), Path.Combine(dir, "state.json"));
+            store.Config.Providers.Clear();
+            store.Config.Providers.Add(new ProviderConfig
+            {
+                Id = "deepseek",
+                Kind = "openai",
+                BaseUrl = "https://api.deepseek.com",
+                Models =
+                [
+                    new ModelConfig
+                    {
+                        Id = "coder",
+                        ContextWindow = 64_000,
+                        MaxOutput = 4000,
+                        Capabilities = new ModelCapabilities { ToolCalling = true },
+                    },
+                ],
+            });
+            store.Config.Provider = "deepseek";
+            store.Config.Model = "coder";
+            store.Config.Routing.Fallback = ["deepseek/coder"];
+            store.Config.Agent.MaxSteps = 2;
+            store.Config.Agent.MaxRepairAttempts = 0;
+            store.Config.Agent.AutoExtendSteps = false;
+
+            var capture = new SequenceClientFactory(
+                new LlmCompletion { ToolCalls = [new ToolCallRequest("c1", "list_files", "{}")] },
+                new LlmCompletion { ToolCalls = [new ToolCallRequest("c2", "list_files", "{}")] },
+                new LlmCompletion { Text = "Completed 2 steps summary.", FinishReason = "stop" });
+
+            var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            await using var runtime = SeekClawRuntime.CreateIsolated(globalWorkspace, configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(store);
+                services.AddSingleton(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+                services.AddSingleton<ILlmHttpFactory>(new LlmHttpFactory());
+                services.AddSingleton<ILlmClientFactory>(capture);
+                services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
+            });
+
+            var session = runtime.Sessions.Create(globalWorkspace);
+            var result = await runtime.Agent.RunTurnAsync(session, globalWorkspace, "review files", CancellationToken.None);
+
+            Assert.Null(result.Error);
+            Assert.False(result.Cancelled);
+            Assert.Equal("Completed 2 steps summary.", result.Text);
+            Assert.Equal(3, capture.Requests.Count);
+            Assert.Empty(capture.Requests[^1].Tools);
+            Assert.Equal(ChatRole.Assistant, session.Messages[^1].Role);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private sealed class SequenceClientFactory(params LlmCompletion[] completions) : ILlmClientFactory

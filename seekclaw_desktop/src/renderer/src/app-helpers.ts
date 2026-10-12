@@ -258,6 +258,8 @@ export function phaseLabel(status: string): string {
   if (s.includes('compacting')) return '压缩记忆'
   if (s.includes('verifying')) return '构建验证'
   if (s.includes('truncated')) return '自动续写'
+  if (s.includes('extending')) return '自动续步'
+  if (s.includes('summarizing')) return '总结成果'
   if (s.includes('thinking')) return '思考中'
   return status
 }

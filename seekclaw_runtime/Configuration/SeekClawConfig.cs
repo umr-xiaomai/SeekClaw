@@ -122,6 +122,13 @@ public sealed class RetryConfig
 public sealed class AgentConfig
 {
     public int MaxSteps { get; set; } = 40;
+    /// <summary>
+    /// When true, automatically extends the step budget when a turn is still actively executing tools,
+    /// driving multi-step tasks to completion without requiring the user to manually send "continue".
+    /// </summary>
+    public bool AutoExtendSteps { get; set; } = true;
+    /// <summary>Maximum total steps permitted for a single turn when auto-extension is enabled.</summary>
+    public int MaxTotalSteps { get; set; } = 300;
     public bool AutoVerify { get; set; } = true;
     public int MaxRepairAttempts { get; set; } = 3;
     /// <summary>Personality prompt key: pragmatic | friendly. Defaults to the pragmatic engineering voice.</summary>

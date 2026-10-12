@@ -21,6 +21,7 @@ export type DaemonEventName =
   | 'done'
   | 'cancelled'
   | 'error'
+  | 'warning'
   | 'bye'
   | 'schedule.updated'
   | 'schedule.upcoming'

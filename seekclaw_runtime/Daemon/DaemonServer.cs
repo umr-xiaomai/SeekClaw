@@ -1225,6 +1225,10 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["success"] = subDone.Success,
                         ["elapsedMs"] = subDone.Elapsed.TotalMilliseconds,
                     }),
+                WarningEvent warning => (
+                    Name: (string?)"warning",
+                    Data: warning.Message,
+                    Details: (JsonObject?)null),
                 _ => (Name: (string?)null, Data: "", Details: (JsonObject?)null),
             };
             if (payload.Name is not null)
