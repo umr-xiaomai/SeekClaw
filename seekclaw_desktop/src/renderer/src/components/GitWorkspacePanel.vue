@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import {
+  ArrowLeft,
   Braces,
   Check,
   ChevronDown,
   ChevronRight,
+  Clock,
   Cloud,
   Copy,
   ExternalLink,
@@ -26,11 +28,12 @@ import {
   RefreshCw,
   Search,
   TerminalSquare,
+  User,
   WrapText,
   X
 } from "@lucide/vue"
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import type { GitBranchInfo, GitHistory, GitOverview } from '../../../shared/ipc'
+import type { GitBranchInfo, GitCommit, GitHistory, GitOverview } from '../../../shared/ipc'
 import type { ProjectItem } from '../types'
 
 type PanelTab = 'diff' | 'history'
@@ -178,7 +181,38 @@ const remoteBranches = computed(() => {
     .filter((b) => !q || b.name.toLowerCase().includes(q))
 })
 
-const displayedDiff = computed(() => props.diffOverride?.diff ?? overview.value?.diff ?? '')
+const selectedCommit = ref<GitCommit | null>(null)
+const commitDiff = ref<string | null>(null)
+const commitDiffLoading = ref(false)
+const commitDiffError = ref('')
+
+async function openCommitDiff(commit: GitCommit): Promise<void> {
+  if (!props.project?.path) return
+  selectedCommit.value = commit
+  commitDiffLoading.value = true
+  commitDiffError.value = ''
+  try {
+    const rawDiff = await window.seekclaw.project.gitCommitDiff(props.project.path, commit.hash)
+    commitDiff.value = rawDiff
+  } catch (err) {
+    commitDiffError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    commitDiffLoading.value = false
+  }
+}
+
+function closeCommitDiff(): void {
+  commitDiff.value = null
+  selectedCommit.value = null
+  commitDiffError.value = ''
+}
+
+const displayedDiff = computed(() => {
+  if (tab.value === 'history' && commitDiff.value !== null) {
+    return commitDiff.value
+  }
+  return props.diffOverride?.diff ?? overview.value?.diff ?? ''
+})
 const panelStyle = computed(() => ({
   '--git-panel-width': `${props.width}px`,
   '--git-tree-width': `${fileTreeWidth.value}px`
@@ -644,6 +678,9 @@ async function refresh(): Promise<void> {
 
 function selectTab(value: PanelTab): void {
   tab.value = value
+  if (value === 'diff') {
+    closeCommitDiff()
+  }
 }
 
 let mainRafId: number | null = null
@@ -1416,18 +1453,164 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else>
-          <div v-if="history?.error" class="git-panel-state">{{ history.error }}</div>
-          <ol v-else-if="history?.commits.length" class="git-history-list">
-            <li v-for="commit in history.commits" :key="commit.hash">
-              <span class="git-history-dot" />
-              <div>
-                <strong>{{ commit.subject }}</strong>
-                <p><code>{{ commit.shortHash }}</code> · {{ commit.author }}</p>
+          <!-- Commit Diff View when a commit is opened -->
+          <div v-if="selectedCommit && commitDiff !== null" class="git-commit-diff-wrap">
+            <div class="git-commit-diff-banner">
+              <button
+                type="button"
+                class="git-back-to-history-btn"
+                title="返回提交记录列表"
+                @click="closeCommitDiff"
+              >
+                <ArrowLeft :size="14" />
+                <span>返回提交列表</span>
+              </button>
+              <div class="git-commit-diff-info">
+                <span
+                  class="commit-hash-pill"
+                  :title="'点击复制完整哈希: ' + selectedCommit.hash"
+                  @click.stop="copyToClipboard(selectedCommit.hash, '已复制提交哈希')"
+                >
+                  <code>{{ selectedCommit.shortHash }}</code>
+                  <Copy :size="11" />
+                </span>
+                <strong class="git-commit-diff-subject" :title="selectedCommit.subject">{{ selectedCommit.subject }}</strong>
               </div>
-              <time :datetime="commit.authoredAt">{{ formatDate(commit.authoredAt) }}</time>
-            </li>
-          </ol>
-          <div v-else class="git-panel-state">没有可显示的提交记录。</div>
+              <div class="git-commit-diff-submeta">
+                <span class="commit-submeta-item">
+                  <User :size="12" />
+                  <span>{{ selectedCommit.author }}</span>
+                </span>
+                <span>·</span>
+                <span class="commit-submeta-item">
+                  <Clock :size="12" />
+                  <time :datetime="selectedCommit.authoredAt">{{ formatDate(selectedCommit.authoredAt) }}</time>
+                </span>
+                <span>·</span>
+                <span class="commit-submeta-item files-count">{{ parsedFiles.length }} 个文件修改</span>
+              </div>
+            </div>
+
+            <div v-if="commitDiffLoading" class="git-panel-state">
+              <RefreshCw :size="18" class="spin" />
+              <span>正在获取提交差异…</span>
+            </div>
+            <div v-else-if="commitDiffError" class="git-panel-state is-error">
+              {{ commitDiffError }}
+            </div>
+            <div v-else-if="parsedFiles.length === 0" class="git-panel-state">
+              此提交没有可显示的文本差异。
+            </div>
+            <div v-else class="git-diff-scrollable full-width">
+              <div
+                v-for="file in parsedFiles"
+                :key="file.id"
+                class="diff-file-card"
+                :class="{ 'is-collapsed': isFileCollapsed(file.id) }"
+              >
+                <div class="diff-file-card-header" @click="toggleFileCollapse(file.id)">
+                  <div class="diff-file-card-title">
+                    <component :is="isFileCollapsed(file.id) ? ChevronRight : ChevronDown" :size="15" class="diff-arrow" />
+                    <svg v-if="file.fileName.endsWith('.vue')" width="14" height="14" viewBox="0 0 24 24" class="file-badge-icon vue-svg">
+                      <path d="M12 22L0 3h4.8L12 15.2 19.2 3H24z" fill="#42b883" />
+                      <path d="M12 22L4.8 3H9.6L12 7.2 14.4 3h4.8z" fill="#35495e" />
+                    </svg>
+                    <span v-else-if="file.fileName.endsWith('.css')" class="file-badge-icon code-tag css">css</span>
+                    <span v-else-if="file.fileName.endsWith('.ts')" class="file-badge-icon code-tag ts">TS</span>
+                    <FileCode v-else :size="14" class="diff-file-type-icon" />
+                    <span class="diff-card-filename">{{ file.fileName }}</span>
+                    <span class="diff-card-stats">
+                      <span v-if="file.additions > 0" class="stat-add">+{{ file.additions }}</span>
+                      <span v-if="file.deletions > 0" class="stat-del">-{{ file.deletions }}</span>
+                    </span>
+                  </div>
+                </div>
+                <div v-show="!isFileCollapsed(file.id)" class="diff-file-card-body">
+                  <div v-for="(hunk, hIdx) in file.hunks" :key="hIdx" class="diff-hunk-wrap">
+                    <div v-if="hunk.unmodifiedBefore > 0" class="diff-unmodified-pill">
+                      {{ hunk.unmodifiedBefore }} unmodified lines
+                    </div>
+                    <div class="diff-hunk-lines">
+                      <div
+                        v-for="(line, lIdx) in hunk.lines"
+                        :key="lIdx"
+                        class="diff-code-line"
+                        :class="['diff-type-' + line.type, { 'is-wrapped': wrapLines }]"
+                      >
+                        <div class="diff-line-gutter">
+                          <span class="line-num">{{ line.oldLineNumber || line.newLineNumber || '' }}</span>
+                          <span class="gutter-color-bar" />
+                        </div>
+                        <div class="diff-line-text">
+                          <template v-if="wordDiffEnabled && line.wordDiff && line.wordDiff.length">
+                            <span
+                              v-for="(part, pIdx) in line.wordDiff"
+                              :key="pIdx"
+                              :class="{
+                                'word-diff-highlight': part.changed,
+                                'word-add': part.changed && line.type === 'addition',
+                                'word-del': part.changed && line.type === 'deletion'
+                              }"
+                            >{{ part.text }}</span>
+                          </template>
+                          <template v-else>
+                            <span>{{ line.content }}</span>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commit History Cards List -->
+          <div v-else class="git-history-scrollable">
+            <div v-if="history?.error" class="git-panel-state is-error">{{ history.error }}</div>
+            <div v-else-if="commitDiffLoading" class="git-panel-state">
+              <RefreshCw :size="18" class="spin" />
+              <span>正在获取提交差异…</span>
+            </div>
+            <ol v-else-if="history?.commits.length" class="git-history-cards-list">
+              <li
+                v-for="commit in history.commits"
+                :key="commit.hash"
+                class="git-commit-card"
+                :class="{ 'is-selected': selectedCommit?.hash === commit.hash }"
+                title="双击查看具体变更内容"
+                @click="selectedCommit = commit"
+                @dblclick="openCommitDiff(commit)"
+              >
+                <div class="git-commit-card-header">
+                  <span class="git-commit-dot" />
+                  <strong class="git-commit-subject" :title="commit.subject">{{ commit.subject }}</strong>
+                  <button
+                    type="button"
+                    class="git-commit-view-btn"
+                    title="查看此提交的差异变更"
+                    @click.stop="openCommitDiff(commit)"
+                  >
+                    <Eye :size="12" />
+                    <span>查看</span>
+                  </button>
+                </div>
+                <div class="git-commit-card-meta">
+                  <span
+                    class="git-commit-hash-pill"
+                    :title="'点击复制完整哈希: ' + commit.hash"
+                    @click.stop="copyToClipboard(commit.hash, '已复制提交哈希')"
+                  >
+                    <code>{{ commit.shortHash }}</code>
+                    <Copy :size="10" />
+                  </span>
+                  <span class="git-commit-author" :title="commit.author">{{ commit.author }}</span>
+                  <time class="git-commit-time" :datetime="commit.authoredAt">{{ formatDate(commit.authoredAt) }}</time>
+                </div>
+              </li>
+            </ol>
+            <div v-else class="git-panel-state">没有可显示的提交记录。</div>
+          </div>
         </template>
       </div>
 

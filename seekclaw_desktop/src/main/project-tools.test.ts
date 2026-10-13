@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { normalizeDiffForGit, openProjectTerminal, parseGitLog, revertFileDiffs } from './project-tools.js'
+import { getGitCommitDiff, normalizeDiffForGit, openProjectTerminal, parseGitLog, revertFileDiffs } from './project-tools.js'
 
 describe('parseGitLog', () => {
   it('parses record and unit separated git log output', () => {
@@ -64,5 +64,11 @@ describe('revertFileDiffs', () => {
 describe('openProjectTerminal', () => {
   it('rejects when target path does not exist', async () => {
     await expect(openProjectTerminal(join(tmpdir(), 'non_existent_folder_xyz_12345'))).rejects.toThrow()
+  })
+})
+
+describe('getGitCommitDiff', () => {
+  it('rejects when target directory does not exist', async () => {
+    await expect(getGitCommitDiff(join(tmpdir(), 'non_existent_folder_xyz_12345'), 'HEAD')).rejects.toThrow()
   })
 })

@@ -156,6 +156,7 @@ export interface DesktopApi {
     checkoutBranch(path: string, branch: string): Promise<CheckoutBranchResult>
     createBranch(path: string, branch: string): Promise<CreateBranchResult>
     revertFileDiffs(workspace: string, patches: RevertDiffItem[]): Promise<RevertDiffsResult>
+    gitCommitDiff(path: string, commitHash: string): Promise<string>
   }
   daemon: {
     connect(): Promise<DaemonState>

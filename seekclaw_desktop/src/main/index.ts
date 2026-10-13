@@ -8,7 +8,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
 import type { DaemonMessage, DaemonRequestOptions, RevertDiffItem } from '../shared/ipc.js'
 import { DaemonClient } from './daemon-client.js'
-import { checkoutGitBranch, createGitBranch, getGitBranches, getGitHistory, getGitOverview, openProjectTerminal, revertFileDiffs } from './project-tools.js'
+import { checkoutGitBranch, createGitBranch, getGitBranches, getGitCommitDiff, getGitHistory, getGitOverview, openProjectTerminal, revertFileDiffs } from './project-tools.js'
 import {
   destroyComputerOverlay,
   hideComputerOverlay,
@@ -440,6 +440,9 @@ function registerIpc(): void {
   ipcMain.handle('project:create-branch', (_event, path: string, branch: string) => createGitBranch(path, branch))
   ipcMain.handle('project:revert-file-diffs', (_event, workspace: string, patches: RevertDiffItem[]) =>
     revertFileDiffs(workspace, patches)
+  )
+  ipcMain.handle('project:git-commit-diff', (_event, path: string, hash: string) =>
+    getGitCommitDiff(path, hash)
   )
 
   ipcMain.handle('daemon:connect', () => daemon.connect())

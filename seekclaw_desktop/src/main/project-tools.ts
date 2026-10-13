@@ -84,6 +84,22 @@ export async function getGitHistory(path: string): Promise<GitHistory> {
   }
 }
 
+export async function getGitCommitDiff(path: string, commitHash: string): Promise<string> {
+  const directory = await workspaceDirectory(path)
+  try {
+    const output = await git(directory, [
+      'show',
+      '--no-ext-diff',
+      '--no-color',
+      '--unified=3',
+      commitHash
+    ])
+    return output
+  } catch (error) {
+    throw new Error(friendlyGitError(error))
+  }
+}
+
 async function spawnDetached(command: string, args: string[], cwd: string): Promise<void> {
   await new Promise<void>((resolveSpawn, reject) => {
     const child = spawn(command, args, { cwd, detached: true, stdio: 'ignore', windowsHide: false })

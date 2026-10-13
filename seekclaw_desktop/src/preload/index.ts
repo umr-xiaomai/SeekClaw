@@ -43,7 +43,8 @@ const api: DesktopApi = {
     gitBranches: (path) => ipcRenderer.invoke('project:git-branches', path),
     checkoutBranch: (path, branch) => ipcRenderer.invoke('project:checkout-branch', path, branch),
     createBranch: (path, branch) => ipcRenderer.invoke('project:create-branch', path, branch),
-    revertFileDiffs: (workspace, patches) => ipcRenderer.invoke('project:revert-file-diffs', workspace, patches)
+    revertFileDiffs: (workspace, patches) => ipcRenderer.invoke('project:revert-file-diffs', workspace, patches),
+    gitCommitDiff: (path, hash) => ipcRenderer.invoke('project:git-commit-diff', path, hash)
   },
   daemon: {
     connect: () => ipcRenderer.invoke('daemon:connect'),
