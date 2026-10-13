@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
@@ -69,6 +70,7 @@ public sealed partial class Agent(
             var lastCompactedCount = 0;
             var isContinuation = false;
             var truncatedSteps = 0;
+            var preambleNudges = 0;
             var reachedMaxSteps = false;
             var step = 0;
             ModelInfo? activeModel = null;
@@ -267,6 +269,25 @@ public sealed partial class Agent(
                 truncatedSteps = 0;
                 isContinuation = false;
 
+                // If the model merely stated an intent/preamble to perform actions (e.g. "I will remove...",
+                // "Next, I'll update...", "好的，我来修改...") but called 0 tools while tools are available,
+                // nudge it to invoke the necessary tools instead of stopping prematurely on an unfulfilled promise.
+                if (completion.ToolCalls.Count == 0
+                    && tools.Count > 0
+                    && !mutated
+                    && preambleNudges < 1
+                    && IsStandaloneActionPreamble(completion.Text))
+                {
+                    preambleNudges++;
+                    var nudgeDirective = ChatMessage.User(
+                        ">>> [System Directive: 你刚才说明了将要执行的操作，但尚未调用任何工具。本轮对话已启用自动执行，请立即调用相应工具（如 bash、write_file、edit_file 等）开始执行操作，不要仅做陈述或等待用户确认。 / You stated the action you are about to perform, but have not invoked any tools yet. Autonomous execution is active. Please call the appropriate tool(s) now to execute the actions directly.]");
+                    sessionStore.Append(session, nudgeDirective);
+                    events.Publish(new StatusEvent("Auto-executing promised actions..."));
+                    PublishWorkflow(step, "tool", "自动执行工具");
+                    PublishSteering(guidance);
+                    continue;
+                }
+
                 // Model believes it is done. If it changed files, prove the project still builds.
                 if (mutated && ShouldVerify(workspace, agentConfig) && repairAttempts < agentConfig.MaxRepairAttempts)
                 {
@@ -378,5 +399,19 @@ public sealed partial class Agent(
     private void PublishSteering(IReadOnlyList<ChatMessage> messages)
     {
         foreach (var message in messages) events.Publish(new UserSteerEvent(message.Text));
+    }
+
+    [GeneratedRegex(@"^(?:\s*(?:ok|okay|sure|alright|great)[!.,\s]*)?\s*(?:i will|i'll|i am going to|i'm going to|next,?\s*i(?:'ll|\s*will)|let me)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex EnglishActionPreambleRegex();
+
+    [GeneratedRegex(@"^(?:\s*(?:好的|收到|明白)[！!，,\s]*)?\s*(?:我来|我将|我马上|接下来我将|现在我来|我这就|让我来)", RegexOptions.CultureInvariant)]
+    private static partial Regex ChineseActionPreambleRegex();
+
+    internal static bool IsStandaloneActionPreamble(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 300) return false;
+        var trimmed = text.Trim();
+        if (trimmed.Contains('?') || trimmed.Contains('？') || trimmed.Contains("```")) return false;
+        return EnglishActionPreambleRegex().IsMatch(trimmed) || ChineseActionPreambleRegex().IsMatch(trimmed);
     }
 }

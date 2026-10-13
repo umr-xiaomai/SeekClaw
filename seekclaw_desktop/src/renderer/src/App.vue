@@ -1286,6 +1286,7 @@ async function runMessageTurn(
   if ((thread.projectId && !project) || thread.archived || thread.running) return
   const reasoningLevel = thread.reasoningLevel ?? ReasoningLevel.High
   const turnToken = makeId()
+  const turnStartIndex = thread.messages.length
 
   const userMessage: ChatMessage = {
     id: makeId(),
@@ -1342,7 +1343,8 @@ async function runMessageTurn(
       ...scope
     }, { timeoutMs: CHAT_FIRST_EVENT_TIMEOUT_MS })
     rememberFinishedRequest(thread, response.id)
-    const finalAssistant = thread.messages.findLast((item) => item.role === 'assistant') ?? assistant
+    const turnAssistantBubbles = thread.messages.slice(turnStartIndex).filter((item) => item.role === 'assistant')
+    const finalAssistant = turnAssistantBubbles[turnAssistantBubbles.length - 1] ?? assistant
     terminalAssistant = finalAssistant
     if (finalAssistant.state !== 'error') {
       finalAssistant.state = 'done'
@@ -1353,7 +1355,8 @@ async function runMessageTurn(
       if (!finalAssistant.content && response.data) finalAssistant.content = response.data
     }
   } catch (error) {
-    const failedAssistant = thread.messages.findLast((item) => item.role === 'assistant') ?? assistant
+    const turnAssistantBubbles = thread.messages.slice(turnStartIndex).filter((item) => item.role === 'assistant')
+    const failedAssistant = turnAssistantBubbles[turnAssistantBubbles.length - 1] ?? assistant
     terminalAssistant = failedAssistant
     failedAssistant.state = 'error'
     if (!failedAssistant.content) {
@@ -1367,12 +1370,14 @@ async function runMessageTurn(
     // Belt-and-braces: finalize every leftover "..." placeholder when this turn
     // settles. The captured assistant can be a stale bubble (a mid-turn steer
     // created a fresh one) and the terminal event itself may have been dropped
-    // by the finished-request guard, so walk all messages instead of one.
-    finalizeAssistantBubbles(thread.messages, terminalAssistant.state === 'error' ? 'error' : 'done')
+    // by the finished-request guard, so walk all messages of this turn.
+    const turnAssistantBubbles = thread.messages.slice(turnStartIndex).filter((item) => item.role === 'assistant')
+    finalizeAssistantBubbles(turnAssistantBubbles, terminalAssistant.state === 'error' ? 'error' : 'done')
     thread.activeTurnToken = undefined
     thread.running = false
     thread.requestId = undefined
     thread.assistantId = undefined
+    thread.phase = undefined
     if (thread.sessionId && terminalAssistant.state !== 'error') {
       await reloadThreadSession(thread, project).catch(() => undefined)
     }

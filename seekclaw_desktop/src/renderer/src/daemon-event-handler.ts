@@ -282,18 +282,21 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         }
         finalizeAssistantBubbles(thread.messages, 'done')
         if (isChatRequest) rememberFinishedRequest(thread, event.id)
-        thread.activeTurnToken = undefined
         thread.pendingGuidance = 0
-        thread.running = false
-        thread.requestId = undefined
-        thread.assistantId = undefined
         thread.phase = undefined
-        scheduleQueuedDrain(thread)
-        if (isBackgroundThread) {
-          void window.seekclaw.notify('后台任务完成', `「${thread.title}」已完成`)
-          reloadBackgroundThreadIfIdle(thread)
-        } else if (thread.sessionId) {
-          void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
+        if (isBackgroundThread && typeof window !== 'undefined') {
+          void window.seekclaw?.notify?.('后台任务完成', `「${thread.title}」已完成`)
+        }
+        if (!thread.activeTurnToken) {
+          thread.running = false
+          thread.requestId = undefined
+          thread.assistantId = undefined
+          scheduleQueuedDrain(thread)
+          if (isBackgroundThread) {
+            reloadBackgroundThreadIfIdle(thread)
+          } else if (thread.sessionId) {
+            void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
+          }
         }
         break
       case 'error':
@@ -303,17 +306,18 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         }
         finalizeAssistantBubbles(thread.messages, 'error')
         if (isChatRequest) rememberFinishedRequest(thread, event.id)
-        thread.activeTurnToken = undefined
         thread.pendingGuidance = 0
-        thread.running = false
-        thread.requestId = undefined
-        thread.assistantId = undefined
         thread.phase = undefined
-        scheduleQueuedDrain(thread)
-        if (isBackgroundThread) {
-          void window.seekclaw.notify('后台任务执行失败', `「${thread.title}」执行失败`)
+        if (isBackgroundThread && typeof window !== 'undefined') {
+          void window.seekclaw?.notify?.('后台任务执行失败', `「${thread.title}」执行失败`)
         }
-        if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
+        if (!thread.activeTurnToken) {
+          thread.running = false
+          thread.requestId = undefined
+          thread.assistantId = undefined
+          scheduleQueuedDrain(thread)
+          if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
+        }
         break
     }
     if (thread.id === activeThreadId.value) void scrollToBottom()

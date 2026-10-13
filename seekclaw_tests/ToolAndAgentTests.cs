@@ -792,5 +792,21 @@ public sealed class ToolAndAgentTests
             try { if (Directory.Exists(tempBase)) Directory.Delete(tempBase, recursive: true); } catch { }
         }
     }
+
+    [Theory]
+    [InlineData("I will remove the auxiliary directories `scripts/`, `references/`, and `assets/`.", true)]
+    [InlineData("Next, I'll patch the config and update the related tests.", true)]
+    [InlineData("Let me run the test suite to verify the changes.", true)]
+    [InlineData("好的，我来删除多余的文件并精简代码。", true)]
+    [InlineData("我将对该会话进行重点排查并修复异常。", true)]
+    [InlineData("我这就开始执行。", true)]
+    [InlineData("Here is the explanation of the code and why it failed.", false)]
+    [InlineData("I will remove the files if you confirm. Should I proceed?", false)]
+    [InlineData("好的，请问您希望保留哪些文件？", false)]
+    [InlineData("No files need to be deleted.", false)]
+    public void IsStandaloneActionPreamble_DetectsPreamblesCorrectly(string text, bool expected)
+    {
+        Assert.Equal(expected, Agent.IsStandaloneActionPreamble(text));
+    }
 }
 
