@@ -159,7 +159,27 @@ function handleSidebarResetWidth(): void {
 const aboutOpen = ref(false)
 const gitPanelOpen = ref(false)
 const gitPanelTab = ref<'diff' | 'history'>('diff')
-const gitPanelWidth = ref(780)
+
+const DEFAULT_GIT_PANEL_WIDTH = 240
+const MIN_GIT_PANEL_WIDTH = 180
+const MAX_GIT_PANEL_WIDTH = 1400
+const GIT_PANEL_WIDTH_STORAGE_KEY = 'seekclaw-git-panel-width-v2'
+
+function loadStoredGitPanelWidth(): number {
+  try {
+    const raw = localStorage.getItem(GIT_PANEL_WIDTH_STORAGE_KEY)
+    if (!raw) return DEFAULT_GIT_PANEL_WIDTH
+    const val = Number(raw)
+    if (Number.isFinite(val) && val >= MIN_GIT_PANEL_WIDTH && val <= 800) {
+      return val
+    }
+    return DEFAULT_GIT_PANEL_WIDTH
+  } catch {
+    return DEFAULT_GIT_PANEL_WIDTH
+  }
+}
+
+const gitPanelWidth = ref(loadStoredGitPanelWidth())
 const toolDiff = ref<{ path: string; diff: string } | null>(null)
 
 const settingsSection = ref<'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'>('general')
@@ -398,13 +418,23 @@ function closeGitPanel(): void {
 
 function resizeGitPanel(width: number): void {
   if (!Number.isFinite(width)) return
-  const maxWidth = Math.min(1400, Math.max(340, Math.floor(window.innerWidth * 0.9)))
-  gitPanelWidth.value = Math.min(maxWidth, Math.max(340, Math.round(width)))
+  const maxWidth = Math.min(MAX_GIT_PANEL_WIDTH, Math.max(MIN_GIT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.9)))
+  const nextWidth = Math.min(maxWidth, Math.max(MIN_GIT_PANEL_WIDTH, Math.round(width)))
+  gitPanelWidth.value = nextWidth
+  localStorage.setItem(GIT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
 }
 
 async function openProjectTerminal(): Promise<void> {
-  if (!activeProject.value) return
-  await window.seekclaw.project.openTerminal(activeProject.value.path)
+  const targetPath = activeProject.value?.path || runtimeWorkspacePath.value || ''
+  if (!targetPath) {
+    await window.seekclaw.notify('无法打开终端', '当前未选定有效的工作区或项目目录')
+    return
+  }
+  try {
+    await window.seekclaw.project.openTerminal(targetPath)
+  } catch (error) {
+    await window.seekclaw.notify('打开终端失败', error instanceof Error ? error.message : String(error))
+  }
 }
 
 function applyTheme(value: AppearanceTheme): void {
@@ -1642,7 +1672,7 @@ watch(theme, applyTheme)
                 <FolderOpen :size="17" />
                 <span>打开位置</span>
               </button>
-              <button v-if="activeProject" class="icon-button project-tool-button" title="在项目目录打开终端"
+              <button v-if="activeProject || runtimeWorkspacePath" class="icon-button project-tool-button" title="在工作区目录打开终端"
                 @click="openProjectTerminal">
                 <TerminalSquare :size="18" />
               </button>

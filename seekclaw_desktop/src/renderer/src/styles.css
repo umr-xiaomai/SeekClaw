@@ -3116,14 +3116,14 @@ body.is-resizing-sidebar .app-body {
 
 .git-panel-header {
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 15px 0 19px;
+  gap: 6px;
+  padding: 0 10px 0 12px;
   border-bottom: 1px solid var(--border);
 }
 
 .git-panel-title {
   min-width: 0;
-  gap: 11px;
+  gap: 6px;
 }
 
 .git-panel-title>div {
@@ -7161,6 +7161,51 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
 
 .filter-search-input:focus {
   border-color: var(--accent);
+}
+
+.git-filter-bar-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.12s ease;
+}
+
+.git-filter-bar-close-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.git-tree-floating-toggle {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  transition: all 0.14s ease;
+}
+
+.git-tree-floating-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 
 .git-tree-content {

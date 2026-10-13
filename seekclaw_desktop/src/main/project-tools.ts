@@ -95,16 +95,69 @@ async function spawnDetached(command: string, args: string[], cwd: string): Prom
   })
 }
 
+async function isCommandAvailableWindows(cmd: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    try {
+      const child = spawn('where.exe', [cmd], { stdio: 'ignore', windowsHide: true })
+      child.once('close', (code) => resolve(code === 0))
+      child.once('error', () => resolve(false))
+    } catch {
+      resolve(false)
+    }
+  })
+}
+
 export async function openProjectTerminal(path: string): Promise<void> {
   const directory = await workspaceDirectory(path)
   if (process.platform === 'win32') {
-    try {
-      await spawnDetached('wt.exe', ['-d', directory], directory)
-    } catch {
-      const escaped = directory.replaceAll("'", "''")
-      await spawnDetached('powershell.exe', ['-NoExit', '-Command', `Set-Location -LiteralPath '${escaped}'`], directory)
+    // 1. If Windows Terminal is available, open it via cmd /c start
+    if (await isCommandAvailableWindows('wt.exe')) {
+      try {
+        const child = spawn('cmd.exe', ['/c', 'start', '', 'wt.exe', '-d', directory], {
+          cwd: directory,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        })
+        child.unref()
+        return
+      } catch {
+        // Fallback to powershell below
+      }
     }
-    return
+
+    // 2. PowerShell via cmd /c start allocates a visible, interactive console window
+    try {
+      const escaped = directory.replaceAll("'", "''")
+      const child = spawn('cmd.exe', [
+        '/c',
+        'start',
+        '',
+        '/d',
+        directory,
+        'powershell.exe',
+        '-NoExit',
+        '-Command',
+        `Set-Location -LiteralPath '${escaped}'`
+      ], {
+        cwd: directory,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      })
+      child.unref()
+      return
+    } catch {
+      // 3. Fallback to Command Prompt
+      const child = spawn('cmd.exe', ['/c', 'start', '', '/d', directory, 'cmd.exe', '/k'], {
+        cwd: directory,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      })
+      child.unref()
+      return
+    }
   }
   if (process.platform === 'darwin') {
     await spawnDetached('open', ['-a', 'Terminal', directory], directory)

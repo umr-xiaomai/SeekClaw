@@ -20,6 +20,8 @@ import {
   LoaderCircle,
   MoreHorizontal,
   PanelRight,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RefreshCw,
   Search,
@@ -81,7 +83,7 @@ const props = withDefaults(defineProps<{
   diffOverride?: { path: string; diff: string } | null
   width?: number
 }>(), {
-  width: 780
+  width: 240
 })
 
 const emit = defineEmits<{
@@ -99,16 +101,17 @@ const resizing = ref(false)
 let resizeStartX = 0
 let resizeStartWidth = 0
 
-const MIN_PANEL_WIDTH = 340
+const MIN_PANEL_WIDTH = 180
 const MAX_PANEL_WIDTH = 1400
+const DEFAULT_PANEL_WIDTH = 240
 
 const panelRef = ref<HTMLElement | null>(null)
 const branchSearchInputRef = ref<HTMLInputElement | null>(null)
 const newBranchInputRef = ref<HTMLInputElement | null>(null)
 
 const FILE_TREE_WIDTH_STORAGE_KEY = 'seekclaw-git-file-tree-width-v1'
-const DEFAULT_FILE_TREE_WIDTH = 250
-const MIN_FILE_TREE_WIDTH = 160
+const DEFAULT_FILE_TREE_WIDTH = 200
+const MIN_FILE_TREE_WIDTH = 120
 const MAX_FILE_TREE_WIDTH = 550
 
 function loadStoredTreeWidth(): number {
@@ -132,7 +135,19 @@ let treeResizeStartWidth = 0
 let treeRafId: number | null = null
 let pendingTreeWidth = fileTreeWidth.value
 
-const showFileTree = ref(true)
+const GIT_FILE_TREE_STORAGE_KEY = 'seekclaw-git-file-tree-open-v2'
+function loadStoredFileTreeOpen(): boolean {
+  try {
+    const raw = localStorage.getItem(GIT_FILE_TREE_STORAGE_KEY)
+    return raw === 'true'
+  } catch {
+    return false
+  }
+}
+const showFileTree = ref(loadStoredFileTreeOpen())
+watch(showFileTree, (open) => {
+  localStorage.setItem(GIT_FILE_TREE_STORAGE_KEY, String(open))
+})
 const fileFilterQuery = ref('')
 const activeFileId = ref('')
 const wrapLines = ref(false)
@@ -652,15 +667,16 @@ function handleResize(event: PointerEvent): void {
   if (!resizing.value) return
   const viewportWidth = window.innerWidth
   const maxWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, Math.floor(viewportWidth * 0.9)))
-  const nextWidth = Math.min(maxWidth, Math.max(MIN_PANEL_WIDTH, Math.round(resizeStartWidth + resizeStartX - event.clientX)))
-  if (nextWidth <= MIN_PANEL_WIDTH) {
+  const nextWidth = Math.round(resizeStartWidth + resizeStartX - event.clientX)
+  if (nextWidth <= MIN_PANEL_WIDTH - 40) {
     stopResize()
     emit('close')
     return
   }
-  pendingMainWidth = nextWidth
+  const clampedWidth = Math.min(maxWidth, Math.max(MIN_PANEL_WIDTH, nextWidth))
+  pendingMainWidth = clampedWidth
   if (panelRef.value) {
-    panelRef.value.style.setProperty('--git-panel-width', `${nextWidth}px`)
+    panelRef.value.style.setProperty('--git-panel-width', `${clampedWidth}px`)
   }
   if (mainRafId === null) {
     mainRafId = requestAnimationFrame(() => {
@@ -684,7 +700,7 @@ function startResize(event: PointerEvent): void {
 }
 
 function resetPanelWidth(): void {
-  emit('resize', 780)
+  emit('resize', DEFAULT_PANEL_WIDTH)
 }
 
 function handleTreeResize(event: PointerEvent): void {
@@ -797,8 +813,13 @@ onBeforeUnmount(() => {
             <Braces :size="16" />
             <span>变更</span>
           </div>
-          <button class="icon-button-mini" title="关闭面板" @click="emit('close')">
-            <X :size="14" />
+          <button
+            class="icon-button-mini"
+            title="刷新 Git 状态"
+            :disabled="loading || !project"
+            @click.stop="refresh"
+          >
+            <RefreshCw :size="15" :class="{ spin: loading }" />
           </button>
         </div>
 
@@ -809,23 +830,18 @@ onBeforeUnmount(() => {
             :title="showFileTree ? '隐藏文件列表' : '展开文件列表'"
             @click="showFileTree = !showFileTree"
           >
-            <PanelRight :size="15" />
+            <component :is="showFileTree ? PanelRightClose : PanelRightOpen" :size="15" />
           </button>
           <button
             class="icon-button-mini"
-            title="在项目目录打开终端"
+            title="在工作区目录打开终端"
             :disabled="!project"
             @click="emit('openTerminal')"
           >
             <TerminalSquare :size="15" />
           </button>
-          <button
-            class="icon-button-mini"
-            title="刷新 Git 状态"
-            :disabled="loading || !project"
-            @click.stop="refresh"
-          >
-            <RefreshCw :size="15" :class="{ spin: loading }" />
+          <button class="icon-button-mini" title="关闭面板" @click="emit('close')">
+            <X :size="14" />
           </button>
         </div>
       </header>
@@ -1257,6 +1273,17 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
+            <button
+              v-if="!showFileTree && parsedFiles.length > 0"
+              type="button"
+              class="git-tree-floating-toggle"
+              title="展开文件列表"
+              @click="showFileTree = true"
+            >
+              <PanelRightOpen :size="13" />
+              <span>文件 ({{ parsedFiles.length }})</span>
+            </button>
+
             <div
               v-if="showFileTree"
               class="git-tree-resize-handle"
@@ -1280,7 +1307,14 @@ onBeforeUnmount(() => {
                   class="filter-search-input"
                   placeholder="筛选文件..."
                 />
-                <Filter :size="13" class="filter-icon" />
+                <button
+                  type="button"
+                  class="git-filter-bar-close-btn"
+                  title="隐藏文件列表"
+                  @click="showFileTree = false"
+                >
+                  <PanelRightClose :size="14" />
+                </button>
               </div>
 
               <div class="git-tree-content">
