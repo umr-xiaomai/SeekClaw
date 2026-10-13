@@ -4,6 +4,7 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { FileAttachment, ImageAttachment, ReasoningLevel } from '../types'
 import { confirmAction } from '../confirmation'
 import { fileBadgeText, fileExtClass, getFileExtension } from '../app-helpers'
+import { clearTaskDraft, getTaskDraft, saveTaskDraft, type ComposerDraft } from '../composer-drafts'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import ApprovalModeMenu from './ApprovalModeMenu.vue'
 import ModelReasoningMenu from './ModelReasoningMenu.vue'
@@ -441,6 +442,8 @@ function removeImage(id: string): void {
   imageNotice.value = ''
 }
 
+export type { ComposerDraft }
+
 function submit(): void {
   const message = value.value.trim()
   if ((!message && images.value.length === 0 && attachedFiles.value.length === 0) || props.disabled) return
@@ -458,6 +461,7 @@ function submit(): void {
   }))
   const outgoingFiles = attachedFiles.value.map((file) => ({ ...file }))
   emit('send', message, outgoingImages, outgoingFiles)
+  if (props.taskId) clearTaskDraft(props.taskId)
   value.value = ''
   images.value = []
   attachedFiles.value = []
@@ -477,6 +481,9 @@ function focus(): void {
 
 function setValue(nextValue: string): void {
   value.value = nextValue
+  if (props.taskId) {
+    saveTaskDraft(props.taskId, nextValue, images.value, attachedFiles.value)
+  }
   void nextTick(() => {
     resize()
     focus()
@@ -491,20 +498,49 @@ function populate(nextValue: string, nextImages?: ImageAttachment[], nextFiles?:
   value.value = nextValue
   images.value = nextImages ? [...nextImages] : []
   attachedFiles.value = nextFiles ? [...nextFiles] : []
+  if (props.taskId) {
+    saveTaskDraft(props.taskId, nextValue, images.value, attachedFiles.value)
+  }
   void nextTick(() => {
     resize()
     focus()
   })
 }
 
-defineExpose({ focus, setValue, getValue, populate })
+function clearDraft(taskId?: string): void {
+  const targetId = taskId || props.taskId
+  if (targetId) clearTaskDraft(targetId)
+}
+
+defineExpose({ focus, setValue, getValue, populate, clearDraft })
 watch(value, resize)
-watch(() => props.taskId, () => {
-  images.value = []
-  attachedFiles.value = []
+
+watch(() => props.taskId, (newTaskId, oldTaskId) => {
+  // 1. 如果此前有活动的会话，暂存该会话当前未发送的草稿内容（文本及附件）
+  if (oldTaskId) {
+    saveTaskDraft(oldTaskId, value.value, images.value, attachedFiles.value)
+  }
+
+  // 2. 切换到新会话：如果新会话有暂存草稿则恢复，否则呈现全新的空输入框
+  const draft = newTaskId ? getTaskDraft(newTaskId) : undefined
+  if (draft) {
+    value.value = draft.value
+    images.value = [...draft.images]
+    attachedFiles.value = [...draft.files]
+  } else {
+    value.value = ''
+    images.value = []
+    attachedFiles.value = []
+  }
+
   imageNotice.value = ''
   previewImage.value = null
+  void nextTick(() => {
+    resize()
+    focus()
+  })
 })
+
 watch(() => props.supportsImages, async (supported) => {
   if (!supported) {
     // 切换为不支持图片的模型：将已附带本地路径的图片自动平滑转换为文件附件

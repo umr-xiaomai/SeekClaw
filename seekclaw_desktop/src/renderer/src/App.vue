@@ -209,8 +209,6 @@ const conversationQuery = ref('')
 const messageHeights = new Map<string, number>()
 const conversationScrollTop = ref(0)
 const conversationViewportHeight = ref(600)
-/** Per-task composer drafts, kept across task switches. */
-const composerDrafts = new Map<string, string>()
 const conversationSelectionToken = { value: 0 }
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
@@ -972,8 +970,6 @@ async function reloadThreadSession(thread: ThreadItem, project?: ProjectItem): P
 async function selectThread(id: string): Promise<void> {
   const thread = threads.value.find((item) => item.id === id)
   if (!thread) return
-  if (activeThread.value && composer.value)
-    composerDrafts.set(activeThread.value.id, composer.value.getValue())
   const project = projects.value.find((item) => item.id === thread.projectId)
   if (thread.projectId && !project) return
   const selectionToken = ++conversationSelectionToken.value
@@ -1025,8 +1021,6 @@ async function selectThread(id: string): Promise<void> {
   }
   if (selectionToken !== conversationSelectionToken.value) return
   autoFollowConversation.value = true
-  const draft = composerDrafts.get(thread.id)
-  if (draft) composer.value?.setValue(draft)
   await scrollToBottom(false, true)
 }
 
@@ -1182,7 +1176,7 @@ async function sendMessage(content: string, images: ImageAttachment[], files?: F
     thread.queuedMessages.push({ id: makeId(), content, images, files, createdAt: Date.now() })
     return
   }
-  composerDrafts.delete(thread.id)
+  composer.value?.clearDraft(thread.id)
   await runMessageTurn(thread, content, images, files)
 }
 

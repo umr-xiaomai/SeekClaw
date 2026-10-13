@@ -3,6 +3,7 @@ import type { DaemonState } from '../../shared/ipc'
 import type { ProjectItem, ThreadItem } from './types'
 import { confirmAction } from './confirmation'
 import { sessionScope } from './app-helpers'
+import { clearTaskDraft } from './composer-drafts'
 
 export interface ThreadActionsContext {
   projects: Ref<ProjectItem[]>
@@ -148,6 +149,7 @@ export function createThreadActions(context: ThreadActionsContext) {
         ...sessionScope(thread, project)
       })
     }
+    clearTaskDraft(thread.id)
     threads.value = threads.value.filter((item) => item.id !== thread.id)
     taskSettingsThreadId.value = ''
     if (activeThreadId.value === thread.id) chooseAfterRemoval(project?.id)
@@ -168,6 +170,7 @@ export function createThreadActions(context: ThreadActionsContext) {
       if (thread.sessionId) {
         await window.seekclaw.daemon.request('session.delete', { id: thread.sessionId, global: true })
       }
+      clearTaskDraft(thread.id)
       threads.value = threads.value.filter((item) => item.id !== thread.id)
     }
     taskSettingsThreadId.value = ''
@@ -193,6 +196,7 @@ export function createThreadActions(context: ThreadActionsContext) {
           workspace: project.path
         })
       }
+      clearTaskDraft(thread.id)
       threads.value = threads.value.filter((item) => item.id !== thread.id)
     }
     taskSettingsThreadId.value = ''
@@ -218,6 +222,7 @@ export function createThreadActions(context: ThreadActionsContext) {
           ...sessionScope(thread, project)
         })
       }
+      clearTaskDraft(thread.id)
       threads.value = threads.value.filter((item) => item.id !== thread.id)
     }
     taskSettingsThreadId.value = ''
@@ -257,6 +262,7 @@ export function createThreadActions(context: ThreadActionsContext) {
     }
 
     const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
+    targets.forEach((thread) => clearTaskDraft(thread.id))
     projects.value = projects.value.filter((item) => item.id !== project.id)
     threads.value = threads.value.filter((thread) => thread.projectId !== project.id)
     if (targets.some((thread) => thread.id === taskSettingsThreadId.value)) taskSettingsThreadId.value = ''
