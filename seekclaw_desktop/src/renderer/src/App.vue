@@ -50,10 +50,13 @@ import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-re
 import { ReasoningLevel } from './types'
 import type { ChatMessage, FileAttachment, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity } from './types'
 import {
+  DEFAULT_SIDEBAR_WIDTH,
   formatPromptWithFiles,
   hydrateMessages,
+  loadStoredSidebarWidth,
   makeId,
   messageMatches,
+  MIN_SIDEBAR_WIDTH,
   normalizePath,
   normalizeReasoningLevel,
   pathName,
@@ -64,6 +67,7 @@ import {
   samePath,
   sessionScope,
   sessionStats,
+  SIDEBAR_WIDTH_STORAGE_KEY,
   updateThreadTitle
 } from './app-helpers'
 import type { RuntimeModelCatalogItem, RuntimeProject, RuntimeSession, RuntimeWorkspace } from './app-helpers'
@@ -139,24 +143,7 @@ function handleActivityChat(): void {
   }
 }
 
-const SIDEBAR_WIDTH_STORAGE_KEY = 'seekclaw-sidebar-width-v1'
-const DEFAULT_SIDEBAR_WIDTH = 300
-const MIN_SIDEBAR_WIDTH = 200
-const MAX_SIDEBAR_WIDTH = 640
 
-function loadStoredSidebarWidth(): number {
-  try {
-    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
-    if (!raw) return DEFAULT_SIDEBAR_WIDTH
-    const val = Number(raw)
-    if (Number.isFinite(val) && val >= MIN_SIDEBAR_WIDTH && val <= MAX_SIDEBAR_WIDTH) {
-      return val
-    }
-    return DEFAULT_SIDEBAR_WIDTH
-  } catch {
-    return DEFAULT_SIDEBAR_WIDTH
-  }
-}
 
 const sidebarWidth = ref(loadStoredSidebarWidth())
 

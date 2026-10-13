@@ -27,7 +27,7 @@ const props = withDefaults(defineProps<{
   activeProjectId?: string
   width?: number
 }>(), {
-  width: 300
+  width: 240
 })
 
 const emit = defineEmits<{
@@ -50,8 +50,8 @@ const emit = defineEmits<{
   resetWidth: []
 }>()
 
-const MIN_SIDEBAR_WIDTH = 200
-const COLLAPSE_THRESHOLD = 160
+const MIN_SIDEBAR_WIDTH = 180
+const COLLAPSE_THRESHOLD = 140
 
 const resizing = ref(false)
 let resizeStartX = 0

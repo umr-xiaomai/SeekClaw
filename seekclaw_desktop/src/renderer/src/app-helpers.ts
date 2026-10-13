@@ -308,3 +308,34 @@ export function formatMessageTime(timestamp?: number): string {
   const minutes = date.getMinutes().toString().padStart(2, '0')
   return `${month}月${day}日 ${hours}:${minutes}`
 }
+
+export const SIDEBAR_WIDTH_STORAGE_KEY = 'seekclaw-sidebar-width-v2'
+export const DEFAULT_SIDEBAR_WIDTH = 240
+export const MIN_SIDEBAR_WIDTH = 180
+export const MAX_SIDEBAR_WIDTH = 640
+
+export function loadStoredSidebarWidth(storage?: Pick<Storage, 'getItem' | 'setItem'>): number {
+  const store = storage ?? (typeof localStorage !== 'undefined' ? localStorage : null)
+  if (!store) return DEFAULT_SIDEBAR_WIDTH
+  try {
+    const rawV2 = store.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+    if (rawV2) {
+      const val = Number(rawV2)
+      if (Number.isFinite(val) && val >= MIN_SIDEBAR_WIDTH && val <= MAX_SIDEBAR_WIDTH) {
+        return val
+      }
+    }
+    const rawV1 = store.getItem('seekclaw-sidebar-width-v1')
+    if (rawV1) {
+      const val = Number(rawV1)
+      if (Number.isFinite(val) && val >= MIN_SIDEBAR_WIDTH && val <= MAX_SIDEBAR_WIDTH && val !== 300) {
+        store.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(val))
+        return val
+      }
+    }
+    return DEFAULT_SIDEBAR_WIDTH
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH
+  }
+}
+

@@ -110,3 +110,50 @@ describe('hydrateMessages', () => {
     expect(hydrated[1]!.createdAt).toBe(ts2)
   })
 })
+
+describe('loadStoredSidebarWidth', () => {
+  it('returns default 240 when storage is empty', async () => {
+    const { loadStoredSidebarWidth, DEFAULT_SIDEBAR_WIDTH } = await import('./app-helpers')
+    const mockStorage = {
+      getItem: () => null,
+      setItem: () => {}
+    }
+    expect(loadStoredSidebarWidth(mockStorage)).toBe(DEFAULT_SIDEBAR_WIDTH)
+    expect(DEFAULT_SIDEBAR_WIDTH).toBe(240)
+  })
+
+  it('reads valid v2 width from storage', async () => {
+    const { loadStoredSidebarWidth } = await import('./app-helpers')
+    const mockStorage = {
+      getItem: (key: string) => key === 'seekclaw-sidebar-width-v2' ? '220' : null,
+      setItem: () => {}
+    }
+    expect(loadStoredSidebarWidth(mockStorage)).toBe(220)
+  })
+
+  it('migrates user custom v1 width if valid and not old 300 default', async () => {
+    const { loadStoredSidebarWidth } = await import('./app-helpers')
+    let savedKey = ''
+    let savedVal = ''
+    const mockStorage = {
+      getItem: (key: string) => key === 'seekclaw-sidebar-width-v1' ? '210' : null,
+      setItem: (key: string, val: string) => {
+        savedKey = key
+        savedVal = val
+      }
+    }
+    expect(loadStoredSidebarWidth(mockStorage)).toBe(210)
+    expect(savedKey).toBe('seekclaw-sidebar-width-v2')
+    expect(savedVal).toBe('210')
+  })
+
+  it('replaces old bloated 300 v1 width with new 240 default', async () => {
+    const { loadStoredSidebarWidth } = await import('./app-helpers')
+    const mockStorage = {
+      getItem: (key: string) => key === 'seekclaw-sidebar-width-v1' ? '300' : null,
+      setItem: () => {}
+    }
+    expect(loadStoredSidebarWidth(mockStorage)).toBe(240)
+  })
+})
+
