@@ -3328,78 +3328,240 @@ body.is-resizing-sidebar .app-body {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 10px 10px 24px;
+  padding: 0 0 24px;
 }
 
-.git-history-cards-list {
+.git-timeline-stream {
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  width: 100%;
 }
 
-.git-commit-card {
+.git-timeline-row {
   position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  align-items: stretch;
+  gap: 9px;
+  padding: 8px 12px 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
   cursor: pointer;
-  transition: all 0.15s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   user-select: none;
+  transition: background 0.12s ease;
 }
 
-.git-commit-card:hover {
+.git-timeline-row:hover {
   background: var(--surface-hover);
-  border-color: var(--border-strong);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
-  transform: translateY(-1px);
 }
 
-.git-commit-card.is-selected {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
-  box-shadow: 0 0 0 1px var(--accent);
+.git-timeline-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.git-commit-card-header {
+.git-timeline-track {
+  position: relative;
+  width: 14px;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
-.git-commit-dot {
+/* Continuous vertical timeline connector line */
+.git-timeline-track::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: -1px;
+  left: 50%;
+  width: 2px;
+  background: var(--border);
+  transform: translateX(-50%);
+  z-index: 1;
+}
+
+/* Line starts from the head node on the first commit */
+.git-timeline-row:first-child .git-timeline-track::before {
+  top: 10px;
+}
+
+/* Line ends at the node on the last commit */
+.git-timeline-row:last-child .git-timeline-track::before {
+  bottom: calc(100% - 10px);
+}
+
+.git-timeline-node {
+  position: relative;
+  z-index: 2;
   width: 7px;
   height: 7px;
+  margin-top: 5px;
   border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  background: var(--text-muted);
+  border: 2px solid var(--surface);
+  box-sizing: content-box;
+  transition: all 0.15s ease;
 }
 
-.git-commit-subject {
-  flex: 1;
+.git-timeline-row:hover .git-timeline-node {
+  background: var(--accent);
+  transform: scale(1.15);
+}
+
+.git-timeline-node.is-head-node {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.git-timeline-row.is-selected .git-timeline-node {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.git-timeline-content {
+  flex: 1 1 0;
   min-width: 0;
-  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+
+.git-timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.git-timeline-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.commit-type-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  height: 17px;
+  border-radius: 3px;
+  font-size: 10px;
   font-weight: 600;
-  color: var(--text);
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+  flex-shrink: 0;
+}
+
+.commit-tag-feat {
+  background: rgba(16, 185, 129, 0.14);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.commit-tag-fix {
+  background: rgba(245, 158, 11, 0.14);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.commit-tag-refactor {
+  background: rgba(59, 130, 246, 0.14);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.commit-tag-perf {
+  background: rgba(139, 92, 246, 0.14);
+  color: #a855f7;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.commit-tag-docs {
+  background: rgba(20, 184, 166, 0.14);
+  color: #14b8a6;
+  border: 1px solid rgba(20, 184, 166, 0.3);
+}
+
+.commit-tag-merge {
+  background: rgba(99, 102, 241, 0.14);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.commit-tag-style {
+  background: rgba(236, 72, 153, 0.14);
+  color: #f472b6;
+  border: 1px solid rgba(236, 72, 153, 0.3);
+}
+
+.commit-tag-test {
+  background: rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.commit-tag-chore {
+  background: rgba(100, 116, 139, 0.14);
+  color: #64748b;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.commit-tag-revert {
+  background: rgba(239, 68, 68, 0.14);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.commit-tag-other {
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.commit-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  height: 16px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  max-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.git-commit-view-btn {
+.git-timeline-subject {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.git-timeline-view-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
+  gap: 3px;
+  padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--surface-raised);
@@ -3409,61 +3571,62 @@ body.is-resizing-sidebar .app-body {
   flex-shrink: 0;
   opacity: 0;
   transition: all 0.12s ease;
+  margin-left: 4px;
 }
 
-.git-commit-card:hover .git-commit-view-btn,
-.git-commit-card.is-selected .git-commit-view-btn {
+.git-timeline-row:hover .git-timeline-view-btn,
+.git-timeline-row.is-selected .git-timeline-view-btn {
   opacity: 1;
 }
 
-.git-commit-view-btn:hover {
+.git-timeline-view-btn:hover {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
 }
 
-.git-commit-card-meta {
+.git-timeline-meta {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 11px;
   color: var(--text-muted);
   min-width: 0;
-  overflow: hidden;
 }
 
-.git-commit-hash-pill {
+.git-timeline-hash {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
-  font-size: 10.5px;
+  font-size: 10px;
   cursor: copy;
   flex-shrink: 0;
   transition: all 0.12s ease;
 }
 
-.git-commit-hash-pill:hover {
+.git-timeline-hash:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.git-commit-author {
+.git-timeline-author {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 130px;
   flex-shrink: 1;
 }
 
-.git-commit-time {
+.git-timeline-time {
   margin-left: auto;
   white-space: nowrap;
   flex-shrink: 0;
+  font-size: 10.5px;
   color: var(--text-muted);
 }
 

@@ -207,6 +207,90 @@ function closeCommitDiff(): void {
   commitDiffError.value = ''
 }
 
+interface ParsedCommitSubject {
+  badge?: {
+    type: string
+    label: string
+    colorClass: string
+  }
+  scope?: string
+  cleanSubject: string
+}
+
+function parseCommitSubject(rawSubject: string): ParsedCommitSubject {
+  if (!rawSubject) return { cleanSubject: '' }
+  const s = rawSubject.trim()
+
+  if (/^merge\b/i.test(s) || s.startsWith('合并')) {
+    return {
+      badge: { type: 'merge', label: 'merge', colorClass: 'commit-tag-merge' },
+      cleanSubject: s
+    }
+  }
+
+  const match = s.match(
+    /^(?:([a-zA-Z]+)(?:\(([^)]+)\))?\s*[:：]|\[([a-zA-Z0-9_\-\u4e00-\u9fa5]+)\]\s*|【([a-zA-Z0-9_\-\u4e00-\u9fa5]+)】\s*|([\u4e00-\u9fa5]{2,4})\s*[:：])\s*(.*)$/
+  )
+
+  if (match) {
+    const rawType = (match[1] || match[3] || match[4] || match[5] || '').toLowerCase()
+    const scope = match[2]?.trim()
+    const rest = (match[6] || '').trim() || s
+
+    let type = ''
+    let label = rawType
+    let colorClass = 'commit-tag-other'
+
+    if (/^(feat|feature|add|新增|特性)$/i.test(rawType)) {
+      type = 'feat'
+      label = 'feat'
+      colorClass = 'commit-tag-feat'
+    } else if (/^(fix|bug|hotfix|patch|修复)$/i.test(rawType)) {
+      type = 'fix'
+      label = 'fix'
+      colorClass = 'commit-tag-fix'
+    } else if (/^(refactor|重构)$/i.test(rawType)) {
+      type = 'refactor'
+      label = 'refactor'
+      colorClass = 'commit-tag-refactor'
+    } else if (/^(perf|opt|optimize|优化|性能)$/i.test(rawType)) {
+      type = 'perf'
+      label = 'perf'
+      colorClass = 'commit-tag-perf'
+    } else if (/^(docs?|文档)$/i.test(rawType)) {
+      type = 'docs'
+      label = 'docs'
+      colorClass = 'commit-tag-docs'
+    } else if (/^(test|tests|测试)$/i.test(rawType)) {
+      type = 'test'
+      label = 'test'
+      colorClass = 'commit-tag-test'
+    } else if (/^(style|样式)$/i.test(rawType)) {
+      type = 'style'
+      label = 'style'
+      colorClass = 'commit-tag-style'
+    } else if (/^(chore|build|ci|deps|杂项)$/i.test(rawType)) {
+      type = 'chore'
+      label = 'chore'
+      colorClass = 'commit-tag-chore'
+    } else if (/^(revert|回滚)$/i.test(rawType)) {
+      type = 'revert'
+      label = 'revert'
+      colorClass = 'commit-tag-revert'
+    }
+
+    if (type) {
+      return {
+        badge: { type, label, colorClass },
+        scope: scope || undefined,
+        cleanSubject: rest
+      }
+    }
+  }
+
+  return { cleanSubject: s }
+}
+
 const displayedDiff = computed(() => {
   if (tab.value === 'history' && commitDiff.value !== null) {
     return commitDiff.value
@@ -1565,47 +1649,71 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <!-- Commit History Cards List -->
+          <!-- Commit History Stream List (Linear flat stream with timeline) -->
           <div v-else class="git-history-scrollable">
             <div v-if="history?.error" class="git-panel-state is-error">{{ history.error }}</div>
             <div v-else-if="commitDiffLoading" class="git-panel-state">
               <RefreshCw :size="18" class="spin" />
               <span>正在获取提交差异…</span>
             </div>
-            <ol v-else-if="history?.commits.length" class="git-history-cards-list">
+            <ol v-else-if="history?.commits.length" class="git-timeline-stream">
               <li
-                v-for="commit in history.commits"
+                v-for="(commit, cIdx) in history.commits"
                 :key="commit.hash"
-                class="git-commit-card"
-                :class="{ 'is-selected': selectedCommit?.hash === commit.hash }"
-                title="双击查看具体变更内容"
+                class="git-timeline-row"
+                :class="{
+                  'is-head': cIdx === 0,
+                  'is-selected': selectedCommit?.hash === commit.hash
+                }"
+                title="双击查看提交具体变更"
                 @click="selectedCommit = commit"
                 @dblclick="openCommitDiff(commit)"
               >
-                <div class="git-commit-card-header">
-                  <span class="git-commit-dot" />
-                  <strong class="git-commit-subject" :title="commit.subject">{{ commit.subject }}</strong>
-                  <button
-                    type="button"
-                    class="git-commit-view-btn"
-                    title="查看此提交的差异变更"
-                    @click.stop="openCommitDiff(commit)"
-                  >
-                    <Eye :size="12" />
-                    <span>查看</span>
-                  </button>
+                <div class="git-timeline-track">
+                  <span class="git-timeline-node" :class="{ 'is-head-node': cIdx === 0 }" />
                 </div>
-                <div class="git-commit-card-meta">
-                  <span
-                    class="git-commit-hash-pill"
-                    :title="'点击复制完整哈希: ' + commit.hash"
-                    @click.stop="copyToClipboard(commit.hash, '已复制提交哈希')"
-                  >
-                    <code>{{ commit.shortHash }}</code>
-                    <Copy :size="10" />
-                  </span>
-                  <span class="git-commit-author" :title="commit.author">{{ commit.author }}</span>
-                  <time class="git-commit-time" :datetime="commit.authoredAt">{{ formatDate(commit.authoredAt) }}</time>
+                <div class="git-timeline-content">
+                  <div class="git-timeline-header">
+                    <div class="git-timeline-title">
+                      <span
+                        v-if="parseCommitSubject(commit.subject).badge"
+                        class="commit-type-badge"
+                        :class="parseCommitSubject(commit.subject).badge?.colorClass"
+                      >
+                        {{ parseCommitSubject(commit.subject).badge?.label }}
+                      </span>
+                      <span
+                        v-if="parseCommitSubject(commit.subject).scope"
+                        class="commit-scope-badge"
+                        :title="parseCommitSubject(commit.subject).scope"
+                      >
+                        {{ parseCommitSubject(commit.subject).scope }}
+                      </span>
+                      <span class="git-timeline-subject" :title="commit.subject">
+                        {{ parseCommitSubject(commit.subject).cleanSubject }}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      class="git-timeline-view-btn"
+                      title="查看此提交代码差异"
+                      @click.stop="openCommitDiff(commit)"
+                    >
+                      <Eye :size="12" />
+                      <span>差异</span>
+                    </button>
+                  </div>
+                  <div class="git-timeline-meta">
+                    <span
+                      class="git-timeline-hash"
+                      :title="'点击复制完整哈希: ' + commit.hash"
+                      @click.stop="copyToClipboard(commit.hash, '已复制提交哈希')"
+                    >
+                      <code>{{ commit.shortHash }}</code>
+                    </span>
+                    <span class="git-timeline-author" :title="commit.author">{{ commit.author }}</span>
+                    <time class="git-timeline-time" :datetime="commit.authoredAt">{{ formatDate(commit.authoredAt) }}</time>
+                  </div>
                 </div>
               </li>
             </ol>
