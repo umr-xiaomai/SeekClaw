@@ -126,6 +126,73 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Advanced_GetAndSet_CrossSessionMemoryEnabled()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("", false, null)));
+
+        await connection.SendAsync(1, "advanced.get");
+        var initial = ParseData(await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 1
+                        && response["event"]!.GetValue<string>() == "result"));
+        Assert.False(initial["crossSessionMemoryEnabled"]!.GetValue<bool>()); // default off
+
+        await connection.SendAsync(2, "advanced.set", new JsonObject { ["crossSessionMemoryEnabled"] = true });
+        var set = ParseData(await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 2
+                        && response["event"]!.GetValue<string>() == "result"));
+        Assert.True(set["crossSessionMemoryEnabled"]!.GetValue<bool>());
+
+        await connection.SendAsync(3, "advanced.get");
+        var after = ParseData(await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 3
+                        && response["event"]!.GetValue<string>() == "result"));
+        Assert.True(after["crossSessionMemoryEnabled"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task Memory_AdminMethods_ListDeleteAndClear()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("", false, null)));
+
+        var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(_tempDir, "global-memory"));
+        _runtime!.Memories.Save("用户偏好中文回复", globalWorkspace, "session-1");
+        _runtime.Memories.Save("依赖管理使用 pnpm", globalWorkspace, "session-2");
+
+        await connection.SendAsync(1, "memory.list");
+        var listed = JsonNode.Parse((await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 1
+                        && response["event"]!.GetValue<string>() == "result"))["data"]!.GetValue<string>())!
+            .AsArray();
+        Assert.Equal(2, listed.Count);
+        var first = listed.First(item => item!["content"]!.GetValue<string>() == "用户偏好中文回复")!.AsObject();
+
+        await connection.SendAsync(2, "memory.delete", new JsonObject { ["id"] = first["id"]!.GetValue<string>() });
+        await connection.ReadUntilAsync(response => response["id"]!.GetValue<long>() == 2
+                                                   && response["event"]!.GetValue<string>() == "result");
+
+        await connection.SendAsync(3, "memory.list");
+        var remaining = JsonNode.Parse((await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 3
+                        && response["event"]!.GetValue<string>() == "result"))["data"]!.GetValue<string>())!
+            .AsArray();
+        Assert.Single(remaining);
+        Assert.Equal("依赖管理使用 pnpm", remaining[0]!["content"]!.GetValue<string>());
+
+        await connection.SendAsync(4, "memory.clear");
+        var cleared = ParseData(await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 4
+                        && response["event"]!.GetValue<string>() == "result"));
+        Assert.Equal(1, cleared["deleted"]!.GetValue<int>());
+
+        await connection.SendAsync(5, "memory.delete", new JsonObject { ["id"] = "missing-id" });
+        var failure = await connection.ReadUntilAsync(response => response["id"]!.GetValue<long>() == 5
+                                                                && response["event"]!.GetValue<string>() == "error");
+        Assert.Contains("Memory not found", failure["data"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task Schedule_AdminMethods_CrudToggleRunAndList()
     {
         var connection = await StartServerAsync(

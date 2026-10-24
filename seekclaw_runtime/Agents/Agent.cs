@@ -7,6 +7,7 @@ using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Memory;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
@@ -31,6 +32,7 @@ public sealed partial class Agent(
     PromptComposer promptComposer,
     IWorkspaceManager workspaceManager,
     ISessionStore sessionStore,
+    ICrossSessionMemoryStore memoryStore,
     IVerifier verifier,
     IEventBus events,
     IFileLockCoordinator fileLocks,
@@ -46,7 +48,8 @@ public sealed partial class Agent(
         ReasoningLevel? reasoningLevel = null,
         IReadOnlyList<ChatImageAttachment>? images = null,
         AgentSteeringQueue? steering = null,
-        string? turnRequestId = null)
+        string? turnRequestId = null,
+        bool captureCrossSessionMemory = true)
     {
         var agentConfig = configStore.Config.Agent;
         events.Publish(new TurnStartedEvent(session.Header.Id, userInput));
@@ -366,6 +369,18 @@ public sealed partial class Agent(
                         }
                     }
                 }
+            }
+
+            if (captureCrossSessionMemory
+                && agentConfig.EnableCrossSessionMemory
+                && !cancelled
+                && error is null
+                && !reachedMaxSteps
+                && activeModel is not null
+                && subAgentScope?.Depth is null or 0)
+            {
+                await CaptureCrossSessionMemoryAsync(
+                    session, workspace, activeModel, userInput, finalText, ct).ConfigureAwait(false);
             }
 
             events.Publish(new WorkflowEvent(

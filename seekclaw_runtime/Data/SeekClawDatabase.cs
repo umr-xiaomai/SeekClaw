@@ -87,6 +87,7 @@ public sealed class SeekClawDatabase
             PRAGMA busy_timeout=10000;
 
             DROP TABLE IF EXISTS messages;
+            DROP TABLE IF EXISTS cross_session_memories;
             DROP TABLE IF EXISTS sessions;
             DROP TABLE IF EXISTS projects;
             DROP TABLE IF EXISTS scheduled_tasks;
@@ -148,6 +149,18 @@ public sealed class SeekClawDatabase
 
             CREATE INDEX IF NOT EXISTS ix_messages_session
                 ON messages(scope, session_id, id);
+
+            CREATE TABLE IF NOT EXISTS cross_session_memories (
+                id TEXT NOT NULL PRIMARY KEY,
+                content TEXT NOT NULL,
+                content_key TEXT NOT NULL UNIQUE,
+                source_workspace TEXT NULL,
+                source_session_id TEXT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_cross_session_memories_created
+                ON cross_session_memories(created_at DESC);
 
             CREATE TABLE IF NOT EXISTS scheduled_tasks (
                 id TEXT NOT NULL PRIMARY KEY,

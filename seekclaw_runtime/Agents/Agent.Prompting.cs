@@ -32,6 +32,16 @@ public sealed partial class Agent
             personality);
         if (!string.IsNullOrWhiteSpace(agentsMd))
             variables["agents_md"] = ContextPlanner.FitInjectedText(agentsMd);
+        if (configStore.Config.Agent.EnableCrossSessionMemory)
+        {
+            var crossSessionMemory = memoryStore.ListRecent(40)
+                .Reverse()
+                .Select(entry => $"- {entry.Content}")
+                .ToList();
+            if (crossSessionMemory.Count > 0)
+                variables["cross_session_memory"] = ContextPlanner.FitInjectedText(
+                    string.Join("\n", crossSessionMemory));
+        }
         var context = new PromptRenderContext
         {
             Variables = variables,

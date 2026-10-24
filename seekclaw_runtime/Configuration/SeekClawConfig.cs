@@ -135,6 +135,8 @@ public sealed class AgentConfig
     public string Personality { get; set; } = "pragmatic";
     /// <summary>Summarizes older history when the context window would overflow, so a single turn can keep going.</summary>
     public bool EnableContextCompaction { get; set; } = true;
+    /// <summary>Opt-in distillation and recall of durable facts across otherwise isolated sessions.</summary>
+    public bool EnableCrossSessionMemory { get; set; } = false;
     /// <summary>Consecutive output-cap truncations allowed before a turn gives up instead of ending silently.</summary>
     public int MaxOutputContinuations { get; set; } = 6;
     /// <summary>Agent mode: edit | plan | readonly | auto.</summary>

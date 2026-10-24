@@ -6846,6 +6846,72 @@ body.is-resizing-git-panel .diff-file-card {
   cursor: not-allowed;
 }
 
+.memory-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.memory-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  margin-top: 10px;
+  padding-right: 2px;
+  overflow-y: auto;
+}
+
+.memory-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  background: color-mix(in srgb, var(--surface-hover) 45%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.memory-item-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.memory-item-body p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.memory-item-body small {
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.memory-delete {
+  flex: none;
+}
+
+.memory-empty {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .compact-reset-btn {
   display: inline-flex;
   align-items: center;

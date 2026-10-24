@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SeekClaw.Runtime.Memory;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
@@ -20,6 +21,8 @@ namespace SeekClaw.Runtime.Configuration;
 [JsonSerializable(typeof(SessionMessage))]
 [JsonSerializable(typeof(ScheduledTask))]
 [JsonSerializable(typeof(List<ScheduledTask>))]
+[JsonSerializable(typeof(CrossSessionMemory))]
+[JsonSerializable(typeof(List<CrossSessionMemory>))]
 [JsonSerializable(typeof(UsageEntry))]
 [JsonSerializable(typeof(McpConfig))]
 [JsonSerializable(typeof(List<SessionHeader>))]

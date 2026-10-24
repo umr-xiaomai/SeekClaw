@@ -94,6 +94,7 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 
 - **Session Management**: SQLite-backed persistence, restoration, and concurrent access
 - **Memory System**: Workspace-specific memory with automatic context injection
+- **Cross-Conversation Memory**: Opt-in user-level memory that distills durable preferences/corrections from successful turns and recalls them in later sessions (Settings → Advanced, off by default)
 - **Verification**: Automatic build/check/repair cycle after code modifications
 - **Hot Reload**: Prompt files and configurations reload without restart
 

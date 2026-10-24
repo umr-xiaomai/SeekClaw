@@ -682,6 +682,21 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.SetAdvancedConfig(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
+                    case "memory.list":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListMemories()), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "memory.delete":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.DeleteMemory(Params(request))), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "memory.clear":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.ClearMemories()), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
                     case "prompt.optimize":
                         await RunAdminAsync(context.Writer, context.WriterGate, id, false,
                             token => _admin.OptimizePromptAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
@@ -1597,12 +1612,13 @@ public sealed class DaemonServer : IAsyncDisposable
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.approval", "agent.mode", "workspace", "provider",
-            "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild"),
+            "model", "mcp", "skill", "usage", "project", "session", "global-session", "memory", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel", "agent.approve",
             "config.status", "config.rebuild",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
             "routing.get", "routing.set", "advanced.get", "advanced.set",
+            "memory.list", "memory.delete", "memory.clear",
             "prompt.optimize",
             "schedule.list", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run",
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",

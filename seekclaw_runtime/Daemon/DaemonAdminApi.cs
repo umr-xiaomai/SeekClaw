@@ -126,6 +126,7 @@ internal sealed class DaemonAdminApi(
     public string GetAdvancedConfig() => new JsonObject
     {
         ["networkEnabled"] = runtime.ConfigStore.Config.Agent.NetworkEnabled,
+        ["crossSessionMemoryEnabled"] = runtime.ConfigStore.Config.Agent.EnableCrossSessionMemory,
         ["failoverEnabled"] = runtime.ConfigStore.Config.Routing.FailoverEnabled,
         ["deepSeekOptimizationEnabled"] = runtime.ConfigStore.Config.Routing.DeepSeekOptimizationEnabled,
         ["computerUseEnabled"] = runtime.ConfigStore.Config.ComputerUse?.Enabled ?? false,
@@ -222,6 +223,11 @@ internal sealed class DaemonAdminApi(
             runtime.ConfigStore.Config.Agent.NetworkEnabled = netEnabled;
         }
 
+        if (parameters["crossSessionMemoryEnabled"] is JsonValue memoryVal && memoryVal.TryGetValue<bool>(out var memoryEnabled))
+        {
+            runtime.ConfigStore.Config.Agent.EnableCrossSessionMemory = memoryEnabled;
+        }
+
         if (parameters["failoverEnabled"] is JsonValue failoverVal && failoverVal.TryGetValue<bool>(out var failover))
         {
             runtime.ConfigStore.Config.Routing.FailoverEnabled = failover;
@@ -254,6 +260,23 @@ internal sealed class DaemonAdminApi(
         return GetAdvancedConfig();
 
     }
+
+    public string ListMemories() => JsonSerializer.Serialize(
+        runtime.Memories.ListRecent(200).ToList(),
+        SeekClawJsonContext.Compact.ListCrossSessionMemory);
+
+    public string DeleteMemory(JsonObject parameters)
+    {
+        var id = RequiredString(parameters, "id");
+        if (!runtime.Memories.Delete(id))
+            throw new DaemonRequestException($"Memory not found: {id}");
+        return id;
+    }
+
+    public string ClearMemories() => new JsonObject
+    {
+        ["deleted"] = runtime.Memories.Clear(),
+    }.ToJsonString();
 
     public string ListSchedules() =>
         JsonSerializer.Serialize(runtime.Schedules.List(), SeekClawJsonContext.Compact.ListScheduledTask);

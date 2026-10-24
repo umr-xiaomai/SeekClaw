@@ -6,6 +6,7 @@ using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Extensions;
 using SeekClaw.Runtime.Mcp;
+using SeekClaw.Runtime.Memory;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Projects;
@@ -41,6 +42,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public IToolRegistry Tools => _services.GetRequiredService<IToolRegistry>();
     public IWorkspaceManager Workspaces => _services.GetRequiredService<IWorkspaceManager>();
     public ISessionStore Sessions => _services.GetRequiredService<ISessionStore>();
+    public ICrossSessionMemoryStore Memories => _services.GetRequiredService<ICrossSessionMemoryStore>();
     public IProjectStore Projects => _services.GetRequiredService<IProjectStore>();
     public IScheduleStore Schedules => _services.GetRequiredService<IScheduleStore>();
     public SeekClawDatabase Database => _services.GetRequiredService<SeekClawDatabase>();
@@ -235,6 +237,14 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                 return ValueTask.FromResult<string?>(null);
             return ValueTask.FromResult<string?>(prompts.TryGet("builtin/memory") ?? memory);
         }));
+
+        // Opt-in user-level memory, kept separate from workspace-authored MEMORY.md.
+        registry.Register(new PromptContribution("cross-session-memory", PromptSlot.Memory, (ctx, _) =>
+        {
+            if (!ctx.Variables.TryGetValue("cross_session_memory", out var memory) || string.IsNullOrWhiteSpace(memory))
+                return ValueTask.FromResult<string?>(null);
+            return ValueTask.FromResult<string?>(prompts.TryGet("builtin/cross_session_memory") ?? memory);
+        }));
     }
 
     private void RegisterBuiltinTools()
@@ -304,6 +314,7 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IWorkspaceManager, WorkspaceManager>();
         services.AddSingleton<SeekClawDatabase>();
         services.AddSingleton<ISessionStore, SessionStore>();
+        services.AddSingleton<ICrossSessionMemoryStore, CrossSessionMemoryStore>();
         services.AddSingleton<IProjectStore, ProjectStore>();
         services.AddSingleton<IScheduleStore, ScheduleStore>();
         services.AddSingleton<IVerifier, BuildVerifier>();

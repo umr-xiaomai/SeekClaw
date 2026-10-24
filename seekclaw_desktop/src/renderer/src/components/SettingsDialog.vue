@@ -131,6 +131,14 @@ interface UsageInfo {
   successRate: number
 }
 
+interface CrossSessionMemoryInfo {
+  id: string
+  content: string
+  sourceWorkspace?: string
+  sourceSessionId?: string
+  createdAt: string
+}
+
 const props = defineProps<{
   open: boolean
   page?: 'settings' | 'extensions'
@@ -161,6 +169,8 @@ const emit = defineEmits<{
 const section = ref<SettingsSection>('general')
 const loading = ref(false)
 const networkEnabled = ref(true)
+const crossSessionMemoryEnabled = ref(false)
+const crossSessionMemories = ref<CrossSessionMemoryInfo[]>([])
 const failoverEnabled = ref(true)
 const deepSeekOptimizationEnabled = ref(false)
 const computerUseEnabled = ref(false)
@@ -459,18 +469,89 @@ async function loadGeneral(): Promise<void> {
 }
 
 async function loadAdvanced(): Promise<void> {
-  const config = await requestJson<{
-    networkEnabled: boolean
-    failoverEnabled: boolean
-    deepSeekOptimizationEnabled: boolean
-    computerUseEnabled?: boolean
-    computerUseDriver?: string
-  }>('advanced.get')
+  const [config, memories] = await Promise.all([
+    requestJson<{
+      networkEnabled: boolean
+      crossSessionMemoryEnabled?: boolean
+      failoverEnabled: boolean
+      deepSeekOptimizationEnabled: boolean
+      computerUseEnabled?: boolean
+      computerUseDriver?: string
+    }>('advanced.get'),
+    loadCrossSessionMemories()
+  ])
   networkEnabled.value = config.networkEnabled
+  crossSessionMemoryEnabled.value = config.crossSessionMemoryEnabled ?? false
+  crossSessionMemories.value = memories
   failoverEnabled.value = config.failoverEnabled
   deepSeekOptimizationEnabled.value = config.deepSeekOptimizationEnabled
   computerUseEnabled.value = config.computerUseEnabled ?? false
   computerUseDriver.value = config.computerUseDriver ?? 'auto'
+}
+
+async function loadCrossSessionMemories(): Promise<CrossSessionMemoryInfo[]> {
+  try {
+    return await requestJson<CrossSessionMemoryInfo[]>('memory.list')
+  } catch {
+    // Older daemons without the memory methods must not break the settings page.
+    return []
+  }
+}
+
+async function toggleCrossSessionMemory(): Promise<void> {
+  beginAction('advanced.set:memory')
+  try {
+    const config = await requestJson<{ crossSessionMemoryEnabled: boolean }>('advanced.set', {
+      crossSessionMemoryEnabled: crossSessionMemoryEnabled.value
+    })
+    crossSessionMemoryEnabled.value = config.crossSessionMemoryEnabled
+    notice.value = crossSessionMemoryEnabled.value
+      ? '已启用跨对话记忆；成功对话后会提炼长期信息，并在后续新对话中自动召回'
+      : '已关闭跨对话记忆；已保存的条目仍会保留，可单独删除或清空'
+  } catch (reason) {
+    fail(reason)
+    crossSessionMemoryEnabled.value = !crossSessionMemoryEnabled.value
+  } finally {
+    endAction()
+  }
+}
+
+async function deleteCrossSessionMemory(id: string): Promise<void> {
+  beginAction(`memory.delete:${id}`)
+  try {
+    await requestJson<string>('memory.delete', { id })
+    crossSessionMemories.value = crossSessionMemories.value.filter(item => item.id !== id)
+    notice.value = '已删除该条记忆'
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
+}
+
+async function clearCrossSessionMemories(): Promise<void> {
+  if (!await confirmAction({
+    title: '清空跨对话记忆',
+    message: `将永久删除已保存的 ${crossSessionMemories.value.length} 条记忆，此操作无法撤销。`,
+    confirmLabel: '全部清空',
+    danger: true
+  })) return
+
+  beginAction('memory.clear')
+  try {
+    await requestJson<{ deleted: number }>('memory.clear')
+    crossSessionMemories.value = []
+    notice.value = '已清空全部跨对话记忆'
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
+}
+
+function formatMemoryTime(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 async function toggleComputerUse(): Promise<void> {
@@ -1662,6 +1743,42 @@ onBeforeUnmount(() => {
                 :disabled="action === 'advanced.set:network'" @change="toggleNetworkEnabled" />
               <span class="toggle-switch" aria-hidden="true"><span /></span>
             </label>
+          </section>
+
+          <section class="settings-group">
+            <label class="provider-enabled-row">
+              <span>
+                <strong>跨对话记忆</strong>
+                <small>从成功对话中提炼长期偏好、明确纠正和稳定技术约定，在后续新对话中自动召回。默认关闭；开启后每轮可能增加一次模型调用。不会复制完整旧聊天。</small>
+              </span>
+              <input v-model="crossSessionMemoryEnabled" class="sr-only" type="checkbox"
+                :disabled="action === 'advanced.set:memory'" @change="toggleCrossSessionMemory" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
+            <div class="memory-toolbar">
+              <span class="memory-count">已保存 {{ crossSessionMemories.length }} 条</span>
+              <button class="compact-button" :disabled="!crossSessionMemories.length || action === 'memory.clear'"
+                @click="clearCrossSessionMemories">
+                <Trash2 :size="13" /> 清空记忆
+              </button>
+            </div>
+            <div v-if="crossSessionMemories.length" class="memory-list">
+              <article v-for="item in crossSessionMemories" :key="item.id" class="memory-item">
+                <div class="memory-item-body">
+                  <p>{{ item.content }}</p>
+                  <small>
+                    {{ formatMemoryTime(item.createdAt) }}
+                    <span v-if="item.sourceWorkspace"> · {{ item.sourceWorkspace }}</span>
+                    <span v-else> · 全局对话</span>
+                  </small>
+                </div>
+                <button class="icon-button-subtle memory-delete" title="删除这条记忆"
+                  :disabled="action === `memory.delete:${item.id}`" @click="deleteCrossSessionMemory(item.id)">
+                  <Trash2 :size="14" />
+                </button>
+              </article>
+            </div>
+            <p v-else class="memory-empty">暂无记忆。启用后，可在对话中直接说“记住我的偏好……”。</p>
           </section>
 
           <section class="settings-group">
