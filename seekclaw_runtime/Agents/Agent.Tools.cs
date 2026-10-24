@@ -168,6 +168,12 @@ public sealed partial class Agent
                     return p.ToString();
                 if (obj.TryGetPropertyValue("file_path", out var fp) && fp is not null)
                     return fp.ToString();
+                if (obj.TryGetPropertyValue("file", out var f) && f is not null)
+                    return f.ToString();
+                if (obj.TryGetPropertyValue("directory", out var dir) && dir is not null)
+                    return dir.ToString();
+                if (obj.TryGetPropertyValue("dir", out var d) && d is not null)
+                    return d.ToString();
                 if (obj.TryGetPropertyValue("pattern", out var pat) && pat is not null)
                     return pat.ToString();
                 if (obj.TryGetPropertyValue("query", out var q) && q is not null)

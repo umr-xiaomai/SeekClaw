@@ -164,10 +164,87 @@ function openFileLocation(path?: string): void {
     window.seekclaw?.showItemInFolder?.(path)
   }
 }
+
+const hasContent = computed(() => Boolean(props.message.content?.trim()))
+const hasThinking = computed(() => Boolean(props.message.thinking?.trim()))
+const hasTools = computed(() => (props.message.tools?.length ?? 0) > 0)
+const hasImages = computed(() =>
+  (props.message.viewedImages?.length ?? 0) > 0 ||
+  (props.message.images?.length ?? 0) > 0 ||
+  (props.message.files?.length ?? 0) > 0
+)
+
+const isVisible = computed(() => {
+  if (props.message.content?.startsWith('>>> [output truncated]')) return false
+  if (props.message.role === 'user') return true
+  if (props.streaming) return true
+  return hasContent.value || hasThinking.value || hasTools.value || hasImages.value
+})
+
+const isToolsOnly = computed(() => {
+  if (props.message.role !== 'assistant') return false
+  return hasTools.value && !hasContent.value && !hasThinking.value
+})
+
+function getToolTarget(tool: ToolActivity): string {
+  if (tool.filePath) {
+    return tool.filePath
+  }
+
+  let text = tool.detail?.trim() || ''
+  if (!text) return tool.name
+
+  if (text.startsWith('{') && text.endsWith('}')) {
+    try {
+      const obj = JSON.parse(text)
+      if (typeof obj.path === 'string') return obj.path
+      if (typeof obj.file_path === 'string') return obj.file_path
+      if (typeof obj.file === 'string') return obj.file
+      if (typeof obj.directory === 'string') return obj.directory
+      if (typeof obj.dir === 'string') return obj.dir
+      if (typeof obj.command === 'string') return obj.command.trim().replace(/\r?\n/g, ' ')
+      if (typeof obj.cmd === 'string') return obj.cmd.trim().replace(/\r?\n/g, ' ')
+      if (typeof obj.pattern === 'string') return obj.pattern
+      if (typeof obj.query === 'string') return obj.query
+    } catch {
+      // fallback
+    }
+  }
+
+  const pathMatch = text.match(/(?:^|\s*)(?:path|file_path|file|directory|dir)\s*:\s*([^,]+)/i)
+  if (pathMatch?.[1]) {
+    return pathMatch[1].trim()
+  }
+
+  const cmdMatch = text.match(/(?:^|\s*)(?:command|cmd)\s*:\s*([^,]+)/i)
+  if (cmdMatch?.[1]) {
+    return cmdMatch[1].trim()
+  }
+
+  const patternMatch = text.match(/(?:^|\s*)(?:pattern|query)\s*:\s*([^,]+)/i)
+  if (patternMatch?.[1]) {
+    return patternMatch[1].trim()
+  }
+
+  const readLinesMatch = text.match(/Read\s+\d+\s+lines\s+from\s+(.+)/i)
+  if (readLinesMatch?.[1]) {
+    return readLinesMatch[1].trim()
+  }
+
+  if (text.includes('\n')) {
+    const firstLine = text.split('\n')[0]?.trim() || ''
+    if (/^\d+\t/.test(firstLine) || firstLine.startsWith('#') || firstLine.startsWith('using ') || firstLine.startsWith('import ')) {
+      return tool.name
+    }
+    return firstLine || tool.name
+  }
+  return text
+}
 </script>
 
 <template>
-  <article v-if="!message.content?.startsWith('>>> [output truncated]')" class="message" :class="[`message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate }]">
+  <article v-if="isVisible" class="message"
+    :class="[`message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate, 'is-tools-only': isToolsOnly }]">
     <!-- user: either a real message or a system-injected card -->
     <template v-if="message.role === 'user'">
       <div v-if="systemKind" class="system-card" :class="`system-${systemKind}`">
@@ -188,14 +265,8 @@ function openFileLocation(path?: string): void {
       </div>
       <div v-else class="user-message-stack">
         <div v-if="message.files?.length" class="user-files-grid">
-          <button
-            v-for="file in message.files"
-            :key="file.id"
-            type="button"
-            class="user-file-chip"
-            :title="`在文件夹中显示: ${file.path}`"
-            @click="openFileLocation(file.path)"
-          >
+          <button v-for="file in message.files" :key="file.id" type="button" class="user-file-chip"
+            :title="`在文件夹中显示: ${file.path}`" @click="openFileLocation(file.path)">
             <span class="file-ext-badge" :class="fileExtClass(file.extension)">
               {{ fileBadgeText(file.extension) }}
             </span>
@@ -210,34 +281,17 @@ function openFileLocation(path?: string): void {
           </button>
         </div>
         <div v-if="message.content" class="user-bubble">{{ message.content }}</div>
-        <footer
-          v-if="!streaming"
-          class="user-footer"
-          :class="{ active: isCopied }"
-        >
+        <footer v-if="!streaming" class="user-footer" :class="{ active: isCopied }">
           <span v-if="message.createdAt" class="message-time">
             {{ formatMessageTime(message.createdAt) }}
           </span>
           <div class="user-actions">
-            <button
-              v-if="message.content"
-              type="button"
-              class="action-btn"
-              :class="{ success: isCopied }"
-              :title="isCopied ? '已复制' : '复制'"
-              aria-label="复制"
-              @click="copyContent"
-            >
+            <button v-if="message.content" type="button" class="action-btn" :class="{ success: isCopied }"
+              :title="isCopied ? '已复制' : '复制'" aria-label="复制" @click="copyContent">
               <Check v-if="isCopied" :size="13" class="action-icon success-icon" />
               <Copy v-else :size="13" class="action-icon" />
             </button>
-            <button
-              type="button"
-              class="action-btn"
-              title="编辑此消息"
-              aria-label="编辑此消息"
-              @click="emit('edit', message)"
-            >
+            <button type="button" class="action-btn" title="编辑此消息" aria-label="编辑此消息" @click="emit('edit', message)">
               <Pencil :size="13" class="action-icon" />
             </button>
           </div>
@@ -245,7 +299,7 @@ function openFileLocation(path?: string): void {
       </div>
     </template>
 
-    <div v-else class="assistant-message">
+    <div v-else class="assistant-message" :class="{ 'tools-only': isToolsOnly }">
       <div v-if="message.viewedImages?.length" class="image-view-list" aria-label="AI 已查看的图片">
         <button v-for="image in message.viewedImages" :key="image.id" type="button" class="image-view-row"
           :class="{ previewable: Boolean(imageUrl(image.id)) }" :disabled="!imageUrl(image.id)"
@@ -260,9 +314,9 @@ function openFileLocation(path?: string): void {
         </button>
       </div>
 
-      <div v-if="message.thinking" class="thinking-wrapper">
-        <button class="thinking-toggle"
-          :class="{ active: streaming && message.state === 'thinking' }" @click="thinkingOpen = !thinkingOpen">
+      <div v-if="hasThinking" class="thinking-wrapper">
+        <button class="thinking-toggle" :class="{ active: streaming && message.state === 'thinking' }"
+          @click="thinkingOpen = !thinkingOpen">
           <LoaderCircle v-if="streaming && message.state === 'thinking'" :size="15" class="spin" />
           <Check v-else :size="15" />
           <span>{{ thinkingLabel }}</span>
@@ -271,28 +325,19 @@ function openFileLocation(path?: string): void {
         <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
       </div>
 
-      <div v-if="isIntermediate && message.content" class="step-preamble">
+      <div v-if="isIntermediate && hasContent" class="step-preamble">
         <MarkdownMessage :content="message.content" />
       </div>
-      <MarkdownMessage v-else-if="message.content" :content="message.content" />
+      <MarkdownMessage v-else-if="hasContent" :content="message.content" />
 
       <div v-if="regularTools.length" class="tool-list">
-        <div
-          v-for="tool in regularTools"
-          :key="tool.id"
-          class="tool-item"
+        <div v-for="tool in regularTools" :key="tool.id" class="tool-item"
           :class="{ 'is-running': tool.state === 'running', 'is-error': tool.state === 'error' }"
-          :title="tool.detail || tool.name"
-        >
-          <component
-            :is="getToolIcon(tool)"
-            :size="14"
-            class="tool-item-icon"
-            :class="{ spin: tool.state === 'running' }"
-          />
+          :title="getToolTarget(tool)">
+          <component :is="getToolIcon(tool)" :size="14" class="tool-item-icon"
+            :class="{ spin: tool.state === 'running' }" />
           <span class="tool-verb">{{ getToolVerb(tool) }}</span>
-          <span v-if="tool.detail" class="tool-target">{{ tool.detail }}</span>
-          <span v-else class="tool-target">{{ tool.name }}</span>
+          <span class="tool-target">{{ getToolTarget(tool) }}</span>
         </div>
       </div>
 
@@ -320,30 +365,15 @@ function openFileLocation(path?: string): void {
         <span /><span /><span />
       </div>
 
-      <footer
-        v-if="showFooter && !streaming && message.content"
-        class="assistant-footer"
-        :class="{ active: isCopied }"
-      >
+      <footer v-if="showFooter && !streaming && message.content" class="assistant-footer" :class="{ active: isCopied }">
         <div class="assistant-actions">
-          <button
-            type="button"
-            class="action-btn"
-            :class="{ success: isCopied }"
-            :title="isCopied ? '已复制' : '复制回答'"
-            aria-label="复制回答"
-            @click="copyContent"
-          >
+          <button type="button" class="action-btn" :class="{ success: isCopied }" :title="isCopied ? '已复制' : '复制回答'"
+            aria-label="复制回答" @click="copyContent">
             <Check v-if="isCopied" :size="13" class="action-icon success-icon" />
             <Copy v-else :size="13" class="action-icon" />
           </button>
-          <button
-            type="button"
-            class="action-btn"
-            title="在此分叉新任务"
-            aria-label="在此分叉新任务"
-            @click="emit('branch', message)"
-          >
+          <button type="button" class="action-btn" title="在此分叉新任务" aria-label="在此分叉新任务"
+            @click="emit('branch', message)">
             <Split :size="13" class="action-icon" />
           </button>
         </div>
@@ -534,8 +564,16 @@ function openFileLocation(path?: string): void {
 .tool-list {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+  margin: 3px 0 10px;
+}
+
+.response-placeholder {
+  margin: 4px 0;
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
-  margin: 4px 0 8px;
+  padding: 3px 0;
 }
 
 .tool-item {
@@ -599,7 +637,15 @@ function openFileLocation(path?: string): void {
 }
 
 .message.is-intermediate {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
+.message.is-intermediate.is-tools-only {
+  margin-bottom: 0;
+}
+
+.message.is-intermediate.is-tools-only .tool-list {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
 </style>

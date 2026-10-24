@@ -190,9 +190,14 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
           state: 'done'
         }
         hydrated.state = item.toolSuccess === false ? 'error' : 'done'
-        hydrated.detail = item.text
-        hydrated.filePath = item.toolFilePath
-        hydrated.diff = item.toolDiff
+        if (item.toolFilePath) {
+          hydrated.filePath = item.toolFilePath
+          if (!hydrated.detail) hydrated.detail = item.toolFilePath
+        }
+        if (item.toolDiff) hydrated.diff = item.toolDiff
+        if (!hydrated.detail && item.text && !item.text.includes('\n')) {
+          hydrated.detail = item.text
+        }
         if (!tool) assistant.tools.push(hydrated)
       }
       return

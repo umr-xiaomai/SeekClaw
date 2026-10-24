@@ -1776,10 +1776,11 @@ body.is-resizing-sidebar .app-body {
 }
 
 .response-placeholder {
-  margin-top: 30px;
-  display: flex;
+  margin: 6px 0;
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
-  padding: 5px 0;
+  padding: 3px 0;
 }
 
 .response-placeholder span {

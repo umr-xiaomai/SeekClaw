@@ -268,5 +268,5 @@ async function handleClick(event: MouseEvent): Promise<void> {
 </script>
 
 <template>
-  <div ref="body" class="markdown-body" @click="handleClick" v-html="rendered" />
+  <div v-if="rendered.trim()" ref="body" class="markdown-body" @click="handleClick" v-html="rendered" />
 </template>
