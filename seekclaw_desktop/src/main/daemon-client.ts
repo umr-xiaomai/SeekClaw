@@ -105,8 +105,25 @@ export class DaemonClient extends EventEmitter {
       // to be running and may legitimately take minutes.
       pending.idleTimer = setTimeout(() => {
         if (this.pending.delete(id) === false) return
-        reject(new Error(
-          `请求超时：Runtime 在 ${Math.round(timeoutMs / 1000)} 秒内未响应 (${method})`))
+        const detail = `请求超时：Runtime 在 ${Math.round(timeoutMs / 1000)} 秒内未响应 (${method})`
+        const isChatRequest = method === 'chat' || method === 'agent.runTurn' || method === 'agent/runTurn'
+        if (isChatRequest) {
+          const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+          // Surface a terminal event locally. Custom Error properties do not survive
+          // Electron IPC, so this event is also how the renderer learns the request id
+          // that must be treated as finished when late daemon events arrive.
+          this.emit('event', {
+            id,
+            event: 'error',
+            data: detail,
+            requestMethod: method,
+            ...(sessionId ? { sessionId } : {})
+          } satisfies DaemonMessage)
+          this.cancelTurn(id)
+        }
+        const error = new Error(detail) as Error & { requestId?: number }
+        error.requestId = id
+        reject(error)
       }, timeoutMs)
 
       this.socket!.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
@@ -192,5 +209,18 @@ export class DaemonClient extends EventEmitter {
       request.reject(error)
     }
     this.pending.clear()
+  }
+
+  private cancelTurn(requestId: number): void {
+    const socket = this.socket
+    if (!socket || socket.readyState !== 'open') return
+    const id = this.nextId++
+    try {
+      socket.write(
+        `${JSON.stringify({ id, method: 'agent.cancel', params: { requestId } })}\n`,
+        () => undefined)
+    } catch {
+      // The request itself is already rejected; a failed cancellation must not mask it.
+    }
   }
 }

@@ -15,24 +15,39 @@ export const confirmationState = reactive({
   danger: false
 })
 
-let settle: ((result: boolean) => void) | undefined
+interface PendingConfirmation {
+  options: ConfirmationOptions
+  resolve: (result: boolean) => void
+}
 
-export function confirmAction(options: ConfirmationOptions): Promise<boolean> {
-  settle?.(false)
+const queue: PendingConfirmation[] = []
+let active: PendingConfirmation | undefined
+
+function showNext(): void {
+  if (active || queue.length === 0) return
+  active = queue.shift()
+  if (!active) return
   Object.assign(confirmationState, {
     open: true,
-    title: options.title,
-    message: options.message,
-    confirmLabel: options.confirmLabel ?? '确认',
-    danger: options.danger ?? false
+    title: active.options.title,
+    message: active.options.message,
+    confirmLabel: active.options.confirmLabel ?? '确认',
+    danger: active.options.danger ?? false
   })
+}
+
+export function confirmAction(options: ConfirmationOptions): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    settle = resolve
+    queue.push({ options, resolve })
+    showNext()
   })
 }
 
 export function settleConfirmation(result: boolean): void {
+  const current = active
+  if (!current) return
+  active = undefined
   confirmationState.open = false
-  settle?.(result)
-  settle = undefined
+  current.resolve(result)
+  showNext()
 }

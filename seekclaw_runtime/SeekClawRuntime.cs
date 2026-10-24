@@ -49,6 +49,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public IMcpManager Mcp => _services.GetRequiredService<IMcpManager>();
     public ISubAgentRegistry SubAgents => _services.GetRequiredService<ISubAgentRegistry>();
     public SubAgentRunner SubAgentRunner => _services.GetRequiredService<SubAgentRunner>();
+    public ToolApprovalService Approvals => _services.GetRequiredService<ToolApprovalService>();
     public Agent Agent => _services.GetRequiredService<Agent>();
 
     private SeekClawRuntime(ServiceProvider services, WorkspaceInfo workspace)
@@ -298,6 +299,8 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IProviderManager, ProviderManager>();
 
         services.AddSingleton<IToolRegistry, ToolRegistry>();
+        services.AddSingleton<ToolApprovalService>();
+        services.AddSingleton<IToolApprovalGate>(sp => sp.GetRequiredService<ToolApprovalService>());
         services.AddSingleton<IWorkspaceManager, WorkspaceManager>();
         services.AddSingleton<SeekClawDatabase>();
         services.AddSingleton<ISessionStore, SessionStore>();

@@ -21,17 +21,90 @@ public sealed class ToolContext
     public string Owner { get; init; } = "";
     /// <summary>Sub-agent recursion depth (0 for top-level orchestrator agent).</summary>
     public int SubAgentDepth { get; init; } = 0;
+    /// <summary>Approval gate inherited by nested tool executions and sub-agents.</summary>
+    public IToolApprovalGate? ApprovalGate { get; init; }
 
     public string ResolvePath(string path)
     {
         var root = Workspace.IsGlobal ? Directory.GetCurrentDirectory() : Workspace.Root;
-        return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
+        return WorkspacePathGuard.Resolve(root, path);
     }
 
     public string Truncate(string text, string label = "output")
     {
         if (text.Length <= MaxOutputChars) return text;
         return text[..MaxOutputChars] + $"\n… [{label} truncated: {text.Length - MaxOutputChars} characters omitted]";
+    }
+}
+
+/// <summary>
+/// Resolves tool paths inside a workspace and rejects both lexical traversal and
+/// symlink/reparse-point escapes. The returned path is the physical target so file
+/// mutations replace the actual file rather than a link that happens to live inside
+/// the workspace.
+/// </summary>
+internal static class WorkspacePathGuard
+{
+    public static string Resolve(string workspaceRoot, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            throw new ArgumentException("path is required.", nameof(path));
+
+        var root = Path.GetFullPath(workspaceRoot);
+        var target = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
+        EnsureWithin(root, target);
+
+        var physicalRoot = ResolveExistingTarget(root);
+        var physicalTarget = ResolvePhysicalTarget(root, physicalRoot, target);
+        EnsureWithin(physicalRoot, physicalTarget);
+        return physicalTarget;
+    }
+
+    private static string ResolveExistingTarget(string path)
+    {
+        var info = Directory.Exists(path) ? (FileSystemInfo)new DirectoryInfo(path) : new FileInfo(path);
+        if (!info.Exists) return Path.GetFullPath(path);
+        var resolved = info.ResolveLinkTarget(returnFinalTarget: true);
+        return Path.GetFullPath(resolved?.FullName ?? info.FullName);
+    }
+
+    private static string ResolvePhysicalTarget(string lexicalRoot, string physicalRoot, string target)
+    {
+        var relative = Path.GetRelativePath(lexicalRoot, target);
+        if (relative == ".") return physicalRoot;
+
+        var current = physicalRoot;
+        foreach (var segment in relative.Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            FileSystemInfo? info = Directory.Exists(current)
+                ? new DirectoryInfo(current)
+                : File.Exists(current) ? new FileInfo(current) : null;
+            if (info is null) continue;
+
+            var resolved = info.ResolveLinkTarget(returnFinalTarget: true);
+            if (resolved is not null)
+                current = Path.GetFullPath(resolved.FullName);
+        }
+
+        return Path.GetFullPath(current);
+    }
+
+    private static void EnsureWithin(string root, string target)
+    {
+        var relative = Path.GetRelativePath(root, target);
+        if (relative == ".")
+            return;
+        if (Path.IsPathRooted(relative)
+            || relative == ".."
+            || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            throw new UnauthorizedAccessException(
+                $"Path '{target}' is outside the workspace root '{root}'.");
+        }
     }
 }
 

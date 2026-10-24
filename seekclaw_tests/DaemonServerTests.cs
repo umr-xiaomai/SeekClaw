@@ -356,6 +356,65 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AgentCancel_WithoutTarget_ReturnsError()
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("", false, null)));
+
+        await connection.SendAsync(1, "agent.cancel");
+        var response = await connection.ReadAsync();
+
+        Assert.Equal(1, response["id"]!.GetValue<long>());
+        Assert.Equal("error", response["event"]!.GetValue<string>());
+        Assert.Contains("requestId", response["data"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AgentCancel_BySession_OnlyCancelsThatSession()
+    {
+        var startedCount = 0;
+        var bothStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<AgentTurnResult> SlowTurn(
+            AgentSession session, WorkspaceInfo workspace, string message, CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref startedCount) == 2) bothStarted.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return new AgentTurnResult("unreachable", false, null);
+        }
+
+        var connection = await StartServerAsync(SlowTurn);
+        await connection.SendAsync(10, "session.new");
+        var firstSession = (await connection.ReadAsync())["data"]!.GetValue<string>();
+        await connection.SendAsync(11, "session.new");
+        var secondSession = (await connection.ReadAsync())["data"]!.GetValue<string>();
+
+        await connection.SendAsync(1, "chat", new JsonObject
+        {
+            ["message"] = "first",
+            ["sessionId"] = firstSession,
+        });
+        await connection.SendAsync(2, "chat", new JsonObject
+        {
+            ["message"] = "second",
+            ["sessionId"] = secondSession,
+        });
+        await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await connection.SendAsync(3, "agent.cancel", new JsonObject { ["sessionId"] = firstSession });
+        var firstCancelled = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 1
+                        && response["event"]!.GetValue<string>() == "cancelled");
+        Assert.Equal(firstSession, firstCancelled["sessionId"]!.GetValue<string>());
+
+        await Task.Delay(100);
+        await connection.SendAsync(4, "agent.cancel", new JsonObject { ["requestId"] = 2 });
+        var secondCancelled = await connection.ReadUntilAsync(
+            response => response["id"]!.GetValue<long>() == 2
+                        && response["event"]!.GetValue<string>() == "cancelled");
+        Assert.Equal(secondSession, secondCancelled["sessionId"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task ConcurrentRequests_AreDispatchedConcurrently_WithoutHeadOfLineBlocking()
     {
         var connection = await StartServerAsync((_, _, _, _) => Task.FromResult(new AgentTurnResult("", false, null)));

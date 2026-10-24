@@ -15,7 +15,8 @@ public static class PromptVariables
         string mode = "edit",
         bool networkEnabled = true,
         bool autoVerify = true,
-        string personality = "pragmatic")
+        string personality = "pragmatic",
+        string? approvalPolicy = null)
     {
         var hasWorkspace = workspace is { IsGlobal: false };
         var languageKinds = hasWorkspace
@@ -43,7 +44,12 @@ public static class PromptVariables
             ["memory"] = memory ?? "",
             ["mode"] = mode,
             ["network"] = networkEnabled ? "enabled" : "disabled",
-            ["approval_policy"] = "never",
+            ["approval_policy"] = approvalPolicy ?? mode.Trim().ToLowerInvariant() switch
+            {
+                "manual" or "ask" => "on-request",
+                "guardrail" => "on-risk",
+                _ => "never",
+            },
             ["sandbox_mode"] = mode is "plan" or "readonly" ? "read_only" : (Agents.AgentModeExtensions.Parse(mode) == Agents.AgentMode.Full ? "unrestricted" : "workspace_write"),
             ["auto_verify"] = autoVerify ? "true" : "false",
             ["personality"] = personality,

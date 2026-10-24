@@ -6,7 +6,8 @@ namespace SeekClaw.Runtime.Tools;
 /// <summary>
 /// Cross-platform process scope that on Windows encapsulates a Job Object
 /// with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE to atomically kill child process trees on exit/timeout.
-/// On non-Windows platforms, operates as a safe no-op.
+/// On non-Windows platforms it tracks a process-group id when the caller launched the
+/// process as a group leader (for example through setsid).
 /// </summary>
 public sealed class ProcessJobScope : IDisposable
 {
@@ -26,10 +27,14 @@ public sealed class ProcessJobScope : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
+    [DllImport("libc", SetLastError = true)]
+    private static extern int kill(int pid, int signal);
+
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 
     private readonly IntPtr _handle;
+    private int _processGroupId;
     private bool _disposed;
 
     public ProcessJobScope()
@@ -67,9 +72,17 @@ public sealed class ProcessJobScope : IDisposable
         }
     }
 
-    public void AssignProcess(Process process)
+    public void AssignProcess(Process process, bool processGroupLeader = false)
     {
-        if (!OperatingSystem.IsWindows() || _handle == IntPtr.Zero || _disposed) return;
+        if (_disposed) return;
+        if (!OperatingSystem.IsWindows())
+        {
+            // Only signal a negative PGID when the child is actually its group leader.
+            // Using an arbitrary PID as a PGID can terminate an unrelated process group.
+            _processGroupId = processGroupLeader ? process.Id : 0;
+            return;
+        }
+        if (_handle == IntPtr.Zero) return;
         try
         {
             if (!process.HasExited)
@@ -81,6 +94,36 @@ public sealed class ProcessJobScope : IDisposable
         {
             // Process may have already exited or access denied
         }
+    }
+
+    /// <summary>
+    /// Kills the process and every descendant. On Unix the shell is started in its own
+    /// session/process group, so signalling the negative PGID also catches children that
+    /// have already been reparented after the shell exits.
+    /// </summary>
+    public void Terminate(Process? process)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                if (process is { HasExited: false }) process.Kill(entireProcessTree: true);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception) { }
+            return;
+        }
+
+        if (_processGroupId > 0)
+        {
+            try { kill(-_processGroupId, 9); }
+            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
+        }
+
+        try
+        {
+            if (process is { HasExited: false }) process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception) { }
     }
 
     public void Dispose()

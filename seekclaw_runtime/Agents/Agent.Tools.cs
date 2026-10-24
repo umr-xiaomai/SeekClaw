@@ -15,7 +15,12 @@ public sealed partial class Agent
     private readonly record struct ToolExecution(ChatMessage Message, bool ToolMutated);
 
     private async Task<ToolExecution> ExecuteToolAsync(
-        ToolCallRequest call, WorkspaceInfo workspace, ModelInfo model, CancellationToken ct)
+        ToolCallRequest call,
+        WorkspaceInfo workspace,
+        ModelInfo model,
+        string sessionId,
+        string? turnRequestId,
+        CancellationToken ct)
     {
         var tool = toolRegistry.Resolve(call.Name);
         var argsSummary = SummarizeArguments(call.ArgumentsJson);
@@ -51,6 +56,40 @@ public sealed partial class Agent
         }
         var arguments = parsedArguments.Obj;
 
+        if (RequiresApproval(mode, tool))
+        {
+            ToolApprovalDecision decision;
+            try
+            {
+                decision = await approvalGate.RequestAsync(new ToolApprovalRequest(
+                    sessionId,
+                    turnRequestId,
+                    call.Id,
+                    tool.Name,
+                    call.ArgumentsJson,
+                    argsSummary,
+                    mode,
+                    tool.Mutating,
+                    tool.RequiresNetwork,
+                    tool.Name.StartsWith("mcp__", StringComparison.OrdinalIgnoreCase)), ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                decision = ToolApprovalDecision.Deny($"Approval channel failed: {ex.Message}");
+            }
+
+            if (!decision.Approved)
+            {
+                var message = $"Tool execution denied: {decision.Reason ?? "the user rejected this action."}";
+                events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
+                return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
+            }
+        }
+
         var context = new ToolContext
         {
             Workspace = workspace,
@@ -61,6 +100,7 @@ public sealed partial class Agent
             Coordinator = fileLocks,
             Owner = lockScope.Owner,
             SubAgentDepth = subAgentScope?.Depth ?? 0,
+            ApprovalGate = approvalGate,
         };
 
         var stopwatch = Stopwatch.StartNew();
@@ -91,6 +131,25 @@ public sealed partial class Agent
         return new ToolExecution(
             ChatMessage.ToolResult(call.Id, call.Name, result.Output, result.Success, result.Diff, filePath, result.Images),
             tool.Mutating && result.Success);
+    }
+
+    private static bool RequiresApproval(AgentMode mode, ITool tool)
+    {
+        if (mode is not (AgentMode.Manual or AgentMode.Guardrail)) return false;
+
+        if (tool.Mutating
+            || tool.RequiresNetwork
+            || tool.Name.StartsWith("mcp__", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // These tools can trigger consequential external actions even though their direct
+        // file mutation flag is false: sub-agents may mutate with the parent's authority,
+        // and screen capture exposes desktop content.
+        return tool.Name.Equals("invoke_subagent", StringComparison.OrdinalIgnoreCase)
+               || (mode == AgentMode.Manual
+                   && tool.Name.Equals("capture_screen", StringComparison.OrdinalIgnoreCase));
     }
 
     // ---------------------------------------------------------------- misc

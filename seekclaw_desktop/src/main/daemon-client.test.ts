@@ -72,6 +72,52 @@ describe('DaemonClient', () => {
       .rejects.toThrow('请求超时')
   })
 
+  it('cancels the timed-out chat request and exposes its request id', async () => {
+    const suffix = `${process.pid}-${Date.now()}-timeout-cancel`
+    const endpoint = process.platform === 'win32'
+      ? String.raw`\\.\pipe\seekclaw-test-${suffix}`
+      : join(tmpdir(), `seekclaw-test-${suffix}.sock`)
+
+    let resolveCancel: (request: { id: number; method: string; params?: { requestId?: number } }) => void = () => undefined
+    const cancelReceived = new Promise<{ id: number; method: string; params?: { requestId?: number } }>((resolve) => {
+      resolveCancel = resolve
+    })
+    const server = createServer((socket) => {
+      socket.setEncoding('utf8')
+      let buffer = ''
+      socket.on('data', (chunk: string) => {
+        buffer += chunk
+        let newline = buffer.indexOf('\n')
+        while (newline >= 0) {
+          const line = buffer.slice(0, newline).trim()
+          buffer = buffer.slice(newline + 1)
+          if (line) {
+            const request = JSON.parse(line) as { id: number; method: string; params?: { requestId?: number } }
+            if (request.method === 'agent.cancel') resolveCancel(request)
+          }
+          newline = buffer.indexOf('\n')
+        }
+      })
+    })
+    servers.push(server)
+    server.listen(endpoint)
+    await once(server, 'listening')
+
+    const client = new DaemonClient(endpoint)
+    clients.push(client)
+    const failure = await client.request('chat', { message: 'hello' }, { timeoutMs: 120 })
+      .then(() => null, (error: unknown) => error as Error & { requestId?: number })
+
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure?.requestId).toBe(1)
+    const cancel = await Promise.race([
+      cancelReceived,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('cancel not received')), 1000))
+    ])
+    expect(cancel.method).toBe('agent.cancel')
+    expect(cancel.params?.requestId).toBe(1)
+  })
+
   it('keeps waiting for a request that produced an event before timeoutMs', async () => {
     const suffix = `${process.pid}-${Date.now()}-activity`
     const endpoint = process.platform === 'win32'

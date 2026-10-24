@@ -95,7 +95,10 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
     // delayed events belonging to the completed request — but still finalize any
     // leftover "..." placeholder bubbles, otherwise a dropped terminal event
     // leaves them on screen forever.
-    if (isChatRequest && isFinishedRequest(thread, event.id)) {
+    // Timeout failures remove the pending request from DaemonClient, so late daemon
+    // events no longer carry requestMethod. The finished-id guard must therefore be
+    // independent of that metadata or a timed-out turn can still mutate the UI.
+    if (isFinishedRequest(thread, event.id)) {
       if (event.event === 'done' || event.event === 'cancelled')
         finalizeAssistantBubbles(thread.messages, 'done')
       else if (event.event === 'error')

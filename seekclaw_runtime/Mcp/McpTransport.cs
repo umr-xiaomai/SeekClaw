@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
+using SeekClaw.Runtime.Tools;
 
 namespace SeekClaw.Runtime.Mcp;
 
@@ -18,6 +19,7 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
     : IMcpTransport
 {
     private readonly Channel<JsonObject> _incoming = Channel.CreateUnbounded<JsonObject>();
+    private readonly ProcessJobScope _jobScope = new();
     private Process? _process;
     private Task? _readLoop;
 
@@ -34,14 +36,30 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardInputEncoding = Encoding.UTF8,
+            CreateNoWindow = true,
         };
         foreach (var arg in args ?? []) startInfo.ArgumentList.Add(arg);
         if (env is not null)
             foreach (var (key, value) in env)
                 startInfo.Environment[key] = value;
 
+        var processGroupLeader = false;
+        if (!OperatingSystem.IsWindows())
+        {
+            var setsidPath = new[] { "/usr/bin/setsid", "/bin/setsid" }.FirstOrDefault(File.Exists);
+            if (setsidPath is not null)
+            {
+                // Give the MCP server its own process group so Dispose/timeout can kill
+                // descendants that were reparented after the launcher exited.
+                startInfo.ArgumentList.Insert(0, command);
+                startInfo.FileName = setsidPath;
+                processGroupLeader = true;
+            }
+        }
+
         _process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Failed to start MCP server process: {command}");
+        _jobScope.AssignProcess(_process, processGroupLeader);
 
         // Drain stderr so the child never blocks on a full pipe.
         _ = Task.Run(async () =>
@@ -93,8 +111,10 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
                 }
             }
             catch (InvalidOperationException) { }
+            _jobScope.Terminate(_process);
             _process.Dispose();
         }
+        _jobScope.Dispose();
         if (_readLoop is not null)
         {
             try { await _readLoop.ConfigureAwait(false); } catch { }
@@ -115,6 +135,8 @@ public class HttpMcpTransport : IMcpTransport
     private readonly Channel<JsonObject> _incoming = Channel.CreateUnbounded<JsonObject>();
     private readonly TaskCompletionSource<string> _endpoint = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly Lock _backgroundGate = new();
+    private readonly List<Task> _backgroundReads = [];
     private string? _sessionId;
     private Task? _readLoop;
 
@@ -147,12 +169,13 @@ public class HttpMcpTransport : IMcpTransport
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
         var token = linkedCts.Token;
+        HttpResponseMessage? response = null;
 
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, _url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, _url);
             request.Headers.TryAddWithoutValidation("Accept", "text/event-stream, application/json");
-            var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+            response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
 
             CaptureSessionId(response);
 
@@ -163,23 +186,29 @@ public class HttpMcpTransport : IMcpTransport
                 {
                     // Server returned an SSE stream.
                     var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+                    var ownedResponse = response;
+                    response = null;
                     _readLoop = Task.Run(async () =>
                     {
-                        try
+                        using (ownedResponse)
+                        using (stream)
                         {
-                            await foreach (var sse in Providers.SseReader.ReadAsync(stream, _lifetime.Token).ConfigureAwait(false))
+                            try
                             {
-                                if (sse.Event == "endpoint")
+                                await foreach (var sse in Providers.SseReader.ReadAsync(stream, _lifetime.Token).ConfigureAwait(false))
                                 {
-                                    _endpoint.TrySetResult(new Uri(new Uri(_url), sse.Data).ToString());
-                                }
-                                else
-                                {
-                                    DispatchSseData(sse.Data);
+                                    if (sse.Event == "endpoint")
+                                    {
+                                        _endpoint.TrySetResult(new Uri(new Uri(_url), sse.Data).ToString());
+                                    }
+                                    else
+                                    {
+                                        DispatchSseData(sse.Data);
+                                    }
                                 }
                             }
+                            catch (Exception ex) when (ex is IOException or HttpRequestException or OperationCanceledException or ObjectDisposedException) { }
                         }
-                        catch (Exception ex) when (ex is IOException or HttpRequestException or OperationCanceledException) { }
                         // NOTE: Do not complete _incoming here because Streamable HTTP servers may finish GET immediately.
                     }, CancellationToken.None);
 
@@ -191,28 +220,40 @@ public class HttpMcpTransport : IMcpTransport
                 else if (mediaType.Contains("json"))
                 {
                     // Some servers return a JSON greeting with endpoint metadata (e.g. {"endpoint": "POST /mcp"})
-                    var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
-                    try
+                    using (response)
                     {
-                        if (JsonNode.Parse(body) is JsonObject json)
+                        var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                        try
                         {
-                            if (json["endpoint"]?.GetValue<string>() is { } epStr)
+                            if (JsonNode.Parse(body) is JsonObject json)
                             {
-                                var resolvedEndpoint = epStr.StartsWith("POST ", StringComparison.OrdinalIgnoreCase)
-                                    ? epStr[5..].Trim()
-                                    : epStr.Trim();
-                                _endpoint.TrySetResult(new Uri(new Uri(_url), resolvedEndpoint).ToString());
+                                if (json["endpoint"]?.GetValue<string>() is { } epStr)
+                                {
+                                    var resolvedEndpoint = epStr.StartsWith("POST ", StringComparison.OrdinalIgnoreCase)
+                                        ? epStr[5..].Trim()
+                                        : epStr.Trim();
+                                    _endpoint.TrySetResult(new Uri(new Uri(_url), resolvedEndpoint).ToString());
+                                }
                             }
                         }
+                        catch { }
                     }
-                    catch { }
+                    response = null;
                 }
             }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
             // Server might only accept POST /mcp and reject GET with 405/400.
             // Fall back directly to POSTing to _url.
+        }
+        finally
+        {
+            response?.Dispose();
         }
 
         _endpoint.TrySetResult(_url);
@@ -234,36 +275,57 @@ public class HttpMcpTransport : IMcpTransport
             request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _sessionId);
         }
 
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-
-        CaptureSessionId(response);
-
-        var mediaType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant() ?? "";
-        if (mediaType.Contains("event-stream"))
+        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+        try
         {
-            // Streamable HTTP: response is an SSE stream (e.g. StarLife, MCP 2024-11/2025 spec)
-            var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
-            await foreach (var sse in Providers.SseReader.ReadAsync(stream, token).ConfigureAwait(false))
+            response.EnsureSuccessStatusCode();
+            CaptureSessionId(response);
+
+            var mediaType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant() ?? "";
+            if (mediaType.Contains("event-stream"))
             {
-                if (sse.Event == "endpoint")
+                // A streamable-HTTP response may stay open for the whole session. Read it
+                // in the background so SendAsync returns and the JSON-RPC request timeout
+                // still covers the complete send + response lifetime.
+                var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+                var readTask = Task.Run(async () =>
                 {
-                    _endpoint.TrySetResult(new Uri(new Uri(_url), sse.Data).ToString());
+                    using (response)
+                    {
+                        try
+                        {
+                            await foreach (var sse in Providers.SseReader.ReadAsync(stream, _lifetime.Token).ConfigureAwait(false))
+                            {
+                                if (sse.Event == "endpoint")
+                                    _endpoint.TrySetResult(new Uri(new Uri(_url), sse.Data).ToString());
+                                else
+                                    DispatchSseData(sse.Data);
+                            }
+                        }
+                        catch (Exception ex) when (ex is IOException or HttpRequestException or OperationCanceledException or ObjectDisposedException) { }
+                    }
+                }, CancellationToken.None);
+                lock (_backgroundGate)
+                {
+                    _backgroundReads.RemoveAll(task => task.IsCompleted);
+                    _backgroundReads.Add(readTask);
                 }
-                else
+                return;
+            }
+
+            using (response)
+            {
+                if (mediaType.Contains("json"))
                 {
-                    DispatchSseData(sse.Data);
+                    var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(body)) DispatchJson(body);
                 }
             }
         }
-        else if (mediaType.Contains("json"))
+        catch
         {
-            // Direct HTTP POST: response is a JSON-RPC message
-            var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(body))
-            {
-                DispatchJson(body);
-            }
+            response.Dispose();
+            throw;
         }
     }
 
@@ -311,6 +373,12 @@ public class HttpMcpTransport : IMcpTransport
 
         try { _lifetime.Cancel(); } catch (ObjectDisposedException) { }
         _incoming.Writer.TryComplete();
+        Task[] background;
+        lock (_backgroundGate) background = _backgroundReads.ToArray();
+        foreach (var task in background)
+        {
+            try { await task.ConfigureAwait(false); } catch { }
+        }
         if (_readLoop is not null)
         {
             try { await _readLoop.ConfigureAwait(false); } catch { }

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -56,6 +56,25 @@ describe('revertFileDiffs', () => {
       expect(result.failed[0]?.filePath).toBe(file)
       expect(result.reverted).toHaveLength(0)
     } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a patch whose path escapes the workspace', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'seekclaw-test-escape-'))
+    const name = `escape-${process.pid}-${Date.now()}.txt`
+    const outside = join(dir, '..', name)
+    writeFileSync(outside, 'owned\n', 'utf8')
+    try {
+      const diff = `--- /dev/null\n+++ b/../${name}\n@@ -0,0 +1 @@\n+owned\n`
+      const result = await revertFileDiffs(dir, [{ filePath: outside, diff }])
+
+      expect(result.failed).toHaveLength(1)
+      expect(result.reverted).toHaveLength(0)
+      expect(existsSync(outside)).toBe(true)
+      expect(readFileSync(outside, 'utf8')).toBe('owned\n')
+    } finally {
+      rmSync(outside, { force: true })
       rmSync(dir, { recursive: true, force: true })
     }
   })

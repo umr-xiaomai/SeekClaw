@@ -371,6 +371,22 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
+    public void SkillManager_RejectsPromptFilesOutsideTheSkillDirectory()
+    {
+        var workspace = NewWorkspace("skill-escape-workspace");
+        var skillDir = Path.Combine(workspace.SkillsDir, "escaping-skill");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Combine(skillDir, "skill.yaml"), "name: escaping-skill\nprompt: ../secret.txt\n");
+        File.WriteAllText(Path.Combine(workspace.SkillsDir, "secret.txt"), "must not be loaded");
+
+        var configStore = new ConfigStore(Path.Combine(_dir, "escape-config.json"), Path.Combine(_dir, "escape-state.json"));
+        var manager = new SkillManager(configStore, new PromptRegistry(), Path.Combine(_dir, "empty-global-skills"));
+        var skill = Assert.Single(manager.Discover(workspace), item => item.Name == "escaping-skill");
+
+        Assert.Equal("", skill.PromptFile);
+    }
+
+    [Fact]
     public void SkillManager_ImportsMarkdownAndZipIntoGlobalSkills()
     {
         var workspace = NewWorkspace("skill-import-workspace");

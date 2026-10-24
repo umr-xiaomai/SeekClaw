@@ -1,6 +1,6 @@
 {
   "name": "seekclaw-cli-win-x64",
-  "version": "1.3.0",
+  "version": "2.0.11",
   "description": "SeekClaw CLI binary package for win32/x64 (win-x64).",
   "license": "SEE LICENSE IN LICENSE",
   "os": [

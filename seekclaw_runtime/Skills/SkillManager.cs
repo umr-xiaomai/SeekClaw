@@ -3,6 +3,7 @@ using System.IO.Compression;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Prompts;
+using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Workspaces;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -22,7 +23,27 @@ public sealed class SkillManifest
 public sealed record SkillInfo(SkillManifest Manifest, string Directory, bool Enabled)
 {
     public string Name => Manifest.Name;
-    public string PromptFile => Path.Combine(Directory, Manifest.Prompt);
+    public string PromptFile
+    {
+        get
+        {
+            try
+            {
+                // The manifest is user-controlled content. Resolve it through the same
+                // workspace guard as file tools so a prompt such as "../secret" (or a
+                // symlink to an outside file) cannot be injected into the system prompt.
+                return WorkspacePathGuard.Resolve(Directory, Manifest.Prompt);
+            }
+            catch (Exception ex) when (ex is ArgumentException
+                                           or IOException
+                                           or NotSupportedException
+                                           or PathTooLongException
+                                           or UnauthorizedAccessException)
+            {
+                return "";
+            }
+        }
+    }
 }
 
 public interface ISkillManager
@@ -267,7 +288,18 @@ public sealed class SkillManager : ISkillManager
 
     private string NewSkillDirectory(string name, bool overwrite = false)
     {
-        var candidate = Path.Combine(_globalSkillsDir, name);
+        var root = Path.GetFullPath(_globalSkillsDir);
+        var candidate = Path.GetFullPath(Path.Combine(root, SanitizeSkillName(name)));
+        var relative = Path.GetRelativePath(root, candidate);
+        if (Path.IsPathRooted(relative)
+            || relative == "."
+            || relative == ".."
+            || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException($"Invalid global skill name '{name}'.");
+        }
+
         if (Directory.Exists(candidate) || File.Exists(candidate))
         {
             if (overwrite)
@@ -288,8 +320,30 @@ public sealed class SkillManager : ISkillManager
     private static string SanitizeSkillName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
-        var sanitized = new string(name.Select(ch => invalid.Contains(ch) ? '-' : ch).ToArray()).Trim();
-        return string.IsNullOrWhiteSpace(sanitized) ? "imported-skill" : sanitized;
+        var sanitized = new string(name
+            .Select(ch => invalid.Contains(ch) || ch is '/' or '\\' ? '-' : ch)
+            .ToArray()).Trim();
+        sanitized = sanitized.TrimEnd('.', ' ');
+
+        if (string.IsNullOrWhiteSpace(sanitized) || sanitized is "." or "..")
+            return "imported-skill";
+        if (!string.Equals(Path.GetFileName(sanitized), sanitized, StringComparison.Ordinal))
+            return "imported-skill";
+
+        var reserved = sanitized.Split('.')[0].Trim();
+        if (reserved.Equals("CON", StringComparison.OrdinalIgnoreCase)
+            || reserved.Equals("PRN", StringComparison.OrdinalIgnoreCase)
+            || reserved.Equals("AUX", StringComparison.OrdinalIgnoreCase)
+            || reserved.Equals("NUL", StringComparison.OrdinalIgnoreCase)
+            || (reserved.Length == 4
+                && (reserved.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
+                    || reserved.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
+                && char.IsDigit(reserved[3])))
+        {
+            return "_" + sanitized;
+        }
+
+        return sanitized;
     }
 
     private static bool LooksLikeSkillDirectory(string directory) =>

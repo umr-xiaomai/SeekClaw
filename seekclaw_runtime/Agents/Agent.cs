@@ -35,6 +35,7 @@ public sealed partial class Agent(
     IEventBus events,
     IFileLockCoordinator fileLocks,
     FileLockScope lockScope,
+    IToolApprovalGate approvalGate,
     SeekClaw.Runtime.SubAgents.SubAgentScope? subAgentScope = null)
 {
     public async Task<AgentTurnResult> RunTurnAsync(
@@ -44,14 +45,15 @@ public sealed partial class Agent(
         CancellationToken ct,
         ReasoningLevel? reasoningLevel = null,
         IReadOnlyList<ChatImageAttachment>? images = null,
-        AgentSteeringQueue? steering = null)
+        AgentSteeringQueue? steering = null,
+        string? turnRequestId = null)
     {
         var agentConfig = configStore.Config.Agent;
         events.Publish(new TurnStartedEvent(session.Header.Id, userInput));
         var userMessage = ChatMessage.User(userInput, images);
         // Everything appended from here on belongs to this turn; earlier entries are history.
-        var turnMessageIndex = session.Messages.Count;
         sessionStore.Append(session, userMessage);
+        var turnMessageIndex = session.Messages.Count - 1;
 
         var mutated = false;
         var repairAttempts = 0;
@@ -138,7 +140,10 @@ public sealed partial class Agent(
                     && source.Count != lastCompactedCount)
                 {
                     PublishWorkflow(step, "compact", "压缩记忆");
-                    await CompactContextAsync(session, workspace, model, source, systemPrompt, ct).ConfigureAwait(false);
+                    await CompactContextAsync(
+                        session, workspace, model, systemPrompt, turnMessageIndex, ct).ConfigureAwait(false);
+                    turnMessageIndex = session.Messages.FindIndex(message => ReferenceEquals(message, userMessage));
+                    if (turnMessageIndex < 0) turnMessageIndex = 0;
                     lastCompactedCount = session.Messages.Count;
                     source = requiresVision ? session.Messages : WithoutImages(session.Messages);
                     history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
@@ -160,6 +165,7 @@ public sealed partial class Agent(
                     Role = ChatRole.Assistant,
                     Text = completion.Text,
                     Thinking = completion.Thinking.Length > 0 ? completion.Thinking : null,
+                    ThinkingSignature = completion.ThinkingSignature,
                     ModelRef = $"{model.Provider.Id}/{model.Model.Id}",
                     ToolCalls = completion.ToolCalls.Count > 0 ? completion.ToolCalls : null,
                     ViewedImages = step == 1
@@ -172,11 +178,6 @@ public sealed partial class Agent(
                     finalText = isContinuation ? finalText + completion.Text : completion.Text;
                     events.Publish(new AssistantMessageCompletedEvent(completion.Text));
                 }
-
-                // Guidance can arrive while the model is streaming. Append it after the
-                // current completion and continue with a fresh model step; the in-flight
-                // request is never cancelled or rewritten.
-                var guidance = AppendSteering(session, steering);
 
                 // StreamOnceAsync preserves partial text on cancellation. Stop the turn after
                 // persisting that text instead of reporting the cancelled request as completed.
@@ -198,7 +199,8 @@ public sealed partial class Agent(
                             if (readOnlyBatch.Count > 0)
                             {
                                 foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
-                                var batchResults = await Task.WhenAll(readOnlyBatch.Select(c => ExecuteToolAsync(c, workspace, model, ct))).ConfigureAwait(false);
+                                var batchResults = await Task.WhenAll(readOnlyBatch.Select(c =>
+                                    ExecuteToolAsync(c, workspace, model, session.Header.Id, turnRequestId, ct))).ConfigureAwait(false);
                                 foreach (var result in batchResults)
                                 {
                                     mutated |= result.ToolMutated;
@@ -208,7 +210,8 @@ public sealed partial class Agent(
                             }
 
                             PublishWorkflow(step, "tool", call.Name);
-                            var singleResult = await ExecuteToolAsync(call, workspace, model, ct).ConfigureAwait(false);
+                            var singleResult = await ExecuteToolAsync(
+                                call, workspace, model, session.Header.Id, turnRequestId, ct).ConfigureAwait(false);
                             mutated |= singleResult.ToolMutated;
                             sessionStore.Append(session, singleResult.Message);
                         }
@@ -217,17 +220,22 @@ public sealed partial class Agent(
                     if (readOnlyBatch.Count > 0)
                     {
                         foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
-                        var batchResults = await Task.WhenAll(readOnlyBatch.Select(c => ExecuteToolAsync(c, workspace, model, ct))).ConfigureAwait(false);
+                        var batchResults = await Task.WhenAll(readOnlyBatch.Select(c =>
+                            ExecuteToolAsync(c, workspace, model, session.Header.Id, turnRequestId, ct))).ConfigureAwait(false);
                         foreach (var result in batchResults)
                         {
                             mutated |= result.ToolMutated;
                             sessionStore.Append(session, result.Message);
                         }
                     }
-                    PublishSteering(guidance);
+                    // Steering must be appended only after every tool result for this
+                    // assistant turn. A user message between assistant(tool_calls) and
+                    // tool(result) breaks provider pairing and fails the next request.
+                    PublishSteering(AppendSteering(session, steering));
                     continue;
                 }
 
+                var guidance = AppendSteering(session, steering);
                 if (guidance.Count > 0)
                 {
                     PublishSteering(guidance);
@@ -263,7 +271,6 @@ public sealed partial class Agent(
                     isContinuation = true;
                     events.Publish(new StatusEvent("Output truncated; auto-continuing"));
                     PublishWorkflow(step, "think", "自动续写");
-                    PublishSteering(guidance);
                     continue;
                 }
                 truncatedSteps = 0;
@@ -340,6 +347,7 @@ public sealed partial class Agent(
                             Role = ChatRole.Assistant,
                             Text = finalCompletion.Text,
                             Thinking = finalCompletion.Thinking.Length > 0 ? finalCompletion.Thinking : null,
+                            ThinkingSignature = finalCompletion.ThinkingSignature,
                             ModelRef = $"{activeModel.Provider.Id}/{activeModel.Model.Id}",
                         };
                         sessionStore.Append(session, assistantSummary);

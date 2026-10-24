@@ -91,9 +91,25 @@ public static class ContextPlanner
             total += cost;
         }
 
-        // Keep tool-call pairs intact: if the tail would open with a tool result, fold
-        // those results back into the summarized old part (their assistant turn is there).
-        while (split < messages.Count && messages[split].Role == ChatRole.Tool) split++;
+        // Keep tool-call pairs intact. A tail must never begin with a tool result: move the
+        // split back to the assistant message that owns the entire result block, otherwise
+        // the summarization request would carry tool results without their tool_calls.
+        if (split < messages.Count && messages[split].Role == ChatRole.Tool)
+        {
+            var assistantIndex = split - 1;
+            while (assistantIndex >= 0 && messages[assistantIndex].Role == ChatRole.Tool) assistantIndex--;
+            if (assistantIndex >= 0
+                && messages[assistantIndex].Role == ChatRole.Assistant
+                && messages[assistantIndex].ToolCalls is { Count: > 0 })
+            {
+                split = assistantIndex;
+            }
+            else
+            {
+                // Malformed history without an owning assistant: keep results out of the tail.
+                while (split < messages.Count && messages[split].Role == ChatRole.Tool) split++;
+            }
+        }
 
         return (messages.Take(split).ToList(), messages.Skip(split).ToList());
     }

@@ -43,6 +43,7 @@ public sealed class SessionMessage
     public string? Text { get; set; }
     public List<SessionImage>? Images { get; set; }
     public string? Thinking { get; set; }
+    public string? ThinkingSignature { get; set; }
     public string? ModelRef { get; set; }
     public List<SessionImageReference>? ViewedImages { get; set; }
     public List<SessionToolCall>? ToolCalls { get; set; }

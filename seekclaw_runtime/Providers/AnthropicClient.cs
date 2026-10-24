@@ -94,6 +94,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
 
             var idleTimeout = TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds));
             var acc = new Accumulator();
+            var sawMessageStop = false;
             Stream stream;
             try { stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -131,7 +132,13 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     var sse = events.Current;
                     JsonNode? node;
                     try { node = JsonNode.Parse(sse.Data); }
-                    catch (JsonException) { continue; }
+                    catch (JsonException ex)
+                    {
+                        throw new LlmException(
+                            $"{request.Provider.Id} returned a malformed streaming event.",
+                            retryable: true,
+                            inner: ex);
+                    }
 
                     var type = node?["type"]?.GetValue<string>() ?? sse.Event ?? "";
                     if (type == "error")
@@ -139,8 +146,19 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                             $"{request.Provider.Id} stream error: {node?["error"]?["message"]?.GetValue<string>() ?? "unknown"}");
 
                     foreach (var evt in acc.Consume(type, node)) yield return evt;
-                    if (type == "message_stop") break;
+                    if (type == "message_stop")
+                    {
+                        sawMessageStop = true;
+                        break;
+                    }
                 }
+            }
+
+            if (!sawMessageStop)
+            {
+                throw new LlmException(
+                    $"{request.Provider.Id} stream ended before message_stop.",
+                    retryable: true);
             }
 
             yield return new LlmCompleted(acc.Build());
@@ -161,6 +179,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
 
         var text = new StringBuilder();
         var thinking = new StringBuilder();
+        var thinkingSignature = new StringBuilder();
         var calls = new List<ToolCallRequest>();
         foreach (var item in content.OfType<JsonObject>())
         {
@@ -171,6 +190,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     break;
                 case "thinking":
                     thinking.Append(item["thinking"]?.GetValue<string>() ?? "");
+                    thinkingSignature.Append(item["signature"]?.GetValue<string>() ?? "");
                     break;
                 case "tool_use":
                     var name = item["name"]?.GetValue<string>() ?? "";
@@ -190,6 +210,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         {
             Text = text.ToString(),
             Thinking = thinking.ToString(),
+            ThinkingSignature = thinkingSignature.Length == 0 ? null : thinkingSignature.ToString(),
             ToolCalls = calls,
             FinishReason = obj["stop_reason"]?.GetValue<string>() ?? "",
             Usage = new TokenUsage(inputTokens, outputTokens)
@@ -227,6 +248,16 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
 
                 case ChatRole.Assistant:
                     var content = new JsonArray();
+                    if (!string.IsNullOrEmpty(msg.Thinking)
+                        && !string.IsNullOrEmpty(msg.ThinkingSignature))
+                    {
+                        content.Add((JsonNode)new JsonObject
+                        {
+                            ["type"] = "thinking",
+                            ["thinking"] = msg.Thinking,
+                            ["signature"] = msg.ThinkingSignature,
+                        });
+                    }
                     if (!string.IsNullOrEmpty(msg.Text))
                         content.Add((JsonNode)new JsonObject { ["type"] = "text", ["text"] = msg.Text });
                     if (msg.ToolCalls is { Count: > 0 })
@@ -415,6 +446,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
     {
         private readonly StringBuilder _text = new();
         private readonly StringBuilder _thinking = new();
+        private readonly StringBuilder _thinkingSignature = new();
         private readonly Dictionary<int, (string Id, string Name, StringBuilder Args)> _toolBlocks = [];
         private long _inputTokens;
         private long _cachedInputTokens;
@@ -439,7 +471,12 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 {
                     var index = node?["index"]?.GetValue<int>() ?? 0;
                     var block = node?["content_block"];
-                    if (block?["type"]?.GetValue<string>() == "tool_use")
+                    var blockType = block?["type"]?.GetValue<string>();
+                    if (blockType == "thinking")
+                    {
+                        _thinkingSignature.Append(block?["signature"]?.GetValue<string>() ?? "");
+                    }
+                    else if (blockType == "tool_use")
                     {
                         var id = block["id"]?.GetValue<string>() ?? $"toolu_{index}";
                         var name = block["name"]?.GetValue<string>() ?? "";
@@ -462,6 +499,9 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                         case "thinking_delta" when delta["thinking"]?.GetValue<string>() is { Length: > 0 } thought:
                             _thinking.Append(thought);
                             yield return new LlmThinkingDelta(thought);
+                            break;
+                        case "signature_delta" when delta["signature"]?.GetValue<string>() is { } signature:
+                            _thinkingSignature.Append(signature);
                             break;
                         case "input_json_delta" when delta["partial_json"]?.GetValue<string>() is { } partial:
                             if (_toolBlocks.TryGetValue(index, out var entry))
@@ -487,6 +527,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         {
             Text = _text.ToString(),
             Thinking = _thinking.ToString(),
+            ThinkingSignature = _thinkingSignature.Length == 0 ? null : _thinkingSignature.ToString(),
             ToolCalls = _toolBlocks
                 .OrderBy(kv => kv.Key)
                 .Select(kv => new ToolCallRequest(

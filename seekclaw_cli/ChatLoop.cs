@@ -5,6 +5,8 @@ using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
+using SeekClaw.Runtime.Tools;
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace SeekClaw.Cli;
@@ -78,6 +80,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
     public async Task<int> RunInteractiveAsync (bool continueLast, string? resumeId)
     {
         var session = ResolveSession(continueLast, resumeId);
+        var sessionState = new InteractiveSessionState(session);
         using var renderer = new TerminalRenderer(
             runtime.Events,
             showTurnDividers: true,
@@ -96,48 +99,158 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
             renderer.SetInputFrame,
             renderer.WriteLine);
 
-        Task? activeTurnTask = null;
-
-        while (!_exitRequested)
+        var pendingApprovals = new ConcurrentDictionary<string, PendingCliApproval>(StringComparer.Ordinal);
+        runtime.Approvals.SetHandler(async (request, ct) =>
         {
-            var input = editor.ReadLine();
-            if (input is null) break; // Ctrl+C / Ctrl+D on an empty line, or EOF
-            input = input.Trim();
-            if (input.Length == 0) continue;
-            SaveHistory(input);
+            var key = Guid.NewGuid().ToString("N");
+            var completion = new TaskCompletionSource<ToolApprovalDecision>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = new PendingCliApproval(key, request, completion);
+            if (!pendingApprovals.TryAdd(key, pending))
+                return ToolApprovalDecision.Deny("A duplicate approval request is already pending.");
 
-            if (input.StartsWith('/'))
+            renderer.WriteLine($"approval required: {request.ToolName} · {request.ArgumentSummary}".Style(Ansi.Yellow));
+            renderer.WriteLine("  type y to approve or n to deny".Style(Ansi.Dim));
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromMinutes(2));
+            try
             {
-                if (HandleSlashCommand(input, ref session, renderer)) break;
-                continue;
+                return await completion.Task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
             }
-
-            // If an AI agent turn is actively running, treat input as mid-turn steering guidance!
-            if (activeTurnTask is not null && !activeTurnTask.IsCompleted)
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                var steerMsg = ChatMessage.User($"[User Steering Instruction]: {input}");
-                runtime.Sessions.Append(session, steerMsg);
-                runtime.Events.Publish(new UserSteerEvent(input));
-                continue;
+                return ToolApprovalDecision.Deny("Timed out waiting for user approval.");
             }
+            finally
+            {
+                pendingApprovals.TryRemove(key, out _);
+            }
+        });
 
-            // Start a new agent turn asynchronously so LineEditor remains responsive for user steering!
+        Task? activeTurnTask = null;
+        AgentSteeringQueue? activeSteering = null;
+
+        async Task FinishActiveTurnAsync (Task task)
+        {
+            try { await task.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { renderer.WriteLine($"error: {ex.Message}".Style(Ansi.Red)); }
+        }
+
+        try
+        {
+            while (!_exitRequested)
+            {
+                if (activeTurnTask is { IsCompleted: true })
+                {
+                    await FinishActiveTurnAsync(activeTurnTask).ConfigureAwait(false);
+                    activeTurnTask = null;
+                    activeSteering = null;
+                    _turnCts?.Dispose();
+                    _turnCts = null;
+                }
+
+                var input = editor.ReadLine();
+                if (input is null)
+                {
+                    // Only leave when idle. While a turn is running, treat the key as
+                    // cancellation and return to the prompt instead of exiting with work alive.
+                    if (activeTurnTask is { IsCompleted: false })
+                    {
+                        _turnCts?.Cancel();
+                        await FinishActiveTurnAsync(activeTurnTask).ConfigureAwait(false);
+                        activeTurnTask = null;
+                        activeSteering = null;
+                        _turnCts?.Dispose();
+                        _turnCts = null;
+                        renderer.WriteLine("turn cancelled.".Style(Ansi.Gray));
+                        continue;
+                    }
+                    break;
+                }
+                input = input.Trim();
+                if (input.Length == 0) continue;
+
+                var pendingApproval = pendingApprovals.Values.FirstOrDefault(
+                    item => !item.Completion.Task.IsCompleted);
+                if (pendingApproval is not null)
+                {
+                    if (IsExitCommand(input)) break;
+                    if (TryParseApprovalInput(input, out var approved))
+                    {
+                        if (pendingApprovals.TryRemove(pendingApproval.Key, out var removed))
+                        {
+                            removed.Completion.TrySetResult(approved
+                                ? ToolApprovalDecision.Allow
+                                : ToolApprovalDecision.Deny("The user denied this tool call."));
+                        }
+                    }
+                    else
+                    {
+                        renderer.WriteLine("an approval is pending: type y to approve or n to deny.".Style(Ansi.Yellow));
+                    }
+                    continue;
+                }
+
+                SaveHistory(input);
+
+                if (input.StartsWith('/'))
+                {
+                    var shouldExit = await HandleSlashCommandAsync(input, sessionState, renderer).ConfigureAwait(false);
+                    session = sessionState.Session;
+                    if (shouldExit) break;
+                    continue;
+                }
+
+                // Guidance must go through the Agent steering queue. Appending it directly
+                // can insert a user message between assistant tool_calls and tool results.
+                if (activeTurnTask is not null && !activeTurnTask.IsCompleted)
+                {
+                    var steerMsg = ChatMessage.User($"[User Steering Instruction]: {input}");
+                    if (activeSteering?.TryEnqueue(steerMsg) == true) continue;
+
+                    await FinishActiveTurnAsync(activeTurnTask).ConfigureAwait(false);
+                    activeTurnTask = null;
+                    activeSteering = null;
+                    _turnCts?.Dispose();
+                    _turnCts = null;
+                }
+
+                // Start a new agent turn asynchronously so LineEditor remains responsive for user steering!
+                _turnCts = new CancellationTokenSource();
+                var currentCts = _turnCts;
+                var currentPrompt = input;
+                var currentSession = session;
+                var currentWorkspace = runtime.Workspace;
+                var steering = new AgentSteeringQueue();
+                activeSteering = steering;
+
+                activeTurnTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await runtime.Agent.RunTurnAsync(
+                            currentSession, currentWorkspace, currentPrompt, currentCts.Token,
+                            steering: steering).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        renderer.Flush();
+                    }
+                });
+            }
+        }
+        finally
+        {
+            runtime.Approvals.ClearHandler();
+            if (activeTurnTask is not null)
+            {
+                if (!activeTurnTask.IsCompleted) _turnCts?.Cancel();
+                await FinishActiveTurnAsync(activeTurnTask).ConfigureAwait(false);
+            }
             _turnCts?.Dispose();
-            _turnCts = new CancellationTokenSource();
-            var currentCts = _turnCts;
-            var currentPrompt = input;
-
-            activeTurnTask = Task.Run(async () =>
-            {
-                try
-                {
-                    await runtime.Agent.RunTurnAsync(session, runtime.Workspace, currentPrompt, currentCts.Token).ConfigureAwait(false);
-                }
-                finally
-                {
-                    renderer.Flush();
-                }
-            });
+            _turnCts = null;
         }
 
         renderer.WriteLine();
@@ -216,7 +329,12 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
 
     private async Task ConnectMcpQuietlyAsync (TerminalRenderer renderer)
     {
-        if (runtime.Mcp.LoadServerConfigs(runtime.Workspace).Count == 0) return;
+        await ConnectMcpQuietlyAsync(renderer, force: false).ConfigureAwait(false);
+    }
+
+    private async Task ConnectMcpQuietlyAsync (TerminalRenderer renderer, bool force)
+    {
+        if (!force && runtime.Mcp.LoadServerConfigs(runtime.Workspace).Count == 0) return;
         try
         {
             var statuses = await runtime.ConnectMcpAsync(CancellationToken.None);
@@ -232,8 +350,9 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
     }
 
     /// <summary>Returns true when the REPL should exit.</summary>
-    private bool HandleSlashCommand (string input, ref AgentSession session, TerminalRenderer renderer)
+    private async Task<bool> HandleSlashCommandAsync (string input, InteractiveSessionState sessionState, TerminalRenderer renderer)
     {
+        var session = sessionState.Session;
         var parts = input.Split(' ', 2, StringSplitOptions.TrimEntries);
         switch (parts[0].ToLowerInvariant())
         {
@@ -257,8 +376,8 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
             }
 
             case "/clear" or "/new":
-                session = runtime.Sessions.Create(runtime.Workspace);
-                renderer.WriteLine($"new session {session.Header.Id}".Style(Ansi.Gray));
+                sessionState.Session = runtime.Sessions.Create(runtime.Workspace);
+                renderer.WriteLine($"new session {sessionState.Session.Header.Id}".Style(Ansi.Gray));
                 return false;
 
             case "/model":
@@ -317,13 +436,20 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                     if (!Path.IsPathRooted(targetDir))
                         targetDir = Path.Combine(runtime.Workspace.Root, targetDir);
 
+                    var previousDirectory = Directory.GetCurrentDirectory();
                     try
                     {
                         targetDir = Path.GetFullPath(targetDir);
                         if (Directory.Exists(targetDir))
                         {
                             Directory.SetCurrentDirectory(targetDir);
-                            runtime.RefreshWorkspace(targetDir);
+                            try { runtime.RefreshWorkspace(targetDir); }
+                            catch
+                            {
+                                Directory.SetCurrentDirectory(previousDirectory);
+                                throw;
+                            }
+                            await ConnectMcpQuietlyAsync(renderer, force: true).ConfigureAwait(false);
                             renderer.WriteLine($"cd → {runtime.Workspace.Root}".Style(Ansi.Green));
                         }
                         else
@@ -441,5 +567,36 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
         Console.Out.Write($"\x1b]52;c;{payload}\x1b\\");
         Console.Out.Flush();
+    }
+
+    private static bool IsExitCommand (string input) =>
+        input.Equals("/exit", StringComparison.OrdinalIgnoreCase)
+        || input.Equals("/quit", StringComparison.OrdinalIgnoreCase)
+        || input.Equals("/q", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryParseApprovalInput (string input, out bool approved)
+    {
+        switch (input.Trim().ToLowerInvariant())
+        {
+            case "y" or "yes" or "approve" or "allow":
+                approved = true;
+                return true;
+            case "n" or "no" or "deny" or "reject":
+                approved = false;
+                return true;
+            default:
+                approved = false;
+                return false;
+        }
+    }
+
+    private sealed record PendingCliApproval (
+        string Key,
+        ToolApprovalRequest Request,
+        TaskCompletionSource<ToolApprovalDecision> Completion);
+
+    private sealed class InteractiveSessionState (AgentSession session)
+    {
+        public AgentSession Session { get; set; } = session;
     }
 }

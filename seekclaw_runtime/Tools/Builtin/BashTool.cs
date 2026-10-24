@@ -68,7 +68,10 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
             }
 
             // 1. Assign process to Windows JobObject to guarantee killing entire process tree on exit/timeout
-            jobScope.AssignProcess(process);
+            jobScope.AssignProcess(
+                process,
+                processGroupLeader: !OperatingSystem.IsWindows()
+                    && Path.GetFileName(shell).Equals("setsid", StringComparison.OrdinalIgnoreCase));
 
             // 2. Immediately close standard input to prevent blocking on interactive stdin prompts (matching Codex)
             try
@@ -135,12 +138,12 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            TryKillProcessTree(process);
+            jobScope.Terminate(process);
             return ToolResult.Fail($"Command timed out after {timeout.TotalSeconds:0}s: {Shorten(command)}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            TryKillProcessTree(process);
+            jobScope.Terminate(process);
             return ToolResult.Fail($"Command execution error: {ex.Message}");
         }
         finally
@@ -149,26 +152,10 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
             {
                 if (ct.IsCancellationRequested)
                 {
-                    TryKillProcessTree(process);
+                    jobScope.Terminate(process);
                 }
                 process.Dispose();
             }
-        }
-    }
-
-    private static void TryKillProcessTree(Process? process)
-    {
-        if (process == null) return;
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch
-        {
-            // Process may already be dead
         }
     }
 
@@ -182,6 +169,10 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (!OperatingSystem.IsWindows())
         {
             var bashPath = File.Exists("/bin/bash") ? "/bin/bash" : "/bin/sh";
+            var setsidPath = new[] { "/usr/bin/setsid", "/bin/setsid" }
+                .FirstOrDefault(File.Exists);
+            if (setsidPath is not null)
+                return (setsidPath, [bashPath, "-c", command]);
             return (bashPath, ["-c", command]);
         }
 

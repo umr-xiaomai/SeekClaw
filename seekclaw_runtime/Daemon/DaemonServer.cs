@@ -13,6 +13,7 @@ using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
+using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Daemon;
@@ -284,6 +285,7 @@ public sealed class DaemonServer : IAsyncDisposable
         public SemaphoreSlim WriterGate { get; } = writerGate;
         public CancellationToken ConnectionCt { get; } = connectionCt;
         public ConcurrentDictionary<long, ActiveTurn> ActiveTurns { get; } = new();
+        public ConcurrentDictionary<string, PendingApproval> PendingApprovals { get; } = new(StringComparer.Ordinal);
         public AgentSession? LegacySession;
     }
 
@@ -360,6 +362,9 @@ public sealed class DaemonServer : IAsyncDisposable
                 if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
             foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Dispose();
             context.ActiveTurns.Clear();
+            foreach (var pending in context.PendingApprovals.Values)
+                pending.Completion.TrySetResult(ToolApprovalDecision.Deny("The approval client disconnected."));
+            context.PendingApprovals.Clear();
         }
     }
 
@@ -445,7 +450,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         context.ActiveTurns[id] = turn;
                         turn.Task = RunTurnAsync(
                             turnSession, workspace, message, images, reasoningLevel, id, context.Writer, context.WriterGate,
-                            turnCancellation.Token, context.ConnectionCt, turn.Steering);
+                            turnCancellation.Token, context.ConnectionCt, turn.Steering, context.PendingApprovals);
                         break;
                     }
 
@@ -491,12 +496,75 @@ public sealed class DaemonServer : IAsyncDisposable
                         break;
                     }
 
+                    case "agent.approve":
+                    case "agent.approval":
+                    {
+                        var parameters = Params(request);
+                        var approvalId = parameters["approvalId"]?.GetValue<string>();
+                        var callId = parameters["callId"]?.GetValue<string>();
+                        bool? approved;
+                        try { approved = parameters["approved"]?.GetValue<bool?>(); }
+                        catch (InvalidOperationException)
+                        {
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error",
+                                "params.approved must be a boolean", context.ConnectionCt).ConfigureAwait(false);
+                            break;
+                        }
+                        if (approved is null && parameters["decision"]?.GetValue<string>() is { } decision)
+                        {
+                            approved = decision.Trim().ToLowerInvariant() switch
+                            {
+                                "approve" or "approved" or "allow" or "yes" => true,
+                                "deny" or "denied" or "reject" or "rejected" or "no" => false,
+                                _ => null,
+                            };
+                        }
+                        if (approved is null)
+                        {
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error",
+                                "params.approved is required", context.ConnectionCt).ConfigureAwait(false);
+                            break;
+                        }
+
+                        PendingApproval? pending = null;
+                        if (!string.IsNullOrWhiteSpace(approvalId))
+                            context.PendingApprovals.TryGetValue(approvalId, out pending);
+                        else if (!string.IsNullOrWhiteSpace(callId))
+                            pending = context.PendingApprovals.Values.LastOrDefault(
+                                item => item.CallId.Equals(callId, StringComparison.Ordinal));
+
+                        if (pending is null
+                            || !context.PendingApprovals.TryRemove(pending.ApprovalId, out pending))
+                        {
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error",
+                                "approval request is no longer pending", context.ConnectionCt).ConfigureAwait(false);
+                            break;
+                        }
+
+                        var reason = parameters["reason"]?.GetValue<string>();
+                        pending.Completion.TrySetResult(new ToolApprovalDecision(approved.Value, reason));
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result",
+                            approved.Value ? "approved" : "denied", context.ConnectionCt,
+                            pending.SessionId).ConfigureAwait(false);
+                        break;
+                    }
+
                     case "agent.cancel":
                     {
                         var requestedId = request["params"]?["requestId"]?.GetValue<long?>();
+                        var requestedSessionId = request["params"]?["sessionId"]?.GetValue<string>();
+                        if (requestedId is null && string.IsNullOrWhiteSpace(requestedSessionId))
+                        {
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error",
+                                "params.requestId or params.sessionId is required", context.ConnectionCt).ConfigureAwait(false);
+                            break;
+                        }
+
                         var targets = requestedId is { } specific
                             ? context.ActiveTurns.Where(item => item.Key == specific).Select(item => item.Value).ToList()
-                            : context.ActiveTurns.Values.ToList();
+                            : context.ActiveTurns.Values
+                                .Where(turn => turn.Session.Header.Id.Equals(requestedSessionId, StringComparison.Ordinal))
+                                .ToList();
                         if (targets.Count == 0)
                         {
                             await WriteAsync(context.Writer, context.WriterGate, id, "result", "no active turn", context.ConnectionCt).ConfigureAwait(false);
@@ -505,7 +573,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         foreach (var target in targets) target.Cancellation.Cancel();
                         var detail = requestedId is { } one
                             ? $"cancellation requested for {one}"
-                            : $"cancellation requested for {targets.Count} active turns";
+                            : $"cancellation requested for session {requestedSessionId}";
                         await WriteAsync(context.Writer, context.WriterGate, id, "result", detail, context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
@@ -1016,7 +1084,8 @@ public sealed class DaemonServer : IAsyncDisposable
         SemaphoreSlim writerGate,
         CancellationToken turnCt,
         CancellationToken connectionCt,
-        AgentSteeringQueue steering)
+        AgentSteeringQueue steering,
+        ConcurrentDictionary<string, PendingApproval> pendingApprovals)
     {
         // Unique per-turn identity for file write-lock ownership; released when the
         // turn ends even if a tool was interrupted before its own finally ran.
@@ -1045,9 +1114,16 @@ public sealed class DaemonServer : IAsyncDisposable
             if (_useIsolatedTurnRuntime && runtime.Mcp.LoadServerConfigs(workspace).Count > 0)
                 await runtime.Mcp.ConnectAllAsync(workspace, turnCt).ConfigureAwait(false);
 
+            if (_runTurn is null)
+            {
+                runtime.Approvals.SetHandler((request, approvalCt) => RequestToolApprovalAsync(
+                    request, id, session.Header.Id, writer, writerGate, pendingApprovals, connectionCt, approvalCt));
+            }
+
             result = _runTurn is null
                 ? await runtime.Agent.RunTurnAsync(
-                    session, workspace, message, turnCt, reasoningLevel, images, steering).ConfigureAwait(false)
+                    session, workspace, message, turnCt, reasoningLevel, images, steering,
+                    turnRequestId: id.ToString()).ConfigureAwait(false)
                 : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -1060,6 +1136,7 @@ public sealed class DaemonServer : IAsyncDisposable
         }
         finally
         {
+            CancelPendingApprovals(pendingApprovals, id);
             subscription.Dispose();
             try { await forwarder.ConfigureAwait(false); }
             catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
@@ -1099,6 +1176,86 @@ public sealed class DaemonServer : IAsyncDisposable
         catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
         {
             // The client disconnected while the turn was ending.
+        }
+    }
+
+    private static async ValueTask<ToolApprovalDecision> RequestToolApprovalAsync(
+        ToolApprovalRequest request,
+        long turnId,
+        string sessionId,
+        StreamWriter writer,
+        SemaphoreSlim writerGate,
+        ConcurrentDictionary<string, PendingApproval> pendingApprovals,
+        CancellationToken connectionCt,
+        CancellationToken approvalCt)
+    {
+        var approvalId = $"{turnId}:{request.CallId}";
+        var completion = new TaskCompletionSource<ToolApprovalDecision>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = new PendingApproval(approvalId, request.CallId, sessionId, completion);
+        if (!pendingApprovals.TryAdd(approvalId, pending))
+        {
+            return ToolApprovalDecision.Deny("A duplicate approval request is already pending.");
+        }
+
+        try
+        {
+            var arguments = request.ArgumentsJson.Length > 20_000
+                ? request.ArgumentsJson[..20_000] + "\n… [arguments truncated]"
+                : request.ArgumentsJson;
+            var details = new JsonObject
+            {
+                ["approvalId"] = approvalId,
+                ["callId"] = request.CallId,
+                ["toolName"] = request.ToolName,
+                ["summary"] = request.ArgumentSummary,
+                ["arguments"] = arguments,
+                ["mode"] = request.Mode.ToModeString(),
+                ["mutating"] = request.Mutating,
+                ["requiresNetwork"] = request.RequiresNetwork,
+                ["isMcp"] = request.IsMcp,
+                ["requestId"] = turnId,
+            };
+            await WriteAsync(writer, writerGate, turnId, "approval_request", request.ToolName,
+                connectionCt, sessionId, details).ConfigureAwait(false);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(approvalCt, connectionCt);
+            timeoutCts.CancelAfter(TimeSpan.FromMinutes(2));
+            try
+            {
+                return await completion.Task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!approvalCt.IsCancellationRequested && !connectionCt.IsCancellationRequested)
+            {
+                // Timeout and agent.approve race to remove the same pending entry. Only the
+                // winner may decide the outcome; otherwise the client can receive "approved"
+                // while the tool has already observed a timeout denial.
+                if (pendingApprovals.TryRemove(approvalId, out _))
+                    return ToolApprovalDecision.Deny("Timed out waiting for user approval.");
+                return await completion.Task.ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            if (pendingApprovals.TryRemove(approvalId, out _))
+                return ToolApprovalDecision.Deny("The approval client disconnected.");
+            return await completion.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            pendingApprovals.TryRemove(approvalId, out _);
+        }
+    }
+
+    private static void CancelPendingApprovals(
+        ConcurrentDictionary<string, PendingApproval> pendingApprovals, long turnId)
+    {
+        var prefix = $"{turnId}:";
+        foreach (var pair in pendingApprovals)
+        {
+            if (!pair.Key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            if (pendingApprovals.TryRemove(pair.Key, out var pending))
+                pending.Completion.TrySetResult(ToolApprovalDecision.Deny("The agent turn ended before approval."));
         }
     }
 
@@ -1362,6 +1519,18 @@ public sealed class DaemonServer : IAsyncDisposable
         public Task? Task { get; set; }
     }
 
+    private sealed class PendingApproval(
+        string approvalId,
+        string callId,
+        string sessionId,
+        TaskCompletionSource<ToolApprovalDecision> completion)
+    {
+        public string ApprovalId { get; } = approvalId;
+        public string CallId { get; } = callId;
+        public string SessionId { get; } = sessionId;
+        public TaskCompletionSource<ToolApprovalDecision> Completion { get; } = completion;
+    }
+
     private string CurrentMode()
     {
         var raw = _runtime.Workspace.Config?.Mode ?? _runtime.ConfigStore.Config.Agent.Mode;
@@ -1427,10 +1596,10 @@ public sealed class DaemonServer : IAsyncDisposable
         ["version"] = ProtocolVersion,
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
-            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.mode", "workspace", "provider",
+            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.approval", "agent.mode", "workspace", "provider",
             "model", "mcp", "skill", "usage", "project", "session", "global-session", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild"),
         ["methods"] = new JsonArray(
-            "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel",
+            "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel", "agent.approve",
             "config.status", "config.rebuild",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
             "routing.get", "routing.set", "advanced.get", "advanced.set",

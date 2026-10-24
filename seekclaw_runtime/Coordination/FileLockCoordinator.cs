@@ -67,15 +67,27 @@ public sealed class FileLockCoordinator : IFileLockCoordinator
     {
         var key = Key(workspaceRoot, filePath);
         var state = GetOrCreateState(key, workspaceRoot, filePath);
-        if (!await state.Gate.WaitAsync(timeout, ct).ConfigureAwait(false))
-            return false;
-
-        lock (_gate)
+        try
         {
-            state.Owner = owner;
-            state.AcquiredAt = DateTimeOffset.UtcNow;
+            if (!await state.Gate.WaitAsync(timeout, ct).ConfigureAwait(false))
+            {
+                ReleaseWaiter(key, state);
+                return false;
+            }
+
+            lock (_gate)
+            {
+                state.Owner = owner;
+                state.AcquiredAt = DateTimeOffset.UtcNow;
+                state.Waiters--;
+            }
+            return true;
         }
-        return true;
+        catch
+        {
+            ReleaseWaiter(key, state);
+            throw;
+        }
     }
 
     public void Release(string workspaceRoot, string filePath, string owner)
@@ -90,19 +102,25 @@ public sealed class FileLockCoordinator : IFileLockCoordinator
             state.Owner = null;
         }
         state.Gate.Release();
+        CleanupIfIdle(key, state);
     }
 
     public void ReleaseAll(string owner)
     {
-        List<FileLockState> released;
+        List<(string Key, FileLockState State)> released;
         lock (_gate)
         {
             released = _locks.Values
                 .Where(state => string.Equals(state.Owner, owner, StringComparison.Ordinal))
+                .Select(state => (Key: Key(state.WorkspaceRoot, state.FilePath), State: state))
                 .ToList();
-            foreach (var state in released) state.Owner = null;
+            foreach (var (_, state) in released) state.Owner = null;
         }
-        foreach (var state in released) state.Gate.Release();
+        foreach (var (key, state) in released)
+        {
+            state.Gate.Release();
+            CleanupIfIdle(key, state);
+        }
     }
 
     public IReadOnlyList<FileLockEntry> Snapshot()
@@ -139,7 +157,31 @@ public sealed class FileLockCoordinator : IFileLockCoordinator
                 state = new FileLockState { WorkspaceRoot = workspaceRoot, FilePath = filePath };
                 _locks[key] = state;
             }
+            state.Waiters++;
             return state;
+        }
+    }
+
+    private void ReleaseWaiter(string key, FileLockState state)
+    {
+        lock (_gate)
+        {
+            if (state.Waiters > 0) state.Waiters--;
+        }
+        CleanupIfIdle(key, state);
+    }
+
+    private void CleanupIfIdle(string key, FileLockState state)
+    {
+        lock (_gate)
+        {
+            if (state.Owner is null
+                && state.Waiters == 0
+                && _locks.TryGetValue(key, out var current)
+                && ReferenceEquals(current, state))
+            {
+                _locks.Remove(key);
+            }
         }
     }
 
@@ -159,6 +201,7 @@ public sealed class FileLockCoordinator : IFileLockCoordinator
         /// <summary>Mutated only under the coordinator gate; the semaphore guarantees exclusion.</summary>
         public string? Owner { get; set; }
         public DateTimeOffset AcquiredAt { get; set; }
+        public int Waiters { get; set; }
         public SemaphoreSlim Gate { get; } = new(1, 1);
     }
 }

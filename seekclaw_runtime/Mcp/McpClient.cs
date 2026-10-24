@@ -134,6 +134,8 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
         var id = Interlocked.Increment(ref _nextId);
         var tcs = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(RequestTimeout);
 
         try
         {
@@ -143,11 +145,11 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
                 ["id"] = id,
                 ["method"] = method,
                 ["params"] = parameters,
-            }, ct).ConfigureAwait(false);
+            }, timeoutCts.Token).ConfigureAwait(false);
 
-            return await tcs.Task.WaitAsync(RequestTimeout, ct).ConfigureAwait(false);
+            return await tcs.Task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
         }
-        catch (TimeoutException)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             throw new McpException($"MCP server '{serverName}' did not answer '{method}' within {RequestTimeout.TotalSeconds:0}s.");
         }

@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, realpathSync, statSync, unlinkSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { CheckoutBranchResult, CreateBranchResult, GitBranchInfo, GitCommit, GitHistory, GitOverview, RevertDiffItem, RevertDiffsResult } from '../shared/ipc.js'
 
@@ -212,9 +212,15 @@ function cleanupNewFileIfEmpty(directory: string, patch: RevertDiffItem): void {
   if (/@@ -[01],0 \+/.test(patch.diff)) {
     const target = isAbsolute(patch.filePath) ? patch.filePath : resolve(directory, patch.filePath)
     if (existsSync(target)) {
-      const stats = statSync(target)
+      const root = realpathSync(directory)
+      const physicalTarget = realpathSync(target)
+      const targetRelative = relative(root, physicalTarget)
+      if (targetRelative === '..'
+        || targetRelative.startsWith(`..${sep}`)
+        || isAbsolute(targetRelative)) return
+      const stats = statSync(physicalTarget)
       if (stats.size === 0) {
-        unlinkSync(target)
+        unlinkSync(physicalTarget)
       }
     }
   }
@@ -223,7 +229,7 @@ function cleanupNewFileIfEmpty(directory: string, patch: RevertDiffItem): void {
 async function applyPatchReverse(directory: string, patch: RevertDiffItem): Promise<void> {
   const normalizedDiff = normalizeDiffForGit(patch.diff)
   await new Promise<void>((resolvePromise, rejectPromise) => {
-    const child = spawn('git', ['apply', '--reverse', '--whitespace=nowarn', '--unsafe-paths'], {
+    const child = spawn('git', ['apply', '--reverse', '--whitespace=nowarn'], {
       cwd: directory,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']

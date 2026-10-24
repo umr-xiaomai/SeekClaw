@@ -1223,6 +1223,41 @@ function isFinishedRequest(thread: ThreadItem, requestId: number): boolean {
   return thread.finishedRequestIds?.includes(requestId) === true
 }
 
+async function handleApprovalRequest(event: DaemonMessage): Promise<void> {
+  const approvalId = typeof event.details?.approvalId === 'string' ? event.details.approvalId : ''
+  if (!approvalId) return
+
+  const thread = (event.sessionId
+    ? threads.value.find((item) => item.sessionId === event.sessionId)
+    : undefined)
+    ?? threads.value.find((item) => item.requestId === event.id)
+  if (thread && isFinishedRequest(thread, event.id)) {
+    // The originating turn timed out or was cancelled while the approval was in
+    // flight. Deny it immediately instead of leaving the runtime blocked.
+    try {
+      await window.seekclaw.daemon.request('agent.approve', { approvalId, approved: false })
+    } catch { /* The runtime may already have denied or expired it. */ }
+    return
+  }
+
+  const toolName = typeof event.details?.toolName === 'string' ? event.details.toolName : event.data
+  const summary = typeof event.details?.summary === 'string' ? event.details.summary : ''
+  const rawArguments = typeof event.details?.arguments === 'string' ? event.details.arguments : ''
+  const description = [
+    summary,
+    rawArguments ? `参数：\n${rawArguments}` : ''
+  ].filter(Boolean).join('\n\n')
+  const approved = await confirmAction({
+    title: `批准工具调用：${toolName || 'unknown'}`,
+    message: description || '该工具调用需要你的批准。',
+    confirmLabel: '批准',
+    danger: true
+  })
+  try {
+    await window.seekclaw.daemon.request('agent.approve', { approvalId, approved })
+  } catch { /* The runtime rejects approvals that already timed out. */ }
+}
+
 function scheduleQueuedDrain(thread: ThreadItem): void {
   if (!thread.running && !thread.queueDraining && !thread.archived && thread.queuedMessages?.length)
     void drainQueuedMessages(thread)
@@ -1366,6 +1401,11 @@ async function runMessageTurn(
       if (!finalAssistant.content && response.data) finalAssistant.content = response.data
     }
   } catch (error) {
+    const requestId = error instanceof Error
+      ? (error as Error & { requestId?: unknown }).requestId
+      : undefined
+    if (typeof requestId === 'number' && Number.isFinite(requestId))
+      rememberFinishedRequest(thread, requestId)
     const turnAssistantBubbles = thread.messages.slice(turnStartIndex).filter((item) => item.role === 'assistant')
     const failedAssistant = turnAssistantBubbles[turnAssistantBubbles.length - 1] ?? assistant
     terminalAssistant = failedAssistant
@@ -1487,12 +1527,25 @@ const handleDaemonEvent = createDaemonEventHandler({
   reloadBackgroundThreadIfIdle
 })
 
+function handleDaemonMessage(event: DaemonMessage): void {
+  if (event.event === 'approval_request') {
+    void handleApprovalRequest(event)
+    return
+  }
+  handleDaemonEvent(event)
+}
+
 async function stopTurn(): Promise<void> {
   const thread = activeThread.value
   if (!thread?.running) return
+  const params = thread.requestId
+    ? { requestId: thread.requestId }
+    : thread.sessionId
+      ? { sessionId: thread.sessionId }
+      : null
+  if (!params) return
   try {
-    await window.seekclaw.daemon.request('agent.cancel',
-      thread.requestId ? { requestId: thread.requestId } : {})
+    await window.seekclaw.daemon.request('agent.cancel', params)
   } catch { /* sendMessage owns the final state */ }
 }
 
@@ -1565,7 +1618,7 @@ onMounted(async () => {
   document.documentElement.dataset.platform = appInfo.value.platform
   document.documentElement.dataset.material = appInfo.value.supportsMica ? 'mica' : 'solid'
   projects.value = loadStoredProjects()
-  unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonEvent)
+  unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonMessage)
   unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
   appReadyForRecovery = true
   await runReconnectCycle(true)

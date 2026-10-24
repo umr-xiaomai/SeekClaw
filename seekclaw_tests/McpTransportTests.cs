@@ -16,6 +16,23 @@ public class McpTransportTests
         }
     }
 
+    private sealed class TrackingResponse : HttpResponseMessage
+    {
+        public TrackingResponse(HttpStatusCode status, HttpContent content, string mediaType) : base(status)
+        {
+            Content = content;
+            Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+        }
+
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
     [Fact]
     public async Task HttpMcpTransport_StreamableHttp_HandlesSseResponseOnPost()
     {
@@ -70,6 +87,39 @@ public class McpTransportTests
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await mcpClient.InitializeAsync(cts.Token);
+    }
+
+    [Fact]
+    public async Task HttpMcpTransport_DisposesStartSseResponseAfterReadLoopEnds()
+    {
+        var response = new TrackingResponse(
+            HttpStatusCode.OK,
+            new StringContent("event: endpoint\ndata: /mcp\n\n", Encoding.UTF8, "text/event-stream"),
+            "text/event-stream");
+        var handler = new DelegatingMockHandler(_ => response);
+
+        using var client = new HttpClient(handler);
+        await using var transport = new HttpMcpTransport("http://localhost:8080/mcp", client);
+        await transport.StartAsync(CancellationToken.None);
+        await transport.DisposeAsync();
+
+        Assert.True(response.Disposed);
+    }
+
+    [Fact]
+    public async Task HttpMcpTransport_DisposesJsonGreetingResponse()
+    {
+        var response = new TrackingResponse(
+            HttpStatusCode.OK,
+            new StringContent("""{"endpoint":"POST /mcp"}""", Encoding.UTF8),
+            "application/json");
+        var handler = new DelegatingMockHandler(_ => response);
+
+        using var client = new HttpClient(handler);
+        await using var transport = new HttpMcpTransport("http://localhost:8080/mcp", client);
+        await transport.StartAsync(CancellationToken.None);
+
+        Assert.True(response.Disposed);
     }
 
     [Fact]

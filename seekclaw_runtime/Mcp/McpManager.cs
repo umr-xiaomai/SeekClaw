@@ -149,47 +149,61 @@ public sealed class McpManager(
         };
 
         var client = new McpClient(name, transport);
+        var registrationStart = _registrations.Count;
         using var initCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         initCts.CancelAfter(TimeSpan.FromSeconds(30));
 
         try
         {
-            await client.InitializeAsync(initCts.Token).ConfigureAwait(false);
+            try
+            {
+                await client.InitializeAsync(initCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new McpException($"Server '{name}' timed out during initialization.");
+            }
+
+            // Auto-discover tools. Names are sanitized to [a-zA-Z0-9_-] (the character set
+            // most providers accept for function names) and de-duplicated so one server
+            // cannot register two tools under the same local name.
+            var tools = await client.ListToolsAsync(ct).ConfigureAwait(false);
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tool in tools)
+            {
+                var baseName = McpToolAdapter.BuildName(name, tool.Name);
+                var uniqueName = baseName;
+                var suffix = 2;
+                while (!usedNames.Add(uniqueName))
+                    uniqueName = $"{baseName}_{suffix++}";
+                _registrations.Add(toolRegistry.Register(new McpToolAdapter(client, tool, uniqueName)));
+            }
+
+            // Auto-discover prompts into the prompt registry.
+            var prompts = await client.ListPromptsAsync(ct).ConfigureAwait(false);
+            foreach (var prompt in prompts)
+            {
+                var promptName = prompt.Name;
+                _registrations.Add(promptRegistry.Register(new PromptContribution(
+                    $"mcp:{name}:{promptName}", PromptSlot.Tool,
+                    async (_, token) => await client.GetPromptAsync(promptName, token).ConfigureAwait(false))));
+            }
+
+            _clients.Add(client);
+            return new McpServerStatus(name, server.Transport, true, tools.Count, null);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch
         {
-            await client.DisposeAsync().ConfigureAwait(false);
-            throw new McpException($"Server '{name}' timed out during initialization.");
+            // A server that fails after initialization must not leave half of its tools and
+            // prompts registered, and its stdio child process must not outlive the attempt.
+            for (var index = _registrations.Count - 1; index >= registrationStart; index--)
+            {
+                try { _registrations[index].Dispose(); } catch { }
+                _registrations.RemoveAt(index);
+            }
+            try { await client.DisposeAsync().ConfigureAwait(false); } catch { }
+            throw;
         }
-
-        _clients.Add(client);
-
-        // Auto-discover tools. Names are sanitized to [a-zA-Z0-9_-] (the character set
-        // most providers accept for function names) and de-duplicated so one server
-        // cannot register two tools under the same local name.
-        var tools = await client.ListToolsAsync(ct).ConfigureAwait(false);
-        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var tool in tools)
-        {
-            var baseName = McpToolAdapter.BuildName(name, tool.Name);
-            var uniqueName = baseName;
-            var suffix = 2;
-            while (!usedNames.Add(uniqueName))
-                uniqueName = $"{baseName}_{suffix++}";
-            _registrations.Add(toolRegistry.Register(new McpToolAdapter(client, tool, uniqueName)));
-        }
-
-        // Auto-discover prompts into the prompt registry.
-        var prompts = await client.ListPromptsAsync(ct).ConfigureAwait(false);
-        foreach (var prompt in prompts)
-        {
-            var promptName = prompt.Name;
-            _registrations.Add(promptRegistry.Register(new PromptContribution(
-                $"mcp:{name}:{promptName}", PromptSlot.Tool,
-                async (_, token) => await client.GetPromptAsync(promptName, token).ConfigureAwait(false))));
-        }
-
-        return new McpServerStatus(name, server.Transport, true, tools.Count, null);
     }
 
     private static string DescribeConnectionError(Exception error) => error switch

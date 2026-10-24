@@ -62,6 +62,10 @@ public sealed class SubAgentRunner(
                     {
                         services.AddSingleton(clientFactory);
                     }
+                    if (context.ApprovalGate is not null)
+                    {
+                        services.AddSingleton(context.ApprovalGate);
+                    }
                     services.AddSingleton<ISessionStore>(new InMemorySessionStore());
                 });
 
@@ -80,7 +84,10 @@ public sealed class SubAgentRunner(
             // 2. Configure system prompt, mode, and max steps
             isolatedRuntime.ConfigStore.Config.Agent.SystemPrompt = def.PromptKey;
             isolatedRuntime.ConfigStore.Config.Agent.MaxSteps = def.MaxSteps;
-            isolatedRuntime.ConfigStore.Config.Agent.Mode = def.AllowMutating ? "edit" : "readonly";
+            var parentMode = AgentModeExtensions.Parse(context.Agent.Mode);
+            isolatedRuntime.ConfigStore.Config.Agent.Mode = def.AllowMutating
+                ? parentMode is AgentMode.Manual or AgentMode.Guardrail ? parentMode.ToModeString() : "edit"
+                : "readonly";
             isolatedRuntime.ConfigStore.Config.Agent.AutoVerify = false;
 
             // 3. Optional model override
@@ -131,19 +138,27 @@ public sealed class SubAgentRunner(
                 catch (OperationCanceledException) { }
             }, forwardCts.Token);
 
-            // 5. Create in-memory session and execute turn
-            var session = isolatedRuntime.Sessions.Create(
-                context.Workspace,
-                networkEnabled: context.Agent.NetworkEnabled);
+            // 5. Create in-memory session and execute turn. The forwarding task must be
+            // stopped in every path, including unexpected exceptions, or it keeps the
+            // isolated event subscription and its parent callback alive after cancellation.
+            AgentTurnResult turnResult;
+            try
+            {
+                var session = isolatedRuntime.Sessions.Create(
+                    context.Workspace,
+                    networkEnabled: context.Agent.NetworkEnabled);
 
-            var turnResult = await isolatedRuntime.Agent.RunTurnAsync(
-                session,
-                context.Workspace,
-                request.Task,
-                ct).ConfigureAwait(false);
-
-            forwardCts.Cancel();
-            try { await forwardTask.ConfigureAwait(false); } catch { }
+                turnResult = await isolatedRuntime.Agent.RunTurnAsync(
+                    session,
+                    context.Workspace,
+                    request.Task,
+                    ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                forwardCts.Cancel();
+                try { await forwardTask.ConfigureAwait(false); } catch { }
+            }
 
             stopwatch.Stop();
 

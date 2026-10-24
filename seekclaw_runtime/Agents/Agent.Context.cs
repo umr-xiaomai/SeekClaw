@@ -31,6 +31,7 @@ public sealed partial class Agent
                     Role = message.Role,
                     Text = message.Text,
                     Thinking = message.Thinking,
+                    ThinkingSignature = message.ThinkingSignature,
                     ViewedImages = message.ViewedImages,
                     ToolCalls = message.ToolCalls,
                     ToolCallId = message.ToolCallId,
@@ -46,11 +47,20 @@ public sealed partial class Agent
         AgentSession session,
         WorkspaceInfo workspace,
         ModelInfo model,
-        IReadOnlyList<ChatMessage> source,
         string systemPrompt,
+        int currentTurnStartIndex,
         CancellationToken ct)
     {
+        var source = session.Messages;
         var (old, recent) = ContextPlanner.SplitForCompaction(source, model.Model, systemPrompt);
+        if (currentTurnStartIndex >= 0 && old.Count > currentTurnStartIndex)
+        {
+            // Never summarize the user message or any tool exchange from the turn that
+            // is currently executing. Besides losing instructions, summarizing image
+            // payloads here would make them disappear from the persisted history.
+            old = source.Take(currentTurnStartIndex).ToList();
+            recent = source.Skip(currentTurnStartIndex).ToList();
+        }
         if (old.Count == 0) return;
 
         events.Publish(new StatusEvent("Compacting context", $"{old.Count} earlier messages"));
@@ -76,17 +86,15 @@ public sealed partial class Agent
             ">>> [Context compaction] 之前的对话已被压缩以保持上下文可容纳，以下是阶段性总结：\n\n"
             + summary.Trim());
 
-        session.Messages.Clear();
-        session.Messages.Add(summaryMessage);
-        session.Messages.AddRange(recent);
+        var compacted = new List<ChatMessage>(recent.Count + 1) { summaryMessage };
+        compacted.AddRange(recent);
 
         try
         {
-            sessionStore.ReplaceHistory(session, session.Messages);
+            sessionStore.ReplaceHistory(session, compacted);
         }
         catch (Exception ex)
         {
-            // Keep the in-memory compacted view even if persistence fails.
             events.Publish(new WarningEvent($"Could not persist context compaction: {ex.Message}"));
         }
 

@@ -8,6 +8,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
 import type { DaemonMessage, DaemonRequestOptions, RevertDiffItem } from '../shared/ipc.js'
 import { DaemonClient } from './daemon-client.js'
+import { PendingApprovalCache } from './pending-approval-cache.js'
 import { checkoutGitBranch, createGitBranch, getGitBranches, getGitCommitDiff, getGitHistory, getGitOverview, openProjectTerminal, revertFileDiffs } from './project-tools.js'
 import {
   destroyComputerOverlay,
@@ -18,6 +19,7 @@ import {
 } from './computer-overlay.js'
 
 const daemon = new DaemonClient()
+const pendingApprovals = new PendingApprovalCache()
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
@@ -445,17 +447,39 @@ function registerIpc(): void {
     getGitCommitDiff(path, hash)
   )
 
-  ipcMain.handle('daemon:connect', () => daemon.connect())
-  ipcMain.handle('daemon:disconnect', () => daemon.disconnect())
+  ipcMain.handle('daemon:connect', async () => {
+    const state = await daemon.connect()
+    if (state.connected) {
+      // The renderer subscribes before connecting, so replay approvals that were
+      // emitted while a reload was in progress. Without this, the runtime waits
+      // for its full approval timeout even though the user can see the turn.
+      for (const message of pendingApprovals.snapshot())
+        mainWindow?.webContents.send('daemon:event', message)
+    }
+    return state
+  })
+  ipcMain.handle('daemon:disconnect', () => {
+    pendingApprovals.clear()
+    daemon.disconnect()
+  })
   ipcMain.handle(
     'daemon:request',
-    (_event, method: string, params?: Record<string, unknown>, options?: DaemonRequestOptions) =>
-      daemon.request(method, params, options))
+    async (_event, method: string, params?: Record<string, unknown>, options?: DaemonRequestOptions) => {
+      const response = await daemon.request(method, params, options)
+      if (method === 'agent.approve' || method === 'agent.approval')
+        pendingApprovals.acknowledge(params?.approvalId)
+      return response
+    })
 
   daemon.on('event', (message) => {
+    pendingApprovals.remember(message)
+    pendingApprovals.finish(message)
     if (message.event === 'tool_start' && (message.data === 'computer' || message.data === 'computer_inspect')) {
       showComputerOverlay(() => {
-        void daemon.request('agent.cancel').catch(() => undefined)
+        const params = message.sessionId
+          ? { sessionId: message.sessionId }
+          : { requestId: message.id }
+        void daemon.request('agent.cancel', params).catch(() => undefined)
       })
     } else if (message.event === 'tool_done' && (message.data?.includes('computer') || isComputerOverlayActive())) {
       scheduleHideComputerOverlay(900)
@@ -466,7 +490,10 @@ function registerIpc(): void {
     showScheduleNativeNotification(message)
     mainWindow?.webContents.send('daemon:event', message)
   })
-  daemon.on('state', (state) => mainWindow?.webContents.send('daemon:state', state))
+  daemon.on('state', (state) => {
+    if (!state.connected) pendingApprovals.clear()
+    mainWindow?.webContents.send('daemon:state', state)
+  })
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -494,6 +521,7 @@ if (!hasSingleInstanceLock) {
 
 app.on('before-quit', (event) => {
   isQuitting = true
+  pendingApprovals.clear()
   destroyComputerOverlay()
   if (tray) {
     tray.destroy()

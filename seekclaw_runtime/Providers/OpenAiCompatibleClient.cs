@@ -94,6 +94,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 : TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds));
 
             var acc = new Accumulator();
+            var sawTerminalFrame = false;
             Stream stream;
             try { stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -129,14 +130,32 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                     if (!hasNext) break;
 
                     var sse = events.Current;
-                    if (sse.Data == "[DONE]") break;
+                    if (sse.Data == "[DONE]")
+                    {
+                        sawTerminalFrame = true;
+                        break;
+                    }
 
                     JsonNode? node;
                     try { node = JsonNode.Parse(sse.Data); }
-                    catch (JsonException) { continue; }
+                    catch (JsonException ex)
+                    {
+                        throw new LlmException(
+                            $"{request.Provider.Id} returned a malformed streaming event.",
+                            retryable: true,
+                            inner: ex);
+                    }
 
                     foreach (var evt in acc.Consume(node)) yield return evt;
+                    if (acc.SawFinishReason) sawTerminalFrame = true;
                 }
+            }
+
+            if (!sawTerminalFrame)
+            {
+                throw new LlmException(
+                    $"{request.Provider.Id} stream ended before a completion frame ([DONE] or finish_reason).",
+                    retryable: true);
             }
 
             yield return new LlmCompleted(DeepSeekOptimizationPolicy.ValidateCompletion(acc.Build(request), request));
@@ -413,6 +432,8 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         private long _cachedInputTokens;
         private long _outputTokens;
         private string _finishReason = "";
+
+        public bool SawFinishReason => _finishReason.Length > 0;
 
         public IEnumerable<LlmStreamEvent> Consume(JsonNode? chunk)
         {

@@ -23,6 +23,8 @@ public sealed class ChatMessage
     public string Text { get; set; } = "";
     public IReadOnlyList<ChatImageAttachment>? Images { get; init; }
     public string? Thinking { get; set; }
+    /// <summary>Anthropic extended-thinking signature required when replaying this block.</summary>
+    public string? ThinkingSignature { get; set; }
     /// <summary>"provider/model" that produced this assistant message (shown by clients).</summary>
     public string? ModelRef { get; set; }
     public IReadOnlyList<ChatImageReference>? ViewedImages { get; init; }
@@ -104,6 +106,7 @@ public sealed record LlmCompletion
 {
     public string Text { get; init; } = "";
     public string Thinking { get; init; } = "";
+    public string? ThinkingSignature { get; init; }
     public IReadOnlyList<ToolCallRequest> ToolCalls { get; init; } = [];
     public TokenUsage Usage { get; init; } = new(0, 0);
     public string FinishReason { get; init; } = "";

@@ -50,8 +50,8 @@ public interface ISessionStore
 
 public sealed class SessionStore : ISessionStore
 {
-    private static readonly ConcurrentDictionary<string, Lock> SessionGates = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly ConcurrentDictionary<string, Lock> MigrationGates = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly GateTable SessionGates = new();
+    private static readonly GateTable MigrationGates = new();
     private readonly SeekClawDatabase _database;
 
     public SessionStore() : this(new SeekClawDatabase()) { }
@@ -94,7 +94,8 @@ public sealed class SessionStore : ISessionStore
         EnsureLegacyImported(workspace);
         var scope = SeekClawDatabase.ScopeKey(workspace);
 
-        lock (GateFor(scope, sourceSessionId))
+        using var gate = GateFor(scope, sourceSessionId);
+        lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
             var sourceHeader = ReadHeader(connection, scope, sourceSessionId)
@@ -247,7 +248,8 @@ public sealed class SessionStore : ISessionStore
             ? TitleFrom(record.Text)
             : null;
 
-        lock (GateFor(session.Scope, session.Header.Id))
+        using (var gate = GateFor(session.Scope, session.Header.Id))
+        lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(deferred: false);
@@ -293,7 +295,8 @@ public sealed class SessionStore : ISessionStore
     {
         ValidateSessionId(sessionId);
         var scope = SeekClawDatabase.ScopeKey(workspace);
-        lock (GateFor(scope, sessionId))
+        using (var gate = GateFor(scope, sessionId))
+        lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
             if (keepMessageCount <= 0)
@@ -338,7 +341,8 @@ public sealed class SessionStore : ISessionStore
         // Snapshot before touching session.Messages: callers may pass the session's own
         // list, and the in-memory replacement below must not alias the DB payload source.
         var snapshot = messages.ToList();
-        lock (GateFor(session.Scope, session.Header.Id))
+        using (var gate = GateFor(session.Scope, session.Header.Id))
+        lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(deferred: false);
@@ -371,10 +375,12 @@ public sealed class SessionStore : ISessionStore
             }
 
             transaction.Commit();
-        }
 
-        session.Messages.Clear();
-        session.Messages.AddRange(snapshot);
+            // Keep DB and the live in-memory history under the same per-session lock.
+            // Concurrent append/compaction can otherwise observe a half-rewritten list.
+            session.Messages.Clear();
+            session.Messages.AddRange(snapshot);
+        }
     }
 
     public SessionHeader UpdateMetadata(
@@ -388,7 +394,8 @@ public sealed class SessionStore : ISessionStore
         ValidateSessionId(sessionId);
         EnsureLegacyImported(workspace);
         var scope = SeekClawDatabase.ScopeKey(workspace);
-        lock (GateFor(scope, sessionId))
+        using (var gate = GateFor(scope, sessionId))
+        lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
             var assignments = new List<string> { "updated_at = $updatedAt" };
@@ -432,7 +439,8 @@ public sealed class SessionStore : ISessionStore
         ValidateSessionId(sessionId);
         EnsureLegacyImported(workspace);
         var scope = SeekClawDatabase.ScopeKey(workspace);
-        lock (GateFor(scope, sessionId))
+        using (var gate = GateFor(scope, sessionId))
+        lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
             using var command = connection.CreateCommand();
@@ -469,7 +477,8 @@ public sealed class SessionStore : ISessionStore
         ValidateSessionId(sessionId);
         EnsureLegacyImported(workspace);
         var scope = SeekClawDatabase.ScopeKey(workspace);
-        lock (GateFor(scope, sessionId))
+        using (var gate = GateFor(scope, sessionId))
+        lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
             using var command = connection.CreateCommand();
@@ -514,7 +523,8 @@ public sealed class SessionStore : ISessionStore
     private void EnsureLegacyImported(WorkspaceInfo workspace)
     {
         var scope = SeekClawDatabase.ScopeKey(workspace);
-        lock (MigrationGates.GetOrAdd(_database.FilePath + "|" + scope, static _ => new Lock()))
+        using var migrationGate = MigrationGates.Enter(_database.FilePath + "|" + scope);
+        lock (migrationGate.Lock)
         {
             using var connection = _database.OpenConnection();
             using (var check = connection.CreateCommand())
@@ -690,8 +700,56 @@ public sealed class SessionStore : ISessionStore
         if (File.Exists(file)) File.Delete(file);
     }
 
-    private Lock GateFor(string scope, string sessionId) =>
-        SessionGates.GetOrAdd(_database.FilePath + "|" + scope + "|" + sessionId, static _ => new Lock());
+    private GateTable.GateLease GateFor(string scope, string sessionId) =>
+        SessionGates.Enter(_database.FilePath + "|" + scope + "|" + sessionId);
+
+    private sealed class GateTable
+    {
+        private readonly Lock _gate = new();
+        private readonly Dictionary<string, Entry> _entries = new(StringComparer.OrdinalIgnoreCase);
+
+        public GateLease Enter(string key)
+        {
+            lock (_gate)
+            {
+                if (!_entries.TryGetValue(key, out var entry))
+                {
+                    entry = new Entry();
+                    _entries[key] = entry;
+                }
+                entry.References++;
+                return new GateLease(this, key, entry);
+            }
+        }
+
+        private void Exit(string key, Entry entry)
+        {
+            lock (_gate)
+            {
+                if (--entry.References > 0) return;
+                if (_entries.TryGetValue(key, out var current) && ReferenceEquals(current, entry))
+                    _entries.Remove(key);
+            }
+        }
+
+        public sealed class Entry
+        {
+            public Lock Lock { get; } = new();
+            public int References { get; set; }
+        }
+
+        public sealed class GateLease(GateTable owner, string key, Entry entry) : IDisposable
+        {
+            private int _disposed;
+            public Lock Lock => entry.Lock;
+
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                    owner.Exit(key, entry);
+            }
+        }
+    }
 
     private static SessionMessage ToRecord(ChatMessage message) => new()
     {
@@ -706,6 +764,7 @@ public sealed class SessionStore : ISessionStore
             SizeBytes = image.SizeBytes,
         }).ToList(),
         Thinking = message.Thinking,
+        ThinkingSignature = message.ThinkingSignature,
         ModelRef = message.ModelRef,
         ViewedImages = message.ViewedImages?.Select(image => new SessionImageReference
         {
@@ -742,6 +801,7 @@ public sealed class SessionStore : ISessionStore
             Images = record.Images?.Select(image => new ChatImageAttachment(
                 image.Id, image.Name, image.MediaType, image.Data, image.SizeBytes)).ToList(),
             Thinking = record.Thinking,
+            ThinkingSignature = record.ThinkingSignature,
             ModelRef = record.ModelRef,
             ViewedImages = record.ViewedImages?.Select(image => new ChatImageReference(
                 image.Id, image.Name)).ToList(),

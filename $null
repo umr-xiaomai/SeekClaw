@@ -1,0 +1,2 @@
+rg: |record: 文件名、目录名或卷标语法不正确。 (os error 123)
+rg: |Abort|Cancellation|Cancel|Timeout|Task.Delay|WaitAsync|Process.Start|Kill|FileSystemWatcher|Checkpoint|Revert|Undo|Skill|SubAgent|Schedule": 文件名、目录名或卷标语法不正确。 (os error 123)

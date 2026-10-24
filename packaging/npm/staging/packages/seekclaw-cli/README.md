@@ -97,14 +97,26 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 - **验证机制**：代码修改后自动构建/检查/修复循环
 - **热重载**：提示文件和配置无需重启即可重载
 
-## 📦 安装
+## 📦 安装与运行
 
-### 通过 npm 安装 CLI（推荐）
+### 方式一：使用 Desktop 桌面端（推荐）
 
-已发布到 npm 的 `seekclaw-cli` 是自包含 .NET 二进制包，安装后可直接使用，无需单独安装 .NET SDK。当前 npm 包提供 Windows x64 平台二进制。
+SeekClaw Desktop 是功能完备的图形客户端（基于 Electron + Vue 3），内置自包含 .NET Runtime，**无需单独安装 .NET SDK** 即可开箱即用。
+
+* **使用发布包**：下载解压 `SeekClaw-win-x64` 文件夹后，直接运行其中的 `SeekClaw.exe`。
+* **从源码构建**：
+  ```powershell
+  git clone https://github.com/umr-xiaomai/SeekClaw.git
+  cd SeekClaw
+  build.cmd
+  ```
+  `build.cmd` 将自动安装前端依赖、构建自包含 Runtime 与 Electron 应用，产物输出于 `publish\SeekClaw-win-x64\SeekClaw.exe`。
+
+### 方式二：通过 npm 安装 CLI
+
+已发布到 npm 的 `seekclaw-cli` 是自包含 .NET 二进制包，安装后可直接使用，无需单独安装 .NET SDK（目前提供 Windows x64 平台二进制）：
 
 前置要求：
-
 - Node.js 18 或更高版本
 - Git（用于工作区检测）
 
@@ -118,7 +130,7 @@ seekclaw --version
 seekclaw
 ```
 
-也可以执行单次任务或管理命令：
+也可以执行单次任务或恢复会话：
 
 ```powershell
 seekclaw "解释这个项目的架构"
@@ -126,22 +138,15 @@ seekclaw --continue
 seekclaw doctor
 ```
 
-### 从源码构建
+### 方式三：从源码运行 CLI
 
-开发者从源码构建时需要：
-
-- .NET 10.0 SDK 或更高版本
-- Git（用于工作区检测）
+需要 .NET 10.0 SDK 与 Git：
 
 ```bash
 git clone https://github.com/umr-xiaomai/SeekClaw.git
 cd SeekClaw
 dotnet build
-```
 
-### 从源码运行
-
-```bash
 # 交互式聊天模式
 dotnet run --project seekclaw_cli
 
@@ -162,15 +167,17 @@ dotnet run --project seekclaw_cli -- --model "openai/gpt-5.5"
 
 ```mermaid
 flowchart TD
-    subgraph Frontends[前端]
+    subgraph Frontends[前端层]
+        Desktop[seekclaw_desktop<br/>Electron + Vue 3 桌面端]
         CLI[seekclaw_cli<br/>System.CommandLine + 渲染引擎]
-        GUI[GUI / Web / IDE<br/>未来]
+        Web[seekclaw_webserver<br/>Blazor 文档与技能市场]
     end
 
     subgraph Runtime[seekclaw_runtime]
         Facade[SeekClawRuntime<br/>组合根 / Facade]
         Agent[Agent 主循环]
         Bus[(EventBus)]
+        DMN[DaemonServer<br/>Named Pipe / Unix Socket]
         subgraph Provider[提供商层]
             PM[ProviderManager<br/>路由·重试·故障转移·熔断]
             MR[ModelRegistry]
@@ -179,22 +186,22 @@ flowchart TD
             HC[HealthChecker]
             UT[UsageTracker]
         end
-        subgraph Plugins[插件体系]
-            TR[ToolRegistry]
+        subgraph Plugins[插件与扩展]
+            TR[ToolRegistry<br/>12+ 内置工具 / Computer Use]
             PR[PromptRegistry]
             SK[SkillManager]
             MCP[McpManager<br/>stdio / SSE]
         end
         PP[PromptProvider<br/>文件化·热加载·变量]
         WS[WorkspaceManager]
-        SS[SessionStore]
+        SS[SessionStore<br/>SQLite seekclaw.db]
         VF[BuildVerifier]
         CFG[ConfigStore<br/>~/.seekclaw/config.json]
-        DMN[DaemonServer<br/>Named Pipe / Unix Socket]
     end
 
+    Desktop -->|"JSONL IPC 2.1"| DMN
+    Web -. 官方技能市场 API .-> SK
     CLI --> Facade
-    GUI -. daemon 协议 .-> DMN
     DMN --> Agent
     Facade --> Agent
     Agent --> PM
@@ -213,33 +220,43 @@ flowchart TD
     PP --> PR
     WS --> CFG
     Bus --> CLI
+    Bus --> DMN
 ```
 
 ## 📁 项目结构
 
-```
+```text
 SeekClaw/
-├── seekclaw_cli/           # CLI 前端
-│   ├── Commands/           # CLI 命令（provider、model、profile 等）
-│   ├── Ui/                 # 终端渲染引擎
+├── seekclaw_desktop/       # 桌面客户端 (Electron + Vue 3)
+│   ├── src/main/           # Electron 主进程、Daemon IPC 客户端、Computer Use 光环
+│   ├── src/renderer/       # Vue 3 渲染进程（对话、项目、任务规划、设置中心）
+│   └── package.json
+├── seekclaw_cli/           # CLI 终端前端
+│   ├── Commands/           # CLI 命令（provider、model、switch、doctor、skill、mcp 等）
+│   ├── Ui/                 # 终端渲染引擎与 Ansi 双缓冲
 │   └── Program.cs          # 入口点
-├── seekclaw_runtime/       # 核心运行时
+├── seekclaw_runtime/       # 核心运行时引擎
 │   ├── Agents/             # Agent 循环和上下文规划
-│   ├── Configuration/      # 配置管理
+│   ├── ComputerUse/        # 计算机交互扩展（屏幕捕获与动作）
+│   ├── Configuration/      # 配置管理与版本迁移
+│   ├── Coordination/       # 文件写锁协调器
+│   ├── Daemon/             # 本地 IPC 服务端 (Named Pipe / Unix Socket)
 │   ├── Events/             # 事件总线系统
-│   ├── Mcp/                # MCP 客户端实现
-│   ├── Prompts/            # 提示加载和组合
-│   ├── Providers/          # LLM 提供商集成
-│   ├── Sessions/           # 会话持久化
-│   ├── Skills/             # 技能管理
-│   ├── Tools/              # 工具注册和实现
-│   ├── Verification/       # 构建验证
-│   └── Workspaces/         # 工作区检测和管理
-├── seekclaw_tests/         # 单元测试
-├── docs/                   # 文档
-├── prompts/                # 提示模板（未来）
-├── skills/                 # 技能定义（未来）
-└── mcp/                    # MCP 服务器配置（未来）
+│   ├── Mcp/                # MCP 客户端实现 (stdio / SSE / Streamable HTTP)
+│   ├── Prompts/            # 提示加载、变量组合与热重载
+│   ├── Providers/          # LLM 提供商集成与故障转移
+│   ├── Sessions/           # 会话持久化 (SQLite seekclaw.db)
+│   ├── Skills/             # 技能加载与市场安装
+│   ├── SubAgents/          # 子智能体协调体系
+│   ├── Tools/              # 内置工具 (文件、搜索、规划、命令、网络等)
+│   ├── Verification/       # 自动构建验证与自愈循环
+│   └── Workspaces/         # 工作区感知与项目类型检测
+├── seekclaw_webserver/     # 官方网站、在线文档与技能市场中心 (Blazor)
+├── seekclaw_tests/         # 运行时单元测试
+├── seekclaw_cli_tests/     # CLI 单元测试
+├── packaging/              # npm 与发布安装包分发定义
+├── build.cmd / build.py    # 跨平台一键构建脚本 (Runtime + Desktop)
+└── SeekClaw.slnx           # .NET 解决方案定义
 ```
 
 ## ⚙️ 配置
@@ -250,25 +267,44 @@ SeekClaw/
 
 ```json
 {
-  "providers": {
-    "openai": {
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "temperature": 0.2,
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "kind": "openai",
+      "baseUrl": "https://api.openai.com/v1",
       "apiKey": "sk-...",
-      "baseUrl": "https://api.openai.com/v1"
+      "enabled": true,
+      "priority": 1,
+      "models": [
+        {
+          "id": "gpt-5.5",
+          "contextWindow": 128000,
+          "maxOutput": 8192
+        }
+      ]
     },
-    "anthropic": {
-      "apiKey": "sk-ant-..."
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "kind": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKey": "sk-ant-...",
+      "enabled": true,
+      "priority": 2
     }
-  },
-  "profiles": {
-    "default": {
-      "provider": "openai",
-      "model": "gpt-5.5"
-    }
+  ],
+  "routing": {
+    "failoverEnabled": true
   },
   "agent": {
-    "maxSteps": 10,
+    "maxSteps": 40,
     "maxRepairAttempts": 3,
-    "autoVerify": true
+    "autoVerify": true,
+    "mode": "edit"
   }
 }
 ```
@@ -277,10 +313,10 @@ SeekClaw/
 
 每个项目可以在 `.seekclaw/config.json` 中覆盖：
 
-- 提供商和模型选择
-- 温度和上下文设置
-- 工具权限
-- 技能配置
+- 提供商和模型选择（`provider`、`model`、`temperature`）
+- Agent 模式与系统提示词（`mode`、`systemPrompt`）
+- 技能与工具禁用列表（`disabledSkills`、`disabledTools`）
+- 构建验证命令（`autoVerify`、`verifyCommand`）
 - MCP 服务器设置
 
 ## 🎯 使用示例
@@ -288,9 +324,9 @@ SeekClaw/
 ### 交互式聊天
 
 ```bash
-seekclaw chat
-# 或直接
 seekclaw
+# 或
+seekclaw chat
 ```
 
 ### 单次任务
@@ -301,38 +337,66 @@ seekclaw "为 UserService 类编写单元测试"
 seekclaw "修复项目中的构建错误"
 ```
 
+### 切换模型与 Provider
+
+```bash
+# 交互式切换 Provider 与模型
+seekclaw switch
+
+# 或直接激活指定模型/Provider
+seekclaw model use openai/gpt-5.5
+seekclaw provider use anthropic
+```
+
 ### 提供商管理
 
 ```bash
 seekclaw provider list
-seekclaw provider add openai --api-key sk-...
-seekclaw provider test openai
-seekclaw provider use anthropic
+seekclaw provider add --id deepseek --kind openai --base-url "https://api.deepseek.com/v1" --api-key "sk-..." --model "deepseek-chat"
+seekclaw provider test deepseek
 ```
 
 ### 模型管理
 
 ```bash
 seekclaw model list
-seekclaw model use openai/gpt-5.5
 seekclaw model info claude-opus
 seekclaw model search "快速编码模型"
+seekclaw model test openai/gpt-5.5
 ```
 
 ### 会话管理
 
 ```bash
-seekclaw session list
-seekclaw session resume <session-id>
-seekclaw session export <session-id> --format json
+# 列出当前工作区的会话
+seekclaw sessions
+
+# 恢复上一次或指定会话
+seekclaw --continue
+seekclaw --resume <session-id>
 ```
 
-会话数据和 Desktop 项目列表统一保存在 `~/.seekclaw/seekclaw.db`。升级后首次访问工作区时，旧的 `.session/*.jsonl`、`.seekclaw/sessions/*.jsonl` 或全局 `~/.seekclaw/sessions/*.jsonl` 会自动导入，原文件保留为备份。Provider、模型、Profile、MCP、Skill、工作区配置仍使用原有 JSON/文本文件，用量记录仍为 `~/.seekclaw/usage.jsonl`。
+会话数据和 Desktop 项目列表统一保存在 `~/.seekclaw/seekclaw.db`。升级后首次访问工作区时，旧的 JSONL 会话会自动导入，原文件保留为备份。Provider、模型、MCP、Skill、工作区配置保存在 JSON 文件，用量记录保存在 `~/.seekclaw/usage.jsonl`。
 
-### 健康检查
+### 技能与 MCP 管理
+
+```bash
+# 技能管理（支持从官方技能市场或 URL 直接安装）
+seekclaw skill list
+seekclaw skill install code-review
+seekclaw skill enable code-review
+
+# MCP 管理
+seekclaw mcp list
+seekclaw mcp test
+```
+
+### 健康检查与用量
 
 ```bash
 seekclaw doctor
+seekclaw usage
+seekclaw usage --days 7
 ```
 
 ## 🔌 扩展 SeekClaw

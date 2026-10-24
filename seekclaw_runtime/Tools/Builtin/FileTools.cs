@@ -148,10 +148,14 @@ public sealed class WriteFileTool(IPromptProvider prompts) : BuiltinTool(prompts
         string path, string content, ToolContext context, CancellationToken ct)
     {
         var existed = File.Exists(path);
-        var oldText = existed ? await File.ReadAllTextAsync(path, ct).ConfigureAwait(false) : "";
+        var oldFile = existed
+            ? await TextFileIO.ReadAsync(path, ct).ConfigureAwait(false)
+            : DecodedTextFile.EmptyUtf8;
+        var oldText = oldFile.Text;
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllTextAsync(path, content, ct).ConfigureAwait(false);
+        await TextFileIO.WriteAtomicAsync(path, content, oldFile.Encoding, oldFile.Preamble, ct)
+            .ConfigureAwait(false);
 
         var relative = Path.GetRelativePath(context.Workspace.Root, path);
         var lineCount = content.Count(c => c == '\n') + 1;
@@ -198,8 +202,13 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
     private static async Task<ToolResult> EditCoreAsync(
         string path, string oldString, string newString, bool replaceAll, ToolContext context, CancellationToken ct)
     {
-        var text = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
-        var occurrences = CountOccurrences(text, oldString);
+        var file = await TextFileIO.ReadAsync(path, ct).ConfigureAwait(false);
+        var text = file.Text;
+        var newline = TextFileIO.DetectDominantNewline(text);
+        var normalizedText = TextFileIO.NormalizeNewlines(text);
+        var normalizedOld = TextFileIO.NormalizeNewlines(oldString);
+        var normalizedNew = TextFileIO.NormalizeNewlines(newString);
+        var occurrences = CountOccurrences(normalizedText, normalizedOld);
         if (occurrences == 0)
             return ToolResult.Fail($"old_string not found in {path}. Read the file again — the content may have changed.");
 
@@ -207,10 +216,12 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
             return ToolResult.Fail(
                 $"old_string matches {occurrences} locations in {path}. Provide more surrounding context to make it unique, or set replace_all.");
 
-        var updated = replaceAll
-            ? text.Replace(oldString, newString)
-            : ReplaceFirst(text, oldString, newString);
-        await File.WriteAllTextAsync(path, updated, ct).ConfigureAwait(false);
+        var updatedNormalized = replaceAll
+            ? normalizedText.Replace(normalizedOld, normalizedNew, StringComparison.Ordinal)
+            : ReplaceFirst(normalizedText, normalizedOld, normalizedNew);
+        var updated = TextFileIO.RestoreNewlines(updatedNormalized, newline);
+        await TextFileIO.WriteAtomicAsync(path, updated, file.Encoding, file.Preamble, ct)
+            .ConfigureAwait(false);
 
         var relative = Path.GetRelativePath(context.Workspace.Root, path);
         var diff = DiffUtil.Unified(text, updated, relative);
@@ -237,5 +248,105 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
     {
         var index = text.IndexOf(oldValue, StringComparison.Ordinal);
         return index < 0 ? text : text[..index] + newValue + text[(index + oldValue.Length)..];
+    }
+}
+
+internal sealed record DecodedTextFile(string Text, Encoding Encoding, byte[] Preamble)
+{
+    public static DecodedTextFile EmptyUtf8 { get; } = new("", new UTF8Encoding(false), []);
+}
+
+/// <summary>
+/// Encoding-preserving text I/O for mutating file tools. Writes go to a sibling
+/// temporary file and are atomically renamed over the destination, so a crash or
+/// cancellation cannot leave a half-written source file.
+/// </summary>
+internal static class TextFileIO
+{
+    public static async Task<DecodedTextFile> ReadAsync(string path, CancellationToken ct)
+    {
+        var bytes = await File.ReadAllBytesAsync(path, ct).ConfigureAwait(false);
+        var (encoding, preambleLength) = DetectEncoding(bytes);
+        var text = encoding.GetString(bytes, preambleLength, bytes.Length - preambleLength);
+        return new DecodedTextFile(text, encoding, bytes[..preambleLength]);
+    }
+
+    public static async Task WriteAtomicAsync(
+        string path, string text, Encoding encoding, byte[] preamble, CancellationToken ct)
+    {
+        var directory = Path.GetDirectoryName(path)
+                        ?? throw new IOException($"Cannot determine the parent directory of '{path}'.");
+        Directory.CreateDirectory(directory);
+
+        var tempPath = Path.Combine(
+            directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await using (var stream = new FileStream(tempPath, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
+            }))
+            {
+                if (preamble.Length > 0)
+                    await stream.WriteAsync(preamble, ct).ConfigureAwait(false);
+
+                var body = encoding.GetBytes(text);
+                await stream.WriteAsync(body, ct).ConfigureAwait(false);
+                await stream.FlushAsync(ct).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+
+            if (!OperatingSystem.IsWindows() && File.Exists(path))
+            {
+                try { File.SetUnixFileMode(tempPath, File.GetUnixFileMode(path)); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { }
+            }
+
+            File.Move(tempPath, path, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    public static string DetectDominantNewline(string text)
+    {
+        var crlf = 0;
+        var bareLf = 0;
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (text[index] != '\n') continue;
+            if (index > 0 && text[index - 1] == '\r') crlf++;
+            else bareLf++;
+        }
+        return crlf > bareLf ? "\r\n" : "\n";
+    }
+
+    public static string NormalizeNewlines(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal);
+
+    public static string RestoreNewlines(string text, string newline) =>
+        newline == "\n" ? text : text.Replace("\n", newline, StringComparison.Ordinal);
+
+    private static (Encoding Encoding, int PreambleLength) DetectEncoding(byte[] bytes)
+    {
+        if (bytes.Length >= 4 && bytes[0] == 0xFF && bytes[1] == 0xFE && bytes[2] == 0x00 && bytes[3] == 0x00)
+            return (new UTF32Encoding(bigEndian: false, byteOrderMark: true), 4);
+        if (bytes.Length >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0xFE && bytes[3] == 0xFF)
+            return (new UTF32Encoding(bigEndian: true, byteOrderMark: true), 4);
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            return (new UTF8Encoding(encoderShouldEmitUTF8Identifier: true), 3);
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+            return (new UnicodeEncoding(bigEndian: false, byteOrderMark: true), 2);
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+            return (new UnicodeEncoding(bigEndian: true, byteOrderMark: true), 2);
+        return (new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), 0);
     }
 }
