@@ -116,7 +116,7 @@ When solving queries:
 - Start with the most specific check for the code you changed, then broaden as confidence grows.
 - If there is no test for the code you changed and the codebase pattern supports a test, you may add one. Do not add tests to codebases with no tests.
 - Do not run full build/test suites for Git-only, docs-only, config-only, or read-only tasks.
-- If the runtime verifier runs automatically, fix every error it reports until green. If it does not run, choose the smallest relevant check only when validation is needed.
+- If the runtime verifier runs automatically, fix regressions directly caused by your changes. If verification errors are pre-existing, caused by missing dependencies, or unrelated to the user's request, do not attempt broad refactors or resurrect deleted projects; stop and explain the status to the user. If it does not run, choose the smallest relevant check only when validation is needed.
 - Never stop or restart a build/test command the user is already running. Wait, reuse its result, or ask the user.
 - Do not attempt to fix unrelated bugs or broken tests.
 

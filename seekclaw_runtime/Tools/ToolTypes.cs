@@ -120,14 +120,17 @@ public sealed record ToolResult
     /// <summary>Optional multi-modal image attachments produced by the tool (e.g. capture_screen).</summary>
     public IReadOnlyList<ChatImageAttachment>? Images { get; init; }
 
-    public static ToolResult Ok(string output, string? summary = null) =>
-        new() { Success = true, Output = output, Summary = summary };
+    /// <summary>Explicit override for whether this execution mutated workspace files. When null, falls back to ITool.Mutating.</summary>
+    public bool? Mutated { get; init; }
 
-    public static ToolResult Ok(string output, IReadOnlyList<ChatImageAttachment>? images, string? summary = null) =>
-        new() { Success = true, Output = output, Summary = summary, Images = images };
+    public static ToolResult Ok(string output, string? summary = null, bool? mutated = null) =>
+        new() { Success = true, Output = output, Summary = summary, Mutated = mutated };
 
-    public static ToolResult Fail(string error) =>
-        new() { Success = false, Output = error, Summary = error.Split('\n')[0] };
+    public static ToolResult Ok(string output, IReadOnlyList<ChatImageAttachment>? images, string? summary = null, bool? mutated = null) =>
+        new() { Success = true, Output = output, Summary = summary, Images = images, Mutated = mutated };
+
+    public static ToolResult Fail(string error, bool? mutated = null) =>
+        new() { Success = false, Output = error, Summary = error.Split('\n')[0], Mutated = mutated };
 }
 
 public interface ITool

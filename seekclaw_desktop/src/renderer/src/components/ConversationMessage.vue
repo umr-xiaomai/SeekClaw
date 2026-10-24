@@ -13,7 +13,7 @@ import {
   Split,
   Wrench
 } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { ChatMessage } from '../types'
 import { fileBadgeText, fileExtClass, formatMessageTime } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
@@ -28,7 +28,9 @@ const props = withDefaults(defineProps<{
   streaming?: boolean
   /** Only true at the final bubble tail of an assistant turn. */
   showFooter?: boolean
-}>(), { imageSources: () => ({}), showFooter: false })
+  /** True when this assistant message is an intermediate step in a multi-step turn. */
+  isIntermediate?: boolean
+}>(), { imageSources: () => ({}), showFooter: false, isIntermediate: false })
 
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
@@ -63,11 +65,36 @@ async function copyContent(): Promise<void> {
 const regularTools = computed(() => (props.message.tools ?? []).filter((tool) => !tool.diff))
 const editedTools = computed(() => (props.message.tools ?? []).filter((tool) => tool.diff && tool.filePath))
 
+const isToolRunning = computed(() => props.streaming && regularTools.value.some((tool) => tool.state === 'running'))
+const hasToolError = computed(() => regularTools.value.some((tool) => tool.state === 'error'))
+
+// Tools are open by default if running or if there was an error; otherwise collapsed
+const toolsOpen = ref(false)
+
+watch([isToolRunning, hasToolError], ([running, error]) => {
+  if (running || error) {
+    toolsOpen.value = true
+  }
+}, { immediate: true })
+
+const toolsSummaryLabel = computed(() => {
+  const count = regularTools.value.length
+  if (isToolRunning.value) {
+    const running = regularTools.value.find((t) => t.state === 'running')
+    return running ? `正在调用工具 · ${running.name}` : '正在调用工具'
+  }
+  if (hasToolError.value) {
+    return `工具执行异常 (${count} 个工具)`
+  }
+  const names = Array.from(new Set(regularTools.value.map((t) => t.name))).join(', ')
+  return `已调用 ${count} 个工具 (${names})`
+})
+
 /** System-injected messages (compaction / verification) get dedicated cards. */
 const systemKind = computed<'memory' | 'verify' | null>(() => {
   const content = props.message.content
   if (content.startsWith('>>> [Context compaction]')) return 'memory'
-  if (content.startsWith('The automatic verification step failed')) return 'verify'
+  if (content.startsWith('The automatic verification step')) return 'verify'
   return null
 })
 
@@ -130,7 +157,7 @@ function openFileLocation(path?: string): void {
 </script>
 
 <template>
-  <article v-if="!message.content?.startsWith('>>> [output truncated]')" class="message" :class="[`message-${message.role}`, { dimmed }]">
+  <article v-if="!message.content?.startsWith('>>> [output truncated]')" class="message" :class="[`message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate }]">
     <!-- user: either a real message or a system-injected card -->
     <template v-if="message.role === 'user'">
       <div v-if="systemKind" class="system-card" :class="`system-${systemKind}`">
@@ -233,13 +260,28 @@ function openFileLocation(path?: string): void {
         </button>
         <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
 
-        <div v-if="regularTools.length" class="tool-list">
-          <div v-for="tool in regularTools" :key="tool.id" class="tool-row" :title="tool.detail || tool.name">
-            <LoaderCircle v-if="tool.state === 'running'" :size="14" class="spin" />
-            <CircleAlert v-else-if="tool.state === 'error'" :size="14" class="tool-error" />
+        <div v-if="regularTools.length" class="tool-group">
+          <button
+            class="tools-toggle"
+            :class="{ active: isToolRunning, error: hasToolError }"
+            type="button"
+            @click="toolsOpen = !toolsOpen"
+          >
+            <LoaderCircle v-if="isToolRunning" :size="14" class="spin" />
+            <CircleAlert v-else-if="hasToolError" :size="14" class="tool-error" />
             <Wrench v-else :size="14" class="tool-done" />
-            <span>{{ tool.name }}</span>
-            <small v-if="tool.detail">{{ tool.detail }}</small>
+            <span>{{ toolsSummaryLabel }}</span>
+            <ChevronDown :size="14" :class="{ rotated: toolsOpen }" />
+          </button>
+
+          <div v-if="toolsOpen" class="tool-list">
+            <div v-for="tool in regularTools" :key="tool.id" class="tool-row" :title="tool.detail || tool.name">
+              <LoaderCircle v-if="tool.state === 'running'" :size="14" class="spin" />
+              <CircleAlert v-else-if="tool.state === 'error'" :size="14" class="tool-error" />
+              <Wrench v-else :size="14" class="tool-done" />
+              <span>{{ tool.name }}</span>
+              <small v-if="tool.detail">{{ tool.detail }}</small>
+            </div>
           </div>
         </div>
 
@@ -264,7 +306,10 @@ function openFileLocation(path?: string): void {
         </section>
       </div>
 
-      <MarkdownMessage v-if="message.content" :content="message.content" />
+      <div v-if="isIntermediate && message.content" class="step-preamble">
+        {{ message.content }}
+      </div>
+      <MarkdownMessage v-else-if="message.content" :content="message.content" />
       <div v-if="streaming && (message.state === 'thinking' || message.state === 'streaming')"
         class="response-placeholder" aria-label="AI 正在思考">
         <span /><span /><span />
@@ -476,4 +521,72 @@ function openFileLocation(path?: string): void {
   color: var(--text-muted);
   margin-left: 2px;
 }
+
+.tools-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  padding: 3px 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.tools-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.tools-toggle.active {
+  color: var(--accent);
+}
+
+.tools-toggle.error {
+  color: var(--danger);
+}
+
+.tools-toggle>.lucide-chevron-down {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 160ms ease;
+}
+
+.tools-toggle>.lucide-chevron-down.rotated {
+  transform: rotate(180deg);
+}
+
+.tools-toggle .spin {
+  color: var(--accent);
+}
+
+.tools-toggle .tool-error {
+  color: var(--danger);
+}
+
+.tools-toggle .tool-done {
+  color: var(--text-muted);
+}
+
+.step-preamble {
+  margin: 4px 0 8px 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+
+.message.is-intermediate {
+  margin-bottom: 6px;
+}
+
+.message.is-intermediate .assistant-activity {
+  margin-bottom: 2px;
+}
+
 </style>

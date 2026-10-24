@@ -1,13 +1,15 @@
-The automatic verification step failed after your changes.
+The automatic verification step reported errors:
 
 Command: {{command}}
 
 Output:
 {{error}}
 
-Fix the reported errors:
-1. Read the affected files before editing.
-2. Group errors by root cause; one bad change can fan out into many messages, so fix causes rather than symptoms.
-3. Make the smallest correct change.
-4. Do not disable, skip, or weaken the verification.
-5. Re-run the verification and continue until it is green.
+Assess the failure before attempting repairs:
+1. Determine whether these errors were directly caused by changes you made in this turn.
+2. If the errors are caused by pre-existing repository issues, missing external tools/dependencies, or intentional architecture deprecations unrelated to the user's explicit request: DO NOT try to fix unrelated files, resurrect deleted solutions, or rewrite the repository. Stop immediately and explain the build issue to the user.
+3. If the errors are regressions caused by your recent edits:
+   - Read the affected files before editing.
+   - Group errors by root cause and make the smallest surgical fix to your changes.
+   - Do not disable, skip, or weaken the verification command.
+   - Once fixed, verify your changes and summarize the resolution.

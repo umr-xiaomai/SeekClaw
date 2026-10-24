@@ -1057,6 +1057,7 @@ async function selectThread(id: string): Promise<void> {
 interface ConversationItem {
   message: ChatMessage
   showFooter: boolean
+  isIntermediate?: boolean
 }
 
 const conversationItems = computed<ConversationItem[]>(() => {
@@ -1069,24 +1070,26 @@ const conversationItems = computed<ConversationItem[]>(() => {
 
   return messages.map((message, index) => {
     let showFooter = false
-    if (message.role === 'assistant' && Boolean(message.content?.trim())) {
-      // If this message belongs to the actively running turn, do not show footer
+    let isIntermediate = false
+    if (message.role === 'assistant') {
       const inActiveRunningTurn = isThreadRunning && (lastUserIndex < 0 || index >= lastUserIndex)
-      if (!inActiveRunningTurn) {
-        // Must be the last assistant message in this turn
-        let hasLaterAssistant = false
-        for (let j = index + 1; j < messages.length; j++) {
-          const next = messages[j]
-          if (!next || next.role === 'user') break
-          if (next.role === 'assistant') {
-            hasLaterAssistant = true
-            break
-          }
+      let hasLaterAssistant = false
+      for (let j = index + 1; j < messages.length; j++) {
+        const next = messages[j]
+        if (!next || next.role === 'user') break
+        if (next.role === 'assistant') {
+          hasLaterAssistant = true
+          break
         }
+      }
+      if (hasLaterAssistant) {
+        isIntermediate = true
+      }
+      if (!inActiveRunningTurn && Boolean(message.content?.trim())) {
         showFooter = !hasLaterAssistant
       }
     }
-    return { message, showFooter }
+    return { message, showFooter, isIntermediate }
   })
 })
 
@@ -1769,6 +1772,7 @@ watch(theme, applyTheme)
                     <ConversationMessage :message="item.message" :image-sources="activeImageSources"
                       :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
                       :show-footer="item.showFooter"
+                      :is-intermediate="item.isIntermediate"
                       :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
                       @open-diff="openToolDiff"
                       @branch="branchFromMessage"
@@ -1782,6 +1786,7 @@ watch(theme, applyTheme)
                   <ConversationMessage :message="item.message" :image-sources="activeImageSources"
                     :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
                     :show-footer="item.showFooter"
+                    :is-intermediate="item.isIntermediate"
                     :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
                     @open-diff="openToolDiff"
                     @branch="branchFromMessage"

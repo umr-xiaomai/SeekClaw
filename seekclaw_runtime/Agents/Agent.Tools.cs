@@ -130,7 +130,7 @@ public sealed partial class Agent
                 : result.FilePath;
         return new ToolExecution(
             ChatMessage.ToolResult(call.Id, call.Name, result.Output, result.Success, result.Diff, filePath, result.Images),
-            tool.Mutating && result.Success);
+            (result.Mutated ?? tool.Mutating) && result.Success);
     }
 
     private static bool RequiresApproval(AgentMode mode, ITool tool)

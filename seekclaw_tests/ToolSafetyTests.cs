@@ -76,6 +76,28 @@ public sealed class ToolSafetyTests : IDisposable
         Assert.Equal("alpha\r\nBETA\r\nGAMMA\r\n", encoding.GetString(bytes, 2, bytes.Length - 2));
     }
 
+    [Theory]
+    [InlineData("git status", true)]
+    [InlineData("git log -n 5", true)]
+    [InlineData("git show 060ca71", true)]
+    [InlineData("git diff HEAD~1", true)]
+    [InlineData("ls -la", true)]
+    [InlineData("dir /b", true)]
+    [InlineData("cat README.md", true)]
+    [InlineData("rg 'function' src/", true)]
+    [InlineData("pwd", true)]
+    [InlineData("echo hello", true)]
+    [InlineData("git log | head -n 10", true)]
+    [InlineData("git commit -m 'feat'", false)]
+    [InlineData("rm -rf src/", false)]
+    [InlineData("echo hello > out.txt", false)]
+    [InlineData("dotnet build", false)]
+    [InlineData("npm install", false)]
+    public void BashTool_IsReadOnlyCommand_DetectsReadActionsAccurately(string command, bool expectedReadOnly)
+    {
+        Assert.Equal(expectedReadOnly, BashTool.IsReadOnlyCommand(command));
+    }
+
     [Fact]
     public void PromptVariables_MapApprovalModesAndHonorExplicitOverride()
     {

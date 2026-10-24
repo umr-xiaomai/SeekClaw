@@ -126,14 +126,16 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
                 outputText = "(no output)";
             }
 
+            var isReadOnly = IsReadOnlyCommand(command);
             var summary = $"{Shorten(command)} → exit {process.ExitCode}";
             return process.ExitCode == 0
-                ? ToolResult.Ok(outputText, summary)
+                ? ToolResult.Ok(outputText, summary, mutated: isReadOnly ? false : null)
                 : new ToolResult
                 {
                     Success = false,
                     Output = $"Exit code {process.ExitCode}\n{outputText}",
-                    Summary = summary
+                    Summary = summary,
+                    Mutated = isReadOnly ? false : null
                 };
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -194,4 +196,97 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
 
     private static string Shorten(string command) =>
         command.Length > 60 ? command[..60] + "…" : command;
+    /// <summary>
+    /// Checks whether the command line consists solely of known read-only queries or inspection commands.
+    /// When true, the execution result will be marked as non-mutating (Mutated = false),
+    /// avoiding accidental auto-verification triggers when reading files or inspecting git.
+    /// </summary>
+    public static bool IsReadOnlyCommand(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command)) return false;
+
+        var trimmed = command.Trim();
+        // File redirection or file-setting cmdlets mean not read-only
+        if (trimmed.Contains('>') ||
+            trimmed.Contains("Out-File", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("Set-Content", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("Add-Content", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // Split on common chain / pipeline tokens
+        var parts = trimmed.Split(new[] { "&&", "||", ";", "|" }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0) return false;
+
+        foreach (var part in parts)
+        {
+            if (!IsReadOnlySegment(part))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsReadOnlySegment(string segment)
+    {
+        var tokens = segment.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (tokens.Length == 0) return false;
+
+        var cmd = Path.GetFileNameWithoutExtension(tokens[0]).ToLowerInvariant();
+
+        // Unwrap shell wrappers: powershell -Command ..., pwsh -c ..., cmd /c ...
+        var index = 0;
+        if ((cmd is "powershell" or "pwsh" or "cmd") && tokens.Length > 1)
+        {
+            for (var i = 1; i < tokens.Length; i++)
+            {
+                var arg = tokens[i].ToLowerInvariant();
+                if (arg is "-c" or "-command" or "/c")
+                {
+                    index = i + 1;
+                    break;
+                }
+            }
+            if (index >= tokens.Length) return false;
+            cmd = Path.GetFileNameWithoutExtension(tokens[index]).ToLowerInvariant();
+        }
+
+        // Git inspection
+        if (cmd == "git")
+        {
+            if (tokens.Length <= index + 1) return true;
+            var subCmd = tokens[index + 1].ToLowerInvariant();
+            if (subCmd.StartsWith('-')) return true;
+
+            return subCmd is "status" or "log" or "show" or "diff" or "branch"
+                or "tag" or "rev-parse" or "ls-files" or "remote" or "describe"
+                or "blame" or "whatchanged" or "shortlog" or "config";
+        }
+
+        // Directory listing & navigation
+        if (cmd is "ls" or "dir" or "get-childitem" or "gci" or "pwd" or "cd")
+            return true;
+
+        // File reading
+        if (cmd is "cat" or "type" or "get-content" or "gc" or "head" or "tail" or "more" or "less")
+            return true;
+
+        // Searching
+        if (cmd is "rg" or "grep" or "findstr" or "fd" or "select-string")
+            return true;
+
+        if (cmd == "find" && !segment.Contains("-delete", StringComparison.OrdinalIgnoreCase) && !segment.Contains("-exec", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // System / utility info
+        if (cmd is "echo" or "which" or "where" or "whoami" or "hostname" or "uname" or "env" or "printenv" or "date" or "time")
+            return true;
+
+        // Version/help flags
+        if (tokens.Any(t => t is "--version" or "-v" or "--help" or "-h" or "--info" or "--list-sdks" or "--list-runtimes"))
+            return true;
+
+        return false;
+    }
 }
