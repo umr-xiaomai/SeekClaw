@@ -154,12 +154,25 @@ public sealed partial class Agent
 
     // ---------------------------------------------------------------- misc
 
-    private static string SummarizeArguments(string argumentsJson)
+    public static string SummarizeArguments(string argumentsJson)
     {
         try
         {
             if (JsonNode.Parse(argumentsJson) is JsonObject obj)
             {
+                if (obj.TryGetPropertyValue("command", out var cmd) && cmd is not null)
+                    return cmd.ToString().Trim().ReplaceLineEndings(" ");
+                if (obj.TryGetPropertyValue("cmd", out var c) && c is not null)
+                    return c.ToString().Trim().ReplaceLineEndings(" ");
+                if (obj.TryGetPropertyValue("path", out var p) && p is not null)
+                    return p.ToString();
+                if (obj.TryGetPropertyValue("file_path", out var fp) && fp is not null)
+                    return fp.ToString();
+                if (obj.TryGetPropertyValue("pattern", out var pat) && pat is not null)
+                    return pat.ToString();
+                if (obj.TryGetPropertyValue("query", out var q) && q is not null)
+                    return q.ToString();
+
                 var parts = obj
                     .Where(kv => kv.Value is JsonValue)
                     .Take(3)

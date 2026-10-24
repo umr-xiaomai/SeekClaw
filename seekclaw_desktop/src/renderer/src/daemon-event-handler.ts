@@ -178,7 +178,9 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         const running = findTool()
         if (running) {
           running.state = event.details?.success === false ? 'error' : 'done'
-          running.detail = event.data || running.detail
+          if (!running.detail && event.data) {
+            running.detail = event.data
+          }
         }
         break
       }

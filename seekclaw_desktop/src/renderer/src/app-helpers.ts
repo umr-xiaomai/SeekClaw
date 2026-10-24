@@ -219,6 +219,7 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
         id: call.id,
         callId: call.id,
         name: call.name,
+        detail: (call as any).detail,
         state: 'done'
       })),
       state: item.role === 'assistant' ? 'done' : undefined,

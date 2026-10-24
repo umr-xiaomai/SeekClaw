@@ -1088,6 +1088,7 @@ internal sealed class DaemonAdminApi(
                 {
                     ["id"] = call.Id,
                     ["name"] = call.Name,
+                    ["detail"] = SeekClaw.Runtime.Agents.Agent.SummarizeArguments(call.ArgumentsJson),
                 });
             }
             messages.Add((JsonNode)new JsonObject

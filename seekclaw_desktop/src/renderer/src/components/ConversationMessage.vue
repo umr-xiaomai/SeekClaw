@@ -6,15 +6,18 @@ import {
   CircleAlert,
   Copy,
   Eye,
+  FileText,
   Image as ImageIcon,
   Layers,
   LoaderCircle,
   Pencil,
+  Search,
   Split,
+  SquareTerminal,
   Wrench
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { ChatMessage } from '../types'
+import type { ChatMessage, ToolActivity } from '../types'
 import { fileBadgeText, fileExtClass, formatMessageTime } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
@@ -65,30 +68,37 @@ async function copyContent(): Promise<void> {
 const regularTools = computed(() => (props.message.tools ?? []).filter((tool) => !tool.diff))
 const editedTools = computed(() => (props.message.tools ?? []).filter((tool) => tool.diff && tool.filePath))
 
-const isToolRunning = computed(() => props.streaming && regularTools.value.some((tool) => tool.state === 'running'))
-const hasToolError = computed(() => regularTools.value.some((tool) => tool.state === 'error'))
+function getToolIcon(tool: ToolActivity) {
+  if (tool.state === 'running') return LoaderCircle
+  if (tool.state === 'error') return CircleAlert
+  const name = tool.name?.toLowerCase() || ''
+  if (['bash', 'cmd', 'powershell', 'sh', 'terminal', 'exec_command'].includes(name)) return SquareTerminal
+  if (['read_file', 'cat', 'view_file'].includes(name)) return FileText
+  if (['glob', 'list_dir', 'search', 'search_code', 'find'].includes(name)) return Search
+  if (['update_plan', 'plan'].includes(name)) return Layers
+  return Wrench
+}
 
-// Tools are open by default if running or if there was an error; otherwise collapsed
-const toolsOpen = ref(false)
-
-watch([isToolRunning, hasToolError], ([running, error]) => {
-  if (running || error) {
-    toolsOpen.value = true
+function getToolVerb(tool: ToolActivity): string {
+  const name = tool.name?.toLowerCase() || ''
+  if (tool.state === 'running') {
+    if (['bash', 'cmd', 'powershell', 'sh', 'terminal', 'exec_command'].includes(name)) return '正在运行'
+    if (['read_file', 'cat', 'view_file'].includes(name)) return '正在读取'
+    if (['write_file', 'apply_patch', 'edit_file'].includes(name)) return '正在修改'
+    if (['glob', 'list_dir', 'search', 'search_code', 'find'].includes(name)) return '正在搜索'
+    if (['update_plan', 'plan'].includes(name)) return '正在更新计划'
+    return '正在调用'
   }
-}, { immediate: true })
-
-const toolsSummaryLabel = computed(() => {
-  const count = regularTools.value.length
-  if (isToolRunning.value) {
-    const running = regularTools.value.find((t) => t.state === 'running')
-    return running ? `正在调用工具 · ${running.name}` : '正在调用工具'
+  if (tool.state === 'error') {
+    return '运行失败'
   }
-  if (hasToolError.value) {
-    return `工具执行异常 (${count} 个工具)`
-  }
-  const names = Array.from(new Set(regularTools.value.map((t) => t.name))).join(', ')
-  return `已调用 ${count} 个工具 (${names})`
-})
+  if (['bash', 'cmd', 'powershell', 'sh', 'terminal', 'exec_command'].includes(name)) return '已运行'
+  if (['read_file', 'cat', 'view_file'].includes(name)) return '已读取'
+  if (['write_file', 'apply_patch', 'edit_file'].includes(name)) return '已修改'
+  if (['glob', 'list_dir', 'search', 'search_code', 'find'].includes(name)) return '已搜索'
+  if (['update_plan', 'plan'].includes(name)) return '已更新计划'
+  return '已调用'
+}
 
 /** System-injected messages (compaction / verification) get dedicated cards. */
 const systemKind = computed<'memory' | 'verify' | null>(() => {
@@ -250,8 +260,8 @@ function openFileLocation(path?: string): void {
         </button>
       </div>
 
-      <div v-if="message.thinking || regularTools.length || editedTools.length" class="assistant-activity">
-        <button v-if="message.thinking" class="thinking-toggle"
+      <div v-if="message.thinking" class="thinking-wrapper">
+        <button class="thinking-toggle"
           :class="{ active: streaming && message.state === 'thinking' }" @click="thinkingOpen = !thinkingOpen">
           <LoaderCircle v-if="streaming && message.state === 'thinking'" :size="15" class="spin" />
           <Check v-else :size="15" />
@@ -259,57 +269,52 @@ function openFileLocation(path?: string): void {
           <ChevronDown :size="14" :class="{ rotated: thinkingOpen }" />
         </button>
         <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
-
-        <div v-if="regularTools.length" class="tool-group">
-          <button
-            class="tools-toggle"
-            :class="{ active: isToolRunning, error: hasToolError }"
-            type="button"
-            @click="toolsOpen = !toolsOpen"
-          >
-            <LoaderCircle v-if="isToolRunning" :size="14" class="spin" />
-            <CircleAlert v-else-if="hasToolError" :size="14" class="tool-error" />
-            <Wrench v-else :size="14" class="tool-done" />
-            <span>{{ toolsSummaryLabel }}</span>
-            <ChevronDown :size="14" :class="{ rotated: toolsOpen }" />
-          </button>
-
-          <div v-if="toolsOpen" class="tool-list">
-            <div v-for="tool in regularTools" :key="tool.id" class="tool-row" :title="tool.detail || tool.name">
-              <LoaderCircle v-if="tool.state === 'running'" :size="14" class="spin" />
-              <CircleAlert v-else-if="tool.state === 'error'" :size="14" class="tool-error" />
-              <Wrench v-else :size="14" class="tool-done" />
-              <span>{{ tool.name }}</span>
-              <small v-if="tool.detail">{{ tool.detail }}</small>
-            </div>
-          </div>
-        </div>
-
-        <section v-if="editedTools.length" class="change-card" aria-label="代码修改">
-          <header class="change-card-header">
-            <Braces :size="14" />
-            <strong>已编辑 {{ editedTools.length }} 个文件</strong>
-            <span class="change-file-stats">
-              <b class="change-added">+{{ editStats.added }}</b>
-              <b class="change-removed">-{{ editStats.removed }}</b>
-            </span>
-            <span class="change-card-state">已完成</span>
-          </header>
-          <button v-for="tool in editedTools" :key="tool.id" type="button" class="change-file-row"
-            :title="`查看 ${tool.filePath} 的 Diff`" @click="emit('openDiff', tool.filePath!, tool.diff!)">
-            <span class="change-file-path">{{ tool.filePath }}</span>
-            <span class="change-file-stats">
-              <b class="change-added">+{{ diffStats(tool.diff).added }}</b>
-              <b class="change-removed">-{{ diffStats(tool.diff).removed }}</b>
-            </span>
-          </button>
-        </section>
       </div>
 
       <div v-if="isIntermediate && message.content" class="step-preamble">
-        {{ message.content }}
+        <MarkdownMessage :content="message.content" />
       </div>
       <MarkdownMessage v-else-if="message.content" :content="message.content" />
+
+      <div v-if="regularTools.length" class="tool-list">
+        <div
+          v-for="tool in regularTools"
+          :key="tool.id"
+          class="tool-item"
+          :class="{ 'is-running': tool.state === 'running', 'is-error': tool.state === 'error' }"
+          :title="tool.detail || tool.name"
+        >
+          <component
+            :is="getToolIcon(tool)"
+            :size="14"
+            class="tool-item-icon"
+            :class="{ spin: tool.state === 'running' }"
+          />
+          <span class="tool-verb">{{ getToolVerb(tool) }}</span>
+          <span v-if="tool.detail" class="tool-target">{{ tool.detail }}</span>
+          <span v-else class="tool-target">{{ tool.name }}</span>
+        </div>
+      </div>
+
+      <section v-if="editedTools.length" class="change-card" aria-label="代码修改">
+        <header class="change-card-header">
+          <Braces :size="14" />
+          <strong>已编辑 {{ editedTools.length }} 个文件</strong>
+          <span class="change-file-stats">
+            <b class="change-added">+{{ editStats.added }}</b>
+            <b class="change-removed">-{{ editStats.removed }}</b>
+          </span>
+          <span class="change-card-state">已完成</span>
+        </header>
+        <button v-for="tool in editedTools" :key="tool.id" type="button" class="change-file-row"
+          :title="`查看 ${tool.filePath} 的 Diff`" @click="emit('openDiff', tool.filePath!, tool.diff!)">
+          <span class="change-file-path">{{ tool.filePath }}</span>
+          <span class="change-file-stats">
+            <b class="change-added">+{{ diffStats(tool.diff).added }}</b>
+            <b class="change-removed">-{{ diffStats(tool.diff).removed }}</b>
+          </span>
+        </button>
+      </section>
       <div v-if="streaming && (message.state === 'thinking' || message.state === 'streaming')"
         class="response-placeholder" aria-label="AI 正在思考">
         <span /><span /><span />
@@ -522,71 +527,79 @@ function openFileLocation(path?: string): void {
   margin-left: 2px;
 }
 
-.tools-toggle {
+.thinking-wrapper {
+  margin: 0 0 6px;
+}
+
+.tool-list {
   display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 4px 0 8px;
+}
+
+.tool-item {
+  display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin: 0 0 6px;
-  padding: 3px 0;
   color: var(--text-muted);
-  font-size: 12.5px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
+  font-size: 13px;
+  line-height: 1.45;
+  user-select: text;
 }
 
-.tools-toggle:hover {
-  color: var(--text-secondary);
-}
-
-.tools-toggle.active {
+.tool-item.is-running {
   color: var(--accent);
 }
 
-.tools-toggle.error {
+.tool-item.is-error {
   color: var(--danger);
 }
 
-.tools-toggle>.lucide-chevron-down {
-  margin-left: auto;
+.tool-item-icon {
   flex: none;
   color: var(--text-muted);
-  transition: transform 160ms ease;
 }
 
-.tools-toggle>.lucide-chevron-down.rotated {
-  transform: rotate(180deg);
-}
-
-.tools-toggle .spin {
+.tool-item.is-running .tool-item-icon {
   color: var(--accent);
 }
 
-.tools-toggle .tool-error {
+.tool-item.is-error .tool-item-icon {
   color: var(--danger);
 }
 
-.tools-toggle .tool-done {
-  color: var(--text-muted);
+.tool-verb {
+  color: var(--text-secondary);
+  font-size: 13px;
+  flex: none;
+}
+
+.tool-target {
+  color: var(--text-secondary);
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 720px;
 }
 
 .step-preamble {
-  margin: 4px 0 8px 12px;
+  margin: 2px 0 6px;
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-  border-left: 2px solid var(--border);
-  padding-left: 8px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.step-preamble :deep(.markdown-body p) {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+  font-size: 13.5px;
 }
 
 .message.is-intermediate {
-  margin-bottom: 6px;
-}
-
-.message.is-intermediate .assistant-activity {
-  margin-bottom: 2px;
+  margin-bottom: 12px;
 }
 
 </style>
