@@ -109,6 +109,35 @@ describe('hydrateMessages', () => {
     expect(hydrated[0]!.createdAt).toBe(ts1)
     expect(hydrated[1]!.createdAt).toBe(ts2)
   })
+
+  it('preserves errorMessage when hydrating messages', async () => {
+    const { hydrateMessages } = await import('./app-helpers')
+    const hydrated = hydrateMessages({
+      id: 'session-err',
+      createdAt: '2026-09-15T02:11:00Z',
+      updatedAt: '2026-09-15T02:12:00Z',
+      messages: [
+        { role: 'assistant', text: '', errorMessage: '503 Service Unavailable' } as any
+      ]
+    })
+    expect(hydrated[0]!.errorMessage).toBe('503 Service Unavailable')
+  })
+})
+
+describe('messageMatches', () => {
+  it('matches search query in errorMessage', async () => {
+    const { messageMatches } = await import('./app-helpers')
+    const msg = {
+      id: 'm1',
+      role: 'assistant' as const,
+      content: '',
+      errorMessage: 'unexpected status 503 Service Unavailable',
+      createdAt: 0
+    }
+    expect(messageMatches(msg, '503')).toBe(true)
+    expect(messageMatches(msg, 'Unavailable')).toBe(true)
+    expect(messageMatches(msg, '404')).toBe(false)
+  })
 })
 
 describe('loadStoredSidebarWidth', () => {

@@ -63,6 +63,7 @@ export interface ChatMessage {
   state?: 'thinking' | 'streaming' | 'done' | 'error'
   tools?: ToolActivity[]
   createdAt: number
+  errorMessage?: string
 }
 
 export interface ScheduledTaskInfo {
@@ -87,6 +88,7 @@ export interface QueuedMessage {
   images: ImageAttachment[]
   files?: FileAttachment[]
   createdAt: number
+  errorMessage?: string
 }
 
 /** Per-session runtime statistics accumulated from daemon events. */

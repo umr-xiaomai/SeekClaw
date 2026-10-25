@@ -228,6 +228,7 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
         state: 'done'
       })),
       state: item.role === 'assistant' ? 'done' : undefined,
+      errorMessage: (item as any).errorMessage,
       createdAt: typeof item.timestamp === 'number' && item.timestamp > 0
         ? item.timestamp
         : new Date(saved.createdAt).getTime() + index
@@ -257,6 +258,7 @@ export function messageMatches(message: ChatMessage, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase()
   if (!normalized) return true
   return message.content.toLocaleLowerCase().includes(normalized)
+    || Boolean(message.errorMessage?.toLocaleLowerCase().includes(normalized))
 }
 
 export function phaseLabel(status: string): string {

@@ -52,9 +52,12 @@ onBeforeUnmount(() => {
 })
 
 async function copyContent(): Promise<void> {
-  if (!props.message.content) return
+  const textToCopy = displayContent.value
+    ? (activeError.value ? `${displayContent.value}\n\n${activeError.value}` : displayContent.value)
+    : (activeError.value || '')
+  if (!textToCopy) return
   try {
-    await navigator.clipboard.writeText(props.message.content)
+    await navigator.clipboard.writeText(textToCopy)
     isCopied.value = true
     if (copyTimer) clearTimeout(copyTimer)
     copyTimer = setTimeout(() => {
@@ -165,7 +168,91 @@ function openFileLocation(path?: string): void {
   }
 }
 
-const hasContent = computed(() => Boolean(props.message.content?.trim()))
+interface TextPart {
+  type: 'text' | 'link'
+  content: string
+  url?: string
+}
+
+function parseTextParts(text: string): TextPart[] {
+  const parts: TextPart[] = []
+  const urlRegex = /(https?:\/\/[^\s"'`<>]+)/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = urlRegex.exec(text)) !== null) {
+    const rawUrl = match[1]
+    if (!rawUrl) continue
+
+    let fullUrl = rawUrl
+    let trailing = ''
+    while (/[.,;:\)"'>\]]$/.test(fullUrl)) {
+      trailing = fullUrl.slice(-1) + trailing
+      fullUrl = fullUrl.slice(0, -1)
+    }
+
+    const start = match.index
+    if (start > lastIndex) {
+      parts.push({ type: 'text', content: text.slice(lastIndex, start) })
+    }
+    if (fullUrl) {
+      parts.push({ type: 'link', content: fullUrl, url: fullUrl })
+    }
+    if (trailing) {
+      parts.push({ type: 'text', content: trailing })
+    }
+    lastIndex = start + rawUrl.length
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ type: 'text', content: text.slice(lastIndex) })
+  }
+
+  return parts
+}
+
+const legacyError = computed<{ error: string; cleanContent: string } | null>(() => {
+  const content = props.message.content || ''
+  const match = content.match(/(?:^|\n\n)(?:模型调用失败：|无法连接 SeekClaw Daemon[：:]?)\n```(?:text)?\n([\s\S]*?)\n```\s*$/)
+  if (match && match[1]) {
+    const matchIndex = match.index ?? 0
+    return {
+      error: match[1].replace(/^ {4}/gm, '').trim(),
+      cleanContent: content.slice(0, matchIndex).trim()
+    }
+  }
+  return null
+})
+
+const activeError = computed<string | null>(() => {
+  if (props.message.errorMessage?.trim()) {
+    return props.message.errorMessage.trim()
+  }
+  const legacy = legacyError.value
+  if (legacy) {
+    return legacy.error
+  }
+  return null
+})
+
+const displayContent = computed(() => {
+  if (props.message.errorMessage) {
+    return props.message.content || ''
+  }
+  const legacy = legacyError.value
+  if (legacy) {
+    return legacy.cleanContent
+  }
+  return props.message.content || ''
+})
+
+const errorParts = computed(() => {
+  if (!activeError.value) return []
+  return parseTextParts(activeError.value)
+})
+
+const hasContent = computed(() => Boolean(displayContent.value?.trim()))
+const hasError = computed(() => Boolean(activeError.value))
 const hasThinking = computed(() => Boolean(props.message.thinking?.trim()))
 const hasTools = computed(() => (props.message.tools?.length ?? 0) > 0)
 const hasImages = computed(() =>
@@ -178,12 +265,12 @@ const isVisible = computed(() => {
   if (props.message.content?.startsWith('>>> [output truncated]')) return false
   if (props.message.role === 'user') return true
   if (props.streaming) return true
-  return hasContent.value || hasThinking.value || hasTools.value || hasImages.value
+  return hasContent.value || hasThinking.value || hasTools.value || hasImages.value || hasError.value
 })
 
 const isToolsOnly = computed(() => {
   if (props.message.role !== 'assistant') return false
-  return hasTools.value && !hasContent.value && !hasThinking.value
+  return hasTools.value && !hasContent.value && !hasThinking.value && !hasError.value
 })
 
 function getToolTarget(tool: ToolActivity): string {
@@ -326,9 +413,9 @@ function getToolTarget(tool: ToolActivity): string {
       </div>
 
       <div v-if="isIntermediate && hasContent" class="step-preamble">
-        <MarkdownMessage :content="message.content" />
+        <MarkdownMessage :content="displayContent" />
       </div>
-      <MarkdownMessage v-else-if="hasContent" :content="message.content" />
+      <MarkdownMessage v-else-if="hasContent" :content="displayContent" />
 
       <div v-if="regularTools.length" class="tool-list">
         <div v-for="tool in regularTools" :key="tool.id" class="tool-item"
@@ -360,12 +447,22 @@ function getToolTarget(tool: ToolActivity): string {
           </span>
         </button>
       </section>
+      <div v-if="activeError" class="model-error-card" role="alert">
+        <CircleAlert :size="16" class="model-error-icon" />
+        <div class="model-error-body">
+          <span v-for="(part, idx) in errorParts" :key="idx">
+            <a v-if="part.type === 'link'" :href="part.url" target="_blank" rel="noreferrer" class="model-error-link">{{ part.content }}</a>
+            <template v-else>{{ part.content }}</template>
+          </span>
+        </div>
+      </div>
+
       <div v-if="streaming && (message.state === 'thinking' || message.state === 'streaming')"
         class="response-placeholder" aria-label="AI 正在思考">
         <span /><span /><span />
       </div>
 
-      <footer v-if="showFooter && !streaming && message.content" class="assistant-footer" :class="{ active: isCopied }">
+      <footer v-if="showFooter && !streaming && (displayContent || activeError)" class="assistant-footer" :class="{ active: isCopied }">
         <div class="assistant-actions">
           <button type="button" class="action-btn" :class="{ success: isCopied }" :title="isCopied ? '已复制' : '复制回答'"
             aria-label="复制回答" @click="copyContent">
@@ -647,5 +744,46 @@ function getToolTarget(tool: ToolActivity): string {
 .message.is-intermediate.is-tools-only .tool-list {
   margin-top: 0;
   margin-bottom: 10px;
+}
+
+.model-error-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 8px 0 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.55;
+  user-select: text;
+}
+
+.model-error-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-secondary);
+}
+
+.model-error-body {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.model-error-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+  transition: opacity 140ms ease;
+}
+
+.model-error-link:hover {
+  opacity: 0.82;
 }
 </style>

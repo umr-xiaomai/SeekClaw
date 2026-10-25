@@ -1085,7 +1085,7 @@ const conversationItems = computed<ConversationItem[]>(() => {
       if (hasLaterAssistant) {
         isIntermediate = true
       }
-      if (!inActiveRunningTurn && Boolean(message.content?.trim())) {
+      if (!inActiveRunningTurn && (Boolean(message.content?.trim()) || Boolean(message.errorMessage?.trim()))) {
         showFooter = !hasLaterAssistant
       }
     }
@@ -1413,9 +1413,9 @@ async function runMessageTurn(
     const failedAssistant = turnAssistantBubbles[turnAssistantBubbles.length - 1] ?? assistant
     terminalAssistant = failedAssistant
     failedAssistant.state = 'error'
-    if (!failedAssistant.content) {
+    if (!failedAssistant.content && !failedAssistant.errorMessage) {
       const detail = error instanceof Error ? error.message : String(error)
-      failedAssistant.content = `无法连接 SeekClaw Daemon。\n\n\`\`\`text\n${detail}\n\`\`\``
+      failedAssistant.errorMessage = `无法连接 SeekClaw Daemon: ${detail}`
     }
   } finally {
     // A terminal event may already have started the next queued turn. Do not let

@@ -33,9 +33,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
 
   function appendModelError(message: ChatMessage, detail: string): void {
     const normalized = detail.trim() || 'Unknown model error'
-    if (message.content.includes(normalized)) return
-    const indentedDetail = normalized.split(/\r?\n/).map((line) => `    ${line}`).join('\n')
-    message.content += `${message.content ? '\n\n' : ''}模型调用失败：\n\`\`\`text\n${indentedDetail}\n\`\`\``
+    message.errorMessage = normalized
     message.state = 'error'
   }
 
@@ -304,10 +302,11 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
           }
         }
         break
-      case 'error':
-        if (message) {
-          message.state = 'error'
-          appendModelError(message, event.data)
+      case 'error': {
+        const targetMessage = message ?? thread.messages.findLast((m) => m.role === 'assistant')
+        if (targetMessage) {
+          targetMessage.state = 'error'
+          appendModelError(targetMessage, event.data)
         }
         finalizeAssistantBubbles(thread.messages, 'error')
         if (isChatRequest) rememberFinishedRequest(thread, event.id)
@@ -324,6 +323,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
           if (!message || isBackgroundThread) reloadBackgroundThreadIfIdle(thread)
         }
         break
+      }
     }
     if (thread.id === activeThreadId.value) void scrollToBottom()
   }

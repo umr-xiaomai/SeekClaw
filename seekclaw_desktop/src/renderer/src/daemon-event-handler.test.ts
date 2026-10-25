@@ -105,4 +105,49 @@ describe('createDaemonEventHandler', () => {
     expect(thread.activeTurnToken).toBeUndefined()
     expect(scheduleQueuedDrain).toHaveBeenCalledWith(thread)
   })
+  it('stores error in errorMessage instead of polluting message.content with code blocks', () => {
+    const thread: ThreadItem = {
+      id: 'thread-err',
+      title: 'Error Thread',
+      messages: [
+        { id: 'u1', role: 'user', content: 'test', createdAt: 0 },
+        { id: 'a1', role: 'assistant', content: 'Partial output', state: 'streaming', createdAt: 0 }
+      ],
+      running: true,
+      activeTurnToken: undefined,
+      assistantId: 'a1',
+      requestId: 30,
+      sessionId: 'sess-3',
+      updatedAt: 0
+    }
+
+    const handler = createDaemonEventHandler({
+      threads: ref([thread]),
+      activeThreadId: ref(thread.id),
+      projects: ref<ProjectItem[]>([]),
+      handleScheduleUpdated: vi.fn(),
+      scrollToBottom: vi.fn().mockResolvedValue(undefined),
+      reloadThreadSession: vi.fn().mockResolvedValue(undefined),
+      rememberFinishedRequest: vi.fn(),
+      isFinishedRequest: () => false,
+      scheduleQueuedDrain: vi.fn(),
+      reloadBackgroundThreadIfIdle: vi.fn()
+    })
+
+    const errorEvent: DaemonMessage = {
+      id: 30,
+      event: 'error',
+      data: 'EasyGemini returned HTTP 503: auth_unavailable: no auth available',
+      requestMethod: 'chat',
+      sessionId: 'sess-3'
+    }
+
+    handler(errorEvent)
+
+    const assistant = thread.messages.find((m) => m.id === 'a1')
+    expect(assistant?.state).toBe('error')
+    expect(assistant?.errorMessage).toBe('EasyGemini returned HTTP 503: auth_unavailable: no auth available')
+    expect(assistant?.content).toBe('Partial output')
+    expect(assistant?.content).not.toContain('```text')
+  })
 })
