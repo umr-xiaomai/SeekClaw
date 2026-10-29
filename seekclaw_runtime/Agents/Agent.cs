@@ -290,7 +290,7 @@ public sealed partial class Agent(
                 {
                     preambleNudges++;
                     var nudgeDirective = ChatMessage.User(
-                        ">>> [System Directive: 你刚才说明了将要执行的操作，但尚未调用任何工具。本轮对话已启用自动执行，请立即调用相应工具（如 bash、write_file、edit_file 等）开始执行操作，不要仅做陈述或等待用户确认。 / You stated the action you are about to perform, but have not invoked any tools yet. Autonomous execution is active. Please call the appropriate tool(s) now to execute the actions directly.]");
+                        ">>> [System Directive: 你刚才说明了将要执行的操作，但尚未调用任何工具。如果你正要为用户执行该操作，请立即调用相应工具（如 write_file、edit_file 等）开始执行；如果你是在提供方案等待用户确认，请忽略本提示并等待用户回复。 / You stated an action without calling tools. If you are executing the requested change, please invoke the relevant tool now; if you are awaiting confirmation, ignore this and wait for the user.]");
                     sessionStore.Append(session, nudgeDirective);
                     events.Publish(new StatusEvent("Auto-executing promised actions..."));
                     PublishWorkflow(step, "tool", "自动执行工具");
@@ -432,9 +432,20 @@ public sealed partial class Agent(
 
     internal static bool IsStandaloneActionPreamble(string text)
     {
-        if (string.IsNullOrWhiteSpace(text) || text.Length > 300) return false;
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 150) return false;
         var trimmed = text.Trim();
         if (trimmed.Contains('?') || trimmed.Contains('？') || trimmed.Contains("```")) return false;
+        if (trimmed.Contains('\n')) return false;
+
+        // If the statement is waiting for user confirmation, proposing a plan, or asking a question without '?', it is NOT a standalone action preamble.
+        if (trimmed.Contains("如确认") || trimmed.Contains("若确认") || trimmed.Contains("请确认") || trimmed.Contains("如果确认") || trimmed.Contains("如认可")) return false;
+        if (trimmed.Contains("是否") || trimmed.Contains("可否") || trimmed.Contains("请问") || trimmed.Contains("建议") || trimmed.Contains("方案") || trimmed.Contains("推进步骤")) return false;
+        if (trimmed.Contains("would you like", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("if you confirm", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("please confirm", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("let me know", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("should i", StringComparison.OrdinalIgnoreCase)) return false;
+
         return EnglishActionPreambleRegex().IsMatch(trimmed) || ChineseActionPreambleRegex().IsMatch(trimmed);
     }
 }

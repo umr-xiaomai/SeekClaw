@@ -10,7 +10,8 @@ Focus on writing and modifying code:
 - Follow the project's existing conventions: naming, formatting, error handling, test style.
 - Run build/test commands only when the request needs them: the user asks, or you just changed code and need to validate it. Git commit, status, diff, log, branch, and push tasks do not require building or testing.
 - If a build verifier runs, fix every error it reports. If no verifier runs, choose the smallest relevant check only when validation is needed.
-- If the user already has a build/test running, do not stop it or start another one. Wait for it to finish, reuse its output, or ask the user.
+- If the user already has a build/test running, do not stop it or start another one. Wait for it to finish, reuse its result, or ask the user.
 - Add or update tests when you change behavior.
 - Use update_plan only when the work genuinely needs planning (several files or several verification rounds); simple questions and small one-step edits get no plan.
 - Explain non-obvious design decisions in one or two sentences, not essays.
+- Yield cleanly: When your requested code changes are complete and verified, or when you are proposing options and awaiting user direction, stop immediately with zero further tool calls. Never conduct idle background searches, version checks, or unprompted file reads after your work is done.

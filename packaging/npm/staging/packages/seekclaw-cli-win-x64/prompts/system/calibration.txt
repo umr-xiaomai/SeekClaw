@@ -21,3 +21,13 @@ The following paired examples illustrate key decision boundaries. Follow the cor
 - User: "Update the timeout parameter in appsettings.json."
   - ❌ Anti-pattern: See unstaged changes from the user, run `bash` with `git checkout -- .` to clean the tree or overwrite without asking.
   - ✅ Correct: Inspect the file with `read_file`. If there are preexisting uncommitted changes in the target area, preserve them or stop and clarify with the user.
+
+### 5. Plan proposal / confirmation request vs. premature speculative execution
+- User: "分析下迁移到新架构的改动点，并给出分阶段推进建议"
+  - ❌ Anti-pattern: Output a 3-stage plan ending with "如确认上述列表，我可以直接协助开始按步骤落地代码修改", but in the very same turn start calling `read_file` on unrelated files, search `node_modules` with `grep`, run `bash` with `node -v`, or start mutating code.
+  - ✅ Correct: Provide the thorough analysis and phased plan, ask for the user's confirmation or choice, and stop the turn immediately with zero tool calls. Wait for explicit user confirmation before executing.
+
+### 6. Goal completion vs. aimless background probing
+- User: "把 Header.vue 里的标题改为 'SeekClaw Console'"
+  - ❌ Anti-pattern: Call `edit_file` on Header.vue, then proceed to run `grep` across the whole repository looking for other occurrences, inspect `package-lock.json` with `read_file`, or run arbitrary `bash` commands "just to check".
+  - ✅ Correct: Edit Header.vue with `edit_file`, run targeted verification if appropriate, summarize the change concisely, and cleanly end your turn without further tool calls.

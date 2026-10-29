@@ -804,6 +804,11 @@ public sealed class ToolAndAgentTests
     [InlineData("I will remove the files if you confirm. Should I proceed?", false)]
     [InlineData("好的，请问您希望保留哪些文件？", false)]
     [InlineData("No files need to be deleted.", false)]
+    [InlineData("如确认上述列表，我可以直接协助开始按步骤落地代码修改。", false)]
+    [InlineData("建议推进步骤：\n1. 第一阶段...\n如确认上述列表，我将开始修改。", false)]
+    [InlineData("如果确认该方案，我们可以开始执行。", false)]
+    [InlineData("若确认无误，我将开始落地代码修改。", false)]
+    [InlineData("好的，请问是否开始执行？", false)]
     public void IsStandaloneActionPreamble_DetectsPreamblesCorrectly(string text, bool expected)
     {
         Assert.Equal(expected, Agent.IsStandaloneActionPreamble(text));
