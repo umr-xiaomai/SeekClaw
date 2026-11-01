@@ -162,6 +162,9 @@ public sealed class SeekClawDatabase
             CREATE INDEX IF NOT EXISTS ix_cross_session_memories_created
                 ON cross_session_memories(created_at DESC);
 
+            CREATE INDEX IF NOT EXISTS ix_cross_session_memories_workspace
+                ON cross_session_memories(source_workspace);
+
             CREATE TABLE IF NOT EXISTS scheduled_tasks (
                 id TEXT NOT NULL PRIMARY KEY,
                 name TEXT NOT NULL,

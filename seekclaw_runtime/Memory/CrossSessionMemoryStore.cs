@@ -11,6 +11,7 @@ public interface ICrossSessionMemoryStore
     void Save(string content, WorkspaceInfo sourceWorkspace, string? sourceSessionId = null);
     bool Delete(string id);
     int Clear();
+    int DeleteByWorkspace(string workspaceRoot);
 }
 
 /// <summary>
@@ -92,6 +93,42 @@ public sealed class CrossSessionMemoryStore(SeekClawDatabase database) : ICrossS
         using var connection = database.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM cross_session_memories;";
+        return command.ExecuteNonQuery();
+    }
+
+    public int DeleteByWorkspace(string workspaceRoot)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceRoot)) return 0;
+        var full = Path.GetFullPath(workspaceRoot);
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var withSlash = trimmed + Path.DirectorySeparatorChar;
+        var withAltSlash = trimmed.Replace('\\', '/');
+        var withAltSlashTrailing = withAltSlash + '/';
+        var backslashPrefix = trimmed + @"\%";
+        var slashPrefix = withAltSlash + "/%";
+
+        using var connection = database.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM cross_session_memories
+            WHERE source_workspace IS NOT NULL
+              AND (
+                source_workspace = $full COLLATE NOCASE
+                OR source_workspace = $trimmed COLLATE NOCASE
+                OR source_workspace = $withSlash COLLATE NOCASE
+                OR source_workspace = $withAltSlash COLLATE NOCASE
+                OR source_workspace = $withAltSlashTrailing COLLATE NOCASE
+                OR (source_workspace LIKE $backslashPrefix)
+                OR (source_workspace LIKE $slashPrefix)
+              );
+            """;
+        command.Parameters.AddWithValue("$full", full);
+        command.Parameters.AddWithValue("$trimmed", trimmed);
+        command.Parameters.AddWithValue("$withSlash", withSlash);
+        command.Parameters.AddWithValue("$withAltSlash", withAltSlash);
+        command.Parameters.AddWithValue("$withAltSlashTrailing", withAltSlashTrailing);
+        command.Parameters.AddWithValue("$backslashPrefix", backslashPrefix);
+        command.Parameters.AddWithValue("$slashPrefix", slashPrefix);
         return command.ExecuteNonQuery();
     }
 

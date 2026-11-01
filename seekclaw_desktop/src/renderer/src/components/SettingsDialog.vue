@@ -5,12 +5,16 @@ import {
   Blocks,
   Bot,
   Check,
+  ChevronRight,
   Circle,
   Clock,
+  Folder,
   FolderOpen,
   Gauge,
+  Globe2,
   GripVertical,
   KeyRound,
+  Layers,
   LoaderCircle,
   Monitor,
   Moon,
@@ -45,6 +49,15 @@ import McpEditorDialog from './McpEditorDialog.vue'
 import type { ModelDetailConfig } from './ModelConfigModal.vue'
 import ProviderEditorDialog from './ProviderEditorDialog.vue'
 import SelectMenu from './SelectMenu.vue'
+import {
+  filterMemories,
+  groupMemories,
+  loadActiveMemoryGroupKey,
+  resolveProjectInfo,
+  saveActiveMemoryGroupKey,
+  type MemoryGroup
+} from './memory-groups'
+import type { ProjectItem } from '../types'
 import TwoPaneLayout from './TwoPaneLayout.vue'
 import UsageTrendChart, { type TimelinePoint } from './UsageTrendChart.vue'
 import UsageModelBarChart from './UsageModelBarChart.vue'
@@ -134,8 +147,8 @@ interface UsageInfo {
 interface CrossSessionMemoryInfo {
   id: string
   content: string
-  sourceWorkspace?: string
-  sourceSessionId?: string
+  sourceWorkspace?: string | null
+  sourceSessionId?: string | null
   createdAt: string
 }
 
@@ -151,6 +164,7 @@ const props = defineProps<{
   daemonEndpoint: string
   initialSection?: SettingsSection
   workspacePath?: string
+  projects?: ProjectItem[]
 }>()
 
 const emit = defineEmits<{
@@ -552,6 +566,83 @@ async function clearCrossSessionMemories(): Promise<void> {
 function formatMemoryTime(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+const selectedMemoryGroupKey = ref<string>(loadActiveMemoryGroupKey())
+const memorySearchQuery = ref<string>('')
+
+const memoryGroups = computed<MemoryGroup[]>(() => {
+  return groupMemories(crossSessionMemories.value, props.projects)
+})
+
+watch(selectedMemoryGroupKey, (val) => {
+  saveActiveMemoryGroupKey(val)
+})
+
+function selectMemoryGroup(key: string): void {
+  selectedMemoryGroupKey.value = key
+}
+
+const selectedGroup = computed<MemoryGroup | undefined>(() => {
+  if (selectedMemoryGroupKey.value === '__all__') return undefined
+  return memoryGroups.value.find((g) => g.key === selectedMemoryGroupKey.value)
+})
+
+const currentGroupTitle = computed<string>(() => {
+  if (selectedMemoryGroupKey.value === '__all__') {
+    return '全部记忆'
+  }
+  return selectedGroup.value?.title ?? '全部记忆'
+})
+
+const currentGroupPath = computed<string>(() => {
+  return selectedGroup.value?.path ?? ''
+})
+
+const displayedMemories = computed<CrossSessionMemoryInfo[]>(() => {
+  let base: CrossSessionMemoryInfo[]
+  if (selectedMemoryGroupKey.value === '__all__' || !selectedGroup.value) {
+    base = crossSessionMemories.value
+  } else {
+    base = selectedGroup.value.items
+  }
+  return filterMemories(base, memorySearchQuery.value)
+})
+
+function resolveMemoryWorkspaceName(workspace?: string | null): string {
+  return resolveProjectInfo(workspace, props.projects).name
+}
+
+function isGlobalWorkspace(workspace?: string | null): boolean {
+  return resolveProjectInfo(workspace, props.projects).isGlobal
+}
+
+async function clearGroupMemories(group: MemoryGroup): Promise<void> {
+  if (!await confirmAction({
+    title: `清空“${group.title}”记忆`,
+    message: `将永久删除“${group.title}”分类下的全部 ${group.items.length} 条记忆，此操作无法撤销。`,
+    confirmLabel: '清空分类记忆',
+    danger: true
+  })) return
+
+  beginAction(`memory.clearGroup:${group.key}`)
+  try {
+    if (group.path) {
+      await requestJson<{ deleted: number }>('memory.deleteByWorkspace', { workspace: group.path })
+    } else {
+      for (const item of group.items) {
+        await requestJson('memory.delete', { id: item.id })
+      }
+    }
+    crossSessionMemories.value = crossSessionMemories.value.filter(
+      (item) => !group.items.some((gItem) => gItem.id === item.id)
+    )
+    notice.value = `已清空“${group.title}”下的全部记忆`
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
 }
 
 async function toggleComputerUse(): Promise<void> {
@@ -1755,28 +1846,142 @@ onBeforeUnmount(() => {
                 :disabled="action === 'advanced.set:memory'" @change="toggleCrossSessionMemory" />
               <span class="toggle-switch" aria-hidden="true"><span /></span>
             </label>
-            <div class="memory-toolbar">
-              <span class="memory-count">已保存 {{ crossSessionMemories.length }} 条</span>
-              <button class="compact-button" :disabled="!crossSessionMemories.length || action === 'memory.clear'"
-                @click="clearCrossSessionMemories">
-                <Trash2 :size="13" /> 清空记忆
-              </button>
-            </div>
-            <div v-if="crossSessionMemories.length" class="memory-list">
-              <article v-for="item in crossSessionMemories" :key="item.id" class="memory-item">
-                <div class="memory-item-body">
-                  <p>{{ item.content }}</p>
-                  <small>
-                    {{ formatMemoryTime(item.createdAt) }}
-                    <span v-if="item.sourceWorkspace"> · {{ item.sourceWorkspace }}</span>
-                    <span v-else> · 全局对话</span>
-                  </small>
+            <div v-if="crossSessionMemories.length" class="memory-manager">
+              <!-- Left Sidebar: Categories Navigation -->
+              <aside class="memory-manager-sidebar">
+                <div class="memory-sidebar-header">
+                  <span class="memory-sidebar-title">记忆分类</span>
+                  <span class="memory-sidebar-count">{{ memoryGroups.length }} 个分类</span>
                 </div>
-                <button class="icon-button-subtle memory-delete" title="删除这条记忆"
-                  :disabled="action === `memory.delete:${item.id}`" @click="deleteCrossSessionMemory(item.id)">
-                  <Trash2 :size="14" />
-                </button>
-              </article>
+                <div class="memory-sidebar-list">
+                  <!-- All memories option -->
+                  <button
+                    type="button"
+                    class="memory-nav-item"
+                    :class="{ active: selectedMemoryGroupKey === '__all__' }"
+                    @click="selectMemoryGroup('__all__')"
+                  >
+                    <Layers :size="14" class="memory-nav-icon layers" />
+                    <span class="memory-nav-name">全部记忆</span>
+                    <span class="memory-nav-badge">{{ crossSessionMemories.length }}</span>
+                  </button>
+
+                  <!-- Category / Project options -->
+                  <button
+                    v-for="group in memoryGroups"
+                    :key="group.key"
+                    type="button"
+                    class="memory-nav-item"
+                    :class="{ active: selectedMemoryGroupKey === group.key }"
+                    :title="group.path ? `${group.title}\n${group.path}` : group.title"
+                    @click="selectMemoryGroup(group.key)"
+                  >
+                    <Globe2 v-if="group.isGlobal" :size="14" class="memory-nav-icon global" />
+                    <Folder v-else :size="14" class="memory-nav-icon folder" />
+                    <span class="memory-nav-name">{{ group.title }}</span>
+                    <span class="memory-nav-badge">{{ group.items.length }}</span>
+                  </button>
+                </div>
+              </aside>
+
+              <!-- Right Content Area: Items & Actions -->
+              <section class="memory-manager-content">
+                <header class="memory-content-header">
+                  <div class="memory-content-title-wrap">
+                    <h4 class="memory-content-title">{{ currentGroupTitle }}</h4>
+                    <span class="memory-content-badge">{{ displayedMemories.length }} 条</span>
+                    <span v-if="currentGroupPath" class="memory-content-path" :title="currentGroupPath">
+                      {{ currentGroupPath }}
+                    </span>
+                  </div>
+                  <div class="memory-content-actions">
+                    <!-- Keyword search filter -->
+                    <div class="memory-search-wrap">
+                      <Search :size="12" class="memory-search-icon" />
+                      <input
+                        v-model="memorySearchQuery"
+                        type="text"
+                        class="memory-search-input"
+                        placeholder="搜索记忆..."
+                      />
+                      <button
+                        v-if="memorySearchQuery"
+                        type="button"
+                        class="memory-search-clear"
+                        title="清空搜索"
+                        @click="memorySearchQuery = ''"
+                      >
+                        <X :size="12" />
+                      </button>
+                    </div>
+
+                    <!-- Clear category button (visible if a specific category with items is active) -->
+                    <button
+                      v-if="selectedGroup && selectedMemoryGroupKey !== '__all__'"
+                      type="button"
+                      class="secondary-button compact-button danger-hover"
+                      :title="`清空“${selectedGroup.title}”分类下的全部记忆`"
+                      :disabled="!selectedGroup.items.length || action === `memory.clearGroup:${selectedGroup.key}`"
+                      @click="clearGroupMemories(selectedGroup)"
+                    >
+                      <LoaderCircle v-if="action === `memory.clearGroup:${selectedGroup.key}`" class="spin" :size="12" />
+                      <Trash2 v-else :size="12" />
+                      清空分类
+                    </button>
+
+                    <!-- Clear all memories button -->
+                    <button
+                      type="button"
+                      class="secondary-button compact-button danger-hover"
+                      title="清空全部跨对话记忆"
+                      :disabled="!crossSessionMemories.length || action === 'memory.clear'"
+                      @click="clearCrossSessionMemories"
+                    >
+                      <LoaderCircle v-if="action === 'memory.clear'" class="spin" :size="12" />
+                      <Trash2 v-else :size="12" />
+                      清空全部
+                    </button>
+                  </div>
+                </header>
+
+                <!-- Scrollable Memory Items List -->
+                <div class="memory-items-scroll">
+                  <div v-if="displayedMemories.length === 0" class="memory-list-empty">
+                    <span v-if="memorySearchQuery">未找到匹配“{{ memorySearchQuery }}”的记忆</span>
+                    <span v-else>当前分类下暂无记忆</span>
+                  </div>
+
+                  <article
+                    v-for="item in displayedMemories"
+                    :key="item.id"
+                    class="memory-item"
+                  >
+                    <div class="memory-item-body">
+                      <p>{{ item.content }}</p>
+                      <div class="memory-item-meta">
+                        <span class="memory-item-time">{{ formatMemoryTime(item.createdAt) }}</span>
+                        <span
+                          v-if="selectedMemoryGroupKey === '__all__'"
+                          class="memory-item-scope-tag"
+                          :class="{ global: isGlobalWorkspace(item.sourceWorkspace) }"
+                        >
+                          <Globe2 v-if="isGlobalWorkspace(item.sourceWorkspace)" :size="10" />
+                          <Folder v-else :size="10" />
+                          {{ resolveMemoryWorkspaceName(item.sourceWorkspace) }}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      class="icon-button-subtle memory-delete"
+                      title="删除这条记忆"
+                      :disabled="action === `memory.delete:${item.id}`"
+                      @click="deleteCrossSessionMemory(item.id)"
+                    >
+                      <Trash2 :size="14" />
+                    </button>
+                  </article>
+                </div>
+              </section>
             </div>
             <p v-else class="memory-empty">暂无记忆。启用后，可在对话中直接说“记住我的偏好……”。</p>
           </section>

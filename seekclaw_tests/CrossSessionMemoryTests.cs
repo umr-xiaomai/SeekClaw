@@ -53,6 +53,49 @@ public sealed class CrossSessionMemoryTests
         }
     }
 
+    [Fact]
+    public void Store_DeleteByWorkspace_RemovesOnlyWorkspaceMemories()
+    {
+        var dir = TempDir();
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new CrossSessionMemoryStore(new SeekClawDatabase(Path.Combine(dir, "state.db")));
+            var global = new WorkspaceManager().CreateGlobal(Path.Combine(dir, "global"));
+            var projectDirA = Path.Combine(dir, "projects", "app-a");
+            var projectDirB = Path.Combine(dir, "projects", "app-b");
+            Directory.CreateDirectory(projectDirA);
+            Directory.CreateDirectory(projectDirB);
+            var workspaceA = new WorkspaceInfo { Root = projectDirA, ProjectKinds = [] };
+            var workspaceB = new WorkspaceInfo { Root = projectDirB, ProjectKinds = [] };
+
+            store.Save("全局偏好：中文", global);
+            store.Save("项目 A 偏好：使用 TypeScript", workspaceA);
+            store.Save("项目 A 规则：遵循 ESLint", workspaceA);
+            store.Save("项目 B 偏好：使用 Python", workspaceB);
+
+            Assert.Equal(4, store.ListRecent().Count);
+
+            // Deleting project A memories removes only workspaceA entries
+            var deleted = store.DeleteByWorkspace(projectDirA);
+            Assert.Equal(2, deleted);
+
+            var remaining = store.ListRecent();
+            Assert.Equal(2, remaining.Count);
+            Assert.Contains(remaining, m => m.Content == "全局偏好：中文");
+            Assert.Contains(remaining, m => m.Content == "项目 B 偏好：使用 Python");
+            Assert.DoesNotContain(remaining, m => m.Content.Contains("项目 A"));
+
+            // Idempotent when called again
+            Assert.Equal(0, store.DeleteByWorkspace(projectDirA));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
     // ---------------------------------------------------------------- parser
 
     [Fact]

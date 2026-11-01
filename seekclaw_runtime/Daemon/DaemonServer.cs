@@ -697,6 +697,11 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.ClearMemories()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
+                    case "memory.deleteByWorkspace":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.DeleteMemoriesByWorkspace(Params(request))), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
                     case "prompt.optimize":
                         await RunAdminAsync(context.Writer, context.WriterGate, id, false,
                             token => _admin.OptimizePromptAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
@@ -1633,7 +1638,7 @@ public sealed class DaemonServer : IAsyncDisposable
             "config.status", "config.rebuild",
             "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
             "routing.get", "routing.set", "advanced.get", "advanced.set",
-            "memory.list", "memory.delete", "memory.clear",
+            "memory.list", "memory.delete", "memory.clear", "memory.deleteByWorkspace",
             "prompt.optimize",
             "schedule.list", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run",
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",

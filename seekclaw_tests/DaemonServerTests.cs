@@ -959,6 +959,46 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task RemoveProject_WithoutKeepSessions_DeletesWorkspaceMemories()
+    {
+        var workspace = CreateWorkspace("mem-project-test");
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)), workspace);
+
+        await connection.SendAsync(1, "project.upsert", new JsonObject
+        {
+            ["id"] = "mem-project",
+            ["path"] = workspace,
+            ["name"] = "MemProject",
+        });
+        Assert.Equal("result", (await connection.ReadAsync())["event"]!.GetValue<string>());
+
+        // Save a memory for this workspace via the runtime's memory store
+        var wsInfo = new WorkspaceInfo { Root = workspace, ProjectKinds = [] };
+        _runtime!.Memories.Save("测试记忆：该项目的特别规范", wsInfo);
+
+        // Verify memory exists
+        await connection.SendAsync(2, "memory.list", new JsonObject());
+        var memListResp = await connection.ReadAsync();
+        Assert.Equal("result", memListResp["event"]!.GetValue<string>());
+        var memories = JsonNode.Parse(memListResp["data"]!.GetValue<string>())!.AsArray();
+        Assert.Contains(memories, m => m!["content"]!.GetValue<string>() == "测试记忆：该项目的特别规范");
+
+        // Remove the project (default keepSessions: false)
+        await connection.SendAsync(3, "project.remove", new JsonObject
+        {
+            ["id"] = "mem-project",
+        });
+        Assert.Equal("mem-project", (await connection.ReadAsync())["data"]!.GetValue<string>());
+
+        // Verify memory is automatically deleted
+        await connection.SendAsync(4, "memory.list", new JsonObject());
+        var memListAfterResp = await connection.ReadAsync();
+        var memoriesAfter = JsonNode.Parse(memListAfterResp["data"]!.GetValue<string>())!.AsArray();
+        Assert.DoesNotContain(memoriesAfter, m => m!["content"]!.GetValue<string>() == "测试记忆：该项目的特别规范");
+    }
+
+    [Fact]
     public async Task GlobalSessions_RunWithoutAProjectAndRemainSeparateFromWorkspaceSessions()
     {
         var observedGlobalContext = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -278,6 +278,15 @@ internal sealed class DaemonAdminApi(
         ["deleted"] = runtime.Memories.Clear(),
     }.ToJsonString();
 
+    public string DeleteMemoriesByWorkspace(JsonObject parameters)
+    {
+        var workspace = RequiredString(parameters, "workspace");
+        return new JsonObject
+        {
+            ["deleted"] = runtime.Memories.DeleteByWorkspace(workspace),
+        }.ToJsonString();
+    }
+
     public string ListSchedules() =>
         JsonSerializer.Serialize(runtime.Schedules.List(), SeekClawJsonContext.Compact.ListScheduledTask);
 
@@ -1041,6 +1050,7 @@ internal sealed class DaemonAdminApi(
                 ? runtime.Workspaces.Detect(project.Path)
                 : new WorkspaceInfo { Root = Path.GetFullPath(project.Path), ProjectKinds = [] };
             runtime.Sessions.DeleteAll(workspace);
+            runtime.Memories.DeleteByWorkspace(project.Path);
         }
         runtime.Projects.Remove(id);
         return id;
