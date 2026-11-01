@@ -27,6 +27,7 @@ import AboutDialog from './components/AboutDialog.vue'
 import ArchivedTasksDialog from './components/ArchivedTasksDialog.vue'
 import ScheduledTasksDialog from './components/ScheduledTasksDialog.vue'
 import Composer from './components/Composer.vue'
+import ComposerProjectSelector from './components/ComposerProjectSelector.vue'
 import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
 
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -265,6 +266,53 @@ const activeProject = computed(() => {
 })
 const globalTaskActive = computed(() => activeThread.value ? !activeThread.value.projectId : !selectedProjectId.value)
 const currentWorkspacePath = computed(() => activeProject.value?.path || runtimeWorkspacePath.value || '')
+
+const isGlobalExplicit = ref(false)
+
+const showComposerProjectSelector = computed(() => {
+  if (activePage.value !== 'main') return false
+  if (conversationLoading.value) return false
+  if (!activeThread.value) return true
+  return activeThread.value.messages.length === 0 && !activeThread.value.running
+})
+
+function onSelectProjectFromComposer(project: ProjectItem): void {
+  isGlobalExplicit.value = false
+  selectedProjectId.value = project.id
+  if (activeThread.value && activeThread.value.messages.length === 0) {
+    activeThread.value.projectId = project.id
+  } else if (!activeThread.value) {
+    newTask(project.id)
+  }
+}
+
+function onSelectGlobalFromComposer(): void {
+  isGlobalExplicit.value = true
+  selectedProjectId.value = ''
+  if (activeThread.value && activeThread.value.messages.length === 0) {
+    activeThread.value.projectId = undefined
+  } else if (!activeThread.value) {
+    newTask(undefined)
+  }
+}
+
+async function handleCreateProjectFromComposer(): Promise<void> {
+  const path = await window.seekclaw.selectWorkspace()
+  if (!path) return
+  if (isForbiddenProjectPath(path, appInfo.value.userProfilePath)) {
+    window.alert('不能把用户主目录或 SeekClaw 数据目录添加为项目，请选择具体的项目文件夹。')
+    return
+  }
+  const project = await saveProject(ensureProject(path))
+  isGlobalExplicit.value = false
+  selectedProjectId.value = project.id
+  if (activeThread.value && activeThread.value.messages.length === 0) {
+    activeThread.value.projectId = project.id
+  } else if (!activeThread.value) {
+    newTask(project.id)
+  }
+  await refreshProjectSessions(project).catch(() => undefined)
+}
 
 const composerCaption = computed(() => {
 
@@ -792,6 +840,7 @@ function newTask(projectId?: string): void {
     }
   }
   threads.value.unshift(thread)
+  isGlobalExplicit.value = false
   selectedProjectId.value = project?.id ?? ''
   activeThreadId.value = thread.id
   // Invalidate an in-flight session read for the previously selected task.
@@ -1005,6 +1054,7 @@ async function selectThread(id: string): Promise<void> {
   const selectionToken = ++conversationSelectionToken.value
   const needsLoad = Boolean(thread.sessionId && (!thread.sessionLoaded || !thread.running))
   activeThreadId.value = id
+  isGlobalExplicit.value = false
   selectedProjectId.value = project?.id ?? ''
   conversationLoadError.value = ''
 
@@ -1839,6 +1889,16 @@ watch(theme, applyTheme)
 
             <TaskStepList :steps="activeThreadTurnSteps" :running="activeThread?.running"
               :phase="activeThread?.phase" />
+            <ComposerProjectSelector
+              v-if="showComposerProjectSelector"
+              :projects="projects"
+              :active-project="activeProject"
+              :is-global-explicit="isGlobalExplicit"
+              :disabled="activeThread?.archived"
+              @select-project="onSelectProjectFromComposer"
+              @select-global="onSelectGlobalFromComposer"
+              @create-project="handleCreateProjectFromComposer"
+            />
             <Composer ref="composer" :busy="busy"
               :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
               :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"

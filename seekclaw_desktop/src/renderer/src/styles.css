@@ -2404,6 +2404,8 @@ body.is-resizing-sidebar .app-body {
 }
 
 .composer-shell {
+  position: relative;
+  z-index: 2;
   min-width: 0;
   width: min(100%, 940px);
   margin: 0 auto;
