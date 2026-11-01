@@ -89,6 +89,9 @@ public sealed class CrossSessionMemoryTests
                 var session = runtime.Sessions.Create(globalWorkspace);
                 var result = await runtime.Agent.RunTurnAsync(
                     session, globalWorkspace, "记住我偏好中文回复", CancellationToken.None);
+                // Memory distillation is post-turn maintenance; it must be awaited explicitly.
+                Assert.NotNull(result.Maintenance);
+                await result.Maintenance!;
 
                 Assert.Null(result.Error);
                 Assert.Equal("任务已完成", result.Text);
@@ -168,6 +171,7 @@ public sealed class CrossSessionMemoryTests
             var session = runtime.Sessions.Create(globalWorkspace);
             var result = await runtime.Agent.RunTurnAsync(
                 session, globalWorkspace, "记住我偏好中文回复", CancellationToken.None);
+            if (result.Maintenance is { } maintenance) await maintenance;
 
             Assert.Null(result.Error);
             Assert.Equal("任务已完成", result.Text);

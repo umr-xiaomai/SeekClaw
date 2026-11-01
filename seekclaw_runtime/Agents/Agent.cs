@@ -17,7 +17,13 @@ using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Agents;
 
-public sealed record AgentTurnResult(string Text, bool Cancelled, string? Error);
+/// <summary>
+/// Outcome of one turn. <paramref name="Maintenance"/> holds optional post-turn work
+/// (cross-session memory extraction) that performs an extra model round trip. Callers
+/// report the turn as finished first and await it afterwards, so the terminal `done`
+/// signal never waits for memory maintenance.
+/// </summary>
+public sealed record AgentTurnResult(string Text, bool Cancelled, string? Error, Task? Maintenance = null);
 
 /// <summary>
 /// The agent loop: compose prompt → stream model → execute tools → repeat,
@@ -63,6 +69,7 @@ public sealed partial class Agent(
         var finalText = "";
         string? error = null;
         var cancelled = false;
+        Task? maintenance = null;
 
         try
         {
@@ -379,8 +386,12 @@ public sealed partial class Agent(
                 && activeModel is not null
                 && subAgentScope?.Depth is null or 0)
             {
-                await CaptureCrossSessionMemoryAsync(
-                    session, workspace, activeModel, userInput, finalText, ct).ConfigureAwait(false);
+                // Memory distillation costs a full extra model round trip. Start it here so it
+                // overlaps the turn's terminal signal, but hand the task to the caller instead of
+                // awaiting it: desktop clients unfreeze on `done`, and blocking that response on
+                // an extra completion made finished answers look stuck for seconds.
+                maintenance = CaptureCrossSessionMemoryAsync(
+                    session, workspace, activeModel, userInput, finalText, ct);
             }
 
             events.Publish(new WorkflowEvent(
@@ -401,7 +412,7 @@ public sealed partial class Agent(
         PublishSteering(AppendSteering(session, steering));
         steering?.Complete();
         events.Publish(new TurnCompletedEvent(session.Header.Id, cancelled, error));
-        return new AgentTurnResult(finalText, cancelled, error);
+        return new AgentTurnResult(finalText, cancelled, error, maintenance);
     }
 
     private void PublishWorkflow(int step, string kind, string label, string? detail = null) =>

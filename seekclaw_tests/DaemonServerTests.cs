@@ -529,6 +529,32 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ChatTurn_SendsDoneBeforePostTurnMaintenanceCompletes()
+    {
+        var maintenance = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connection = await StartServerAsync((_, _, _, _) =>
+            Task.FromResult(new AgentTurnResult("ok", false, null, maintenance.Task)));
+
+        await connection.SendAsync(21, "chat", new JsonObject { ["message"] = "hello" });
+        var response = await connection.ReadAsync();
+
+        // Cross-session memory extraction is an extra model round trip that runs after the
+        // answer. The terminal response must not wait for it, otherwise the desktop keeps
+        // the turn "running" for seconds after the last sentence was already rendered.
+        Assert.Equal(21, response["id"]!.GetValue<long>());
+        Assert.Equal("done", response["event"]!.GetValue<string>());
+        Assert.False(maintenance.Task.IsCompleted);
+
+        // The connection keeps serving new turns while maintenance is still draining.
+        await connection.SendAsync(22, "chat", new JsonObject { ["message"] = "again" });
+        var second = await connection.ReadAsync();
+        Assert.Equal(22, second["id"]!.GetValue<long>());
+        Assert.Equal("done", second["event"]!.GetValue<string>());
+
+        maintenance.SetResult();
+    }
+
+    [Fact]
     public async Task ImageOnlyChat_AcceptsMultipleValidatedAttachments()
     {
         var invoked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -1192,6 +1192,21 @@ public sealed class DaemonServer : IAsyncDisposable
         {
             // The client disconnected while the turn was ending.
         }
+
+        // Post-turn maintenance (cross-session memory extraction) is an extra model round
+        // trip. The terminal response above already released the client, so draining it here
+        // keeps the memory write ordered before the next turn without adding latency.
+        if (result?.Maintenance is { } maintenance)
+        {
+            try
+            {
+                await maintenance.ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Best-effort: maintenance failures never change the finished turn's outcome.
+            }
+        }
     }
 
     private static async ValueTask<ToolApprovalDecision> RequestToolApprovalAsync(

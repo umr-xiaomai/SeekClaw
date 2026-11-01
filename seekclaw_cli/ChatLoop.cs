@@ -73,6 +73,8 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
 
         _turnCts = new CancellationTokenSource();
         var result = await runtime.Agent.RunTurnAsync(session, runtime.Workspace, prompt, _turnCts.Token);
+        if (result.Maintenance is { } maintenance)
+            await maintenance.ConfigureAwait(false);
         renderer.Flush();
         return result.Error is null ? 0 : 1;
     }
@@ -230,9 +232,13 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                 {
                     try
                     {
-                        await runtime.Agent.RunTurnAsync(
+                        var result = await runtime.Agent.RunTurnAsync(
                             currentSession, currentWorkspace, currentPrompt, currentCts.Token,
                             steering: steering).ConfigureAwait(false);
+                        // Memory distillation runs after the turn is reported done; keep it
+                        // inside the turn task so the next prompt sees fresh memory.
+                        if (result.Maintenance is { } maintenance)
+                            await maintenance.ConfigureAwait(false);
                     }
                     finally
                     {
