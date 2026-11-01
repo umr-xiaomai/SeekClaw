@@ -1,3 +1,0 @@
-Project memory (persisted notes about this workspace). These facts reflect past sessions and may be stale; prefer current files, git history, and tool evidence when they conflict.
-
-{{memory}}

@@ -174,3 +174,5 @@ token-cache/
 
 # SeekClaw
 .seekclaw/
+.workbuddy/
+packaging/
