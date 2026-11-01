@@ -35,6 +35,8 @@ import ConversationMessage from './components/ConversationMessage.vue'
 import CustomizationPage from './components/CustomizationPage.vue'
 import EditMessageDialog from './components/EditMessageDialog.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
+import ConversationTimeline from './components/ConversationTimeline.vue'
+import { extractConversationTurns, type ConversationTurn } from './components/conversation-turns'
 
 import OfficialSkillsDialog from './components/OfficialSkillsDialog.vue'
 import ProjectPropertiesDialog from './components/ProjectPropertiesDialog.vue'
@@ -547,10 +549,93 @@ function measureConversationViewport(): void {
   if (scrollArea.value) conversationViewportHeight.value = scrollArea.value.clientHeight
 }
 
+const userTurns = computed<ConversationTurn[]>(() => {
+  return extractConversationTurns(activeThread.value?.messages ?? [])
+})
+
+const activeTurnId = ref<string>('')
+
+function updateActiveTurn(): void {
+  const container = scrollArea.value
+  if (!container || userTurns.value.length === 0) return
+
+  if (isNearConversationBottom(container, 80)) {
+    activeTurnId.value = userTurns.value[userTurns.value.length - 1]?.id ?? ''
+    return
+  }
+
+  const containerRect = container.getBoundingClientRect()
+  const triggerY = containerRect.top + 160
+
+  let currentId = userTurns.value[0]?.id ?? ''
+  for (const turn of userTurns.value) {
+    const el = document.getElementById('message-' + turn.id)
+    if (el) {
+      const rect = el.getBoundingClientRect()
+      if (rect.top <= triggerY) {
+        currentId = turn.id
+      } else {
+        break
+      }
+    }
+  }
+  activeTurnId.value = currentId
+}
+
+watch(
+  () => userTurns.value.map((t) => t.id).join(','),
+  () => {
+    void nextTick(() => updateActiveTurn())
+  },
+  { immediate: true }
+)
+
+function triggerMessagePulse(el: HTMLElement): void {
+  el.classList.remove('target-highlight-flash')
+  void el.offsetWidth
+  el.classList.add('target-highlight-flash')
+  setTimeout(() => {
+    el.classList.remove('target-highlight-flash')
+  }, 1600)
+}
+
+function handleTimelineNavigate(turn: ConversationTurn): void {
+  const container = scrollArea.value
+  if (!container) return
+
+  activeTurnId.value = turn.id
+  autoFollowConversation.value = false
+
+  const targetEl = document.getElementById('message-' + turn.id)
+  if (targetEl) {
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    triggerMessagePulse(targetEl)
+    return
+  }
+
+  const index = conversationItems.value.findIndex((item) => item.message.id === turn.id)
+  if (index >= 0) {
+    let top = 0
+    for (let i = 0; i < index; i++) {
+      const id = conversationItems.value[i]?.message.id ?? ''
+      top += messageHeights.get(id) ?? VIRTUAL_ESTIMATED_HEIGHT
+    }
+    container.scrollTo({ top, behavior: 'smooth' })
+    setTimeout(() => {
+      const el = document.getElementById('message-' + turn.id)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        triggerMessagePulse(el)
+      }
+    }, 150)
+  }
+}
+
 function handleConversationScroll(): void {
   if (scrollArea.value) conversationScrollTop.value = scrollArea.value.scrollTop
   const element = scrollArea.value
   if (element) autoFollowConversation.value = isNearConversationBottom(element)
+  updateActiveTurn()
 }
 
 async function scrollToBottom(smooth = false, force = false): Promise<void> {
@@ -655,9 +740,14 @@ async function loadRuntimeState(): Promise<void> {
     await refreshAllProjectSessions()
     await migrateImplicitDocumentsProject()
 
+    // 清理可能由于先前未加锁保存残留的无消息未启动草稿
+    threads.value = threads.value.filter((thread) =>
+      thread.sessionId || thread.messages.length > 0 || thread.running
+    )
+
     if (!activeThread.value) {
       const recent = threads.value
-        .filter((thread) => !thread.archived)
+        .filter((thread) => !thread.archived && Boolean(thread.sessionId || thread.messages.length > 0 || thread.running))
         .sort((left, right) => right.updatedAt - left.updatedAt)[0]
       if (recent) {
         activeThreadId.value = recent.id
@@ -820,6 +910,24 @@ function selectArchivedThread(id: string): void {
 function newTask(projectId?: string): void {
   const project = projectId ? projects.value.find((item) => item.id === projectId) : undefined
   if (projectId && !project) return
+
+  // 1. 如果当前已经在未开启的空会话中，不重复新建，直接复用当前会话页面并更新作用域
+  const current = activeThread.value
+  if (current && !current.sessionId && current.messages.length === 0 && !current.running) {
+    current.projectId = project?.id
+    selectedProjectId.value = project?.id ?? ''
+    isGlobalExplicit.value = !project
+    conversationSelectionToken.value++
+    conversationLoading.value = false
+    conversationLoadError.value = ''
+    void nextTick(() => composer.value?.focus())
+    return
+  }
+
+  // 2. 清理之前遗留的未发送消息的空会话草稿，避免内存中堆积
+  threads.value = threads.value.filter((t) => t.sessionId || t.messages.length > 0 || t.running)
+
+  // 3. 创建单例的空会话草稿
   const thread: ThreadItem = {
     id: makeId(),
     title: '新任务',
@@ -840,7 +948,7 @@ function newTask(projectId?: string): void {
     }
   }
   threads.value.unshift(thread)
-  isGlobalExplicit.value = false
+  isGlobalExplicit.value = !project
   selectedProjectId.value = project?.id ?? ''
   activeThreadId.value = thread.id
   // Invalidate an in-flight session read for the previously selected task.
@@ -1047,6 +1155,12 @@ async function reloadThreadSession(thread: ThreadItem, project?: ProjectItem): P
 }
 
 async function selectThread(id: string): Promise<void> {
+  // 切换离开未开始的空草稿会话时，自动清理该草稿
+  const current = activeThread.value
+  if (current && current.id !== id && !current.sessionId && current.messages.length === 0 && !current.running) {
+    threads.value = threads.value.filter((t) => t.id !== current.id)
+  }
+
   const thread = threads.value.find((item) => item.id === id)
   if (!thread) return
   const project = projects.value.find((item) => item.id === thread.projectId)
@@ -1799,6 +1913,13 @@ watch(theme, applyTheme)
             </div>
           </header>
 
+          <ConversationTimeline
+            v-if="userTurns.length > 0"
+            :turns="userTurns"
+            :active-turn-id="activeTurnId"
+            @select-turn="handleTimelineNavigate"
+          />
+
           <section ref="scrollArea" class="conversation-scroll" @scroll="handleConversationScroll">
             <div v-if="conversationLoading" class="conversation-content conversation-skeleton" role="status" aria-label="正在加载会话">
               <div class="skeleton-bubble user" style="width: 130px;" />
@@ -1935,6 +2056,7 @@ watch(theme, applyTheme)
       :daemon-connected="daemonState.connected" :daemon-endpoint="daemonState.endpoint"
       :initial-section="activePage === 'settings' ? settingsSection : extensionsSection"
       :workspace-path="currentWorkspacePath"
+      :projects="projects"
       @close="closePage"
       @change-theme="applyTheme"
       @change-accent-color="applyAccentColor"

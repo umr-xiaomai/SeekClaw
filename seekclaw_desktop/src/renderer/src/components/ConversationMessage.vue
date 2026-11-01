@@ -330,7 +330,7 @@ function getToolTarget(tool: ToolActivity): string {
 </script>
 
 <template>
-  <article v-if="isVisible" class="message"
+  <article v-if="isVisible" :id="'message-' + message.id" class="message"
     :class="[`message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate, 'is-tools-only': isToolsOnly }]">
     <!-- user: either a real message or a system-injected card -->
     <template v-if="message.role === 'user'">

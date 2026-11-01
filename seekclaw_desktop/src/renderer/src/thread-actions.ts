@@ -43,7 +43,7 @@ export function createThreadActions(context: ThreadActionsContext) {
     conversationLoading.value = false
     conversationLoadError.value = ''
     const fallback = threads.value
-      .filter((thread) => thread.projectId === projectId && !thread.archived)
+      .filter((thread) => thread.projectId === projectId && !thread.archived && Boolean(thread.sessionId || thread.messages.length > 0 || thread.running))
       .sort((left, right) => right.updatedAt - left.updatedAt)[0]
     if (fallback) {
       void selectThread(fallback.id)
@@ -256,6 +256,7 @@ export function createThreadActions(context: ThreadActionsContext) {
 
     try {
       await window.seekclaw.daemon.request('project.remove', { id: project.id })
+      await window.seekclaw.daemon.request('memory.deleteByWorkspace', { workspace: project.path }).catch(() => undefined)
     } catch {
       await refreshProjectSessions(project).catch(() => undefined)
       return
