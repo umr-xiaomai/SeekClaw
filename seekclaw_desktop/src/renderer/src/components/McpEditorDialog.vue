@@ -98,6 +98,9 @@ watch(() => props.open, (open) => {
   if (!open) return
   void updateWorkspacePath()
   Object.assign(form, props.server ? mcpFormFromServer(props.server) : createMcpFormValue())
+  form.bearerTokenEnv = props.server?.bearerTokenEnv ?? ''
+  form.envHeaders = Object.entries(props.server?.envHeaders ?? {}).map(([key, value]) => `${key}=${value}`).join('\n')
+  form.oauth = { ...(props.server?.oauth ?? {}) }
   validationError.value = ''
   document.addEventListener('keydown', handleKeydown)
   void nextTick(() => firstInput.value?.focus())
@@ -186,6 +189,22 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                   />
                 </label>
               </div>
+            </section>
+
+            <section v-if="remote" class="mcp-form-section">
+              <label class="form-field">
+                <span>Bearer Token 环境变量</span>
+                <input v-model="form.bearerTokenEnv" class="form-input" placeholder="例如 MCP_API_TOKEN" autocomplete="off" />
+              </label>
+              <label class="form-field">
+                <span>请求头 → 环境变量（每行 Header=ENV_NAME）</span>
+                <textarea v-model="form.envHeaders" class="form-input" rows="2" placeholder="X-Api-Key=MCP_API_KEY" />
+              </label>
+              <label v-if="form.oauth" class="form-field">
+                <span>OAuth Client ID（支持自动发现时可留空）</span>
+                <input v-model="form.oauth.clientId" class="form-input" autocomplete="off" />
+              </label>
+              <small>保存后可在服务器列表点击“登录”完成浏览器授权。</small>
             </section>
 
             <section class="mcp-form-section">

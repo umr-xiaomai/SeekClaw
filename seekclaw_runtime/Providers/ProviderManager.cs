@@ -127,8 +127,9 @@ public sealed class ProviderManager(
                 ct.ThrowIfCancellationRequested();
 
                 var stopwatch = Stopwatch.StartNew();
-                var committed = false;
+                var hasOutput = false;
                 LlmCompletion? completion = null;
+                LlmException? failure = null;
                 IAsyncEnumerator<LlmStreamEvent>? stream = null;
 
                 // The finally below disposes the provider stream on every exit path,
@@ -147,61 +148,59 @@ public sealed class ProviderManager(
                             if (!await stream.MoveNextAsync().ConfigureAwait(false)) break;
                             evt = stream.Current;
                         }
-                        catch (LlmException ex) when (!committed && ex.Retryable && !ct.IsCancellationRequested)
-                        {
-                            lastError = ex;
-                            Breaker.RecordFailure(model.Ref);
-                            RecordUsage(model, null, stopwatch, success: false);
-                            await stream.DisposeAsync().ConfigureAwait(false);
-
-                            if (attempt < Retry.MaxAttempts)
-                            {
-                                var delay = BackoffDelay(attempt);
-                                eventBus.Publish(new ProviderRetryEvent(model.Ref, attempt, ex.Message, delay));
-                                await Task.Delay(delay, ct).ConfigureAwait(false);
-                            }
-                            goto NextAttempt;
-                        }
                         catch (LlmException ex)
                         {
-                            Breaker.RecordFailure(model.Ref);
-                            RecordUsage(model, completion, stopwatch, success: false);
-                            await stream.DisposeAsync().ConfigureAwait(false);
-                            // Once the stream has yielded tokens we can no longer switch providers
-                            // mid-answer, so propagate immediately. A non-retryable failure of the
-                            // active model (bad key, invalid request...) is also surfaced directly
-                            // instead of being hidden by a silent failover. But a fallback candidate
-                            // rejecting the request (e.g. HTTP 401 from an unconfigured default)
-                            // must not abort the remaining candidates: record it and keep walking.
-                            if (committed || (candidateIndex == 0 && !ex.Retryable)) throw;
-                            lastError = ex;
-                            failures.Add((model.Ref, ex.Message));
-                            goto NextCandidate;
+                            failure = ex;
+                            break;
                         }
 
-                        committed = true;
+                        hasOutput = true;
                         if (evt is LlmCompleted done) completion = done.Completion;
                         yield return evt;
+                        // Completion is authoritative. Never read/retry past this boundary:
+                        // the caller may now execute the completed tool calls.
+                        if (completion is not null) break;
                     }
-
-                    Breaker.RecordSuccess(model.Ref);
-                    RecordUsage(model, completion, stopwatch, success: true);
-                    yield break;
-
-                    NextAttempt: ;
                 }
                 finally
                 {
                     if (stream is not null)
                         await stream.DisposeAsync().ConfigureAwait(false);
                 }
+
+                ct.ThrowIfCancellationRequested();
+                if (failure is null && completion is not null)
+                {
+                    Breaker.RecordSuccess(model.Ref);
+                    RecordUsage(model, completion, stopwatch, success: true);
+                    yield break;
+                }
+
+                failure ??= new LlmException($"{model.Provider.Id} stream ended without a completed response.");
+                lastError = failure;
+                Breaker.RecordFailure(model.Ref);
+                RecordUsage(model, null, stopwatch, success: false);
+
+                // Only repeat this model invocation, whose tool calls have not been
+                // committed. Earlier tool executions remain in request history.
+                if (failure.Retryable && attempt < Retry.MaxAttempts)
+                {
+                    var delay = BackoffDelay(attempt);
+                    eventBus.Publish(new ProviderRetryEvent(model.Ref, attempt, failure.Message, delay));
+                    await Task.Delay(delay, ct).ConfigureAwait(false);
+                    if (hasOutput) yield return new LlmStreamReset(model.Ref);
+                    continue;
+                }
+
+                // Do not splice another provider into a partially displayed answer.
+                // Non-retryable errors of the selected provider also remain explicit.
+                if (hasOutput || (candidateIndex == 0 && !failure.Retryable)) throw failure;
+                break;
             }
 
             // All retries for this candidate were exhausted; remember the failure too.
             if (lastError is not null && !failures.Exists(failure => failure.Ref == model.Ref))
                 failures.Add((model.Ref, lastError.Message));
-
-            NextCandidate: ;
         }
 
         throw BuildFailoverException(failures, lastError);

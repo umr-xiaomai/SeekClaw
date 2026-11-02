@@ -1,3 +1,5 @@
 Create a new file or fully overwrite an existing one. Parent directories are created automatically. For small changes to existing files prefer edit_file.
 
 Never overwrite a file without reading it first unless the user explicitly asks for a full replacement.
+
+HTML files automatically get a preview card in Desktop. For a self-contained preview, use inline styles/scripts and embedded assets; the sandbox does not load external or relative resources. Keep preview HTML under 2 MiB. Use present_artifact to present other deliverables or assign a descriptive title.

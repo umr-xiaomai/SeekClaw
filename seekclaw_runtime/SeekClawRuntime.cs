@@ -4,6 +4,7 @@ using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Execution;
 using SeekClaw.Runtime.Extensions;
 using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Memory;
@@ -53,6 +54,20 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public SubAgentRunner SubAgentRunner => _services.GetRequiredService<SubAgentRunner>();
     public ToolApprovalService Approvals => _services.GetRequiredService<ToolApprovalService>();
     public Agent Agent => _services.GetRequiredService<Agent>();
+    public CommandSessionManager Commands => _services.GetRequiredService<CommandSessionManager>();
+    public WorktreeManager Worktrees => _services.GetRequiredService<WorktreeManager>();
+    public SessionTurnCoordinator Turns => _services.GetRequiredService<SessionTurnCoordinator>();
+    public ExecutionRecordStore ExecutionRecords => _services.GetRequiredService<ExecutionRecordStore>();
+    public McpAuthentication McpAuth => _services.GetRequiredService<McpAuthentication>();
+    public RuntimeTaskServices TaskServices => _services.GetRequiredService<RuntimeTaskServices>();
+    public SubAgentTaskManager SubAgentTasks => TaskServices.SubAgents;
+
+    /// <summary>Long-lived services are shared by foreground, background and delegated runtimes.</summary>
+    internal void ShareTaskServices(IServiceCollection services)
+    {
+        TaskServices.ShareWith(services);
+        services.AddSingleton<IConfigStore>(new TaskConfigStore(ConfigStore));
+    }
 
     private SeekClawRuntime(ServiceProvider services, WorkspaceInfo workspace)
     {
@@ -253,6 +268,10 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
         foreach (var tool in new ITool[]
                  {
                      new PlanTool(prompts),
+                     new LoadSkillTool(prompts, Skills),
+                     new ScheduleTool(prompts, Schedules),
+                     new SeekClaw.Runtime.Presentation.PresentArtifactTool(prompts),
+                     new CommandSessionTool(prompts, Commands),
                      new ReadFileTool(prompts),
                      new WriteFileTool(prompts),
                      new EditFileTool(prompts),
@@ -264,6 +283,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                      new WebFetchTool(prompts),
                      new CaptureScreenTool(prompts),
                      new InvokeSubAgentTool(prompts, SubAgentRunner),
+                     new SubAgentControlTool(prompts, SubAgentRunner, SubAgentTasks),
                   })
             Tools.Register(tool);
 
@@ -309,10 +329,19 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IProviderManager, ProviderManager>();
 
         services.AddSingleton<IToolRegistry, ToolRegistry>();
+        services.AddSingleton<CommandSessionManager>();
         services.AddSingleton<ToolApprovalService>();
         services.AddSingleton<IToolApprovalGate>(sp => sp.GetRequiredService<ToolApprovalService>());
         services.AddSingleton<IWorkspaceManager, WorkspaceManager>();
         services.AddSingleton<SeekClawDatabase>();
+        services.AddSingleton<ExecutionRecordStore>();
+        services.AddSingleton<SubAgentTaskManager>();
+        services.AddSingleton<RuntimeTaskServices>();
+        services.AddSingleton<WorktreeManager>();
+        services.AddSingleton(sp => new SessionTurnCoordinator(Path.Combine(
+            Path.GetDirectoryName(sp.GetRequiredService<SeekClawDatabase>().FilePath)!, "task-locks")));
+        services.AddSingleton<McpCredentialStore>();
+        services.AddSingleton<McpAuthentication>();
         services.AddSingleton<ISessionStore, SessionStore>();
         services.AddSingleton<ICrossSessionMemoryStore, CrossSessionMemoryStore>();
         services.AddSingleton<IProjectStore, ProjectStore>();

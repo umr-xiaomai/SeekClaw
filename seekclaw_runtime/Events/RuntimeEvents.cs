@@ -1,3 +1,6 @@
+using System.Text.Json.Nodes;
+using SeekClaw.Runtime.Presentation;
+
 namespace SeekClaw.Runtime.Events;
 
 /// <summary>
@@ -24,6 +27,9 @@ public sealed record StatusEvent(string Status, string? Detail = null) : Runtime
 
 public sealed record AssistantTextDeltaEvent(string Delta) : RuntimeEvent;
 
+/// <summary>Replace only the current uncommitted stream when its model request is retried.</summary>
+public sealed record AssistantStreamResetEvent(string ModelRef, int TextLength, int ThinkingLength) : RuntimeEvent;
+
 public sealed record AssistantMessageCompletedEvent(string Text) : RuntimeEvent;
 
 public sealed record ThinkingDeltaEvent(string Delta) : RuntimeEvent;
@@ -44,7 +50,15 @@ public sealed record ToolCallCompletedEvent(
     string ToolName,
     bool Success,
     string ResultSummary,
-    TimeSpan Duration) : RuntimeEvent;
+    TimeSpan Duration) : RuntimeEvent
+{
+    /// <summary>Full text output, separate from the one-line display summary.</summary>
+    public string Output { get; init; } = ResultSummary;
+    public JsonArray? Content { get; init; }
+    public JsonNode? StructuredContent { get; init; }
+    public JsonObject? Metadata { get; init; }
+    public IReadOnlyList<ConversationWidget>? Widgets { get; init; }
+}
 
 /// <summary>A unified diff produced by a file-mutating tool, for rich rendering.</summary>
 public sealed record FileDiffEvent(string CallId, string FilePath, string UnifiedDiff) : RuntimeEvent;
@@ -84,6 +98,10 @@ public sealed record VerificationCompletedEvent(bool Success, string Summary, in
 // ---------------------------------------------------------------- scheduling
 
 /// <summary>Emitted when a scheduled task enters the one-minute pre-run window.</summary>
+public sealed record ScheduledTaskUpdatedEvent : RuntimeEvent;
+
+public sealed record SubAgentTaskChangedEvent(string ParentSessionId, string TaskId, string Status) : RuntimeEvent;
+
 public sealed record ScheduledTaskUpcomingEvent(
     string TaskId,
     string Name,

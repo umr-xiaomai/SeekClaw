@@ -38,7 +38,8 @@ public sealed class SubAgentTests
         Assert.Contains("edit_file", coder.AllowedTools!);
 
         var tester = registry.Resolve("tester")!;
-        Assert.False(tester.AllowMutating);
+        // Build/test commands can create artifacts; they inherit the parent's approval mode.
+        Assert.True(tester.AllowMutating);
         Assert.Contains("bash", tester.AllowedTools!);
     }
 

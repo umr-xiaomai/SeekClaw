@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { formatTokenCount, normalizePath, pathName, samePath } from './app-helpers'
+import { formatTokenCount, hydrateMessages, normalizePath, pathName, samePath } from './app-helpers'
+
+describe('interrupted session hydration', () => {
+  it('restores partial content and failure status while preserving legacy completed messages', () => {
+    const messages = hydrateMessages({
+      id: 'session', createdAt: '2026-11-03T00:00:00Z', updatedAt: '2026-11-03T00:00:00Z',
+      messages: [
+        { role: 'assistant', text: 'legacy answer' },
+        { role: 'assistant', text: 'partial answer', thinking: 'partial thought', finishReason: 'error',
+          errorMessage: 'ResponseEnded' },
+        { role: 'assistant', text: '', finishReason: 'error', errorMessage: 'Connection failed' }
+      ]
+    })
+    expect(messages[0]).toMatchObject({ content: 'legacy answer', state: 'done' })
+    expect(messages[1]).toMatchObject({ content: 'partial answer', thinking: 'partial thought',
+      state: 'error', errorMessage: 'ResponseEnded' })
+    expect(messages[2]).toMatchObject({ content: '', state: 'error', errorMessage: 'Connection failed' })
+  })
+})
 
 describe('formatTokenCount', () => {
   it('formats millions with M suffix correctly without unnecessary trailing zeros', () => {

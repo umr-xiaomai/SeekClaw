@@ -69,6 +69,10 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             {
                 string body;
                 try { body = await response.Content.ReadAsStringAsync(headerCts.Token).ConfigureAwait(false); }
+                catch (Exception ex) when (ex is HttpRequestException or IOException)
+                {
+                    throw LlmTransportErrors.ReadingResponse(request.Provider.Id, ex);
+                }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
                     throw new LlmException(
@@ -97,6 +101,10 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             var sawMessageStop = false;
             Stream stream;
             try { stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is HttpRequestException or IOException)
+            {
+                throw LlmTransportErrors.ReadingResponse(request.Provider.Id, ex);
+            }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 throw new LlmException(
@@ -112,6 +120,10 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 {
                     bool hasNext;
                     try { hasNext = await events.MoveNextAsync().ConfigureAwait(false); }
+                    catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException)
+                    {
+                        throw LlmTransportErrors.ReadingResponse(request.Provider.Id, ex);
+                    }
                     catch (TimeoutException ex)
                     {
                         throw new LlmException(
@@ -248,7 +260,8 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
 
                 case ChatRole.Assistant:
                     var content = new JsonArray();
-                    if (!string.IsNullOrEmpty(msg.Thinking)
+                    if (msg.FinishReason is not ("error" or "cancelled")
+                        && !string.IsNullOrEmpty(msg.Thinking)
                         && !string.IsNullOrEmpty(msg.ThinkingSignature))
                     {
                         content.Add((JsonNode)new JsonObject
@@ -258,8 +271,9 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                             ["signature"] = msg.ThinkingSignature,
                         });
                     }
-                    if (!string.IsNullOrEmpty(msg.Text))
-                        content.Add((JsonNode)new JsonObject { ["type"] = "text", ["text"] = msg.Text });
+                    var historyText = msg.AssistantHistoryText();
+                    if (!string.IsNullOrEmpty(historyText))
+                        content.Add((JsonNode)new JsonObject { ["type"] = "text", ["text"] = historyText });
                     if (msg.ToolCalls is { Count: > 0 })
                         foreach (var call in msg.ToolCalls)
                             content.Add((JsonNode)new JsonObject

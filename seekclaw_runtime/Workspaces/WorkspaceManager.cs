@@ -11,11 +11,15 @@ public sealed class WorkspaceInfo
     public required IReadOnlyList<string> ProjectKinds { get; init; }
     public WorkspaceConfig? Config { get; init; }
     public bool IsGlobal { get; init; }
+    /// <summary>File execution root; a global workspace's Root stores settings, not user artifacts.</summary>
+    public string WorkingDirectory => IsGlobal ? Directory.GetCurrentDirectory() : Root;
+    /// <summary>Fallback for local settings omitted from a Git worktree checkout.</summary>
+    public string? ConfigurationRoot { get; init; }
 
     public string Name => IsGlobal ? "Global" : Path.GetFileName(Root.TrimEnd(Path.DirectorySeparatorChar, '/'));
 
     public string SeekClawDir => IsGlobal ? Root : Path.Combine(Root, ".seekclaw");
-    public string PromptsDir => Path.Combine(SeekClawDir, "prompts");
+    public string PromptsDir => ConfigurationDirectory("prompts", conventional: false);
     public string MemoryDir => Path.Combine(SeekClawDir, "memory");
     public string MemoryFile => Path.Combine(MemoryDir, "MEMORY.md");
     public string CacheDir => Path.Combine(SeekClawDir, "cache");
@@ -23,9 +27,18 @@ public sealed class WorkspaceInfo
         ? Path.Combine(Root, "sessions")
         : Directory.Exists(Path.Combine(Root, ".session")) ? Path.Combine(Root, ".session") : Path.Combine(SeekClawDir, "sessions");
     public string LogsDir => Path.Combine(SeekClawDir, "logs");
-    public string SkillsDir => Directory.Exists(Path.Combine(Root, "skills")) ? Path.Combine(Root, "skills") : Path.Combine(SeekClawDir, "skills");
-    public string McpDir => Directory.Exists(Path.Combine(Root, "mcp")) ? Path.Combine(Root, "mcp") : Path.Combine(SeekClawDir, "mcp");
+    public string SkillsDir => ConfigurationDirectory("skills", conventional: true);
+    public string McpDir => ConfigurationDirectory("mcp", conventional: true);
     public string DocsDir => Directory.Exists(Path.Combine(Root, "docs")) ? Path.Combine(Root, "docs") : Path.Combine(SeekClawDir, "docs");
+
+    private string ConfigurationDirectory(string name, bool conventional)
+    {
+        if (conventional && Directory.Exists(Path.Combine(Root, name))) return Path.Combine(Root, name);
+        var local = Path.Combine(SeekClawDir, name);
+        if (Directory.Exists(local) || ConfigurationRoot is null) return local;
+        if (conventional && Directory.Exists(Path.Combine(ConfigurationRoot, name))) return Path.Combine(ConfigurationRoot, name);
+        return Path.Combine(ConfigurationRoot, ".seekclaw", name);
+    }
 }
 
 public interface IWorkspaceManager

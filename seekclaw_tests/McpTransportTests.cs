@@ -8,6 +8,25 @@ namespace SeekClaw.Tests;
 
 public class McpTransportTests
 {
+    [Theory]
+    [InlineData("2024-11-05")]
+    [InlineData("2025-03-26")]
+    [InlineData("2025-06-18")]
+    public async Task HttpMcpTransport_UsesNegotiatedProtocolVersionOnSubsequentRequests(string version)
+    {
+        string? initializedVersion = null;
+        using var http = new HttpClient(new DelegatingMockHandler(request =>
+        {
+            if (request.Method == HttpMethod.Get) return new HttpResponseMessage(HttpStatusCode.MethodNotAllowed);
+            if (request.Headers.TryGetValues("MCP-Protocol-Version", out var values)) initializedVersion = Assert.Single(values);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(new JsonObject
+            { ["jsonrpc"] = "2.0", ["id"] = 1, ["result"] = new JsonObject { ["protocolVersion"] = version } }.ToJsonString(), Encoding.UTF8, "application/json") };
+        }));
+        await using var client = new McpClient("test", new HttpMcpTransport("http://localhost/mcp", http));
+        await client.InitializeAsync(CancellationToken.None);
+        Assert.Equal(version, initializedVersion);
+    }
+
     private sealed class DelegatingMockHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

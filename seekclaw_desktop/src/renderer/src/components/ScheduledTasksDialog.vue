@@ -13,13 +13,14 @@ import {
   X
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import type { ProjectItem, ScheduledTaskInfo } from '../types'
+import type { ProjectItem, ScheduledTaskInfo, ThreadItem } from '../types'
 import SelectMenu from './SelectMenu.vue'
 import TwoPaneLayout from './TwoPaneLayout.vue'
 
 const props = defineProps<{
   open: boolean
   projects: ProjectItem[]
+  threads?: ThreadItem[]
 }>()
 
 const emit = defineEmits<{ close: [] }>()
@@ -30,6 +31,9 @@ interface ScheduleForm {
   prompt: string
   cron: string
   enabled: boolean
+  sessionId: string
+  runInWorktree: boolean
+  notificationPolicy: 'changes' | 'failures' | 'always'
 }
 
 type ScheduleFilter = 'all' | 'enabled' | 'disabled'
@@ -54,12 +58,31 @@ const cronPresets = [
   { value: '__custom__', label: '自定义 Cron', description: '自定义 5 段表达式' }
 ]
 
-const form = reactive<ScheduleForm>({ name: '', workspace: '', prompt: '', cron: '0 9 * * *', enabled: true })
+const defaults = (): ScheduleForm => ({ name: '', workspace: '', prompt: '', cron: '0 9 * * *', enabled: true, sessionId: '', runInWorktree: false, notificationPolicy: 'changes' })
+const form = reactive<ScheduleForm>(defaults())
+const notificationOptions = [
+  { value: 'changes', label: '有变化时通知', description: '无变化时保持安静' },
+  { value: 'failures', label: '仅失败时通知', description: '成功时保持安静' },
+  { value: 'always', label: '每次通知', description: '报告每次运行结果' }
+]
 
 const workspaceOptions = computed(() => [
   { value: '', label: '不绑定项目', description: '无固定工作目录' },
   ...props.projects.map((project) => ({ value: project.path, label: project.name, description: project.path }))
 ])
+
+const conversationOptions = computed(() => {
+  const project = props.projects.find((item) => item.path === form.workspace)
+  const matches = (props.threads ?? []).filter((thread) => thread.sessionId && !thread.archived
+    && (form.workspace ? thread.projectId === project?.id : !thread.projectId))
+  const options = [
+    { value: '', label: '每次创建新对话', description: '独立执行' },
+    ...matches.map((thread) => ({ value: thread.sessionId!, label: thread.title, description: '延续此对话的上下文' }))
+  ]
+  if (form.sessionId && !options.some((option) => option.value === form.sessionId))
+    options.push({ value: form.sessionId, label: '已绑定的对话', description: form.sessionId })
+  return options
+})
 
 const selectedPreset = computed({
   get: () => cronPresets.some((preset) => preset.value === form.cron) ? form.cron : '__custom__',
@@ -141,7 +164,7 @@ async function loadTasks(): Promise<void> {
 function newTask(): void {
   error.value = ''
   editingId.value = null
-  Object.assign(form, { name: '', workspace: '', prompt: '', cron: '0 9 * * *', enabled: true })
+  Object.assign(form, defaults())
   customCron.value = false
   editorOpen.value = true
 }
@@ -154,7 +177,10 @@ function editTask(task: ScheduledTaskInfo): void {
     workspace: task.workspace ?? '',
     prompt: task.prompt,
     cron: task.cron,
-    enabled: task.enabled
+    enabled: task.enabled,
+    sessionId: task.sessionId ?? '',
+    runInWorktree: task.runInWorktree ?? false,
+    notificationPolicy: task.notificationPolicy ?? 'always'
   })
   customCron.value = !cronPresets.some((preset) => preset.value === task.cron)
   editorOpen.value = true
@@ -174,7 +200,10 @@ async function saveTask(): Promise<void> {
         workspace: form.workspace || undefined,
         prompt: form.prompt.trim(),
         cron: form.cron.trim(),
-        enabled: form.enabled
+        enabled: form.enabled,
+        sessionId: form.sessionId.trim() || null,
+        runInWorktree: form.runInWorktree,
+        notificationPolicy: form.notificationPolicy
       })
       notice.value = `已更新「${form.name}」`
     } else {
@@ -183,7 +212,10 @@ async function saveTask(): Promise<void> {
         workspace: form.workspace || undefined,
         prompt: form.prompt.trim(),
         cron: form.cron.trim(),
-        enabled: form.enabled
+        enabled: form.enabled,
+        sessionId: form.sessionId.trim() || null,
+        runInWorktree: form.runInWorktree,
+        notificationPolicy: form.notificationPolicy
       })
       notice.value = `已创建「${form.name}」`
     }
@@ -252,7 +284,7 @@ watch(() => props.open, (open) => {
 onMounted(() => {
   document.addEventListener('keydown', closeOnEscape)
   unsubscribeDaemonEvent = window.seekclaw.daemon.onEvent((message) => {
-    if (message.event === 'schedule.updated') void loadTasks()
+    if (message.event === 'schedule.updated' || message.event === 'schedule.changed') void loadTasks()
   })
 })
 
@@ -445,6 +477,18 @@ onBeforeUnmount(() => {
                   <input v-if="customCron" v-model="form.cron" class="scheduled-cron-input"
                     placeholder="分 时 日 月 周，如 0 9 * * 1" spellcheck="false" />
                 </div>
+              </label>
+              <label class="scheduled-enabled-row span-2">
+                <span><strong>隔离工作目录</strong><small>在专属 Git worktree 中执行</small></span>
+                <input v-model="form.runInWorktree" type="checkbox" :disabled="!form.workspace" />
+              </label>
+              <label class="span-2">
+                <span>对话上下文</span>
+                <SelectMenu v-model="form.sessionId" :options="conversationOptions" label="对话上下文" />
+              </label>
+              <label class="span-2">
+                <span>通知</span>
+                <SelectMenu v-model="form.notificationPolicy" :options="notificationOptions" label="通知策略" />
               </label>
               <label class="scheduled-enabled-row span-2">
                 <span><strong>启用</strong><small>关闭后保留任务但不再自动执行</small></span>

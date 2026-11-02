@@ -87,6 +87,7 @@ public sealed class SeekClawDatabase
             PRAGMA busy_timeout=10000;
 
             DROP TABLE IF EXISTS messages;
+            DROP TABLE IF EXISTS execution_records;
             DROP TABLE IF EXISTS cross_session_memories;
             DROP TABLE IF EXISTS sessions;
             DROP TABLE IF EXISTS projects;
@@ -113,6 +114,16 @@ public sealed class SeekClawDatabase
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS execution_records (
+                kind TEXT NOT NULL,
+                id TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (kind, id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_execution_records_owner ON execution_records(kind, owner);
 
             CREATE TABLE IF NOT EXISTS sessions (
                 scope TEXT NOT NULL,
@@ -200,6 +211,9 @@ public sealed class SeekClawDatabase
         EnsureColumn(connection, "sessions", "cached_input_tokens", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "sessions", "output_tokens", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "sessions", "output_elapsed_ms", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "scheduled_tasks", "session_id", "TEXT NULL");
+        EnsureColumn(connection, "scheduled_tasks", "run_in_worktree", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "scheduled_tasks", "notification_policy", "TEXT NOT NULL DEFAULT 'always'");
     }
 
     private static void EnsureColumn(

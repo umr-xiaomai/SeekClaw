@@ -56,7 +56,7 @@ public interface ISkillManager
 
 /// <summary>
 /// Directory-based skills: each skill is a folder with skill.yaml + prompt.txt.
-/// Enabled skills contribute their prompt to the composed system prompt each turn.
+/// Only metadata is injected. Full instructions and supporting files are loaded on demand.
 /// </summary>
 public sealed class SkillManager : ISkillManager
 {
@@ -83,15 +83,32 @@ public sealed class SkillManager : ISkillManager
 
             var parts = Discover(_workspace)
                 .Where(s => s.Enabled && File.Exists(s.PromptFile))
-                .Select(s => ContextPlanner.FitInjectedText(File.ReadAllText(s.PromptFile).Trim()))
-                .Where(text => text.Length > 0)
+                .Select(s => $"- {s.Name}: {s.Manifest.Description ?? "Reusable workflow"}")
                 .ToList();
-            return ValueTask.FromResult<string?>(parts.Count == 0 ? null : string.Join("\n\n", parts));
+            return ValueTask.FromResult<string?>(parts.Count == 0 ? null :
+                "Available skills (metadata only). Use load_skill to read a relevant skill before following it. "
+                + "Use load_skill with a relative file path to read its scripts or references.\n"
+                + ContextPlanner.FitInjectedText(string.Join("\n", parts)));
         }));
     }
 
     /// <summary>Binds the manager to the current workspace (called during runtime initialization).</summary>
     public void Attach(WorkspaceInfo workspace) => _workspace = workspace;
+
+    public string Load(WorkspaceInfo workspace, string name, string? file = null)
+    {
+        var skill = Discover(workspace).FirstOrDefault(s => s.Enabled
+            && s.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException($"Enabled skill not found: {name}");
+        var path = file is null ? skill.PromptFile : WorkspacePathGuard.Resolve(skill.Directory, file);
+        if (!File.Exists(path)) throw new FileNotFoundException("Skill file not found.", path);
+        if (new FileInfo(path).Length > 512 * 1024)
+            throw new InvalidDataException("Skill file exceeds the 512 KiB text limit.");
+        var text = File.ReadAllText(path);
+        // Supporting files retain their paths so the model can resolve relative references.
+        return $"Skill: {skill.Name}\nDirectory: {skill.Directory}\nFile: {path}\n\n"
+            + ContextPlanner.FitInjectedText(text);
+    }
 
     public IReadOnlyList<SkillInfo> Discover(WorkspaceInfo workspace)
     {
@@ -99,11 +116,21 @@ public sealed class SkillManager : ISkillManager
         var disabledWorkspace = workspace.Config?.DisabledSkills ?? [];
         var skills = new Dictionary<string, SkillInfo>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var root in new[] { _globalSkillsDir, workspace.SkillsDir })
+        var roots = new List<string> { _globalSkillsDir };
+        // Preserve source-only local skills when executing in a Git worktree. Native
+        // SeekClaw directories take precedence over compatible ecosystem layouts.
+        foreach (var project in new[] { workspace.ConfigurationRoot, workspace.Root }.Where(x => x is not null).Distinct())
+        {
+            roots.Add(Path.Combine(project!, ".claude", "skills"));
+            roots.Add(Path.Combine(project!, ".agents", "skills"));
+        }
+        roots.Add(workspace.SkillsDir);
+        foreach (var root in roots.Distinct())
         {
             if (!Directory.Exists(root)) continue;
             foreach (var dir in Directory.EnumerateDirectories(root))
             {
+                if (Path.GetFileName(dir).StartsWith('.')) continue;
                 var manifest = LoadManifest(dir);
                 if (manifest is null) continue;
                 var enabled = !disabledGlobal.ContainsKey(manifest.Name)
@@ -189,11 +216,17 @@ public sealed class SkillManager : ISkillManager
 
     private void ImportMarkdown(string markdownFile, bool overwrite = false)
     {
+        if (Path.GetFileName(markdownFile).Equals("SKILL.md", StringComparison.OrdinalIgnoreCase))
+        {
+            CopySkillDirectory(Path.GetDirectoryName(Path.GetFullPath(markdownFile))!, "skill", overwrite);
+            return;
+        }
         var name = Path.GetFileNameWithoutExtension(markdownFile);
-        var directory = NewSkillDirectory(SanitizeSkillName(name), overwrite);
-        Directory.CreateDirectory(directory);
-        File.Copy(markdownFile, Path.Combine(directory, "prompt.txt"), overwrite: true);
-        WriteManifest(directory, name, $"Imported from {Path.GetFileName(markdownFile)}");
+        InstallSkill(SanitizeSkillName(name), overwrite, directory =>
+        {
+            File.Copy(markdownFile, Path.Combine(directory, "prompt.txt"));
+            WriteManifest(directory, name, $"Imported from {Path.GetFileName(markdownFile)}");
+        });
     }
 
     private void ImportZip(string zipFile, bool overwrite = false)
@@ -268,25 +301,43 @@ public sealed class SkillManager : ISkillManager
         var desiredName = (!string.IsNullOrWhiteSpace(manifest?.Name) && !manifest.Name.StartsWith("seekclaw-skill-import-", StringComparison.OrdinalIgnoreCase))
             ? manifest.Name
             : fallbackName;
-        var destination = NewSkillDirectory(SanitizeSkillName(desiredName), overwrite);
-        Directory.CreateDirectory(destination);
-
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        var intended = Path.GetFullPath(Path.Combine(_globalSkillsDir, SanitizeSkillName(desiredName)));
+        if (string.Equals(Path.GetFullPath(source), intended, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return;
+        var relativeDestination = Path.GetRelativePath(source, intended);
+        if (!Path.IsPathRooted(relativeDestination) && relativeDestination != ".."
+            && !relativeDestination.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new InvalidDataException("A skill cannot be imported into its own source directory.");
+        var files = new List<string>();
+        CollectFiles(source, files);
+        InstallSkill(SanitizeSkillName(desiredName), overwrite, destination =>
         {
-            var relative = Path.GetRelativePath(source, file);
-            var target = Path.Combine(destination, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, overwrite: true);
-        }
+            foreach (var file in files)
+            {
+                var relative = Path.GetRelativePath(source, file);
+                var target = Path.Combine(destination, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target);
+            }
 
-        var hasYaml = File.Exists(Path.Combine(destination, "skill.yaml")) || File.Exists(Path.Combine(destination, "skill.yml"));
-        if (!hasYaml)
+            var hasYaml = File.Exists(Path.Combine(destination, "skill.yaml")) || File.Exists(Path.Combine(destination, "skill.yml"));
+            if (!hasYaml && !File.Exists(Path.Combine(destination, "SKILL.md")))
+                WriteManifest(destination, desiredName, $"Imported skill {desiredName}");
+        });
+    }
+
+    private static void CollectFiles(string directory, List<string> files)
+    {
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
         {
-            WriteManifest(destination, desiredName, $"Imported skill {desiredName}");
+            var attributes = File.GetAttributes(entry);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Skill imports cannot contain symbolic links or reparse points.");
+            if ((attributes & FileAttributes.Directory) != 0) CollectFiles(entry, files);
+            else files.Add(entry);
         }
     }
 
-    private string NewSkillDirectory(string name, bool overwrite = false)
+    private void InstallSkill(string name, bool overwrite, Action<string> populate)
     {
         var root = Path.GetFullPath(_globalSkillsDir);
         var candidate = Path.GetFullPath(Path.Combine(root, SanitizeSkillName(name)));
@@ -300,21 +351,33 @@ public sealed class SkillManager : ISkillManager
             throw new InvalidDataException($"Invalid global skill name '{name}'.");
         }
 
-        if (Directory.Exists(candidate) || File.Exists(candidate))
+        WorkspacePathGuard.Resolve(root, candidate);
+        if (!overwrite && (Directory.Exists(candidate) || File.Exists(candidate)))
+            throw new InvalidDataException($"A global skill named '{name}' already exists.");
+        if (File.Exists(candidate)) throw new InvalidDataException("The skill destination is a file.");
+        var staging = Path.Combine(root, ".import-" + Guid.NewGuid().ToString("N"));
+        var backup = Path.Combine(root, ".backup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(staging);
+        try
         {
-            if (overwrite)
+            populate(staging); // Copy failures leave the installed version untouched.
+            if (Directory.Exists(candidate))
             {
-                if (Directory.Exists(candidate))
-                    Directory.Delete(candidate, recursive: true);
-                else
-                    File.Delete(candidate);
+                if (!overwrite) throw new InvalidDataException($"A global skill named '{name}' already exists.");
+                Directory.Move(candidate, backup);
             }
-            else
+            try { Directory.Move(staging, candidate); }
+            catch
             {
-                throw new InvalidDataException($"A global skill named '{name}' already exists.");
+                if (Directory.Exists(backup) && !Directory.Exists(candidate)) Directory.Move(backup, candidate);
+                throw;
             }
+            if (Directory.Exists(backup)) Directory.Delete(backup, recursive: true);
         }
-        return candidate;
+        finally
+        {
+            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        }
     }
 
     private static string SanitizeSkillName(string name)
@@ -347,7 +410,8 @@ public sealed class SkillManager : ISkillManager
     }
 
     private static bool LooksLikeSkillDirectory(string directory) =>
-        File.Exists(Path.Combine(directory, "skill.yaml"))
+        File.Exists(Path.Combine(directory, "SKILL.md"))
+        || File.Exists(Path.Combine(directory, "skill.yaml"))
         || File.Exists(Path.Combine(directory, "skill.yml"))
         || File.Exists(Path.Combine(directory, "prompt.txt"));
 
@@ -370,8 +434,31 @@ public sealed class SkillManager : ISkillManager
         try
         {
             SkillManifest? manifest = null;
-            if (file is not null)
-                manifest = Yaml.Deserialize<SkillManifest>(File.ReadAllText(file));
+            var markdown = Path.Combine(dir, "SKILL.md");
+            if (File.Exists(markdown))
+            {
+                if (new FileInfo(markdown).Length > 512 * 1024) return null;
+                using var reader = File.OpenText(markdown);
+                if (reader.ReadLine()?.Trim() == "---")
+                {
+                    var metadata = new System.Text.StringBuilder();
+                    string? line;
+                    while ((line = reader.ReadLine()) is not null && line.Trim() != "---")
+                    {
+                        metadata.AppendLine(line);
+                        if (metadata.Length > 64 * 1024) return null;
+                    }
+                    if (line is null) return null;
+                    lock (Yaml) manifest = Yaml.Deserialize<SkillManifest>(metadata.ToString());
+                }
+                else manifest = new SkillManifest();
+                if (manifest is not null) manifest.Prompt = "SKILL.md";
+            }
+            else if (file is not null)
+            {
+                if (new FileInfo(file).Length > 64 * 1024) return null;
+                lock (Yaml) manifest = Yaml.Deserialize<SkillManifest>(File.ReadAllText(file));
+            }
             else if (File.Exists(Path.Combine(dir, "prompt.txt")))
                 manifest = new SkillManifest(); // bare skill: folder with just a prompt
 

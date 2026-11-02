@@ -17,13 +17,18 @@ import {
   Wrench
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { ChatMessage, ToolActivity } from '../types'
+import type { ChatMessage, ConversationWidget, ToolActivity } from '../types'
 import { fileBadgeText, fileExtClass, formatMessageTime } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
+import McpToolContent from './McpToolContent.vue'
+import ConversationWidgets from './ConversationWidgets.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 
 const props = withDefaults(defineProps<{
   message: ChatMessage
+  widgets?: ConversationWidget[]
+  sessionId?: string
+  workspace?: string
   imageSources?: Record<string, string>
   /** Dimmed while the conversation search does not match this message. */
   dimmed?: boolean
@@ -33,7 +38,7 @@ const props = withDefaults(defineProps<{
   showFooter?: boolean
   /** True when this assistant message is an intermediate step in a multi-step turn. */
   isIntermediate?: boolean
-}>(), { imageSources: () => ({}), showFooter: false, isIntermediate: false })
+}>(), { imageSources: () => ({}), widgets: () => [], showFooter: false, isIntermediate: false })
 
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
@@ -70,6 +75,7 @@ async function copyContent(): Promise<void> {
 
 const regularTools = computed(() => (props.message.tools ?? []).filter((tool) => !tool.diff))
 const editedTools = computed(() => (props.message.tools ?? []).filter((tool) => tool.diff && tool.filePath))
+const resultTools = computed(() => regularTools.value.filter((tool) => !tool.widgets?.length))
 
 function getToolIcon(tool: ToolActivity) {
   if (tool.state === 'running') return LoaderCircle
@@ -265,7 +271,7 @@ const isVisible = computed(() => {
   if (props.message.content?.startsWith('>>> [output truncated]')) return false
   if (props.message.role === 'user') return true
   if (props.streaming) return true
-  return hasContent.value || hasThinking.value || hasTools.value || hasImages.value || hasError.value
+  return hasContent.value || hasThinking.value || hasTools.value || hasImages.value || hasError.value || props.widgets.length > 0
 })
 
 const isToolsOnly = computed(() => {
@@ -274,6 +280,7 @@ const isToolsOnly = computed(() => {
 })
 
 function getToolTarget(tool: ToolActivity): string {
+  if (tool.widgets?.length) return tool.widgets[0]!.title
   if (tool.filePath) {
     return tool.filePath
   }
@@ -428,6 +435,8 @@ function getToolTarget(tool: ToolActivity): string {
         </div>
       </div>
 
+      <McpToolContent v-for="tool in resultTools" :key="`content:${tool.id}`" :tool="tool" />
+
       <section v-if="editedTools.length" class="change-card" aria-label="代码修改">
         <header class="change-card-header">
           <Braces :size="14" />
@@ -447,6 +456,7 @@ function getToolTarget(tool: ToolActivity): string {
           </span>
         </button>
       </section>
+      <ConversationWidgets :widgets="widgets" :session-id="sessionId" :workspace="workspace" />
       <div v-if="activeError" class="model-error-card" role="alert">
         <CircleAlert :size="16" class="model-error-icon" />
         <div class="model-error-body">

@@ -136,6 +136,9 @@ describe('buildMcpServerPayload', () => {
       command: '',
       args: [],
       url: 'http://localhost:5070/mcp',
+      bearerTokenEnv: null,
+      envHeaders: {},
+      oauth: null,
       enabled: true
     })
   })
@@ -186,6 +189,9 @@ describe('mcpFormFromServer', () => {
       args: '',
       url: 'http://localhost:5070/mcp',
       env: '',
+      bearerTokenEnv: undefined,
+      envHeaders: '',
+      oauth: undefined,
       enabled: true
     })
   })

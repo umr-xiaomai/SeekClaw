@@ -25,7 +25,7 @@ public sealed class SubAgentRegistry : ISubAgentRegistry
             PromptKey: "subagent/researcher",
             AllowedTools: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "read_file", "list_dir", "glob", "grep", "web_search", "web_fetch"
+                "read_file", "list_dir", "glob", "grep", "web_search", "web_fetch", "load_skill"
             },
             AllowMutating: false,
             MaxSteps: 10));
@@ -36,7 +36,7 @@ public sealed class SubAgentRegistry : ISubAgentRegistry
             PromptKey: "subagent/coder",
             AllowedTools: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "read_file", "write_file", "edit_file", "list_dir", "glob", "grep"
+                "read_file", "write_file", "edit_file", "list_dir", "glob", "grep", "bash", "load_skill"
             },
             AllowMutating: true,
             MaxSteps: 12));
@@ -47,9 +47,9 @@ public sealed class SubAgentRegistry : ISubAgentRegistry
             PromptKey: "subagent/tester",
             AllowedTools: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "read_file", "list_dir", "glob", "grep", "bash"
+                "read_file", "list_dir", "glob", "grep", "bash", "load_skill"
             },
-            AllowMutating: false,
+            AllowMutating: true,
             MaxSteps: 10));
 
         Register(new SubAgentDefinition(

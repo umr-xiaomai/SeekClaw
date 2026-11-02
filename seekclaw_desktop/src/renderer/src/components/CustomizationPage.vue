@@ -106,6 +106,9 @@ const pluginSearchQuery = ref('')
 const skillSearchQuery = ref('')
 
 const mcpServers = ref<McpServerSummary[]>([])
+const authenticatingServer = ref('')
+const authLifetime = new AbortController()
+onBeforeUnmount(() => authLifetime.abort())
 const localSkills = ref<LocalSkillInfo[]>([])
 const remoteSkills = ref<RemoteSkill[]>([])
 
@@ -484,6 +487,37 @@ async function toggleServer(server: McpServerSummary): Promise<void> {
     }, 120_000)
   } catch (err) {
     alert(`切换插件状态失败: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+async function loginServer(server: McpServerSummary): Promise<void> {
+  if (authenticatingServer.value) return
+  authenticatingServer.value = server.name
+  try {
+    const login = await requestDaemon<{ state: string; authorizationUrl: string }>('mcp.auth.login', { name: server.name })
+    window.open(login.authorizationUrl, '_blank', 'noopener,noreferrer')
+    while (!authLifetime.signal.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      if (authLifetime.signal.aborted) return
+      const status = await requestDaemon<{ status: string; error?: string }>('mcp.auth.status', { state: login.state })
+      if (status.status === 'pending') continue
+      if (status.status !== 'completed') throw new Error(status.error || '授权已取消')
+      await reloadMcp()
+      return
+    }
+  } catch (reason) {
+    if (!authLifetime.signal.aborted) alert(`MCP 登录失败: ${reason instanceof Error ? reason.message : String(reason)}`)
+  } finally {
+    authenticatingServer.value = ''
+  }
+}
+
+async function logoutServer(server: McpServerSummary): Promise<void> {
+  try {
+    await window.seekclaw.daemon.request('mcp.auth.logout', { name: server.name })
+    await loadMcpServers()
+  } catch (reason) {
+    alert(`MCP 退出登录失败: ${reason instanceof Error ? reason.message : String(reason)}`)
   }
 }
 
@@ -968,6 +1002,13 @@ onBeforeUnmount(() => {
 
                   <button class="icon-button compact" title="编辑配置" @click="editServer(server)">
                     <Settings2 :size="15" />
+                  </button>
+
+                  <button v-if="isRemoteTransport(server.transport)" class="secondary-button compact" :disabled="Boolean(authenticatingServer)" @click="loginServer(server)">
+                    {{ authenticatingServer === server.name ? '等待授权…' : '登录' }}
+                  </button>
+                  <button v-if="isRemoteTransport(server.transport)" class="icon-button compact" title="清除 OAuth 登录凭据" @click="logoutServer(server)">
+                    <ShieldCheck :size="15" />
                   </button>
 
                   <button class="icon-button compact danger-icon" title="删除插件" @click="deleteServer(server)">

@@ -48,6 +48,8 @@ root.Add(SkillCommands.Build());
 root.Add(McpCommands.Build());
 root.Add(SessionCommands.Build());
 root.Add(DaemonCommand.Build());
+root.Add(ExecCommand.Build());
+root.Add(WorktreeCommands.Build());
 
 return await root.Parse(args).InvokeAsync();
 

@@ -3,6 +3,7 @@ using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.IO;
 
 namespace SeekClaw.Runtime.Providers;
 
@@ -49,6 +50,20 @@ public sealed class LlmHttpFactory : ILlmHttpFactory, IDisposable
 /// <summary>One server-sent event: optional event name + data payload.</summary>
 public readonly record struct SseMessage(string? Event, string Data);
 
+internal static class LlmTransportErrors
+{
+    public static LlmException ReadingResponse(string providerId, Exception error)
+    {
+        // Buffered HttpContent reads can wrap the actual ResponseEnded failure.
+        var cause = error.GetBaseException();
+        var detail = ReferenceEquals(cause, error) ? error.Message : $"{error.Message} {cause.Message}";
+        return new LlmException(
+            $"Response from {providerId} was interrupted while reading: {detail}",
+            retryable: error is not InvalidDataException && cause is not InvalidDataException,
+            inner: error);
+    }
+}
+
 public static class SseReader
 {
     /// <summary>Parses a text/event-stream response body into discrete messages.</summary>
@@ -65,8 +80,10 @@ public static class SseReader
         Stream stream, TimeSpan idleTimeout, [EnumeratorCancellation] CancellationToken ct = default)
     {
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
+        var lines = new BoundedLineReader(reader, ProtocolText.MaximumMessageChars);
         string? eventName = null;
         var data = new List<string>();
+        var dataChars = 0;
         var hasTimeout = idleTimeout > TimeSpan.Zero && idleTimeout != Timeout.InfiniteTimeSpan;
 
         using var idleCts = hasTimeout ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
@@ -78,7 +95,7 @@ public static class SseReader
             try
             {
                 var readToken = idleCts?.Token ?? ct;
-                line = await reader.ReadLineAsync(readToken).ConfigureAwait(false);
+                line = await lines.ReadLineAsync(readToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && (idleCts?.IsCancellationRequested ?? false))
             {
@@ -96,6 +113,7 @@ public static class SseReader
                 {
                     yield return new SseMessage(eventName, string.Join('\n', data));
                     data.Clear();
+                    dataChars = 0;
                 }
                 eventName = null;
                 continue;
@@ -104,7 +122,14 @@ public static class SseReader
             if (line.StartsWith("event:", StringComparison.Ordinal))
                 eventName = line[6..].Trim();
             else if (line.StartsWith("data:", StringComparison.Ordinal))
-                data.Add(line[5..].TrimStart());
+            {
+                var value = line[5..];
+                if (value.StartsWith(' ')) value = value[1..];
+                dataChars += value.Length + (data.Count == 0 ? 0 : 1);
+                if (dataChars > ProtocolText.MaximumMessageChars)
+                    throw new InvalidDataException("SSE message exceeds the 16 MiB text limit.");
+                data.Add(value);
+            }
             // comments (":") and other fields are recognized as transport activity
         }
 

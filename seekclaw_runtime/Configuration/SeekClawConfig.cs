@@ -174,7 +174,20 @@ public sealed class McpServerConfig
     public List<string>? Args { get; set; }
     public Dictionary<string, string>? Env { get; set; }
     public string? Url { get; set; }
+    public Dictionary<string, string>? Headers { get; set; }
+    public Dictionary<string, string>? EnvHeaders { get; set; }
+    public string? BearerTokenEnv { get; set; }
+    public McpOAuthConfig? OAuth { get; set; }
     public bool Enabled { get; set; } = true;
+}
+
+public sealed class McpOAuthConfig
+{
+    public string? AuthorizationEndpoint { get; set; }
+    public string? TokenEndpoint { get; set; }
+    public string? ClientId { get; set; }
+    public string? ClientSecretEnv { get; set; }
+    public string? Scope { get; set; }
 }
 
 /// <summary>Per-workspace overrides stored in &lt;workspace&gt;/.seekclaw/config.json.</summary>

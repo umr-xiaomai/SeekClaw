@@ -166,7 +166,7 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
     /// On Windows, prefers pwsh/powershell with UTF-8 prefix and non-interactive flags,
     /// avoiding unintentional invocation of MSYS2/Git bash on Windows command strings.
     /// </summary>
-    private static (string Shell, string[] Args) ResolveShell(string command)
+    internal static (string Shell, string[] Args) ResolveShell(string command)
     {
         if (!OperatingSystem.IsWindows())
         {

@@ -21,11 +21,16 @@ export interface ToolActivity {
   callId?: string
   name: string
   detail?: string
+  output?: string
   filePath?: string
   diff?: string
   addedLines?: number
   removedLines?: number
   state: 'running' | 'done' | 'error'
+  content?: Array<Record<string, unknown>>
+  structuredContent?: unknown
+  metadata?: Record<string, unknown>
+  widgets?: ConversationWidget[]
 }
 
 export interface ImageAttachment {
@@ -73,6 +78,9 @@ export interface ScheduledTaskInfo {
   prompt: string
   cron: string
   enabled: boolean
+  sessionId?: string
+  runInWorktree?: boolean
+  notificationPolicy?: 'changes' | 'failures' | 'always'
   lastRunAt?: string
   nextRunAt?: string
   lastStatus?: string
@@ -81,6 +89,27 @@ export interface ScheduledTaskInfo {
   createdAt: string
   updatedAt: string
 }
+
+interface ConversationWidgetBase {
+  version: 1
+  id: string
+  title: string
+}
+
+export interface ScheduleWidget extends ConversationWidgetBase {
+  kind: 'schedule'
+  task: ScheduledTaskInfo
+  deleted?: boolean
+}
+
+export interface ArtifactWidget extends ConversationWidgetBase {
+  kind: 'artifact'
+  path: string
+  mediaType: string
+  description?: string
+}
+
+export type ConversationWidget = ScheduleWidget | ArtifactWidget
 
 export interface QueuedMessage {
   id: string
@@ -110,6 +139,8 @@ export interface ThreadItem {
   messages: ChatMessage[]
   sessionId?: string
   sessionLoaded?: boolean
+  executionWorkspace?: string
+  worktree?: { path: string; status: string; baseCommit?: string }
   archived?: boolean
   pinned?: boolean
   /** True while this task has an agent turn running, independent of the selected task. */
@@ -121,6 +152,8 @@ export interface ThreadItem {
   finishedRequestIds?: number[]
   /** Local generation marker so an older request cannot clean up a newer turn. */
   activeTurnToken?: string
+  /** First user bubble of the active turn, retained across mid-turn guidance. */
+  activeTurnStartId?: string
   /** Current work phase shown in the header (thinking/tool/verify…). */
   phase?: string
   /** Custom high-level plan steps emitted explicitly by update_plan. */

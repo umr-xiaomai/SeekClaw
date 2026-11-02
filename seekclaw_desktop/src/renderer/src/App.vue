@@ -48,10 +48,11 @@ import TaskStepList from './components/TaskStepList.vue'
 import { computeTurnTaskSteps, type TaskStep } from './task-planner'
 import { confirmAction } from './confirmation'
 import { finalizeAssistantBubbles } from './conversation-state'
+import { widgetsAtTurnTails } from './conversation-widgets'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
-import type { ChatMessage, FileAttachment, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity } from './types'
+import type { ChatMessage, ConversationWidget, FileAttachment, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity } from './types'
 import {
   DEFAULT_SIDEBAR_WIDTH,
   formatPromptWithFiles,
@@ -188,6 +189,8 @@ const toolDiff = ref<{ path: string; diff: string } | null>(null)
 const settingsSection = ref<'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'>('general')
 const extensionsSection = ref<'mcp' | 'skills'>('mcp')
 const taskSettingsThreadId = ref('')
+const worktreeBusy = ref(false)
+const worktreeError = ref('')
 const activePropertiesProject = ref<ProjectItem | null>(null)
 const storedAccentColor = localStorage.getItem('seekclaw-accent-color') || 'default'
 const accentColor = ref<string>(storedAccentColor)
@@ -214,6 +217,7 @@ const configAnomaly = ref<{
 } | null>(null)
 const rebuildingConfig = ref(false)
 const projects = ref<ProjectItem[]>([])
+const projectsReady = ref(false)
 const threads = ref<ThreadItem[]>([])
 const activeThreadId = ref('')
 const selectedProjectId = ref('')
@@ -441,7 +445,8 @@ async function removeInvalidProjectRows(): Promise<void> {
 }
 
 function showActiveProject(): void {
-  if (activeProject.value) void window.seekclaw.showItemInFolder(activeProject.value.path)
+  const path = activeThread.value?.executionWorkspace || activeProject.value?.path
+  if (path) void window.seekclaw.showItemInFolder(path)
 }
 
 function openGitPanel(tab: 'diff' | 'history'): void {
@@ -475,7 +480,7 @@ function resizeGitPanel(width: number): void {
 }
 
 async function openProjectTerminal(): Promise<void> {
-  const targetPath = activeProject.value?.path || runtimeWorkspacePath.value || ''
+  const targetPath = activeThread.value?.executionWorkspace || activeProject.value?.path || runtimeWorkspacePath.value || ''
   if (!targetPath) {
     await window.seekclaw.notify('无法打开终端', '当前未选定有效的工作区或项目目录')
     return
@@ -721,6 +726,7 @@ async function loadRuntimeState(): Promise<void> {
       path: project.path,
       loaded: false
     }))
+    projectsReady.value = true
     await removeInvalidProjectRows()
     const available = JSON.parse(modelResponse.data) as string[]
     const catalog = JSON.parse(catalogResponse.data) as RuntimeModelCatalogItem[]
@@ -1195,6 +1201,8 @@ async function selectThread(id: string): Promise<void> {
       const saved = JSON.parse(response.data) as RuntimeSession
       thread.messages = hydrateMessages(saved)
       thread.sessionLoaded = true
+      thread.executionWorkspace = saved.executionWorkspace
+      thread.worktree = saved.worktree
       thread.title = saved.title || thread.title
       thread.archived = Boolean(saved.archived)
       thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
@@ -1220,6 +1228,7 @@ async function selectThread(id: string): Promise<void> {
 
 interface ConversationItem {
   message: ChatMessage
+  widgets: ConversationWidget[]
   showFooter: boolean
   isIntermediate?: boolean
 }
@@ -1231,6 +1240,10 @@ const conversationItems = computed<ConversationItem[]>(() => {
   )
   const isThreadRunning = thread?.running === true
   const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
+  const turnWidgets = widgetsAtTurnTails(messages, {
+    running: isThreadRunning,
+    startMessageId: thread?.activeTurnStartId
+  })
 
   return messages.map((message, index) => {
     let showFooter = false
@@ -1253,7 +1266,7 @@ const conversationItems = computed<ConversationItem[]>(() => {
         showFooter = !hasLaterAssistant
       }
     }
-    return { message, showFooter, isIntermediate }
+    return { message, showFooter, isIntermediate, widgets: turnWidgets.get(message.id) ?? [] }
   })
 })
 
@@ -1398,7 +1411,7 @@ async function handleApprovalRequest(event: DaemonMessage): Promise<void> {
     ? threads.value.find((item) => item.sessionId === event.sessionId)
     : undefined)
     ?? threads.value.find((item) => item.requestId === event.id)
-  if (thread && isFinishedRequest(thread, event.id)) {
+  if (thread && event.details?.background !== true && isFinishedRequest(thread, event.id)) {
     // The originating turn timed out or was cancelled while the approval was in
     // flight. Deny it immediately instead of leaving the runtime blocked.
     try {
@@ -1520,6 +1533,7 @@ async function runMessageTurn(
   const titleChanged = updateThreadTitle(thread, titlePrompt)
   thread.running = true
   thread.activeTurnToken = turnToken
+  thread.activeTurnStartId = userMessage.id
   thread.assistantId = assistant.id
   thread.requestId = undefined
   let terminalAssistant = assistant
@@ -1592,6 +1606,7 @@ async function runMessageTurn(
     const turnAssistantBubbles = thread.messages.slice(turnStartIndex).filter((item) => item.role === 'assistant')
     finalizeAssistantBubbles(turnAssistantBubbles, terminalAssistant.state === 'error' ? 'error' : 'done')
     thread.activeTurnToken = undefined
+    thread.activeTurnStartId = undefined
     thread.running = false
     thread.requestId = undefined
     thread.assistantId = undefined
@@ -1615,7 +1630,30 @@ function reloadBackgroundThreadIfIdle(thread: ThreadItem): void {
 }
 
 function openTaskSettings(thread: ThreadItem = activeThread.value!): void {
+  worktreeError.value = ''
   if (thread) taskSettingsThreadId.value = thread.id
+}
+
+async function manageTaskWorktree(action: 'create' | 'archive' | 'restore', baseRef: string): Promise<void> {
+  const thread = settingsThread.value
+  const project = settingsProject.value
+  if (!thread || !project || thread.running || worktreeBusy.value) return
+  worktreeBusy.value = true
+  worktreeError.value = ''
+  try {
+    const scope = sessionScope(thread, project)
+    if (!thread.sessionId) {
+      const response = await window.seekclaw.daemon.request('session.new', { ...scope, reasoningLevel: thread.reasoningLevel, networkEnabled: thread.networkEnabled ?? true })
+      thread.sessionId = response.data
+      await window.seekclaw.daemon.request('session.update', { ...scope, id: thread.sessionId, title: thread.title })
+    }
+    await window.seekclaw.daemon.request(`worktree.${action}`, { ...scope, sessionId: thread.sessionId, baseRef }, { timeoutMs: 150_000 })
+    await reloadThreadSession(thread, project)
+  } catch (reason) {
+    worktreeError.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    worktreeBusy.value = false
+  }
 }
 
 function openProjectProperties(project: ProjectItem): void {
@@ -1836,6 +1874,7 @@ watch(theme, applyTheme)
             <Sidebar
               v-if="sidebarOpen"
               :projects="projects"
+              :projects-ready="projectsReady"
               :threads="threads"
               :active-thread-id="activeThreadId"
               :active-project-id="selectedProjectId"
@@ -1941,6 +1980,7 @@ watch(theme, applyTheme)
                 <template v-for="item in virtualWindow.items" :key="item.message.id">
                   <div v-measure="item.message.id" class="virtual-message">
                     <ConversationMessage :message="item.message" :image-sources="activeImageSources"
+                      :widgets="item.widgets" :session-id="activeThread.sessionId" :workspace="activeProject?.path"
                       :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
                       :show-footer="item.showFooter"
                       :is-intermediate="item.isIntermediate"
@@ -1955,6 +1995,7 @@ watch(theme, applyTheme)
               <template v-else>
                 <template v-for="item in conversationItems" :key="item.message.id">
                   <ConversationMessage :message="item.message" :image-sources="activeImageSources"
+                    :widgets="item.widgets" :session-id="activeThread.sessionId" :workspace="activeProject?.path"
                     :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
                     :show-footer="item.showFooter"
                     :is-intermediate="item.isIntermediate"
@@ -2032,7 +2073,7 @@ watch(theme, applyTheme)
           </footer>
         </main>
 
-        <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="activeProject"
+        <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="activeProject && activeThread?.executionWorkspace ? { ...activeProject, path: activeThread.executionWorkspace } : activeProject"
           :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="gitPanelWidth" @close="closeGitPanel"
           @resize="resizeGitPanel" @open-terminal="openProjectTerminal" />
       </div>
@@ -2068,7 +2109,7 @@ watch(theme, applyTheme)
 
     <OfficialSkillsDialog :open="activePage === 'official-skills'" @close="closePage" />
 
-    <ScheduledTasksDialog :open="activePage === 'scheduled'" :projects="projects" @close="closePage" />
+    <ScheduledTasksDialog :open="activePage === 'scheduled'" :projects="projects" :threads="threads" @close="closePage" />
 
     <ArchivedTasksDialog :open="activePage === 'archived'" :projects="projects" :threads="threads" @close="closePage"
       @select-thread="selectArchivedThread" @restore-task="restoreTask" @delete-task="deleteTask"
@@ -2080,6 +2121,7 @@ watch(theme, applyTheme)
 
 
     <TaskSettingsDialog :open="Boolean(taskSettingsThreadId)" :thread="settingsThread" :project="settingsProject"
+      :worktree-busy="worktreeBusy" :worktree-error="worktreeError" @worktree="manageTaskWorktree"
       @close="taskSettingsThreadId = ''" @save-title="saveTaskTitle"
       @archive="settingsThread && archiveTask(settingsThread)" @restore="settingsThread && restoreTask(settingsThread)"
       @delete="settingsThread && deleteTask(settingsThread)" />

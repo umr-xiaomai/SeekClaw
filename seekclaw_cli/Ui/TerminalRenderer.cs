@@ -177,6 +177,16 @@ public sealed class TerminalRenderer : IDisposable
                 _streamDirty = true;
                 break;
 
+            case AssistantStreamResetEvent:
+                _streamBuffer.Clear();
+                _streamMarkdown.Reset();
+                _streamRenderedLines = [];
+                _streamDirty = false;
+                _thinkingBuffer.Clear();
+                _thinkingPreview.Clear();
+                _thinkingActive = false;
+                break;
+
             case AssistantMessageCompletedEvent message:
                 // Replace the streamed tail with the fully rendered markdown in scrollback.
                 _streamBuffer.Clear();

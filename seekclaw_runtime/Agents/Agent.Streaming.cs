@@ -68,6 +68,14 @@ public sealed partial class Agent
             {
                 switch (evt)
                 {
+                    case LlmStreamReset reset:
+                        events.Publish(new AssistantStreamResetEvent(
+                            reset.ModelRef, streamedText.Length, streamedThinking.Length));
+                        streamedText.Clear();
+                        streamedThinking.Clear();
+                        thinkingOpen = false;
+                        completion = null;
+                        break;
                     case LlmThinkingDelta thinking:
                         thinkingOpen = true;
                         streamedThinking.Append(thinking.Text);
@@ -96,7 +104,7 @@ public sealed partial class Agent
                 }
             }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested && streamedText.Length > 0)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Preserve whatever was streamed before the user hit Ctrl+C.
             return new LlmCompletion
@@ -106,8 +114,23 @@ public sealed partial class Agent
                 FinishReason = "cancelled",
             };
         }
+        catch (LlmException ex)
+        {
+            // Keep partial output for history/UI, but never commit partially streamed
+            // tool arguments or mistake the interrupted response for a successful turn.
+            return new LlmCompletion
+            {
+                Text = streamedText.ToString(),
+                Thinking = streamedThinking.ToString(),
+                FinishReason = "error",
+                ErrorMessage = ex.Message,
+            };
+        }
+        finally
+        {
+            if (thinkingOpen) events.Publish(new ThinkingCompletedEvent());
+        }
 
-        if (thinkingOpen) events.Publish(new ThinkingCompletedEvent());
         return completion ?? new LlmCompletion
         {
             Text = streamedText.ToString(),

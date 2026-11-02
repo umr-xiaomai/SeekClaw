@@ -17,7 +17,8 @@ public sealed record SubAgentDefinition(
 public sealed record SubAgentTaskRequest(
     string Role,
     string Task,
-    string? ModelOverride = null);
+    string? ModelOverride = null,
+    bool Isolated = false);
 
 /// <summary>Execution outcome returned to the orchestrator agent.</summary>
 public sealed record SubAgentTaskResult(

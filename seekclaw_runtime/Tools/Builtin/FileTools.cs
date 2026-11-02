@@ -166,7 +166,11 @@ public sealed class WriteFileTool(IPromptProvider prompts) : BuiltinTool(prompts
         return ToolResult.Ok(
             existed ? $"Overwrote {relative}" : $"Created {relative}",
             $"{(existed ? "Updated" : "Created")} {relative} ({lineCount} lines)") with
-        { Diff = diff, FilePath = path };
+        {
+            Diff = diff, FilePath = path,
+            Widgets = SeekClaw.Runtime.Presentation.ArtifactWidget.IsHtml(path)
+                ? [SeekClaw.Runtime.Presentation.ArtifactWidget.FromFile(path, executionRoot: context.Workspace.WorkingDirectory)] : null,
+        };
     }
 }
 
@@ -231,7 +235,12 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
         var summary = replaceAll && occurrences > 1
             ? $"Replaced {occurrences} occurrences in {relative}"
             : $"Edited {relative}";
-        return ToolResult.Ok(summary, summary) with { Diff = diff, FilePath = path };
+        return ToolResult.Ok(summary, summary) with
+        {
+            Diff = diff, FilePath = path,
+            Widgets = SeekClaw.Runtime.Presentation.ArtifactWidget.IsHtml(path)
+                ? [SeekClaw.Runtime.Presentation.ArtifactWidget.FromFile(path, executionRoot: context.Workspace.WorkingDirectory)] : null,
+        };
     }
 
     internal static int CountOccurrences(string text, string value)

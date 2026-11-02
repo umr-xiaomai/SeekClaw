@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="seekclaw_tests" />
+    <InternalsVisibleTo Include="seekclaw_cli_tests" />
   </ItemGroup>
 
   <ItemGroup>

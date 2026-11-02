@@ -7,6 +7,7 @@ using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Daemon;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
+using SeekClaw.Runtime.Presentation;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Workspaces;
 
@@ -21,6 +22,160 @@ public sealed class DaemonServerTests : IAsyncDisposable
     private SeekClawRuntime? _runtime;
 
     public DaemonServerTests() => Directory.CreateDirectory(_tempDir);
+
+    [Fact]
+    public async Task StreamRecovery_EventsRemainNonterminal_AndSessionGetRestoresFailure()
+    {
+        var connection = await StartServerAsync((session, _, _, _) =>
+        {
+            _runtime!.Events.Publish(new ProviderRetryEvent("test/model", 1, "ResponseEnded", TimeSpan.FromSeconds(1)));
+            _runtime.Events.Publish(new AssistantStreamResetEvent("test/model", 7, 12));
+            _runtime.Sessions.Append(session, new ChatMessage
+            {
+                Role = ChatRole.Assistant, Text = "partial", Thinking = "thought", ModelRef = "test/model",
+                FinishReason = "error", ErrorMessage = "ResponseEnded",
+            });
+            return Task.FromResult(new AgentTurnResult("partial", false, "ResponseEnded"));
+        });
+        await connection.SendAsync(1, "chat", new JsonObject { ["message"] = "test" });
+        var retry = await connection.ReadUntilAsync(item => item["event"]!.GetValue<string>() == "provider_retry");
+        Assert.Equal(1, retry["details"]!["attempt"]!.GetValue<int>());
+        var reset = await connection.ReadUntilAsync(item => item["event"]!.GetValue<string>() == "stream_reset");
+        Assert.Equal(7, reset["details"]!["textLength"]!.GetValue<int>());
+        Assert.Equal(12, reset["details"]!["thinkingLength"]!.GetValue<int>());
+        var failure = await connection.ReadUntilAsync(item => item["event"]!.GetValue<string>() == "error");
+        Assert.Equal("ResponseEnded", failure["data"]!.GetValue<string>());
+        await connection.SendAsync(2, "session.get", new JsonObject { ["id"] = failure["sessionId"]!.GetValue<string>() });
+        var saved = ParseData(await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 2));
+        var message = Assert.Single(saved["messages"]!.AsArray())!;
+        Assert.Equal("partial", message["text"]!.GetValue<string>());
+        Assert.Equal("error", message["finishReason"]!.GetValue<string>());
+        Assert.Equal("ResponseEnded", message["errorMessage"]!.GetValue<string>());
+        Assert.Equal("test/model", message["modelRef"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ToolCompletion_ForwardsFullOutputAndOptionalMcpContent(bool richContent)
+    {
+        const string output = "first line\nsecond line\n";
+        var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = output });
+        var structured = JsonValue.Create(false);
+        var metadata = new JsonObject { ["vendor"] = "test" };
+        var connection = await StartServerAsync((_, _, _, _) =>
+        {
+            _runtime!.Events.Publish(new ToolCallCompletedEvent("call", "test_tool", true, "summary", TimeSpan.FromMilliseconds(12))
+            {
+                Output = output,
+                Content = richContent ? content : null,
+                StructuredContent = richContent ? structured : null,
+                Metadata = richContent ? metadata : null,
+                Widgets = [ArtifactWidget.FromFile(Path.Combine(_tempDir, "demo.html"))],
+            });
+            return Task.FromResult(new AgentTurnResult("done", false, null));
+        });
+
+        await connection.SendAsync(1, "chat", new JsonObject { ["message"] = "run a tool" });
+        var response = await connection.ReadUntilAsync(item => item["event"]!.GetValue<string>() == "tool_done");
+        Assert.Equal("summary", response["data"]!.GetValue<string>());
+        var details = response["details"]!.AsObject();
+        Assert.Equal("call", details["callId"]!.GetValue<string>());
+        Assert.Equal(output, details["output"]!.GetValue<string>());
+        var widget = Assert.Single(details["widgets"]!.AsArray());
+        Assert.Equal("artifact", widget!["kind"]!.GetValue<string>());
+        Assert.Equal(1, widget["version"]!.GetValue<int>());
+        if (richContent)
+        {
+            Assert.True(JsonNode.DeepEquals(content, details["content"]));
+            Assert.False(details["structuredContent"]!.GetValue<bool>());
+            Assert.True(JsonNode.DeepEquals(metadata, details["metadata"]));
+            Assert.Null(content.Parent);
+            Assert.Null(structured.Parent);
+            Assert.Null(metadata.Parent);
+        }
+        else
+        {
+            Assert.Null(details["content"]);
+            Assert.Null(details["structuredContent"]);
+            Assert.Null(details["metadata"]);
+        }
+        await connection.ReadUntilAsync(item => item["event"]!.GetValue<string>() == "done");
+    }
+
+    [Fact]
+    public async Task ArtifactRead_RequiresConversationOwnership_AndReturnsFreshBoundedHtml()
+    {
+        var connection = await StartServerAsync((_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+        var workspace = _runtime!.Workspace;
+        var session = _runtime.Sessions.Create(workspace);
+        var other = _runtime.Sessions.Create(workspace);
+        var path = Path.Combine(workspace.Root, "demo.html");
+        await File.WriteAllTextAsync(path, "<h1>Original</h1>");
+        var artifact = ArtifactWidget.FromFile(path);
+        _runtime.Sessions.Append(session, ChatMessage.ToolResult("call", "present_artifact", "Presented", true, widgets: [artifact]));
+
+        await connection.SendAsync(1, "session.get", new JsonObject { ["id"] = session.Header.Id });
+        var saved = ParseData(await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 1));
+        Assert.Equal(artifact.Id, saved["messages"]![0]!["toolWidgets"]![0]!["id"]!.GetValue<string>());
+
+        await connection.SendAsync(2, "artifact.read", new JsonObject { ["sessionId"] = other.Header.Id, ["widgetId"] = artifact.Id });
+        Assert.Equal("error", (await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 2))["event"]!.GetValue<string>());
+        await File.WriteAllTextAsync(path, "<h1>Updated</h1>");
+        await connection.SendAsync(3, "artifact.read", new JsonObject { ["sessionId"] = session.Header.Id, ["widgetId"] = artifact.Id, ["path"] = "ignored.html" });
+        var preview = ParseData(await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 3));
+        Assert.Equal("<h1>Updated</h1>", preview["html"]!.GetValue<string>());
+
+        await File.WriteAllTextAsync(path, new string('x', 2 * 1024 * 1024 + 1));
+        await connection.SendAsync(4, "artifact.read", new JsonObject { ["sessionId"] = session.Header.Id, ["widgetId"] = artifact.Id });
+        Assert.Equal("error", (await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 4))["event"]!.GetValue<string>());
+
+        // Even a persisted root override must not bypass a project's boundary.
+        var outside = ArtifactWidget.FromFile(Path.Combine(_tempDir, "outside.html"), executionRoot: _tempDir);
+        await File.WriteAllTextAsync(outside.Path, "<h1>Outside project</h1>");
+        _runtime.Sessions.Append(session, ChatMessage.ToolResult("outside", "test", "", true, widgets: [outside]));
+        await connection.SendAsync(5, "artifact.read", new JsonObject { ["sessionId"] = session.Header.Id, ["widgetId"] = outside.Id });
+        var rejected = await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 5);
+        Assert.Equal("error", rejected["event"]!.GetValue<string>());
+        Assert.Contains("outside the workspace root", rejected["data"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ArtifactRead_GlobalConversation_UsesRecordedOrLegacyExecutionDirectory(bool recordedRoot)
+    {
+        var connection = await StartServerAsync((_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+        var global = new WorkspaceManager().CreateGlobal(Path.Combine(_tempDir, "global-state"));
+        var session = _runtime!.Sessions.Create(global);
+        var other = _runtime.Sessions.Create(global);
+        // The recorded root survives a change in daemon launch directory. Legacy
+        // cards use the same working directory as the original global file tools.
+        var directory = recordedRoot ? Path.Combine(_tempDir, "execution")
+            : Path.Combine(Directory.GetCurrentDirectory(), ".cache", "artifact-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "demo.html");
+            await File.WriteAllTextAsync(path, "<h1>Global preview</h1>");
+            var widget = ArtifactWidget.FromFile(path, executionRoot: recordedRoot ? directory : null);
+            _runtime.Sessions.Append(session, ChatMessage.ToolResult("call", "present_artifact", "Presented", true, widgets: [widget]));
+            await connection.SendAsync(1, "artifact.read", new JsonObject
+            {
+                ["global"] = true, ["sessionId"] = session.Header.Id, ["widgetId"] = widget.Id,
+                ["path"] = Path.Combine(_tempDir, "ignored.html"), ["executionRoot"] = "ignored",
+            });
+            var response = await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 1);
+            Assert.Equal("result", response["event"]!.GetValue<string>());
+            Assert.Equal("<h1>Global preview</h1>", ParseData(response)["html"]!.GetValue<string>());
+            await connection.SendAsync(2, "artifact.read", new JsonObject
+            {
+                ["global"] = true, ["sessionId"] = other.Header.Id, ["widgetId"] = widget.Id,
+            });
+            Assert.Equal("error", (await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 2))["event"]!.GetValue<string>());
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
 
     [Fact]
     public async Task ActiveChat_DoesNotBlockCancellation_AndEndsWithCancelledEvent()
@@ -227,7 +382,7 @@ public sealed class DaemonServerTests : IAsyncDisposable
                 item["id"]!.GetValue<long>() == 4 && item["event"]!.GetValue<string>() == "result");
             var listNow = JsonNode.Parse(listResponse["data"]!.GetValue<string>())!.AsArray();
             listed = listNow.FirstOrDefault(item => item!["id"]!.GetValue<string>() == id)?.AsObject();
-            if (listed is not null && listed["lastStatus"]!.GetValue<string>() is not null) break;
+            if (listed?["lastStatus"]?.GetValue<string>() is not null) break;
             await Task.Delay(50);
         }
         Assert.NotNull(listed);
@@ -246,6 +401,16 @@ public sealed class DaemonServerTests : IAsyncDisposable
         await connection.SendAsync(6, "schedule.delete", new JsonObject { ["id"] = id });
         var deleted = await connection.ReadUntilAsync(item => item["id"]?.GetValue<long>() == 6);
         Assert.Equal("result", deleted["event"]!.GetValue<string>());
+        await connection.SendAsync(7, "schedule.get", new JsonObject { ["id"] = id });
+        var missing = await connection.ReadUntilAsync(item => item["id"]?.GetValue<long>() == 7);
+        Assert.Equal("null", missing["data"]!.GetValue<string>());
+        await connection.SendAsync(8, "schedule.update", new JsonObject
+        {
+            ["id"] = id, ["name"] = "Stale card", ["prompt"] = "Do not resurrect", ["cron"] = "0 9 * * *",
+        });
+        var stale = await connection.ReadUntilAsync(item => item["id"]?.GetValue<long>() == 8);
+        Assert.Equal("error", stale["event"]!.GetValue<string>());
+        Assert.Null(_runtime!.Schedules.Get(id));
     }
 
     [Fact]

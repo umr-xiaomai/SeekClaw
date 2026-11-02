@@ -122,6 +122,8 @@ export async function reloadThreadSession(
     const saved = JSON.parse(response.data) as RuntimeSession
     thread.messages = hydrateMessages(saved)
     thread.sessionLoaded = true
+    thread.executionWorkspace = saved.executionWorkspace
+    thread.worktree = saved.worktree
     thread.title = saved.title || thread.title
     thread.archived = Boolean(saved.archived)
     thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)

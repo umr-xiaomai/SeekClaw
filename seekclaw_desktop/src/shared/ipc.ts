@@ -1,4 +1,6 @@
 export type DaemonEventName =
+  | 'provider_retry'
+  | 'stream_reset'
   | 'pong'
   | 'delta'
   | 'thinking'
@@ -25,6 +27,8 @@ export type DaemonEventName =
   | 'warning'
   | 'bye'
   | 'schedule.updated'
+  | 'schedule.changed'
+  | 'subagent.updated'
   | 'schedule.upcoming'
   | 'mcp.updated'
 

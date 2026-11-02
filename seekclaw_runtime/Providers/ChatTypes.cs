@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Presentation;
 
 namespace SeekClaw.Runtime.Providers;
 
@@ -27,6 +28,9 @@ public sealed class ChatMessage
     public string? ThinkingSignature { get; set; }
     /// <summary>"provider/model" that produced this assistant message (shown by clients).</summary>
     public string? ModelRef { get; set; }
+    /// <summary>Terminal generation outcome, retained when an answer was interrupted.</summary>
+    public string? FinishReason { get; set; }
+    public string? ErrorMessage { get; set; }
     public IReadOnlyList<ChatImageReference>? ViewedImages { get; init; }
     public IReadOnlyList<ToolCallRequest>? ToolCalls { get; set; }
     /// <summary>Set when Role == Tool.</summary>
@@ -37,7 +41,18 @@ public sealed class ChatMessage
     public string? ToolDiff { get; init; }
     /// <summary>Workspace-relative file path associated with ToolDiff.</summary>
     public string? ToolFilePath { get; init; }
+    public JsonArray? ToolContent { get; init; }
+    public JsonNode? ToolStructuredContent { get; init; }
+    public JsonObject? ToolMetadata { get; init; }
+    public IReadOnlyList<ConversationWidget>? ToolWidgets { get; init; }
     public DateTimeOffset? Timestamp { get; init; }
+
+    internal string AssistantHistoryText() => FinishReason switch
+    {
+        "error" => Text + "\n\n[SeekClaw runtime: This model response failed before completion. Any tool calls being generated in this interrupted response were not executed.]",
+        "cancelled" => Text + "\n\n[SeekClaw runtime: This model response was cancelled before completion. Any tool calls being generated in this interrupted response were not executed.]",
+        _ => Text,
+    };
 
     public static ChatMessage User(string text, IReadOnlyList<ChatImageAttachment>? images = null) => new()
     {
@@ -53,7 +68,9 @@ public sealed class ChatMessage
         bool success,
         string? diff = null,
         string? filePath = null,
-        IReadOnlyList<ChatImageAttachment>? images = null) =>
+        IReadOnlyList<ChatImageAttachment>? images = null,
+        JsonArray? content = null, JsonNode? structuredContent = null, JsonObject? metadata = null,
+        IReadOnlyList<ConversationWidget>? widgets = null) =>
         new()
         {
             Role = ChatRole.Tool,
@@ -64,6 +81,8 @@ public sealed class ChatMessage
             ToolDiff = diff,
             ToolFilePath = filePath,
             Images = images is { Count: > 0 } ? images : null,
+            ToolContent = content, ToolStructuredContent = structuredContent, ToolMetadata = metadata,
+            ToolWidgets = widgets,
         };
 }
 
@@ -96,6 +115,9 @@ public sealed record LlmTextDelta(string Text) : LlmStreamEvent;
 
 public sealed record LlmThinkingDelta(string Text) : LlmStreamEvent;
 
+/// <summary>Discards only the uncommitted output of the current model invocation before retrying.</summary>
+public sealed record LlmStreamReset(string ModelRef) : LlmStreamEvent;
+
 /// <summary>Emitted as soon as the model starts a tool call (arguments may still be streaming).</summary>
 public sealed record LlmToolCallStarted(string Id, string Name) : LlmStreamEvent;
 
@@ -110,6 +132,7 @@ public sealed record LlmCompletion
     public IReadOnlyList<ToolCallRequest> ToolCalls { get; init; } = [];
     public TokenUsage Usage { get; init; } = new(0, 0);
     public string FinishReason { get; init; } = "";
+    public string? ErrorMessage { get; init; }
 }
 
 public sealed record TokenUsage(long InputTokens, long OutputTokens)

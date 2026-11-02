@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Collections.Concurrent;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace SeekClaw.Runtime.Providers;
 
@@ -15,7 +17,7 @@ public interface IUsageTracker
 /// <summary>Append-only JSONL usage log with in-memory aggregation.</summary>
 public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : IUsageTracker
 {
-    private readonly string _file = filePath ?? SeekClawPaths.UsageFile;
+    private readonly string _file = Path.GetFullPath(filePath ?? SeekClawPaths.UsageFile);
     // Isolated concurrent turn runtimes share the append-only usage file. A process-wide
     // lock prevents two instances from opening/writing the same file at the same time.
     private static readonly ConcurrentDictionary<string, Lock> FileGates = new(StringComparer.OrdinalIgnoreCase);
@@ -25,6 +27,7 @@ public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : 
     {
         lock (Gate)
         {
+            using var lease = AcquireFileLease();
             Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
             var line = JsonSerializer.Serialize(entry, SeekClawJsonContext.Compact.UsageEntry);
             File.AppendAllText(_file, line + Environment.NewLine);
@@ -40,6 +43,7 @@ public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : 
     {
         lock (Gate)
         {
+            using var lease = AcquireFileLease();
             if (!File.Exists(_file)) return [];
             var entries = new List<UsageEntry>();
             foreach (var line in File.ReadLines(_file))
@@ -55,6 +59,30 @@ public sealed class UsageTracker(IEventBus eventBus, string? filePath = null) : 
             }
             return entries;
         }
+    }
+
+    private IDisposable AcquireFileLease()
+    {
+        // A daemon and CI processes can share the same log. Named mutex ownership is
+        // released by the OS after a crash, so a dead writer cannot block future turns.
+        var key = OperatingSystem.IsWindows() ? _file.ToUpperInvariant() : _file;
+        var name = "SeekClaw.Usage." + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        var mutex = new Mutex(false, name);
+        try
+        {
+            try
+            {
+                if (!mutex.WaitOne(TimeSpan.FromSeconds(10))) throw new IOException("Timed out acquiring the usage log lock.");
+            }
+            catch (AbandonedMutexException) { /* This thread now owns the recovered mutex. */ }
+            return new FileLease(mutex);
+        }
+        catch { mutex.Dispose(); throw; }
+    }
+
+    private sealed class FileLease(Mutex mutex) : IDisposable
+    {
+        public void Dispose() { mutex.ReleaseMutex(); mutex.Dispose(); }
     }
 
     public IReadOnlyList<UsageAggregate> Aggregate(DateTimeOffset? since = null) =>

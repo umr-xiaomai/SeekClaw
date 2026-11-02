@@ -15,7 +15,7 @@ namespace SeekClaw.Runtime.Daemon;
 internal sealed class DaemonRequestException(string message) : Exception(message);
 
 /// <summary>Structured administrative operations shared by desktop and editor clients.</summary>
-internal sealed class DaemonAdminApi(
+internal sealed partial class DaemonAdminApi(
     SeekClawRuntime runtime,
     WorkspaceInfo globalWorkspace,
     IFileLockCoordinator fileLocks,
@@ -302,7 +302,17 @@ internal sealed class DaemonAdminApi(
             : true;
         try
         {
-            var task = runtime.Schedules.Upsert(id, name, workspace, prompt, cron, enabled);
+            var previous = id is null ? null : runtime.Schedules.Get(id);
+            if (id is not null && previous is null)
+                throw new DaemonRequestException("Scheduled task no longer exists. Refresh its card before editing.");
+            var sessionId = parameters.ContainsKey("sessionId") ? OptionalString(parameters, "sessionId") : previous?.SessionId;
+            if (sessionId is not null && runtime.Sessions.Load(
+                    workspace is null ? globalWorkspace : runtime.Workspaces.Detect(workspace), sessionId) is null)
+                throw new DaemonRequestException("Scheduled conversation was not found in the selected workspace.");
+            var task = runtime.Schedules.Upsert(id, name, workspace, prompt, cron, enabled, sessionId,
+                parameters["runInWorktree"]?.GetValue<bool>() ?? previous?.RunInWorktree ?? false,
+                OptionalString(parameters, "notificationPolicy") ?? previous?.NotificationPolicy ?? "changes");
+            runtime.Events.Publish(new SeekClaw.Runtime.Events.ScheduledTaskUpdatedEvent());
             return JsonSerializer.Serialize(task, SeekClawJsonContext.Compact.ScheduledTask);
         }
         catch (CronFormatException ex)
@@ -320,6 +330,7 @@ internal sealed class DaemonAdminApi(
         try
         {
             var task = runtime.Schedules.SetEnabled(id, enabled);
+            runtime.Events.Publish(new SeekClaw.Runtime.Events.ScheduledTaskUpdatedEvent());
             return JsonSerializer.Serialize(task, SeekClawJsonContext.Compact.ScheduledTask);
         }
         catch (InvalidOperationException ex)
@@ -332,6 +343,7 @@ internal sealed class DaemonAdminApi(
     {
         var id = RequiredString(parameters, "id");
         runtime.Schedules.Remove(id);
+        runtime.Events.Publish(new SeekClaw.Runtime.Events.ScheduledTaskUpdatedEvent());
         return "ok";
     }
 
@@ -643,6 +655,12 @@ internal sealed class DaemonAdminApi(
         server.Transport = OptionalString(input, "transport") ?? server.Transport;
         server.Command = OptionalString(input, "command") ?? server.Command;
         server.Url = OptionalString(input, "url") ?? server.Url;
+        if (input["headers"] is JsonObject headers)
+            server.Headers = headers.ToDictionary(x => x.Key, x => x.Value?.GetValue<string>() ?? "");
+        if (input["envHeaders"] is JsonObject envHeaders)
+            server.EnvHeaders = envHeaders.ToDictionary(x => x.Key, x => x.Value?.GetValue<string>() ?? "");
+        if (input.ContainsKey("bearerTokenEnv")) server.BearerTokenEnv = OptionalString(input, "bearerTokenEnv");
+        if (input.ContainsKey("oauth")) server.OAuth = input["oauth"]?.Deserialize(SeekClawJsonContext.Default.McpOAuthConfig);
         server.Enabled = input["enabled"]?.GetValue<bool?>() ?? server.Enabled;
         if (input["args"] is JsonArray args)
             server.Args = args.Select(node => node?.GetValue<string>() ?? "").Where(value => value.Length > 0).ToList();
@@ -1049,6 +1067,8 @@ internal sealed class DaemonAdminApi(
             var workspace = Directory.Exists(project.Path)
                 ? runtime.Workspaces.Detect(project.Path)
                 : new WorkspaceInfo { Root = Path.GetFullPath(project.Path), ProjectKinds = [] };
+            foreach (var session in runtime.Sessions.List(workspace, includeArchived: true))
+                EnsureTaskCanBeDeleted(workspace, session.Id);
             runtime.Sessions.DeleteAll(workspace);
             runtime.Memories.DeleteByWorkspace(project.Path);
         }
@@ -1108,6 +1128,9 @@ internal sealed class DaemonAdminApi(
                 ["timestamp"] = (message.Timestamp ?? session.Header.CreatedAt).ToUnixTimeMilliseconds(),
                 ["images"] = images,
                 ["thinking"] = message.Thinking,
+                ["modelRef"] = message.ModelRef,
+                ["finishReason"] = message.FinishReason,
+                ["errorMessage"] = message.ErrorMessage,
                 ["viewedImages"] = viewedImages,
                 ["toolCalls"] = toolCalls,
                 ["toolCallId"] = message.ToolCallId,
@@ -1115,6 +1138,11 @@ internal sealed class DaemonAdminApi(
                 ["toolSuccess"] = message.ToolSuccess,
                 ["toolDiff"] = message.ToolDiff,
                 ["toolFilePath"] = message.ToolFilePath,
+                ["toolContent"] = message.ToolContent?.DeepClone(),
+                ["toolStructuredContent"] = message.ToolStructuredContent?.DeepClone(),
+                ["toolMetadata"] = message.ToolMetadata?.DeepClone(),
+                ["toolWidgets"] = message.ToolWidgets is null ? null : JsonSerializer.SerializeToNode(message.ToolWidgets,
+                    SeekClawJsonContext.Compact.IReadOnlyListConversationWidget),
             });
         }
         return new JsonObject
@@ -1122,6 +1150,9 @@ internal sealed class DaemonAdminApi(
             ["id"] = session.Header.Id,
             ["title"] = session.Header.Title,
             ["workspace"] = workspace.IsGlobal ? null : session.Header.Workspace ?? workspace.Root,
+            ["executionWorkspace"] = runtime.Worktrees.Get(workspace.Root, id) is { } worktree
+                ? (worktree["workspacePath"] ?? worktree["path"])?.DeepClone() : JsonValue.Create(workspace.IsGlobal ? null : workspace.Root),
+            ["worktree"] = runtime.Worktrees.Get(workspace.Root, id),
             ["archived"] = session.Header.Archived,
             ["reasoningLevel"] = session.Header.ReasoningLevel.ToWireValue(),
             ["networkEnabled"] = session.Header.NetworkEnabled,
@@ -1215,6 +1246,7 @@ internal sealed class DaemonAdminApi(
     {
         var workspace = SessionWorkspace(parameters);
         var id = RequiredString(parameters, "id");
+        EnsureTaskCanBeDeleted(workspace, id);
         try
         {
             runtime.Sessions.Delete(workspace, id);
@@ -1224,6 +1256,15 @@ internal sealed class DaemonAdminApi(
         {
             throw new DaemonRequestException(ex.Message);
         }
+    }
+
+    private void EnsureTaskCanBeDeleted(WorkspaceInfo workspace, string id)
+    {
+        if (runtime.Worktrees.Get(workspace.Root, id) is { } worktree && worktree["status"]?.GetValue<string>() != "archived")
+            throw new DaemonRequestException("Archive this task's worktree before deleting the conversation so its files remain recoverable.");
+        if (runtime.Commands.List(id).OfType<JsonObject>().Any(x => x["status"]?.GetValue<string>() == "running")
+            || runtime.SubAgentTasks.List(id).OfType<JsonObject>().Any(x => x["status"]?.GetValue<string>() == "running"))
+            throw new DaemonRequestException("Stop active command sessions and sub-agents before deleting the conversation.");
     }
 
     public async Task<string> DoctorAsync(CancellationToken ct)
@@ -1295,6 +1336,9 @@ internal sealed class DaemonAdminApi(
         ["args"] = Strings(server.Args ?? []),
         ["url"] = server.Url,
         ["envKeys"] = Strings(server.Env is null ? Enumerable.Empty<string>() : server.Env.Keys),
+        ["envHeaders"] = server.EnvHeaders is null ? new JsonObject() : new JsonObject(server.EnvHeaders.Select(x => KeyValuePair.Create<string, JsonNode?>(x.Key, JsonValue.Create(x.Value)))),
+        ["bearerTokenEnv"] = server.BearerTokenEnv,
+        ["oauth"] = server.OAuth is null ? null : JsonSerializer.SerializeToNode(server.OAuth, SeekClawJsonContext.Default.McpOAuthConfig),
         ["enabled"] = server.Enabled,
         ["connected"] = status?.Connected ?? false,
         ["connecting"] = status?.Connecting ?? false,

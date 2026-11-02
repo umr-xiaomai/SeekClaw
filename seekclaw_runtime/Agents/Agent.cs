@@ -44,7 +44,10 @@ public sealed partial class Agent(
     IFileLockCoordinator fileLocks,
     FileLockScope lockScope,
     IToolApprovalGate approvalGate,
-    SeekClaw.Runtime.SubAgents.SubAgentScope? subAgentScope = null)
+    SeekClaw.Runtime.SubAgents.SubAgentScope? subAgentScope = null,
+    SeekClaw.Runtime.Execution.SessionTurnCoordinator? turns = null,
+    WorktreeManager? worktrees = null,
+    SeekClaw.Runtime.Skills.SkillManager? skills = null)
 {
     public async Task<AgentTurnResult> RunTurnAsync(
         AgentSession session,
@@ -57,6 +60,31 @@ public sealed partial class Agent(
         string? turnRequestId = null,
         bool captureCrossSessionMemory = true)
     {
+        using var turnLease = turns is null ? null : await turns.AcquireAsync(
+            session.FilePath + "|" + session.Scope + "|" + session.Header.Id, ct).ConfigureAwait(false);
+        // Load only after acquiring the lease: a scheduled turn may have updated the history while we waited.
+        if (turns is not null && sessionStore.Load(workspace, session.Header.Id) is { } latest
+            && !ReferenceEquals(latest, session))
+        {
+            session.Messages.Clear(); session.Messages.AddRange(latest.Messages);
+            session.Header.NetworkEnabled &= latest.Header.NetworkEnabled;
+            session.Header.Title = latest.Header.Title;
+            session.Header.Archived = latest.Header.Archived;
+            session.Header.ReasoningLevel = latest.Header.ReasoningLevel;
+            session.Header.LlmRounds = latest.Header.LlmRounds;
+            session.Header.ExecutionSteps = latest.Header.ExecutionSteps;
+            session.Header.InputTokens = latest.Header.InputTokens;
+            session.Header.TotalInputTokens = latest.Header.TotalInputTokens;
+            session.Header.CachedInputTokens = latest.Header.CachedInputTokens;
+            session.Header.OutputTokens = latest.Header.OutputTokens;
+            session.Header.OutputElapsedMs = latest.Header.OutputElapsedMs;
+        }
+        var sessionWorkspace = workspace;
+        using var executionLease = worktrees is null ? null
+            : await worktrees.AcquireExecutionAsync(workspace.Root, session.Header.Id, ct).ConfigureAwait(false);
+        workspace = worktrees?.Resolve(workspace, session.Header.Id) ?? workspace;
+        promptProvider.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
+        skills?.Attach(workspace);
         var agentConfig = configStore.Config.Agent;
         events.Publish(new TurnStartedEvent(session.Header.Id, userInput));
         var userMessage = ChatMessage.User(userInput, images);
@@ -177,12 +205,19 @@ public sealed partial class Agent(
                     Thinking = completion.Thinking.Length > 0 ? completion.Thinking : null,
                     ThinkingSignature = completion.ThinkingSignature,
                     ModelRef = $"{model.Provider.Id}/{model.Model.Id}",
+                    FinishReason = completion.FinishReason,
+                    ErrorMessage = completion.ErrorMessage,
                     ToolCalls = completion.ToolCalls.Count > 0 ? completion.ToolCalls : null,
                     ViewedImages = step == 1
                         ? userMessage.Images?.Select(image => new ChatImageReference(image.Id, image.Name)).ToList()
                         : null,
                 };
                 sessionStore.Append(session, assistant);
+                if (completion.ErrorMessage is { } completionError)
+                {
+                    finalText = isContinuation ? finalText + completion.Text : completion.Text;
+                    throw new LlmException(completionError, retryable: false);
+                }
                 if (completion.Text.Length > 0)
                 {
                     finalText = isContinuation ? finalText + completion.Text : completion.Text;
@@ -210,7 +245,7 @@ public sealed partial class Agent(
                             {
                                 foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
                                 var batchResults = await Task.WhenAll(readOnlyBatch.Select(c =>
-                                    ExecuteToolAsync(c, workspace, model, session.Header.Id, turnRequestId, ct))).ConfigureAwait(false);
+                                    ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, ct))).ConfigureAwait(false);
                                 foreach (var result in batchResults)
                                 {
                                     mutated |= result.ToolMutated;
@@ -221,7 +256,7 @@ public sealed partial class Agent(
 
                             PublishWorkflow(step, "tool", call.Name);
                             var singleResult = await ExecuteToolAsync(
-                                call, workspace, model, session.Header.Id, turnRequestId, ct).ConfigureAwait(false);
+                                call, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, ct).ConfigureAwait(false);
                             mutated |= singleResult.ToolMutated;
                             sessionStore.Append(session, singleResult.Message);
                         }
@@ -231,7 +266,7 @@ public sealed partial class Agent(
                     {
                         foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
                         var batchResults = await Task.WhenAll(readOnlyBatch.Select(c =>
-                            ExecuteToolAsync(c, workspace, model, session.Header.Id, turnRequestId, ct))).ConfigureAwait(false);
+                            ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, ct))).ConfigureAwait(false);
                         foreach (var result in batchResults)
                         {
                             mutated |= result.ToolMutated;
@@ -359,12 +394,17 @@ public sealed partial class Agent(
                             Thinking = finalCompletion.Thinking.Length > 0 ? finalCompletion.Thinking : null,
                             ThinkingSignature = finalCompletion.ThinkingSignature,
                             ModelRef = $"{activeModel.Provider.Id}/{activeModel.Model.Id}",
+                            FinishReason = finalCompletion.FinishReason,
+                            ErrorMessage = finalCompletion.ErrorMessage,
                         };
                         sessionStore.Append(session, assistantSummary);
+                        ct.ThrowIfCancellationRequested();
+                        error = finalCompletion.ErrorMessage;
+                        if (error is not null) events.Publish(new ErrorEvent("LLM request failed", error));
                         if (finalCompletion.Text.Length > 0)
                         {
                             finalText = finalCompletion.Text;
-                            events.Publish(new AssistantMessageCompletedEvent(finalCompletion.Text));
+                            if (error is null) events.Publish(new AssistantMessageCompletedEvent(finalCompletion.Text));
                         }
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)

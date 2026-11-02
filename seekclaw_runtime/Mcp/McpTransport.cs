@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using SeekClaw.Runtime.Tools;
+using SeekClaw.Runtime.IO;
 
 namespace SeekClaw.Runtime.Mcp;
 
@@ -12,6 +13,7 @@ public interface IMcpTransport : IAsyncDisposable
     Task StartAsync(CancellationToken ct);
     Task SendAsync(JsonObject message, CancellationToken ct);
     ChannelReader<JsonObject> Incoming { get; }
+    void SetProtocolVersion(string version) { }
 }
 
 /// <summary>stdio transport: spawns the server process, newline-delimited JSON-RPC over stdin/stdout.</summary>
@@ -64,7 +66,11 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
         // Drain stderr so the child never blocks on a full pipe.
         _ = Task.Run(async () =>
         {
-            try { while (await _process.StandardError.ReadLineAsync().ConfigureAwait(false) is not null) { } }
+            try
+            {
+                var buffer = new char[4096];
+                while (await _process.StandardError.ReadAsync(buffer).ConfigureAwait(false) > 0) { }
+            }
             catch (IOException) { }
         }, CancellationToken.None);
 
@@ -72,7 +78,8 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
         {
             try
             {
-                while (await _process.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line)
+                var reader = new BoundedLineReader(_process.StandardOutput, ProtocolText.MaximumMessageChars);
+                while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     try
@@ -138,13 +145,18 @@ public class HttpMcpTransport : IMcpTransport
     private readonly Lock _backgroundGate = new();
     private readonly List<Task> _backgroundReads = [];
     private string? _sessionId;
+    private string? _protocolVersion;
     private Task? _readLoop;
 
-    public HttpMcpTransport(string url, HttpClient? httpClient = null)
+    private readonly Func<CancellationToken, Task<IReadOnlyDictionary<string, string>>>? _headers;
+
+    public HttpMcpTransport(string url, HttpClient? httpClient = null,
+        Func<CancellationToken, Task<IReadOnlyDictionary<string, string>>>? headers = null)
     {
         _url = url;
         _ownsHttpClient = httpClient is null;
         _http = httpClient ?? CreateDefaultClient();
+        _headers = headers;
     }
 
     /// <summary>
@@ -157,6 +169,7 @@ public class HttpMcpTransport : IMcpTransport
     {
         var handler = new SocketsHttpHandler
         {
+            AllowAutoRedirect = false,
             ConnectTimeout = TimeSpan.FromSeconds(10),
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         };
@@ -164,6 +177,8 @@ public class HttpMcpTransport : IMcpTransport
     }
 
     public ChannelReader<JsonObject> Incoming => _incoming.Reader;
+
+    public void SetProtocolVersion(string version) => _protocolVersion = version;
 
     public virtual async Task StartAsync(CancellationToken ct)
     {
@@ -175,6 +190,7 @@ public class HttpMcpTransport : IMcpTransport
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, _url);
             request.Headers.TryAddWithoutValidation("Accept", "text/event-stream, application/json");
+            await AuthenticateAsync(request, token).ConfigureAwait(false);
             response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
 
             CaptureSessionId(response);
@@ -222,7 +238,7 @@ public class HttpMcpTransport : IMcpTransport
                     // Some servers return a JSON greeting with endpoint metadata (e.g. {"endpoint": "POST /mcp"})
                     using (response)
                     {
-                        var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                        var body = await ProtocolText.ReadBodyAsync(response.Content, token).ConfigureAwait(false);
                         try
                         {
                             if (JsonNode.Parse(body) is JsonObject json)
@@ -270,6 +286,8 @@ public class HttpMcpTransport : IMcpTransport
             Content = new StringContent(message.ToJsonString(), Encoding.UTF8, "application/json")
         };
         request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+        if (_protocolVersion is { } version) request.Headers.Add("MCP-Protocol-Version", version);
+        await AuthenticateAsync(request, token).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(_sessionId))
         {
             request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _sessionId);
@@ -317,7 +335,7 @@ public class HttpMcpTransport : IMcpTransport
             {
                 if (mediaType.Contains("json"))
                 {
-                    var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                    var body = await ProtocolText.ReadBodyAsync(response.Content, token).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(body)) DispatchJson(body);
                 }
             }
@@ -327,6 +345,25 @@ public class HttpMcpTransport : IMcpTransport
             response.Dispose();
             throw;
         }
+    }
+
+    private async Task AuthenticateAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        if (_headers is null) return;
+        var headers = await _headers(ct).ConfigureAwait(false);
+        if (headers.Count > 0)
+        {
+            McpAuthentication.ValidateEndpoint(request.RequestUri!.AbsoluteUri);
+            if (Uri.Compare(new Uri(_url), request.RequestUri, UriComponents.SchemeAndServer,
+                    UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) != 0)
+                throw new McpException("MCP endpoint changed origin; credentials were not forwarded.");
+        }
+        foreach (var pair in headers)
+            if (pair.Key.Equals("Host", StringComparison.OrdinalIgnoreCase)
+                || pair.Key.Equals("Connection", StringComparison.OrdinalIgnoreCase)
+                || pair.Value.Contains('\r') || pair.Value.Contains('\n')
+                || !request.Headers.TryAddWithoutValidation(pair.Key, pair.Value))
+                throw new McpException($"Invalid MCP request header: {pair.Key}");
     }
 
     private void CaptureSessionId(HttpResponseMessage response)

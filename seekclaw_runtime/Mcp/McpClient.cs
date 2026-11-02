@@ -13,7 +13,7 @@ public sealed record McpResource(string Uri, string? Name, string? Description);
 /// <summary>Minimal MCP (Model Context Protocol) JSON-RPC 2.0 client with request correlation.</summary>
 public sealed class McpClient(string serverName, IMcpTransport transport) : IAsyncDisposable
 {
-    private const string ProtocolVersion = "2024-11-05";
+    private const string ProtocolVersion = "2025-06-18";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
 
     private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonObject>> _pending = new();
@@ -27,12 +27,18 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
         await transport.StartAsync(ct).ConfigureAwait(false);
         _dispatchLoop = Task.Run(DispatchLoopAsync, CancellationToken.None);
 
-        await RequestAsync("initialize", new JsonObject
+        var initialization = await RequestAsync("initialize", new JsonObject
         {
             ["protocolVersion"] = ProtocolVersion,
             ["capabilities"] = new JsonObject(),
             ["clientInfo"] = new JsonObject { ["name"] = "seekclaw", ["version"] = "1.0.0" },
         }, ct).ConfigureAwait(false);
+
+        var version = initialization["protocolVersion"]?.GetValue<string>()
+            ?? "2024-11-05"; // Compatibility with older servers that omitted negotiation.
+        if (version is not ("2024-11-05" or "2025-03-26" or ProtocolVersion))
+            throw new McpException($"MCP server selected unsupported protocol version: {version}");
+        transport.SetProtocolVersion(version);
 
         await transport.SendAsync(new JsonObject
         {
@@ -58,20 +64,19 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
 
     public async Task<(bool Success, string Text)> CallToolAsync(string name, JsonObject arguments, CancellationToken ct)
     {
+        var result = await CallToolResultAsync(name, arguments, ct).ConfigureAwait(false);
+        return (result.Success, result.Text);
+    }
+
+    public async Task<McpCallResult> CallToolResultAsync(string name, JsonObject arguments, CancellationToken ct)
+    {
         var result = await RequestAsync("tools/call", new JsonObject
         {
             ["name"] = name,
             ["arguments"] = arguments.DeepClone(),
         }, ct).ConfigureAwait(false);
 
-        var isError = result["isError"]?.GetValue<bool>() ?? false;
-        var text = new StringBuilder();
-        foreach (var node in result["content"] as JsonArray ?? [])
-        {
-            if (node is JsonObject item && item["type"]?.GetValue<string>() == "text")
-                text.AppendLine(item["text"]?.GetValue<string>() ?? "");
-        }
-        return (!isError, text.ToString().TrimEnd());
+        return McpCallResult.Parse(result);
     }
 
     public async Task<IReadOnlyList<McpPrompt>> ListPromptsAsync(CancellationToken ct)

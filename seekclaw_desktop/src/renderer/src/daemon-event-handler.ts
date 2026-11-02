@@ -3,6 +3,7 @@ import type { DaemonMessage } from '../../shared/ipc'
 import type { ChatMessage, ProjectItem, ThreadItem } from './types'
 import { finalizeAssistantBubbles } from './conversation-state'
 import { makeId, phaseLabel } from './app-helpers'
+import { parseConversationWidgets } from './conversation-widgets'
 
 export interface DaemonEventContext {
   threads: Ref<ThreadItem[]>
@@ -127,6 +128,21 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
     }
 
     switch (event.event) {
+      case 'provider_retry':
+        thread.phase = `连接中断，正在重试（${Number(event.details?.attempt) || 1}）`
+        break
+      case 'stream_reset': {
+        if (!message) break
+        const textLength = Math.max(0, Number(event.details?.textLength) || 0)
+        const thinkingLength = Math.max(0, Number(event.details?.thinkingLength) || 0)
+        message.content = message.content.slice(0, Math.max(0, message.content.length - textLength))
+        const thinking = message.thinking ?? ''
+        message.thinking = thinking.slice(0, Math.max(0, thinking.length - thinkingLength))
+        message.errorMessage = undefined
+        message.modelRef = event.data || message.modelRef
+        message.state = 'thinking'
+        break
+      }
       case 'thinking':
         if (!message) break
         message.thinking = (message.thinking ?? '') + event.data
@@ -176,6 +192,14 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         const running = findTool()
         if (running) {
           running.state = event.details?.success === false ? 'error' : 'done'
+          running.output = typeof event.details?.output === 'string' ? event.details.output : event.data
+          running.content = Array.isArray(event.details?.content)
+            ? event.details.content as Array<Record<string, unknown>> : undefined
+          running.structuredContent = event.details?.structuredContent ?? undefined
+          running.widgets = parseConversationWidgets(event.details?.widgets)
+          const metadata = event.details?.metadata
+          running.metadata = metadata != null && typeof metadata === 'object' && !Array.isArray(metadata)
+            ? metadata as Record<string, unknown> : undefined
           if (!running.detail && event.data) {
             running.detail = event.data
           }
@@ -292,6 +316,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         }
         if (!thread.activeTurnToken) {
           thread.running = false
+          thread.activeTurnStartId = undefined
           thread.requestId = undefined
           thread.assistantId = undefined
           scheduleQueuedDrain(thread)
@@ -317,6 +342,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         }
         if (!thread.activeTurnToken) {
           thread.running = false
+          thread.activeTurnStartId = undefined
           thread.requestId = undefined
           thread.assistantId = undefined
           scheduleQueuedDrain(thread)

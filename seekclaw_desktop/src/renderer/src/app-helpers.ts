@@ -1,4 +1,5 @@
 import { ReasoningLevel } from './types'
+import { parseConversationWidgets } from './conversation-widgets'
 import type {
   ChatMessage,
   FileAttachment,
@@ -48,19 +49,27 @@ export interface RuntimeSessionHeader {
 }
 
 export interface RuntimeSession extends RuntimeSessionHeader {
+  executionWorkspace?: string
+  worktree?: ThreadItem['worktree']
   messages: Array<{
     role: 'user' | 'assistant' | 'tool'
     text: string
     images?: ImageAttachment[]
     thinking?: string
     modelRef?: string
+    finishReason?: string | null
+    errorMessage?: string | null
     viewedImages?: Array<{ id: string; name: string }>
-    toolCalls?: Array<{ id: string; name: string }>
+    toolCalls?: Array<{ id: string; name: string; detail?: string }>
     toolCallId?: string
     toolName?: string
     toolSuccess?: boolean
     toolDiff?: string
     toolFilePath?: string
+    toolContent?: Array<Record<string, unknown>> | null
+    toolStructuredContent?: unknown
+    toolMetadata?: Record<string, unknown> | null
+    toolWidgets?: unknown
     timestamp?: number
   }>
 }
@@ -190,6 +199,11 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
           state: 'done'
         }
         hydrated.state = item.toolSuccess === false ? 'error' : 'done'
+        hydrated.output = item.text
+        hydrated.content = item.toolContent ?? undefined
+        hydrated.structuredContent = item.toolStructuredContent ?? undefined
+        hydrated.metadata = item.toolMetadata ?? undefined
+        hydrated.widgets = parseConversationWidgets(item.toolWidgets)
         if (item.toolFilePath) {
           hydrated.filePath = item.toolFilePath
           if (!hydrated.detail) hydrated.detail = item.toolFilePath
@@ -224,11 +238,13 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
         id: call.id,
         callId: call.id,
         name: call.name,
-        detail: (call as any).detail,
+        detail: call.detail,
         state: 'done'
       })),
-      state: item.role === 'assistant' ? 'done' : undefined,
-      errorMessage: (item as any).errorMessage,
+      state: item.role === 'assistant'
+        ? (item.errorMessage || item.finishReason === 'error' ? 'error' : 'done')
+        : undefined,
+      errorMessage: item.errorMessage ?? undefined,
       createdAt: typeof item.timestamp === 'number' && item.timestamp > 0
         ? item.timestamp
         : new Date(saved.createdAt).getTime() + index

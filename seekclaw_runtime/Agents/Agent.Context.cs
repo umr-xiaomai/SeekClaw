@@ -30,6 +30,9 @@ public sealed partial class Agent
                 {
                     Role = message.Role,
                     Text = message.Text,
+                    ModelRef = message.ModelRef,
+                    FinishReason = message.FinishReason,
+                    ErrorMessage = message.ErrorMessage,
                     Thinking = message.Thinking,
                     ThinkingSignature = message.ThinkingSignature,
                     ViewedImages = message.ViewedImages,
@@ -39,6 +42,8 @@ public sealed partial class Agent
                     ToolSuccess = message.ToolSuccess,
                     ToolDiff = message.ToolDiff,
                     ToolFilePath = message.ToolFilePath,
+                    ToolContent = message.ToolContent, ToolStructuredContent = message.ToolStructuredContent, ToolMetadata = message.ToolMetadata,
+                    ToolWidgets = message.ToolWidgets,
                 })
             .ToList();
     }

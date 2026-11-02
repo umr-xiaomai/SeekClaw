@@ -4,6 +4,7 @@ using SeekClaw.Runtime.Memory;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
+using SeekClaw.Runtime.Presentation;
 
 namespace SeekClaw.Runtime.Configuration;
 
@@ -19,12 +20,14 @@ namespace SeekClaw.Runtime.Configuration;
 [JsonSerializable(typeof(RuntimeState))]
 [JsonSerializable(typeof(SessionHeader))]
 [JsonSerializable(typeof(SessionMessage))]
+[JsonSerializable(typeof(IReadOnlyList<ConversationWidget>))]
 [JsonSerializable(typeof(ScheduledTask))]
 [JsonSerializable(typeof(List<ScheduledTask>))]
 [JsonSerializable(typeof(CrossSessionMemory))]
 [JsonSerializable(typeof(List<CrossSessionMemory>))]
 [JsonSerializable(typeof(UsageEntry))]
 [JsonSerializable(typeof(McpConfig))]
+[JsonSerializable(typeof(McpOAuthConfig))]
 [JsonSerializable(typeof(List<SessionHeader>))]
 [JsonSerializable(typeof(List<string>))]
 public sealed partial class SeekClawJsonContext : JsonSerializerContext

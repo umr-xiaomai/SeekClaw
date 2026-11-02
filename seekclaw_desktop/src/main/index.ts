@@ -292,6 +292,11 @@ function createWindow(): void {
     }
   })
   mainWindow.on('closed', () => { mainWindow = null })
+  // Artifact previews have an opaque sandbox origin. Keep them on srcdoc/blank,
+  // including attempts to navigate via links, forms or script-assigned locations.
+  mainWindow.webContents.on('will-frame-navigate', (event) => {
+    if (!event.isMainFrame && !['about:srcdoc', 'about:blank'].includes(event.url)) event.preventDefault()
+  })
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
     return { action: 'deny' }

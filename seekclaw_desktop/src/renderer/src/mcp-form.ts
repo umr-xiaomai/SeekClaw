@@ -10,6 +10,17 @@ export interface McpFormValue {
   url: string
   env: string
   enabled: boolean
+  bearerTokenEnv?: string
+  envHeaders?: string
+  oauth?: McpOAuth
+}
+
+export interface McpOAuth {
+  clientId?: string
+  authorizationEndpoint?: string
+  tokenEndpoint?: string
+  clientSecretEnv?: string
+  scope?: string
 }
 
 export interface McpServerSummary {
@@ -26,6 +37,9 @@ export interface McpServerSummary {
   connecting?: boolean
   toolCount: number
   error?: string
+  bearerTokenEnv?: string
+  envHeaders?: Record<string, string>
+  oauth?: McpOAuth
 }
 
 export interface McpOption {
@@ -109,7 +123,10 @@ export function mcpFormFromServer(server: McpServerSummary): McpFormValue {
     args: (server.args ?? []).join('\n'),
     url: server.url ?? '',
     env: '',
-    enabled: server.enabled
+    enabled: server.enabled,
+    bearerTokenEnv: server.bearerTokenEnv,
+    envHeaders: Object.entries(server.envHeaders ?? {}).map(([key, value]) => `${key}=${value}`).join('\n'),
+    oauth: server.oauth ? { ...server.oauth } : undefined
   }
 }
 
@@ -152,6 +169,11 @@ export function buildMcpServerPayload(form: McpFormValue): Record<string, unknow
   // Only stdio servers consume process environment variables today.
   const env = remote ? undefined : parseEnvText(form.env)
   if (env) server.env = env
+  if (remote) {
+    server.bearerTokenEnv = form.bearerTokenEnv?.trim() || null
+    server.envHeaders = parseEnvText(form.envHeaders ?? '') ?? {}
+    server.oauth = form.oauth ? { ...form.oauth } : null
+  }
   return server
 }
 

@@ -19,9 +19,11 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import logoUrl from '../../../../resources/logo.png?url'
 import type { ProjectItem, ThreadItem } from '../types'
+import { useSidebarExpansion } from '../sidebar-expansion'
 
 const props = withDefaults(defineProps<{
   projects: ProjectItem[]
+  projectsReady: boolean
   threads: ThreadItem[]
   activeThreadId: string
   activeProjectId?: string
@@ -92,127 +94,15 @@ function startResize(event: PointerEvent): void {
 }
 
 const PINNED_THREADS_STORAGE_KEY = 'seekclaw-pinned-threads'
-const EXPANDED_PROJECTS_STORAGE_KEY = 'seekclaw-sidebar-expanded-projects-v1'
-const INITIALIZED_PROJECTS_STORAGE_KEY = 'seekclaw-sidebar-known-projects-v1'
-const TASK_SECTION_EXPANDED_STORAGE_KEY = 'seekclaw-sidebar-task-section-expanded-v1'
-
-function loadTaskSectionExpanded(): boolean {
-  try {
-    const raw = localStorage.getItem(TASK_SECTION_EXPANDED_STORAGE_KEY)
-    return raw === null ? true : raw !== 'false'
-  } catch {
-    return true
-  }
-}
-
-function saveTaskSectionExpanded(expanded: boolean): void {
-  try {
-    localStorage.setItem(TASK_SECTION_EXPANDED_STORAGE_KEY, String(expanded))
-  } catch {
-    // ignore
-  }
-}
-
-function loadStoredSet(key: string): Set<string> {
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return new Set()
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? new Set(parsed.filter((item): item is string => typeof item === 'string')) : new Set()
-  } catch {
-    return new Set()
-  }
-}
-
-function saveStoredSet(key: string, set: Set<string>): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(Array.from(set)))
-  } catch {
-    // ignore
-  }
-}
 
 const searching = ref(false)
 const query = ref('')
-const taskSectionExpanded = ref<boolean>(loadTaskSectionExpanded())
-const expandedProjects = ref<Set<string>>(loadStoredSet(EXPANDED_PROJECTS_STORAGE_KEY))
-const knownProjectIds = ref<Set<string>>(loadStoredSet(INITIALIZED_PROJECTS_STORAGE_KEY))
+const { taskSectionExpanded, expandedProjects, toggleProject } = useSidebarExpansion({
+  projectIds: () => props.projects.map((project) => project.id),
+  projectsReady: () => props.projectsReady
+})
 const menuKey = ref('')
 const menuPlacement = ref<'up' | 'down'>('down')
-const knownThreadIds = new Set<string>()
-let threadsWatchInitialized = false
-
-watch(taskSectionExpanded, (expanded) => {
-  saveTaskSectionExpanded(expanded)
-})
-
-watch(() => props.projects, (items) => {
-  const currentIds = new Set(items.map((p) => p.id))
-  const nextExpanded = new Set(expandedProjects.value)
-  const nextKnown = new Set(knownProjectIds.value)
-  let changed = false
-
-  // 1. 删除已被移除的项目记录，确保删除后不留历史，再次添加该目录时作为新项目重新初始化
-  for (const id of Array.from(nextExpanded)) {
-    if (!currentIds.has(id)) {
-      nextExpanded.delete(id)
-      changed = true
-    }
-  }
-  for (const id of Array.from(nextKnown)) {
-    if (!currentIds.has(id)) {
-      nextKnown.delete(id)
-      changed = true
-    }
-  }
-
-  // 2. 对于新添加的项目（此前未记录过的），默认展开并记录为已知
-  for (const project of items) {
-    if (!nextKnown.has(project.id)) {
-      nextKnown.add(project.id)
-      nextExpanded.add(project.id)
-      changed = true
-    }
-  }
-
-  if (changed) {
-    expandedProjects.value = nextExpanded
-    knownProjectIds.value = nextKnown
-    saveStoredSet(EXPANDED_PROJECTS_STORAGE_KEY, nextExpanded)
-    saveStoredSet(INITIALIZED_PROJECTS_STORAGE_KEY, nextKnown)
-  }
-}, { immediate: true, deep: true })
-
-watch(() => props.threads.map((thread) => thread.id), (ids) => {
-  const current = new Set(ids)
-  // 初次挂载时仅记录已知会话 ID，避免每次打开应用强制展开所有项目
-  if (!threadsWatchInitialized) {
-    threadsWatchInitialized = true
-    knownThreadIds.clear()
-    current.forEach((id) => knownThreadIds.add(id))
-    return
-  }
-
-  let expandedChanged = false
-  const next = new Set(expandedProjects.value)
-  for (const id of ids) {
-    if (knownThreadIds.has(id)) continue
-    const thread = props.threads.find((item) => item.id === id)
-    if (!thread || !isRealThread(thread)) continue
-    if (thread.projectId) {
-      next.add(thread.projectId)
-      expandedChanged = true
-    } else {
-      taskSectionExpanded.value = true
-    }
-  }
-  knownThreadIds.clear()
-  current.forEach((id) => knownThreadIds.add(id))
-  if (expandedChanged) {
-    expandedProjects.value = next
-    saveStoredSet(EXPANDED_PROJECTS_STORAGE_KEY, next)
-  }
-}, { immediate: true })
 
 function loadPinnedThreadIds(): Set<string> {
   try {
@@ -296,14 +186,6 @@ function projectHasRunningTask(projectId: string): boolean {
 }
 
 function createTask(projectId?: string): void {
-  if (projectId) {
-    const next = new Set(expandedProjects.value)
-    next.add(projectId)
-    expandedProjects.value = next
-    saveStoredSet(EXPANDED_PROJECTS_STORAGE_KEY, next)
-  } else {
-    taskSectionExpanded.value = true
-  }
   emit('newTask', projectId)
 }
 
@@ -313,26 +195,6 @@ const visibleGlobalThreads = computed(() => {
     .filter((thread) => !normalizedQuery.value || thread.title.toLocaleLowerCase().includes(normalizedQuery.value))
   return sortThreads(filtered)
 })
-
-function toggleProject(project: ProjectItem): void {
-  const next = new Set(expandedProjects.value)
-  if (next.has(project.id)) next.delete(project.id)
-  else next.add(project.id)
-  expandedProjects.value = next
-  saveStoredSet(EXPANDED_PROJECTS_STORAGE_KEY, next)
-}
-
-function handleDeleteProject(project: ProjectItem): void {
-  const nextExpanded = new Set(expandedProjects.value)
-  const nextKnown = new Set(knownProjectIds.value)
-  nextExpanded.delete(project.id)
-  nextKnown.delete(project.id)
-  expandedProjects.value = nextExpanded
-  knownProjectIds.value = nextKnown
-  saveStoredSet(EXPANDED_PROJECTS_STORAGE_KEY, nextExpanded)
-  saveStoredSet(INITIALIZED_PROJECTS_STORAGE_KEY, nextKnown)
-  emit('deleteProject', project)
-}
 
 function updateMenuPlacement(trigger: HTMLElement | null, menuHeight = 200): void {
   const row = trigger?.closest<HTMLElement>('.thread-heading-row, .project-heading-row')
@@ -522,7 +384,8 @@ onBeforeUnmount(() => {
 
         <div v-for="project in projects" :key="project.id" class="project-group">
           <div class="project-heading-row" :class="{ 'has-menu': menuKey === `project:${project.id}` }">
-            <button class="project-row" :title="project.path" @click="toggleProject(project)">
+            <button class="project-row" :title="project.path" :aria-expanded="expandedProjects.has(project.id)"
+              @click="toggleProject(project.id)">
               <Folder :size="18" />
               <span>{{ project.name }}</span>
               <LoaderCircle v-if="!expandedProjects.has(project.id) && projectHasRunningTask(project.id)"
@@ -550,7 +413,7 @@ onBeforeUnmount(() => {
                 <button class="danger" @click="runAction(() => emit('deleteProjectTasks', project))">
                   <Trash2 :size="15" />删除全部任务
                 </button>
-                <button class="danger" @click="runAction(() => handleDeleteProject(project))">
+                <button class="danger" @click="runAction(() => emit('deleteProject', project))">
                   <Trash2 :size="15" />删除项目
                 </button>
               </div>

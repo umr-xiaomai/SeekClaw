@@ -17,8 +17,10 @@ public sealed partial class Agent
     private async Task<ToolExecution> ExecuteToolAsync(
         ToolCallRequest call,
         WorkspaceInfo workspace,
+        WorkspaceInfo sessionWorkspace,
         ModelInfo model,
         string sessionId,
+        bool networkEnabled,
         string? turnRequestId,
         CancellationToken ct)
     {
@@ -38,6 +40,13 @@ public sealed partial class Agent
         if (mode.IsReadOnly() && tool.Mutating)
         {
             var message = $"Tool execution denied: '{tool.Name}' is not allowed in {mode.ToDisplayString()}. Switch mode via '/mode edit' or '/mode auto' to allow file mutations.";
+            events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
+            return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
+        }
+
+        if (tool.RequiresNetwork && !networkEnabled)
+        {
+            const string message = "Tool execution denied: network access is disabled for this conversation.";
             events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
             return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
         }
@@ -97,6 +106,9 @@ public sealed partial class Agent
             Agent = configStore.Config.Agent,
             MaxOutputChars = ContextPlanner.ToolOutputBudget(model.Model, configStore.Config.Agent),
             CallId = call.Id,
+            SessionId = sessionId,
+            SessionWorkspace = sessionWorkspace,
+            NetworkEnabled = networkEnabled,
             Coordinator = fileLocks,
             Owner = lockScope.Owner,
             SubAgentDepth = subAgentScope?.Depth ?? 0,
@@ -121,7 +133,14 @@ public sealed partial class Agent
 
         events.Publish(new ToolCallCompletedEvent(
             call.Id, call.Name, result.Success,
-            result.Summary ?? Firstline(result.Output), stopwatch.Elapsed));
+            result.Summary ?? Firstline(result.Output), stopwatch.Elapsed)
+        {
+            Output = result.Output,
+            Content = result.Content?.DeepClone().AsArray(),
+            StructuredContent = result.StructuredContent?.DeepClone(),
+            Metadata = result.Metadata?.DeepClone().AsObject(),
+            Widgets = result.Widgets,
+        });
 
         var filePath = result.FilePath is null
             ? null
@@ -129,7 +148,8 @@ public sealed partial class Agent
                 ? Path.GetRelativePath(workspace.Root, result.FilePath)
                 : result.FilePath;
         return new ToolExecution(
-            ChatMessage.ToolResult(call.Id, call.Name, result.Output, result.Success, result.Diff, filePath, result.Images),
+            ChatMessage.ToolResult(call.Id, call.Name, result.Output, result.Success, result.Diff, filePath, result.Images,
+                result.Content, result.StructuredContent, result.Metadata, result.Widgets),
             (result.Mutated ?? tool.Mutating) && result.Success);
     }
 
@@ -148,6 +168,7 @@ public sealed partial class Agent
         // file mutation flag is false: sub-agents may mutate with the parent's authority,
         // and screen capture exposes desktop content.
         return tool.Name.Equals("invoke_subagent", StringComparison.OrdinalIgnoreCase)
+               || tool.Name.Equals("subagent", StringComparison.OrdinalIgnoreCase)
                || (mode == AgentMode.Manual
                    && tool.Name.Equals("capture_screen", StringComparison.OrdinalIgnoreCase));
     }

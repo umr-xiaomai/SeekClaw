@@ -48,6 +48,9 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
     private readonly ConcurrentDictionary<string, string> _upcomingNotified = new();
     private readonly CancellationTokenSource _dispose = new();
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly Lock _state = new();
+    private readonly Dictionary<string, Task> _runs = new(StringComparer.Ordinal);
+    private bool _disposed;
     private TimeProvider _clock = TimeProvider.System;
 
     public ScheduleService(
@@ -137,42 +140,55 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
     public void StartRun(string id)
     {
         var task = _store.Get(id) ?? throw new InvalidOperationException($"Scheduled task not found: {id}");
-        if (!_running.ContainsKey(task.Id)) _ = RunTaskAsync(task, _lifetime.Token);
+        _ = RunTaskAsync(task, _lifetime.Token);
     }
 
-    private async Task RunTaskAsync(ScheduledTask task, CancellationToken ct)
+    private Task RunTaskAsync(ScheduledTask task, CancellationToken ct)
     {
-        // Serialize executions so scheduled runs cannot pile up on the same machine,
-        // and skip a task that is still running from a previous tick.
-        await _gate.WaitAsync(ct).ConfigureAwait(false);
-        if (!_running.TryAdd(task.Id, 0))
+        lock (_state)
         {
-            _gate.Release();
-            return;
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            // Claim before waiting for the machine slot, so repeated manual triggers cannot queue duplicates.
+            if (!_running.TryAdd(task.Id, 0)) return Task.CompletedTask;
+            return _runs[task.Id] = Task.Run(() => RunClaimedAsync(task, ct), CancellationToken.None);
         }
+    }
 
+    private async Task RunClaimedAsync(ScheduledTask task, CancellationToken ct)
+    {
         // A hung turn must not wedge the scheduler forever: give every run a hard
         // wall-clock budget, then record the timeout and free the task's slot.
         var timeoutSeconds = Math.Clamp(_runtime.ConfigStore.Config.Agent.ScheduledTurnTimeoutSeconds, 60, 86_400);
-        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
         runCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         var runCt = runCts.Token;
         string? sessionId = null;
+        var entered = false;
 
         try
         {
+            await _gate.WaitAsync(runCt).ConfigureAwait(false);
+            entered = true;
             var workspace = ResolveWorkspace(task);
-            var session = _runtime.Sessions.Create(
-                workspace,
-                reasoningLevel: _runtime.ConfigStore.Config.Agent.ReasoningLevel,
-                networkEnabled: true);
+            var session = task.SessionId is { Length: > 0 } existing
+                ? _runtime.Sessions.Load(workspace, existing)
+                    ?? throw new InvalidOperationException("The scheduled conversation no longer exists.")
+                : _runtime.Sessions.Create(workspace,
+                    reasoningLevel: _runtime.ConfigStore.Config.Agent.ReasoningLevel,
+                    networkEnabled: _runtime.ConfigStore.Config.Agent.NetworkEnabled);
             sessionId = session.Header.Id;
-            _runtime.Sessions.UpdateMetadata(workspace, session.Header.Id, title: $"{task.Name}（计划任务）");
-            var result = await _turnRunner(workspace, session, task.Prompt, runCt).ConfigureAwait(false);
+            if (task.SessionId is null)
+                _runtime.Sessions.UpdateMetadata(workspace, session.Header.Id, title: $"{task.Name}（计划任务）");
+            if (task.RunInWorktree && _runtime.Worktrees.Get(workspace.Root, session.Header.Id) is null)
+                await _runtime.Worktrees.CreateAsync(workspace.Root, session.Header.Id, ct: runCt).ConfigureAwait(false);
+            var prompt = task.Prompt + $"\n\n[Scheduled run: {task.Id}. To stop this follow-up, use schedule action complete with this ID. "
+                + "If there is no meaningful change to report, respond exactly [NO_CHANGE].]";
+            var result = await _turnRunner(workspace, session, prompt, runCt).ConfigureAwait(false);
+            if (result.Maintenance is { } maintenance) await maintenance.ConfigureAwait(false);
             RecordRun(
                 task.Id,
                 sessionId,
-                result.Error is null ? ScheduleRunStatus.Success : ScheduleRunStatus.Error,
+                result.Cancelled ? ScheduleRunStatus.Cancelled : result.Error is null ? ScheduleRunStatus.Success : ScheduleRunStatus.Error,
                 result.Error,
                 result.Text);
         }
@@ -191,20 +207,28 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
         finally
         {
             _running.TryRemove(task.Id, out _);
-            _gate.Release();
+            if (entered) _gate.Release();
         }
     }
 
-    private ScheduledTask RecordRun(
+    private ScheduledTask? RecordRun(
         string id,
         string? sessionId,
         string status,
         string? error = null,
         string? output = null)
     {
+        var previous = _store.Get(id);
+        if (previous is null) return null; // Deleting a schedule does not invalidate an in-flight turn.
         var updated = _store.RecordRun(id, status, error, output);
-        _runtime.Events.Publish(new ScheduledTaskCompletedEvent(
+        if (updated is null) return null;
+        var changed = updated.LastStatus != previous.LastStatus || updated.LastError != previous.LastError || updated.LastOutput != previous.LastOutput;
+        var notify = updated.NotificationPolicy == "always"
+            || updated.NotificationPolicy == "failures" && status is ScheduleRunStatus.Error or ScheduleRunStatus.Cancelled
+            || updated.NotificationPolicy == "changes" && changed && (status != ScheduleRunStatus.Success || output?.Trim() != "[NO_CHANGE]");
+        if (notify) _runtime.Events.Publish(new ScheduledTaskCompletedEvent(
             updated.Id, updated.DisplayName, sessionId, status, updated.LastError, updated.LastOutput));
+        else _runtime.Events.Publish(new ScheduledTaskUpdatedEvent());
         return updated;
     }
 
@@ -212,14 +236,8 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
     {
         if (!string.IsNullOrWhiteSpace(task.Workspace))
         {
-            try
-            {
-                return _runtime.Workspaces.Detect(task.Workspace);
-            }
-            catch (Exception)
-            {
-                // Fall back to the global scope when the target path cannot be resolved.
-            }
+            if (!Directory.Exists(task.Workspace)) throw new DirectoryNotFoundException("Scheduled workspace no longer exists.");
+            return _runtime.Workspaces.Detect(task.Workspace);
         }
         return _runtime.Workspaces.CreateGlobal();
     }
@@ -232,6 +250,7 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
         {
             services.AddSingleton<ILlmHttpFactory>(_sharedHttp);
             services.AddSingleton(_sharedBreaker);
+            _runtime.ShareTaskServices(services);
         });
         turnRuntime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
         turnRuntime.Skills.Attach(workspace);
@@ -241,13 +260,17 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
             session, workspace, prompt, ct, captureCrossSessionMemory: false).ConfigureAwait(false);
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        _lifetime.Cancel();
-        _dispose.Cancel();
-        _lifetime.Dispose();
-        _dispose.Dispose();
-        _gate.Dispose();
-        return ValueTask.CompletedTask;
+        Task[] runs;
+        lock (_state)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _lifetime.Cancel(); _dispose.Cancel();
+            runs = _runs.Values.ToArray();
+        }
+        try { await Task.WhenAll(runs).ConfigureAwait(false); }
+        finally { _lifetime.Dispose(); _dispose.Dispose(); _gate.Dispose(); }
     }
 }

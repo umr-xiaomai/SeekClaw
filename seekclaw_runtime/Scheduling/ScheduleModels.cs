@@ -23,6 +23,11 @@ public sealed class ScheduledTask
     public string Prompt { get; set; } = "";
     public string Cron { get; set; } = "0 9 * * *";
     public bool Enabled { get; set; } = true;
+    /// <summary>When set, each run appends to this existing conversation.</summary>
+    public string? SessionId { get; set; }
+    public bool RunInWorktree { get; set; }
+    /// <summary>always | changes | failures. Existing schedules retain always.</summary>
+    public string NotificationPolicy { get; set; } = "always";
     public DateTimeOffset? LastRunAt { get; set; }
     public DateTimeOffset? NextRunAt { get; set; }
     public string? LastStatus { get; set; }

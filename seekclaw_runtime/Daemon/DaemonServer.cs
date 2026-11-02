@@ -372,6 +372,26 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         switch (method)
         {
+                    case "worktree.list": case "worktree.create": case "worktree.archive": case "worktree.restore":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.ManageWorktreeAsync(method[9..], Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "command.list": case "command.read": case "command.write": case "command.terminate": case "command.close":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.ManageCommandAsync(method[8..], Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "subagent.list": case "subagent.status": case "subagent.wait": case "subagent.cancel":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.ManageSubAgentAsync(method[9..], Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "mcp.auth.login": case "mcp.auth.status": case "mcp.auth.logout":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.ManageMcpAuthenticationAsync(method[9..], Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
                     case "ping":
                         await WriteAsync(context.Writer, context.WriterGate, id, "pong", "", context.ConnectionCt).ConfigureAwait(false);
                         break;
@@ -712,6 +732,16 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.ListSchedules()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
+                    case "schedule.get":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.GetSchedule(Params(request))), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "artifact.read":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.ReadArtifactAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
                     case "schedule.create":
                     case "schedule.update":
                         await RunAdminAsync(context.Writer, context.WriterGate, id, true,
@@ -946,6 +976,9 @@ public sealed class DaemonServer : IAsyncDisposable
                         var networkEnabled = Params(request)["networkEnabled"]?.GetValue<bool?>()
                             ?? _runtime.ConfigStore.Config.Agent.NetworkEnabled;
                         context.LegacySession = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled);
+                        if (Params(request)["worktree"]?.GetValue<bool>() == true)
+                            await _runtime.Worktrees.CreateAsync(workspace.Root, context.LegacySession.Header.Id,
+                                Params(request)["baseRef"]?.GetValue<string>() ?? "HEAD", context.ConnectionCt).ConfigureAwait(false);
                         await WriteAsync(context.Writer, context.WriterGate, id, "result", context.LegacySession.Header.Id, context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
@@ -1033,6 +1066,17 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         await foreach (var evt in reader.ReadAllAsync(ct).ConfigureAwait(false))
         {
+            if (evt is SubAgentTaskChangedEvent child)
+            {
+                await BroadcastAsync(0, "subagent.updated", child.TaskId, ct,
+                    new JsonObject { ["parentSessionId"] = child.ParentSessionId, ["taskId"] = child.TaskId, ["status"] = child.Status }).ConfigureAwait(false);
+                continue;
+            }
+            if (evt is ScheduledTaskUpdatedEvent)
+            {
+                await BroadcastAsync(0, "schedule.changed", "", _shutdown.Token).ConfigureAwait(false);
+                continue;
+            }
             if (evt is ScheduledTaskUpcomingEvent upcoming)
             {
                 var upcomingDetails = new JsonObject
@@ -1117,13 +1161,15 @@ public sealed class DaemonServer : IAsyncDisposable
                   // registrations so DI resolves these for every turn.
                   services.AddSingleton<ILlmHttpFactory>(_sharedHttp);
                   services.AddSingleton(_sharedBreaker);
+                  _runtime.ShareTaskServices(services);
               })
             : null;
         var runtime = turnRuntime ?? _runtime;
         using var subscription = runtime.Events.Subscribe();
         var sessionUsage = new SessionUsageAccumulator();
         var forwarder = ForwardEventsAsync(
-            subscription, writer, writerGate, id, session.Header.Id, connectionCt, sessionUsage);
+            subscription, writer, writerGate, id, session.Header.Id, connectionCt, sessionUsage,
+            _useIsolatedTurnRuntime ? _runtime.Events : null);
         AgentTurnResult? result = null;
         Exception? failure = null;
 
@@ -1224,7 +1270,8 @@ public sealed class DaemonServer : IAsyncDisposable
         CancellationToken connectionCt,
         CancellationToken approvalCt)
     {
-        var approvalId = $"{turnId}:{request.CallId}";
+        var background = request.SessionId != sessionId;
+        var approvalId = background ? $"background:{request.SessionId}:{request.CallId}" : $"{turnId}:{request.CallId}";
         var completion = new TaskCompletionSource<ToolApprovalDecision>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = new PendingApproval(approvalId, request.CallId, sessionId, completion);
@@ -1250,8 +1297,10 @@ public sealed class DaemonServer : IAsyncDisposable
                 ["requiresNetwork"] = request.RequiresNetwork,
                 ["isMcp"] = request.IsMcp,
                 ["requestId"] = turnId,
+                ["background"] = background,
+                ["childSessionId"] = background ? request.SessionId : null,
             };
-            await WriteAsync(writer, writerGate, turnId, "approval_request", request.ToolName,
+            await WriteAsync(writer, writerGate, background ? 0 : turnId, "approval_request", request.ToolName,
                 connectionCt, sessionId, details).ConfigureAwait(false);
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(approvalCt, connectionCt);
@@ -1301,10 +1350,18 @@ public sealed class DaemonServer : IAsyncDisposable
         long id,
         string sessionId,
         CancellationToken ct,
-        SessionUsageAccumulator usage)
+        SessionUsageAccumulator usage,
+        IEventBus? sharedEvents = null)
     {
         await foreach (var evt in subscription.Reader.ReadAllAsync(ct).ConfigureAwait(false))
         {
+            // Turn runtimes have their own event bus; invalidate cards in every
+            // connected client through the daemon's shared broadcast subscription.
+            if (evt is ScheduledTaskUpdatedEvent)
+            {
+                sharedEvents?.Publish(evt);
+                continue;
+            }
             AccumulateSessionUsage(usage, evt);
             // ErrorEvent is a runtime diagnostic, not a terminal protocol response. The turn
             // result below sends the final `error` envelope with the provider's full detail.
@@ -1313,6 +1370,21 @@ public sealed class DaemonServer : IAsyncDisposable
             var payload = evt switch
             {
                 AssistantTextDeltaEvent delta => (Name: (string?)"delta", Data: delta.Delta, Details: (JsonObject?)null),
+                AssistantStreamResetEvent reset => (
+                    Name: (string?)"stream_reset", Data: reset.ModelRef,
+                    Details: new JsonObject
+                    {
+                        ["textLength"] = reset.TextLength,
+                        ["thinkingLength"] = reset.ThinkingLength,
+                    }),
+                ProviderRetryEvent retry => (
+                    Name: (string?)"provider_retry", Data: retry.Reason,
+                    Details: new JsonObject
+                    {
+                        ["modelRef"] = retry.ModelRef,
+                        ["attempt"] = retry.Attempt,
+                        ["delayMs"] = retry.Delay.TotalMilliseconds,
+                    }),
                 ThinkingDeltaEvent thinking => (Name: (string?)"thinking", Data: thinking.Delta, Details: (JsonObject?)null),
                 UserSteerEvent steer => (Name: (string?)"steer", Data: steer.Instruction, Details: (JsonObject?)null),
                 ImageViewedEvent image => (
@@ -1340,6 +1412,12 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["callId"] = tool.CallId,
                         ["success"] = tool.Success,
                         ["durationMs"] = tool.Duration.TotalMilliseconds,
+                        ["output"] = tool.Output,
+                        ["content"] = tool.Content?.DeepClone(),
+                        ["structuredContent"] = tool.StructuredContent?.DeepClone(),
+                        ["metadata"] = tool.Metadata?.DeepClone(),
+                        ["widgets"] = tool.Widgets is null ? null : JsonSerializer.SerializeToNode(tool.Widgets,
+                            SeekClawJsonContext.Compact.IReadOnlyListConversationWidget),
                     }),
                 FileDiffEvent diff => (
                     Name: (string?)"file_diff",
@@ -1632,7 +1710,8 @@ public sealed class DaemonServer : IAsyncDisposable
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.approval", "agent.mode", "workspace", "provider",
-            "model", "mcp", "skill", "usage", "project", "session", "global-session", "memory", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild"),
+            "model", "mcp", "skill", "usage", "project", "session", "global-session", "memory", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild",
+            "worktree", "command-session", "lazy-skills", "mcp-auth", "mcp-content", "subagent-lifecycle", "schedule-context", "conversation-widgets"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel", "agent.approve",
             "config.status", "config.rebuild",
@@ -1640,10 +1719,14 @@ public sealed class DaemonServer : IAsyncDisposable
             "routing.get", "routing.set", "advanced.get", "advanced.set",
             "memory.list", "memory.delete", "memory.clear", "memory.deleteByWorkspace",
             "prompt.optimize",
-            "schedule.list", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run",
+            "schedule.list", "schedule.get", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run", "artifact.read",
             "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
             "model.list", "model.catalog", "model.switch", "model.test", "model.update",
             "mcp.list", "mcp.upsert", "mcp.remove", "mcp.reload",
+            "mcp.auth.login", "mcp.auth.status", "mcp.auth.logout",
+            "worktree.list", "worktree.create", "worktree.archive", "worktree.restore",
+            "command.list", "command.read", "command.write", "command.terminate", "command.close",
+            "subagent.list", "subagent.status", "subagent.wait", "subagent.cancel",
             "skill.list", "skill.import", "skill.toggle", "usage.get", "usage.timeline", "doctor", "doctor.run",
             "project.list", "project.upsert", "project.remove",
             "session.list", "session.get", "session.update", "session.archive", "session.delete",

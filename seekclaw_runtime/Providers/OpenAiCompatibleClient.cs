@@ -65,6 +65,10 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             {
                 string body;
                 try { body = await response.Content.ReadAsStringAsync(headerCts.Token).ConfigureAwait(false); }
+                catch (Exception ex) when (ex is HttpRequestException or IOException)
+                {
+                    throw LlmTransportErrors.ReadingResponse(request.Provider.Id, ex);
+                }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
                     throw new LlmException(
@@ -97,6 +101,10 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             var sawTerminalFrame = false;
             Stream stream;
             try { stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is HttpRequestException or IOException)
+            {
+                throw LlmTransportErrors.ReadingResponse(request.Provider.Id, ex);
+            }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 throw new LlmException(
@@ -112,6 +120,16 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 {
                     bool hasNext;
                     try { hasNext = await events.MoveNextAsync().ConfigureAwait(false); }
+                    catch (Exception ex) when (sawTerminalFrame && (ex is HttpRequestException or HttpIOException))
+                    {
+                        // finish_reason already commits the model output. A connection
+                        // closing before optional usage/[DONE] must not replay that output.
+                        break;
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException)
+                    {
+                        throw LlmTransportErrors.ReadingResponse(request.Provider.Id, ex);
+                    }
                     catch (TimeoutException ex)
                     {
                         throw new LlmException(
@@ -258,11 +276,12 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                     break;
 
                 case ChatRole.Assistant:
-                    var assistant = new JsonObject { ["role"] = "assistant", ["content"] = msg.Text };
+                    var assistant = new JsonObject { ["role"] = "assistant", ["content"] = msg.AssistantHistoryText() };
                     // DeepSeek reasoners continue a truncated thinking phase only when the
                     // previous reasoning_content is passed back; the opt-in policy drops it for
                     // pure text turns to avoid paying for ignored tokens.
-                    if (DeepSeekOptimizationPolicy.ShouldPassBackReasoning(request, msg))
+                    if (msg.FinishReason is not ("error" or "cancelled")
+                        && DeepSeekOptimizationPolicy.ShouldPassBackReasoning(request, msg))
                         assistant["reasoning_content"] = msg.Thinking;
                     if (msg.ToolCalls is { Count: > 0 })
                     {

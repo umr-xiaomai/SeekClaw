@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using SeekClaw.Runtime.Presentation;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
@@ -15,6 +16,11 @@ public sealed class ToolContext
     /// <summary>Adaptive per-call output budget (characters), derived from the model context window.</summary>
     public int MaxOutputChars { get; init; } = 30_000;
     public string CallId { get; init; } = "";
+    public string SessionId { get; init; } = "";
+    /// <summary>Conversation storage scope, which may differ from its worktree execution directory.</summary>
+    public WorkspaceInfo? SessionWorkspace { get; init; }
+    /// <summary>Effective network permission, including the conversation's ceiling.</summary>
+    public bool NetworkEnabled { get; init; } = true;
     /// <summary>Centralized write-lock coordinator shared by all concurrent turns.</summary>
     public IFileLockCoordinator? Coordinator { get; init; }
     /// <summary>Task identity used when acquiring file write locks.</summary>
@@ -26,8 +32,7 @@ public sealed class ToolContext
 
     public string ResolvePath(string path)
     {
-        var root = Workspace.IsGlobal ? Directory.GetCurrentDirectory() : Workspace.Root;
-        return WorkspacePathGuard.Resolve(root, path);
+        return WorkspacePathGuard.Resolve(Workspace.WorkingDirectory, path);
     }
 
     public string Truncate(string text, string label = "output")
@@ -119,6 +124,10 @@ public sealed record ToolResult
     public string? FilePath { get; init; }
     /// <summary>Optional multi-modal image attachments produced by the tool (e.g. capture_screen).</summary>
     public IReadOnlyList<ChatImageAttachment>? Images { get; init; }
+    public JsonArray? Content { get; init; }
+    public JsonNode? StructuredContent { get; init; }
+    public JsonObject? Metadata { get; init; }
+    public IReadOnlyList<ConversationWidget>? Widgets { get; init; }
 
     /// <summary>Explicit override for whether this execution mutated workspace files. When null, falls back to ITool.Mutating.</summary>
     public bool? Mutated { get; init; }

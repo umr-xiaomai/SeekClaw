@@ -303,6 +303,7 @@ public static class McpCommands
     public static Command Build()
     {
         var command = new Command("mcp", "Manage MCP servers");
+        McpAuthCommands.AddTo(command);
 
         var list = new Command("list", "List configured MCP servers");
         list.SetAction(_ =>

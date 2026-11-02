@@ -1,4 +1,6 @@
 using SeekClaw.Runtime.Providers;
+using SeekClaw.Runtime.Presentation;
+using System.Text.Json.Nodes;
 
 namespace SeekClaw.Runtime.Sessions;
 
@@ -45,6 +47,8 @@ public sealed class SessionMessage
     public string? Thinking { get; set; }
     public string? ThinkingSignature { get; set; }
     public string? ModelRef { get; set; }
+    public string? FinishReason { get; set; }
+    public string? ErrorMessage { get; set; }
     public List<SessionImageReference>? ViewedImages { get; set; }
     public List<SessionToolCall>? ToolCalls { get; set; }
     /// <summary>Set when Role == "tool".</summary>
@@ -53,6 +57,10 @@ public sealed class SessionMessage
     public bool? ToolSuccess { get; set; }
     public string? ToolDiff { get; set; }
     public string? ToolFilePath { get; set; }
+    public JsonArray? ToolContent { get; set; }
+    public JsonNode? ToolStructuredContent { get; set; }
+    public JsonObject? ToolMetadata { get; set; }
+    public IReadOnlyList<ConversationWidget>? ToolWidgets { get; set; }
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.UtcNow;
 }
 

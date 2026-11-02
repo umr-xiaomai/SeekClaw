@@ -766,6 +766,8 @@ public sealed class SessionStore : ISessionStore
         Thinking = message.Thinking,
         ThinkingSignature = message.ThinkingSignature,
         ModelRef = message.ModelRef,
+        FinishReason = message.FinishReason,
+        ErrorMessage = message.ErrorMessage,
         ViewedImages = message.ViewedImages?.Select(image => new SessionImageReference
         {
             Id = image.Id,
@@ -782,6 +784,8 @@ public sealed class SessionStore : ISessionStore
         ToolSuccess = message.Role == ChatRole.Tool ? message.ToolSuccess : null,
         ToolDiff = message.ToolDiff,
         ToolFilePath = message.ToolFilePath,
+        ToolContent = message.ToolContent, ToolStructuredContent = message.ToolStructuredContent, ToolMetadata = message.ToolMetadata,
+        ToolWidgets = message.ToolWidgets,
         Timestamp = message.Timestamp ?? DateTimeOffset.UtcNow,
     };
 
@@ -803,6 +807,8 @@ public sealed class SessionStore : ISessionStore
             Thinking = record.Thinking,
             ThinkingSignature = record.ThinkingSignature,
             ModelRef = record.ModelRef,
+            FinishReason = record.FinishReason,
+            ErrorMessage = record.ErrorMessage,
             ViewedImages = record.ViewedImages?.Select(image => new ChatImageReference(
                 image.Id, image.Name)).ToList(),
             ToolCalls = record.ToolCalls?.Select(call =>
@@ -812,6 +818,8 @@ public sealed class SessionStore : ISessionStore
             ToolSuccess = record.ToolSuccess ?? true,
             ToolDiff = record.ToolDiff,
             ToolFilePath = record.ToolFilePath,
+            ToolContent = record.ToolContent, ToolStructuredContent = record.ToolStructuredContent, ToolMetadata = record.ToolMetadata,
+            ToolWidgets = record.ToolWidgets,
         };
     }
 }

@@ -34,7 +34,8 @@ public interface IMcpManager : IAsyncDisposable
 public sealed class McpManager(
     IConfigStore configStore,
     IToolRegistry toolRegistry,
-    IPromptRegistry promptRegistry) : IMcpManager
+    IPromptRegistry promptRegistry,
+    McpAuthentication? authentication = null) : IMcpManager
 {
     private readonly List<McpClient> _clients = [];
     private readonly List<IDisposable> _registrations = [];
@@ -142,7 +143,8 @@ public sealed class McpManager(
             "stdio" when !string.IsNullOrWhiteSpace(server.Command) =>
                 new StdioMcpTransport(server.Command!, server.Args, server.Env),
             "sse" or "http" or "streamable-http" or "streamable_http" when !string.IsNullOrWhiteSpace(server.Url) =>
-                new HttpMcpTransport(server.Url!),
+                new HttpMcpTransport(server.Url!, headers: authentication is null ? null
+                    : token => authentication.HeadersAsync(name, server, token)),
             "websocket" =>
                 throw new McpException($"Transport '{server.Transport}' is reserved but not implemented yet."),
             _ => throw new McpException($"Server '{name}': invalid transport/command/url combination."),
@@ -270,11 +272,12 @@ public sealed class McpToolAdapter : ITool
     {
         try
         {
-            var (success, text) = await _client.CallToolAsync(_tool.Name, arguments, ct).ConfigureAwait(false);
+            var result = await _client.CallToolResultAsync(_tool.Name, arguments, ct).ConfigureAwait(false);
+            var text = result.Text;
             var output = context.Truncate(text.Length == 0 ? "(no output)" : text, "MCP output");
-            return success
-                ? ToolResult.Ok(output, $"{_tool.Name} via {_client.ServerName}")
-                : ToolResult.Fail(output);
+            return new ToolResult { Success = result.Success, Output = output,
+                Summary = $"{_tool.Name} via {_client.ServerName}", Content = result.Content,
+                StructuredContent = result.StructuredContent, Metadata = result.Metadata, Images = result.Images() };
         }
         catch (McpException ex)
         {
