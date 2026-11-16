@@ -1850,7 +1850,9 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         var payload = new JsonObject { ["id"] = id, ["event"] = eventName, ["data"] = data };
         if (!string.IsNullOrWhiteSpace(sessionId)) payload["sessionId"] = sessionId;
-        if (details is not null) payload["details"] = details;
+        // A broadcast can reuse details across clients and subsequent state updates.
+        // Each payload must own its own copy of the JSON nodes.
+        if (details is not null) payload["details"] = details.DeepClone();
         await writerGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {

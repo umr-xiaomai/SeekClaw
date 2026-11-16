@@ -1,9 +1,12 @@
 using System.IO.Pipes;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Daemon;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
@@ -20,6 +23,7 @@ public sealed class DaemonServerTests : IAsyncDisposable
     private readonly CancellationTokenSource _serverCts = new();
     private readonly List<IAsyncDisposable> _asyncDisposables = [];
     private SeekClawRuntime? _runtime;
+    private DaemonServer? _server;
 
     public DaemonServerTests() => Directory.CreateDirectory(_tempDir);
 
@@ -472,6 +476,84 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Equal("upcoming-id", details["taskId"]!.GetValue<string>());
         Assert.Equal("即将执行", details["name"]!.GetValue<string>());
         Assert.False(string.IsNullOrWhiteSpace(details["runAt"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task StructuredBroadcasts_ReachEveryClient_AndContinueAfterward()
+    {
+        var first = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+        var second = await ConnectServerAsync(_server!);
+        var connections = new[] { first, second };
+        foreach (var connection in connections)
+        {
+            // A reply confirms that the connection is registered before publishing.
+            await connection.SendAsync(1, "ping");
+            Assert.Equal("pong", (await connection.ReadAsync())["event"]!.GetValue<string>());
+        }
+
+        var runAt = DateTimeOffset.UtcNow.AddMinutes(1);
+        _runtime!.Events.Publish(new ScheduledTaskUpcomingEvent("shared-task", "通知两个窗口", runAt));
+        foreach (var connection in connections)
+        {
+            var notice = await connection.ReadUntilAsync(item =>
+                item["event"]!.GetValue<string>() == "schedule.upcoming");
+            Assert.Equal(0, notice["id"]!.GetValue<long>());
+            var details = notice["details"]!.AsObject();
+            Assert.Equal("shared-task", details["taskId"]!.GetValue<string>());
+            Assert.Equal("通知两个窗口", details["name"]!.GetValue<string>());
+            Assert.Equal(runAt.ToString("O"), details["runAt"]!.GetValue<string>());
+        }
+
+        // A failed broadcast must not silently kill the event-forwarding loop.
+        _runtime.Events.Publish(new ScheduledTaskCompletedEvent("shared-task", "通知两个窗口", "session-id", "success"));
+        foreach (var connection in connections)
+        {
+            var notice = await connection.ReadUntilAsync(item =>
+                item["event"]!.GetValue<string>() == "schedule.updated");
+            var details = notice["details"]!.AsObject();
+            Assert.Equal("shared-task", details["taskId"]!.GetValue<string>());
+            Assert.Equal("session-id", details["sessionId"]!.GetValue<string>());
+            Assert.Equal("success", details["status"]!.GetValue<string>());
+        }
+    }
+
+    [Theory]
+    [InlineData("修复标题加载状态")]
+    [InlineData(null)]
+    public async Task SessionTitle_GenerationBroadcastsFinishedStateWithoutReload(string? generatedTitle)
+    {
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)),
+            providers: new StubTitleProviders(generatedTitle));
+        await connection.SendAsync(1, "ping");
+        await connection.ReadAsync();
+        var session = _runtime!.Sessions.Create(_runtime.Workspace);
+        _runtime.Sessions.Append(session, ChatMessage.User("检查标题加载状态"));
+
+        // Keep the real title lifecycle and transport, with a deterministic provider.
+        // Both successful generation and provider failure must end the loading state.
+        var generate = typeof(DaemonServer).GetMethod("GenerateSessionTitleAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var task = Assert.IsAssignableFrom<Task>(generate.Invoke(_server,
+            [session, _runtime.Workspace, "检查标题加载状态", CancellationToken.None]));
+
+        var started = await connection.ReadUntilAsync(item =>
+            item["event"]!.GetValue<string>() == "session.title");
+        Assert.Equal(session.Header.Id, started["details"]!["sessionId"]!.GetValue<string>());
+        Assert.True(started["details"]!["generating"]!.GetValue<bool>());
+
+        var finishedRead = connection.ReadUntilAsync(item =>
+            item["event"]!.GetValue<string>() == "session.title");
+        // Drain the pipe while generation finishes; writes can wait for a reader.
+        await Task.WhenAll(task, finishedRead).WaitAsync(TimeSpan.FromSeconds(10));
+        var finished = await finishedRead;
+        Assert.Equal(session.Header.Id, finished["details"]!["sessionId"]!.GetValue<string>());
+        Assert.False(finished["details"]!["generating"]!.GetValue<bool>());
+        Assert.Equal(generatedTitle, finished["details"]!["title"]?.GetValue<string>());
+        var saved = _runtime.Sessions.Load(_runtime.Workspace, session.Header.Id)!;
+        Assert.Equal(generatedTitle is null ? "input" : "generated", saved.Header.TitleSource);
+        Assert.Equal(generatedTitle ?? "检查标题加载状态", saved.Header.Title);
     }
 
     [Fact]
@@ -1204,21 +1286,32 @@ public sealed class DaemonServerTests : IAsyncDisposable
 
     private async Task<TestConnection> StartServerAsync(
         Func<AgentSession, WorkspaceInfo, string, CancellationToken, Task<AgentTurnResult>> runTurn,
-        string? workspace = null)
+        string? workspace = null,
+        IProviderManager? providers = null)
     {
         workspace ??= CreateWorkspace("workspace");
         var configStore = new ConfigStore(
             Path.Combine(_tempDir, "config.json"),
             Path.Combine(_tempDir, "state.json"));
-        _runtime = SeekClawRuntime.Create(
-            workspace,
-            configStore,
-            Path.Combine(_tempDir, "seekclaw.db"),
-            new OfflineHealthChecker(new HealthChecker(new LlmHttpFactory(), configStore)));
+        var databaseFile = Path.Combine(_tempDir, "seekclaw.db");
+        var health = new OfflineHealthChecker(new HealthChecker(new LlmHttpFactory(), configStore));
+        _runtime = providers is null
+            ? SeekClawRuntime.Create(workspace, configStore, databaseFile, health)
+            : SeekClawRuntime.CreateIsolated(new WorkspaceManager().Detect(workspace), configureServices: services =>
+            {
+                services.AddSingleton<IConfigStore>(configStore);
+                services.AddSingleton(new SeekClawDatabase(databaseFile));
+                services.AddSingleton<IHealthChecker>(health);
+                services.AddSingleton(providers);
+            });
         var globalWorkspace = new WorkspaceManager().CreateGlobal(Path.Combine(_tempDir, "global-state"));
-        var server = new DaemonServer(_runtime, runTurn, globalWorkspace);
-        _asyncDisposables.Add(server);
+        _server = new DaemonServer(_runtime, runTurn, globalWorkspace);
+        _asyncDisposables.Add(_server);
+        return await ConnectServerAsync(_server);
+    }
 
+    private async Task<TestConnection> ConnectServerAsync(DaemonServer server)
+    {
         var pipeName = $"seekclaw-test-{Guid.NewGuid():N}";
         var serverPipe = new NamedPipeServerStream(
             pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
@@ -1332,6 +1425,31 @@ public sealed class DaemonServerTests : IAsyncDisposable
 
         public IReadOnlyList<HealthCheckResult> RunChecks(WorkspaceInfo workspace)
             => inner.RunChecks(workspace);
+    }
+
+    private sealed class StubTitleProviders(string? title) : IProviderManager
+    {
+        private ModelInfo Model { get; } = new(
+            new ProviderConfig { Id = "test-provider" }, new ModelConfig { Id = "test-title" });
+
+        public ModelInfo ResolveActive(WorkspaceConfig? workspace = null) => Model;
+        public IReadOnlyList<ModelInfo> BuildCandidates(WorkspaceConfig? workspace = null) => [Model];
+
+        public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
+            Func<ModelInfo, LlmRequest> requestFactory, WorkspaceConfig? workspace,
+            [EnumeratorCancellation] CancellationToken ct, Func<ModelInfo, bool>? candidateFilter = null)
+        {
+            await Task.Yield();
+            ct.ThrowIfCancellationRequested();
+            _ = requestFactory(Model);
+            if (title is null) throw new HttpRequestException("Simulated title provider failure");
+            yield return new LlmCompleted(new LlmCompletion { Text = title });
+        }
+
+        public Task<(bool Success, string Detail, double LatencyMs)> TestModelAsync(ModelInfo model, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<IReadOnlyList<string>> FetchModelsAsync(ProviderConfig provider, string? url = null, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 
     [Fact]
