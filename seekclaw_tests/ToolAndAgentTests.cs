@@ -130,7 +130,7 @@ public sealed class ToolAndAgentTests
     }
 
     [Fact]
-    public async Task TurnWithImages_StillResolvesVisionModel()
+    public async Task TurnWithImages_UsesActiveModelWithMultimodalEnabledByDefault()
     {
         var dir = Path.Combine(Path.GetTempPath(), "seekclaw-vision-test", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
@@ -176,8 +176,7 @@ public sealed class ToolAndAgentTests
                 services.AddSingleton(new CircuitBreaker(store.Config.Routing.Retry));
             });
 
-            // This turn carries an image, so routing must pick the vision-capable candidate
-            // even though it is not the active model.
+            // Image input is enabled for the active model without a capability toggle.
             var session = runtime.Sessions.Create(globalWorkspace);
             var result = await runtime.Agent.RunTurnAsync(
                 session, globalWorkspace, "what is in this image?", CancellationToken.None,
@@ -185,7 +184,8 @@ public sealed class ToolAndAgentTests
 
             Assert.Null(result.Error);
             Assert.NotNull(capture.LastRequest);
-            Assert.Equal("visionp", capture.LastRequest!.Provider.Id);
+            Assert.Equal("openai", capture.LastRequest!.Provider.Id);
+            Assert.Contains(capture.LastRequest.Messages, message => message.Images is { Count: > 0 });
         }
         finally
         {
@@ -195,7 +195,7 @@ public sealed class ToolAndAgentTests
     }
 
     [Fact]
-    public async Task SteeredImage_SwitchesTheRunningTurnOntoVision()
+    public async Task SteeredImage_RemainsOnActiveModelAndPreservesAttachment()
     {
         var dir = Path.Combine(Path.GetTempPath(), "seekclaw-vision-test", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
@@ -253,9 +253,8 @@ public sealed class ToolAndAgentTests
             Assert.Equal("done", result.Text);
             Assert.Equal(2, capture.Requests.Count);
             Assert.Equal("openai", capture.Requests[0].Provider.Id);
-            // The steered image must switch the next step onto vision and ship the attachment;
-            // WithoutImages() would otherwise strip it and the model would never see it.
-            Assert.Equal("visionp", capture.Requests[1].Provider.Id);
+            // Mid-turn image guidance must reach the same active model.
+            Assert.Equal("openai", capture.Requests[1].Provider.Id);
             Assert.Contains(capture.Requests[1].Messages, message => message.Images is { Count: > 0 });
         }
         finally

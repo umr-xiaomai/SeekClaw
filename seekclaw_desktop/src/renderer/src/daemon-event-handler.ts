@@ -1,9 +1,16 @@
 import type { Ref } from 'vue'
 import type { DaemonMessage } from '../../shared/ipc'
-import type { ChatMessage, ProjectItem, ThreadItem } from './types'
+import type { ChatMessage, ProjectItem, SubAgentActivity, ThreadItem } from './types'
 import { finalizeAssistantBubbles } from './conversation-state'
 import { makeId, phaseLabel } from './app-helpers'
 import { parseConversationWidgets } from './conversation-widgets'
+import { applySubAgentEvent, messageSubAgents } from './subagent-activity'
+
+export interface SubAgentStatusSnapshot {
+  status: SubAgentActivity['status']
+  output?: string
+  childSessionId?: string
+}
 
 export interface DaemonEventContext {
   threads: Ref<ThreadItem[]>
@@ -16,6 +23,8 @@ export interface DaemonEventContext {
   isFinishedRequest: (thread: ThreadItem, requestId: number) => boolean
   scheduleQueuedDrain: (thread: ThreadItem) => void
   reloadBackgroundThreadIfIdle: (thread: ThreadItem) => void
+  /** Broadcasts have no run identity; verify the current durable child before applying them. */
+  readSubAgentStatus?: (thread: ThreadItem, taskId: string) => Promise<SubAgentStatusSnapshot>
 }
 
 export function createDaemonEventHandler(context: DaemonEventContext): (event: DaemonMessage) => void {
@@ -38,10 +47,68 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
     message.state = 'error'
   }
 
+  function latestChild(thread: ThreadItem, id: string): SubAgentActivity | undefined {
+    return thread.messages.flatMap((message) => message.subAgents ?? []).findLast((agent) => agent.id === id)
+      ?? thread.messages.flatMap(messageSubAgents).findLast((agent) => agent.id === id)
+  }
+
+  async function applyChildBroadcast(thread: ThreadItem, event: DaemonMessage, id: string): Promise<void> {
+    const activity = latestChild(thread, id)
+    if (!activity) return
+    const sessionId = thread.sessionId
+    const runId = activity.runId
+    const requestId = activity.requestId
+    const sourceToolId = activity.sourceToolId
+    let verified = event
+    if (context.readSubAgentStatus) {
+      try {
+        const snapshot = await context.readSubAgentStatus(thread, id)
+        // A new send or a reloaded/switched session can supersede this lookup.
+        const owner = threads.value.find((item) => item.id === thread.id && item.sessionId === sessionId)
+        const current = owner && latestChild(owner, id)
+        if (!owner || !current || current.runId !== runId || current.requestId !== requestId || current.sourceToolId !== sourceToolId) return
+        thread = owner
+        verified = { ...event, details: { ...event.details, status: snapshot.status, output: snapshot.output, childSessionId: snapshot.childSessionId } }
+      } catch {
+        // Keep the known state when the invalidation cannot be verified.
+        return
+      }
+    } else if (activity.runId || activity.requestId !== undefined) {
+      // Legacy consumers can update recovered snapshots, but an unversioned
+      // terminal notification must not settle a live instruction.
+      return
+    }
+    if (applySubAgentEvent(thread.messages, verified, undefined, false)
+      && thread.id === activeThreadId.value) void scrollToBottom()
+  }
+
   return function handleDaemonEvent(event: DaemonMessage): void {
+    if (event.event === 'session.title') {
+      const sessionId = event.details?.sessionId
+      const thread = typeof sessionId === 'string' ? threads.value.find((item) => item.sessionId === sessionId) : undefined
+      if (thread && thread.titleSource !== 'manual') {
+        thread.titleGenerating = event.details?.generating === true
+        const title = typeof event.details?.title === 'string' ? event.details.title.trim() : ''
+        if (title) {
+          thread.title = title
+          thread.titleSource = 'generated'
+        }
+      } else if (thread && event.details?.generating !== true) thread.titleGenerating = false
+      return
+    }
     if (event.event === 'schedule.upcoming') return
     if (event.event === 'schedule.updated') {
       void handleScheduleUpdated()
+      return
+    }
+    // Durable child tasks can finish after the parent chat request has ended.
+    // Route their broadcast by the owning session, never by the active chat.
+    if (event.event === 'subagent.updated') {
+      const parentSessionId = event.details?.parentSessionId
+      const owner = typeof parentSessionId === 'string'
+        ? threads.value.find((item) => item.sessionId === parentSessionId) : undefined
+      const id = event.details?.taskId
+      if (owner && typeof id === 'string') void applyChildBroadcast(owner, event, id)
       return
     }
     const isChatRequest = event.requestMethod === 'chat'
@@ -60,6 +127,18 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         ? threads.value.find((item) => item.id === activeThreadId.value)
         : undefined)
     if (!thread) return
+
+    if (event.event === 'subagent_start' || event.event === 'subagent_progress' || event.event === 'subagent_done') {
+      const currentRequest = !isFinishedRequest(thread, event.id)
+        && (!isChatRequest || thread.requestId === undefined || thread.requestId === event.id)
+      // Completion may race the parent's terminal response. It may update an
+      // existing child, but a stale request must not create a new activity.
+      if (!currentRequest && event.event !== 'subagent_done') return
+      const current = currentRequest ? thread.messages.find((item) => item.id === thread.assistantId) : undefined
+      if (applySubAgentEvent(thread.messages, event, current, currentRequest)
+        && thread.id === activeThreadId.value) void scrollToBottom()
+      return
+    }
 
     // Guidance is drained by the Agent and forwarded under the chat request id, so it
     // can arrive after the turn's terminal response already resolved (IPC race). It
@@ -81,7 +160,8 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         }
         thread.messages.push(nextAssistant)
         thread.assistantId = nextAssistant.id
-        if (thread.id === activeThreadId.value) void scrollToBottom(true, true)
+        // The user may have scrolled away since submitting the guidance.
+        if (thread.id === activeThreadId.value) void scrollToBottom()
       } else if (!thread.running && thread.sessionId) {
         void reloadThreadSession(thread, projects.value.find((project) => project.id === thread.projectId))
       }
@@ -183,6 +263,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
           callId: eventCallId,
           name: event.data,
           detail: typeof event.details?.summary === 'string' ? event.details.summary : undefined,
+          input: typeof event.details?.argumentsJson === 'string' ? event.details.argumentsJson : undefined,
           state: 'running'
         })
         break

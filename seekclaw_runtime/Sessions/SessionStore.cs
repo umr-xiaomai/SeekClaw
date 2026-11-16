@@ -22,7 +22,8 @@ public interface ISessionStore
     AgentSession Create(
         WorkspaceInfo workspace,
         ReasoningLevel reasoningLevel = ReasoningLevel.High,
-        bool networkEnabled = true);
+        bool networkEnabled = true,
+        string? parentSessionId = null);
     AgentSession Fork(
         WorkspaceInfo workspace,
         string sourceSessionId,
@@ -44,6 +45,8 @@ public interface ISessionStore
         ReasoningLevel? reasoningLevel = null,
         bool? networkEnabled = null);
     SessionHeader RecordUsage(WorkspaceInfo workspace, string sessionId, SessionUsage usage);
+    /// <summary>Sets an automatic title only while the session has not been manually named.</summary>
+    SessionHeader? TrySetGeneratedTitle(WorkspaceInfo workspace, string sessionId, string title);
     void Delete(WorkspaceInfo workspace, string sessionId);
     void DeleteAll(WorkspaceInfo workspace);
 }
@@ -63,7 +66,8 @@ public sealed class SessionStore : ISessionStore
     public AgentSession Create(
         WorkspaceInfo workspace,
         ReasoningLevel reasoningLevel = ReasoningLevel.High,
-        bool networkEnabled = true)
+        bool networkEnabled = true,
+        string? parentSessionId = null)
     {
         EnsureLegacyImported(workspace);
         var id = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
@@ -72,6 +76,7 @@ public sealed class SessionStore : ISessionStore
         {
             Id = id,
             Workspace = workspace.IsGlobal ? null : Path.GetFullPath(workspace.Root),
+            ParentSessionId = string.IsNullOrWhiteSpace(parentSessionId) ? null : parentSessionId,
             ReasoningLevel = reasoningLevel,
             NetworkEnabled = networkEnabled,
             CreatedAt = now,
@@ -112,6 +117,7 @@ public sealed class SessionStore : ISessionStore
                 Id = newId,
                 Workspace = sourceHeader.Workspace,
                 Title = branchTitle,
+                TitleSource = "manual",
                 Archived = false,
                 ReasoningLevel = sourceHeader.ReasoningLevel,
                 NetworkEnabled = sourceHeader.NetworkEnabled,
@@ -223,16 +229,33 @@ public sealed class SessionStore : ISessionStore
         var scope = SeekClawDatabase.ScopeKey(workspace);
         using var connection = _database.OpenConnection();
         using var command = connection.CreateCommand();
+        // Older child sessions predate parent_session_id. Recover their explicit
+        // relationship from durable task records, scoped to the original workspace.
+        // The uncorrelated NOT IN subquery is evaluated once, rather than scanning
+        // all task records for every listed conversation.
+        const string safePayload = "CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END";
+        var recordWorkspace = $"rtrim(replace(json_extract({safePayload}, '$.workspace'), char(92), '/'), '/')";
+        if (OperatingSystem.IsWindows()) recordWorkspace = $"lower({recordWorkspace})";
         command.CommandText = $"""
             SELECT id, title, workspace, archived, reasoning_level, network_enabled,
                    llm_rounds, execution_steps, input_tokens, total_input_tokens,
                    cached_input_tokens, output_tokens, output_elapsed_ms,
-                   created_at, updated_at
+                   created_at, updated_at, parent_session_id, title_source
             FROM sessions
             WHERE scope = $scope {(includeArchived ? "" : "AND archived = 0")}
+              AND parent_session_id IS NULL
+              AND id NOT IN (
+                  SELECT json_extract({safePayload}, '$.sessionId')
+                  FROM execution_records
+                  WHERE kind = 'subagent'
+                    AND json_type({safePayload}, '$.sessionId') = 'text'
+                    AND {recordWorkspace} = $workspaceKey
+              )
             ORDER BY updated_at DESC;
             """;
         command.Parameters.AddWithValue("$scope", scope);
+        var workspaceKey = SeekClawDatabase.PathKey(workspace.Root).Replace('\\', '/');
+        command.Parameters.AddWithValue("$workspaceKey", OperatingSystem.IsWindows() ? workspaceKey.ToLowerInvariant() : workspaceKey);
         using var reader = command.ExecuteReader();
         var headers = new List<SessionHeader>();
         while (reader.Read()) headers.Add(ReadHeader(reader));
@@ -272,7 +295,9 @@ public sealed class SessionStore : ISessionStore
                 update.CommandText = """
                     UPDATE sessions SET
                         updated_at = $updatedAt,
-                        title = CASE WHEN title IS NULL AND $suggestedTitle IS NOT NULL
+                        title_source = CASE WHEN title IS NULL AND title_source = 'pending' AND $suggestedTitle IS NOT NULL
+                            THEN 'input' ELSE title_source END,
+                        title = CASE WHEN title IS NULL AND title_source = 'pending' AND $suggestedTitle IS NOT NULL
                             THEN $suggestedTitle ELSE title END
                     WHERE scope = $scope AND id = $sessionId;
                     """;
@@ -286,8 +311,11 @@ public sealed class SessionStore : ISessionStore
             transaction.Commit();
             session.Messages.Add(message);
             session.Header.UpdatedAt = now;
-            if (session.Header.Title is null && suggestedTitle is not null)
+            if (session.Header.Title is null && session.Header.TitleSource == "pending" && suggestedTitle is not null)
+            {
                 session.Header.Title = suggestedTitle;
+                session.Header.TitleSource = "input";
+            }
         }
     }
 
@@ -404,6 +432,7 @@ public sealed class SessionStore : ISessionStore
             if (title is not null)
             {
                 assignments.Add("title = $title");
+                assignments.Add("title_source = 'manual'");
                 command.Parameters.AddWithValue("$title",
                     string.IsNullOrWhiteSpace(title) ? DBNull.Value : title.Trim());
             }
@@ -431,6 +460,29 @@ public sealed class SessionStore : ISessionStore
             if (command.ExecuteNonQuery() == 0)
                 throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
             return ReadHeader(connection, scope, sessionId)!;
+        }
+    }
+
+    public SessionHeader? TrySetGeneratedTitle(WorkspaceInfo workspace, string sessionId, string title)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        ValidateSessionId(sessionId);
+        var scope = SeekClawDatabase.ScopeKey(workspace);
+        using var gate = GateFor(scope, sessionId);
+        lock (gate.Lock)
+        {
+            using var connection = _database.OpenConnection();
+            using var command = connection.CreateCommand();
+            // A late background summary must never overwrite a manual rename or
+            // resurrect a deleted conversation. Naming does not reorder the sidebar.
+            command.CommandText = """
+                UPDATE sessions SET title = $title, title_source = 'generated'
+                WHERE scope = $scope AND id = $sessionId AND title_source IN ('pending', 'input');
+                """;
+            command.Parameters.AddWithValue("$title", title.Trim());
+            command.Parameters.AddWithValue("$scope", scope);
+            command.Parameters.AddWithValue("$sessionId", sessionId);
+            return command.ExecuteNonQuery() == 0 ? null : ReadHeader(connection, scope, sessionId);
         }
     }
 
@@ -624,15 +676,17 @@ public sealed class SessionStore : ISessionStore
             INSERT {(ignoreConflict ? "OR IGNORE" : "")} INTO sessions(
                 scope, id, workspace, title, archived, reasoning_level, network_enabled,
                 llm_rounds, execution_steps, input_tokens, total_input_tokens,
-                cached_input_tokens, output_tokens, output_elapsed_ms, created_at, updated_at)
+                cached_input_tokens, output_tokens, output_elapsed_ms, created_at, updated_at, parent_session_id, title_source)
             VALUES($scope, $id, $workspace, $title, $archived, $reasoningLevel, $networkEnabled,
                    $llmRounds, $executionSteps, $inputTokens, $totalInputTokens,
-                   $cachedInputTokens, $outputTokens, $outputElapsedMs, $createdAt, $updatedAt);
+                   $cachedInputTokens, $outputTokens, $outputElapsedMs, $createdAt, $updatedAt, $parentSessionId, $titleSource);
             """;
         command.Parameters.AddWithValue("$scope", scope);
         command.Parameters.AddWithValue("$id", header.Id);
         command.Parameters.AddWithValue("$workspace", (object?)header.Workspace ?? DBNull.Value);
+        command.Parameters.AddWithValue("$parentSessionId", (object?)header.ParentSessionId ?? DBNull.Value);
         command.Parameters.AddWithValue("$title", (object?)header.Title ?? DBNull.Value);
+        command.Parameters.AddWithValue("$titleSource", header.Title is not null && header.TitleSource == "pending" ? "manual" : header.TitleSource);
         command.Parameters.AddWithValue("$archived", header.Archived ? 1 : 0);
         command.Parameters.AddWithValue("$reasoningLevel", (int)header.ReasoningLevel);
         command.Parameters.AddWithValue("$networkEnabled", header.NetworkEnabled ? 1 : 0);
@@ -655,7 +709,7 @@ public sealed class SessionStore : ISessionStore
             SELECT id, title, workspace, archived, reasoning_level, network_enabled,
                    llm_rounds, execution_steps, input_tokens, total_input_tokens,
                    cached_input_tokens, output_tokens, output_elapsed_ms,
-                   created_at, updated_at
+                   created_at, updated_at, parent_session_id, title_source
             FROM sessions WHERE scope = $scope AND id = $sessionId;
             """;
         command.Parameters.AddWithValue("$scope", scope);
@@ -681,6 +735,8 @@ public sealed class SessionStore : ISessionStore
         OutputElapsedMs = reader.GetInt64(12),
         CreatedAt = DateTimeOffset.Parse(reader.GetString(13)),
         UpdatedAt = DateTimeOffset.Parse(reader.GetString(14)),
+        ParentSessionId = reader.IsDBNull(15) ? null : reader.GetString(15),
+        TitleSource = reader.GetString(16),
     };
 
     private static string TitleFrom(string text) =>

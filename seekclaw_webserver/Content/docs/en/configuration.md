@@ -138,3 +138,9 @@ This example uses the current field names:
 Saving through Desktop's Daemon administration methods updates that Daemon immediately. CLI commands persist the file for subsequent CLI processes, but a separate Daemon already in memory does not automatically observe the external write. After editing with CLI or an editor, reconnect or restart an existing Daemon, or use the appropriate administration method. Prompt-file hot reload is a separate mechanism.
 
 If the global JSON is invalid, the Runtime preserves the file for inspection and falls back to the seed defaults. Repair the original file before restarting to avoid accidentally saving the fallback state.
+
+## Automatic model limits and multimodal input
+
+Desktop can fetch models using an unsaved provider draft, including its endpoint, key, proxy and timeout. Discovery does not persist configuration. Context and output limits have independent `contextWindowAuto` / `maxOutputAuto` flags. Automatic mode uses `detectedContextWindow` / `detectedMaxOutput` from the model-list response, falling back to 1,000,000 / 128,000 tokens when absent. A standard `/models` response containing IDs alone cannot establish exact limits; no model-name guesses are made.
+
+`contextWindow` / `maxOutput` preserve manual values for switching back. Existing configurations without automatic flags retain their numeric settings. Requests and context budgets use the resolved limits. Image input is always enabled; legacy `vision: false` is accepted but cannot disable it. The provider API must still support the submitted image format.

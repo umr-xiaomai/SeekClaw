@@ -1,4 +1,5 @@
 using SeekClaw.Runtime.Providers;
+using System.Text.Json.Serialization;
 
 namespace SeekClaw.Runtime.Configuration;
 
@@ -56,8 +57,21 @@ public sealed class ModelConfig
 {
     public string Id { get; set; } = "";
     public string? Alias { get; set; }
-    public int ContextWindow { get; set; } = 128_000;
-    public int MaxOutput { get; set; } = 8_192;
+    public const int DefaultContextWindow = 1_000_000;
+    public const int DefaultMaxOutput = 128_000;
+    // Persist both the selected mode and provider metadata. Existing numeric configs stay manual.
+    public int ContextWindow { get; set; } = DefaultContextWindow;
+    public int MaxOutput { get; set; } = DefaultMaxOutput;
+    public bool ContextWindowAuto { get; set; }
+    public bool MaxOutputAuto { get; set; }
+    public int? DetectedContextWindow { get; set; }
+    public int? DetectedMaxOutput { get; set; }
+    [JsonIgnore]
+    public int EffectiveContextWindow => ContextWindowAuto
+        ? DetectedContextWindow is > 0 ? DetectedContextWindow.Value : DefaultContextWindow : ContextWindow;
+    [JsonIgnore]
+    public int EffectiveMaxOutput => MaxOutputAuto
+        ? DetectedMaxOutput is > 0 ? DetectedMaxOutput.Value : DefaultMaxOutput : MaxOutput;
     public ModelCapabilities Capabilities { get; set; } = new();
     /// <summary>USD per 1M tokens.</summary>
     public decimal InputPricePerMTok { get; set; }
@@ -74,7 +88,8 @@ public sealed class ModelCapabilities
 {
     public bool Streaming { get; set; } = true;
     public bool Thinking { get; set; }
-    public bool Vision { get; set; }
+    /// <summary>Image input is always available; accepts legacy serialized flags for compatibility.</summary>
+    public bool Vision { get => true; set { } }
     public bool Image { get; set; }
     public bool ToolCalling { get; set; } = true;
     public bool JsonMode { get; set; }

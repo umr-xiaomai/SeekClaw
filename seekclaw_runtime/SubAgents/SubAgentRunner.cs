@@ -54,7 +54,8 @@ public sealed class SubAgentRunner(
         if (registry.Resolve(request.Role) is null) throw new ArgumentException("Unknown sub-agent role.");
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Task);
         var sessions = new SessionStore(taskServices.Database);
-        var session = sessions.Create(context.Workspace, networkEnabled: context.NetworkEnabled && context.Agent.NetworkEnabled);
+        var session = sessions.Create(context.Workspace, networkEnabled: context.NetworkEnabled && context.Agent.NetworkEnabled,
+            parentSessionId: Parent(context));
         var id = Guid.NewGuid().ToString("N");
         if (request.Isolated)
             await taskServices.Worktrees.CreateAsync(context.Workspace.Root, session.Header.Id, ct: ct).ConfigureAwait(false);
@@ -130,7 +131,8 @@ public sealed class SubAgentRunner(
             subAgentId,
             def.Role,
             request.Task,
-            request.ModelOverride ?? def.DefaultModelOverride));
+            request.ModelOverride ?? def.DefaultModelOverride,
+            savedSession?.Header.Id));
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -203,6 +205,16 @@ public sealed class SubAgentRunner(
                 }
             }
 
+            var session = savedSession ?? isolatedRuntime.Sessions.Create(
+                childWorkspace,
+                networkEnabled: context.NetworkEnabled && context.Agent.NetworkEnabled);
+
+            // Keep child streams under the parent's routing envelope. Consumers can
+            // inspect the child without mixing its tokens into the parent's answer.
+            void Progress(string status, string? detail = null, string? kind = null, string? delta = null) =>
+                context.Events.Publish(new SubAgentProgressEvent(
+                    subAgentId, def.Role, status, detail, kind, delta, session.Header.Id));
+
             // 4. Forward events from isolated runtime to parent event bus for live UI updates
             using var childSubscription = isolatedRuntime.Events.Subscribe();
             using var forwardCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -215,17 +227,32 @@ public sealed class SubAgentRunner(
                     {
                         switch (evt)
                         {
+                            case ModelInvocationStartedEvent model:
+                                Progress("Thinking", kind: "model", delta: $"{model.ProviderId}/{model.ModelId}");
+                                break;
+                            case AssistantTextDeltaEvent text:
+                                Progress("Responding", kind: "text", delta: text.Delta);
+                                break;
+                            case ThinkingDeltaEvent thinking:
+                                Progress("Thinking", kind: "thinking", delta: thinking.Delta);
+                                break;
+                            case AssistantStreamResetEvent reset:
+                                Progress("Retrying", kind: "stream_reset", delta: reset.ModelRef);
+                                break;
+                            case AssistantMessageCompletedEvent message:
+                                Progress("Responding", kind: "message_done", delta: message.Text);
+                                break;
                             case ToolCallStartedEvent tool:
-                                context.Events.Publish(new SubAgentProgressEvent(
-                                    subAgentId, def.Role, $"Using {tool.ToolName}", tool.ArgumentSummary));
+                                Progress($"Using {tool.ToolName}", tool.ArgumentSummary, "tool_start");
+                                break;
+                            case ToolCallCompletedEvent tool:
+                                Progress($"Used {tool.ToolName}", tool.ResultSummary, "tool_done");
                                 break;
                             case StatusEvent status:
-                                context.Events.Publish(new SubAgentProgressEvent(
-                                    subAgentId, def.Role, status.Status, status.Detail));
+                                Progress(status.Status, status.Detail);
                                 break;
                             case WorkflowEvent wf:
-                                context.Events.Publish(new SubAgentProgressEvent(
-                                    subAgentId, def.Role, wf.Label, wf.Detail));
+                                Progress(wf.Label, wf.Detail);
                                 break;
                             case FileDiffEvent diff:
                                 context.Events.Publish(diff);
@@ -245,10 +272,6 @@ public sealed class SubAgentRunner(
             AgentTurnResult turnResult;
             try
             {
-                var session = savedSession ?? isolatedRuntime.Sessions.Create(
-                    childWorkspace,
-                    networkEnabled: context.NetworkEnabled && context.Agent.NetworkEnabled);
-
                 turnResult = await isolatedRuntime.Agent.RunTurnAsync(
                     session,
                     childWorkspace,
@@ -258,7 +281,9 @@ public sealed class SubAgentRunner(
             }
             finally
             {
-                forwardCts.Cancel();
+                // Drain terminal deltas before publishing completion. Cancellation
+                // still interrupts the reader through the linked token.
+                childSubscription.Dispose();
                 try { await forwardTask.ConfigureAwait(false); } catch { }
             }
 

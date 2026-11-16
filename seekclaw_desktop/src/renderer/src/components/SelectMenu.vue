@@ -279,7 +279,7 @@ onBeforeUnmount(() => {
             <Search :size="14" />
             <input ref="searchInput" v-model="query" type="text" :placeholder="`搜索${label}`" aria-label="搜索选项"
               spellcheck="false">
-            <button v-if="query" type="button" class="custom-select-search-clear" title="清空" @click="query = ''">
+            <button v-if="query" type="button" class="custom-select-search-clear" title="清空" aria-label="清空搜索" @click="query = ''">
               <X :size="13" />
             </button>
           </div>
@@ -319,7 +319,9 @@ onBeforeUnmount(() => {
   text-align: left;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
 .custom-select-trigger:hover:not(:disabled),
@@ -328,9 +330,13 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--text-muted) 58%, var(--border));
 }
 
-.custom-select.open .custom-select-trigger {
-  outline: 2px solid color-mix(in srgb, var(--accent) 34%, transparent);
-  outline-offset: 1px;
+.custom-select-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.custom-select-trigger:disabled {
+  cursor: not-allowed;
 }
 
 .custom-select-value {
@@ -362,29 +368,32 @@ onBeforeUnmount(() => {
 .custom-select-menu {
   position: fixed;
   z-index: 240;
-  padding: 4px;
+  padding: 6px;
   overflow-y: auto;
   /* Keep the sticky search bar clear of items scrolled into view. */
-  scroll-padding-top: 44px;
+  scroll-padding-top: 48px;
+  scrollbar-width: thin;
   color: var(--text);
-  background: color-mix(in srgb, var(--surface-raised) 96%, transparent);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 9px;
-  box-shadow: 0 14px 36px rgb(0 0 0 / 18%), 0 2px 8px rgb(0 0 0 / 10%);
-  backdrop-filter: blur(20px) saturate(130%);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--popover-shadow);
 }
 
 .custom-select-option {
   display: flex;
   width: 100%;
-  min-height: 36px;
+  min-height: 34px;
   align-items: center;
   gap: 10px;
   padding: 7px 9px;
   color: var(--text-secondary);
   text-align: left;
   background: transparent;
-  border-radius: 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
 }
 
 .custom-select-option:hover:not(:disabled),
@@ -395,7 +404,18 @@ onBeforeUnmount(() => {
 
 .custom-select-option.selected {
   color: var(--text);
-  font-weight: 600;
+  background: var(--surface-subtle);
+  font-weight: 500;
+}
+
+.custom-select-option.selected:hover,
+.custom-select-option.selected.highlighted {
+  background: var(--surface-hover);
+}
+
+.custom-select-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .custom-select-option:disabled {
@@ -414,7 +434,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   font-size: 13px;
   font-weight: inherit;
-  line-height: 1.35;
+  line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -422,28 +442,34 @@ onBeforeUnmount(() => {
 .custom-select-option-copy small {
   margin-top: 2px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
 }
 
 .custom-select-option>svg {
   flex: 0 0 auto;
-  color: var(--accent);
+  color: var(--text);
 }
 
 .custom-select-search {
   position: sticky;
-  top: 0;
+  top: -6px;
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 5px 8px;
+  gap: 8px;
+  min-height: 36px;
+  margin: -1px -1px 4px;
+  padding: 6px 8px;
   color: var(--text-muted);
-  background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 7px;
+  background: var(--surface-raised);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.custom-select-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
 }
 
 .custom-select-search input {
@@ -478,6 +504,11 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 
+.custom-select-search-clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .custom-select-empty {
   padding: 12px 9px;
   color: var(--text-muted);
@@ -495,5 +526,15 @@ onBeforeUnmount(() => {
 .select-popover-leave-to {
   opacity: 0;
   transform: translateY(-4px) scale(.985);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .custom-select-trigger,
+  .custom-select-chevron,
+  .custom-select-option,
+  .select-popover-enter-active,
+  .select-popover-leave-active {
+    transition: none;
+  }
 }
 </style>

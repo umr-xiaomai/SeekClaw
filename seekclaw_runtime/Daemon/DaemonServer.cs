@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime.Agents;
+using SeekClaw.Runtime.Browser;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
@@ -53,6 +54,7 @@ public sealed class DaemonServer : IAsyncDisposable
     private readonly ScheduleService _scheduler;
     private readonly IEventSubscription _runtimeEvents;
     private readonly Task _scheduleEventsTask;
+    private readonly ConcurrentDictionary<string, byte> _titlesInFlight = new();
 
     // Configuration and workspace administration remains serialized, while agent turns
     // execute concurrently in isolated runtime instances.
@@ -287,6 +289,8 @@ public sealed class DaemonServer : IAsyncDisposable
         public ConcurrentDictionary<long, ActiveTurn> ActiveTurns { get; } = new();
         public ConcurrentDictionary<string, PendingApproval> PendingApprovals { get; } = new(StringComparer.Ordinal);
         public AgentSession? LegacySession;
+        public DesktopBrowserBridge Browser { get; } = new((name, details) =>
+            WriteAsync(writer, writerGate, 0, name, "", connectionCt, details: details));
     }
 
     internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct)
@@ -356,6 +360,7 @@ public sealed class DaemonServer : IAsyncDisposable
         }
         finally
         {
+            context.Browser.Dispose();
             UnregisterClient(clientId);
             foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Cancel();
             foreach (var turn in context.ActiveTurns.Values)
@@ -372,6 +377,16 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         switch (method)
         {
+                    case "browser.attach":
+                        context.Browser.Enabled = true;
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", "attached", context.ConnectionCt).ConfigureAwait(false);
+                        break;
+                    case "browser.reply":
+                        var reply = Params(request);
+                        var accepted = context.Browser.Complete(reply["requestId"]?.GetValue<string>() ?? "",
+                            reply["result"] as JsonObject ?? new JsonObject { ["error"] = "Invalid browser reply." });
+                        await WriteAsync(context.Writer, context.WriterGate, id, "result", accepted ? "accepted" : "expired", context.ConnectionCt).ConfigureAwait(false);
+                        break;
                     case "worktree.list": case "worktree.create": case "worktree.archive": case "worktree.restore":
                         await RunAdminAsync(context.Writer, context.WriterGate, id, false,
                             token => _admin.ManageWorktreeAsync(method[9..], Params(request), token), context.ConnectionCt).ConfigureAwait(false);
@@ -398,11 +413,6 @@ public sealed class DaemonServer : IAsyncDisposable
 
                     case "protocol.info":
                         await WriteAsync(context.Writer, context.WriterGate, id, "result", ProtocolInfoJson(), context.ConnectionCt).ConfigureAwait(false);
-                        break;
-
-                    case "workspace.init":
-                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
-                            _ => Task.FromResult(_admin.InitializeWorkspace()), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "factory.reset":
@@ -470,7 +480,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         context.ActiveTurns[id] = turn;
                         turn.Task = RunTurnAsync(
                             turnSession, workspace, message, images, reasoningLevel, id, context.Writer, context.WriterGate,
-                            turnCancellation.Token, context.ConnectionCt, turn.Steering, context.PendingApprovals);
+                            turnCancellation.Token, context.ConnectionCt, turn.Steering, context.PendingApprovals, context.Browser);
                         break;
                     }
 
@@ -786,6 +796,16 @@ public sealed class DaemonServer : IAsyncDisposable
                     case "provider.test":
                         await RunAdminAsync(context.Writer, context.WriterGate, id, false,
                             token => _admin.TestProvidersAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "provider.models.preview":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.PreviewProviderModelsAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "browser.scope":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.BrowserScope(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
                     case "provider.models.fetch":
@@ -1149,7 +1169,8 @@ public sealed class DaemonServer : IAsyncDisposable
         CancellationToken turnCt,
         CancellationToken connectionCt,
         AgentSteeringQueue steering,
-        ConcurrentDictionary<string, PendingApproval> pendingApprovals)
+        ConcurrentDictionary<string, PendingApproval> pendingApprovals,
+        DesktopBrowserBridge browser)
     {
         // Unique per-turn identity for file write-lock ownership; released when the
         // turn ends even if a tool was interrupted before its own finally ran.
@@ -1162,9 +1183,14 @@ public sealed class DaemonServer : IAsyncDisposable
                   services.AddSingleton<ILlmHttpFactory>(_sharedHttp);
                   services.AddSingleton(_sharedBreaker);
                   _runtime.ShareTaskServices(services);
+                  if (browser.Enabled) services.AddSingleton<IBrowserBridge>(browser);
               })
             : null;
         var runtime = turnRuntime ?? _runtime;
+        var titleTask = _runTurn is null && session.Header.ParentSessionId is null
+            && session.Header.TitleSource is "pending" or "input"
+            ? GenerateSessionTitleAsync(session, workspace, message, connectionCt)
+            : Task.CompletedTask;
         using var subscription = runtime.Events.Subscribe();
         var sessionUsage = new SessionUsageAccumulator();
         var forwarder = ForwardEventsAsync(
@@ -1244,6 +1270,9 @@ public sealed class DaemonServer : IAsyncDisposable
             // The client disconnected while the turn was ending.
         }
 
+        // Naming runs beside the turn, and never delays its terminal response.
+        await titleTask.ConfigureAwait(false);
+
         // Post-turn maintenance (cross-session memory extraction) is an extra model round
         // trip. The terminal response above already released the client, so draining it here
         // keeps the memory write ordered before the next turn without adding latency.
@@ -1257,6 +1286,39 @@ public sealed class DaemonServer : IAsyncDisposable
             {
                 // Best-effort: maintenance failures never change the finished turn's outcome.
             }
+        }
+    }
+
+    private async Task GenerateSessionTitleAsync(AgentSession session, WorkspaceInfo workspace, string prompt, CancellationToken ct)
+    {
+        var key = session.Scope + ":" + session.Header.Id;
+        if (!_titlesInFlight.TryAdd(key, 0)) return;
+        var firstPrompt = session.Messages.FirstOrDefault(item => item.Role == ChatRole.User)?.Text ?? prompt;
+        var details = new JsonObject { ["sessionId"] = session.Header.Id, ["generating"] = true };
+        try
+        {
+            await BroadcastAsync(0, "session.title", "", ct, details).ConfigureAwait(false);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdown.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(45));
+            var title = await SessionTitleGenerator.GenerateAsync(_runtime.Providers, workspace, firstPrompt, timeout.Token).ConfigureAwait(false);
+            if (title is not null && _runtime.Sessions.TrySetGeneratedTitle(workspace, session.Header.Id, title) is { } saved)
+            {
+                session.Header.Title = saved.Title;
+                session.Header.TitleSource = saved.TitleSource;
+                details["title"] = saved.Title;
+            }
+        }
+        catch (Exception)
+        {
+            // A title is optional. Provider failures and deletion/rename races
+            // must not fail a turn or leave the client in an endless loading state.
+        }
+        finally
+        {
+            _titlesInFlight.TryRemove(key, out _);
+            details["generating"] = false;
+            try { await BroadcastAsync(0, "session.title", "", _shutdown.Token, details).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
         }
     }
 
@@ -1403,6 +1465,7 @@ public sealed class DaemonServer : IAsyncDisposable
                     {
                         ["callId"] = tool.CallId,
                         ["summary"] = tool.ArgumentSummary,
+                        ["argumentsJson"] = tool.ArgumentsJson,
                     }),
                 ToolCallCompletedEvent tool => (
                     Name: (string?)"tool_done",
@@ -1475,6 +1538,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["subAgentId"] = subStart.SubAgentId,
                         ["role"] = subStart.Role,
                         ["model"] = subStart.ModelRef,
+                        ["childSessionId"] = subStart.ChildSessionId,
                     }),
                 SubAgentProgressEvent subProg => (
                     Name: (string?)"subagent_progress",
@@ -1484,6 +1548,9 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["subAgentId"] = subProg.SubAgentId,
                         ["role"] = subProg.Role,
                         ["detail"] = subProg.Detail,
+                        ["kind"] = subProg.Kind,
+                        ["delta"] = subProg.Delta,
+                        ["childSessionId"] = subProg.ChildSessionId,
                     }),
                 SubAgentCompletedEvent subDone => (
                     Name: (string?)"subagent_done",
@@ -1711,16 +1778,17 @@ public sealed class DaemonServer : IAsyncDisposable
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.approval", "agent.mode", "workspace", "provider",
             "model", "mcp", "skill", "usage", "project", "session", "global-session", "memory", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild",
-            "worktree", "command-session", "lazy-skills", "mcp-auth", "mcp-content", "subagent-lifecycle", "schedule-context", "conversation-widgets"),
+            "worktree", "command-session", "lazy-skills", "mcp-auth", "mcp-content", "subagent-lifecycle", "schedule-context", "conversation-widgets", "desktop-browser"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel", "agent.approve",
             "config.status", "config.rebuild",
-            "workspace.get", "workspace.open", "workspace.init", "agent.mode.get", "agent.mode.switch",
+            "browser.attach", "browser.reply",
+            "workspace.get", "workspace.open", "agent.mode.get", "agent.mode.switch",
             "routing.get", "routing.set", "advanced.get", "advanced.set",
             "memory.list", "memory.delete", "memory.clear", "memory.deleteByWorkspace",
             "prompt.optimize",
             "schedule.list", "schedule.get", "schedule.create", "schedule.update", "schedule.toggle", "schedule.delete", "schedule.run", "artifact.read",
-            "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch",
+            "provider.list", "provider.upsert", "provider.use", "provider.remove", "provider.test", "provider.models.fetch", "provider.models.preview", "browser.scope",
             "model.list", "model.catalog", "model.switch", "model.test", "model.update",
             "mcp.list", "mcp.upsert", "mcp.remove", "mcp.reload",
             "mcp.auth.login", "mcp.auth.status", "mcp.auth.logout",

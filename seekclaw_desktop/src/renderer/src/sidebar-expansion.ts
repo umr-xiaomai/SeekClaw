@@ -4,6 +4,7 @@ const PREFERENCES_STORAGE_KEY = 'seekclaw-sidebar-expansion-v2'
 const EXPANDED_PROJECTS_STORAGE_KEY = 'seekclaw-sidebar-expanded-projects-v1'
 const KNOWN_PROJECTS_STORAGE_KEY = 'seekclaw-sidebar-known-projects-v1'
 const TASK_SECTION_EXPANDED_STORAGE_KEY = 'seekclaw-sidebar-task-section-expanded-v1'
+const SIDEBAR_VISIBILITY_STORAGE_KEY = 'seekclaw-sidebar-visible-v1'
 
 function loadStoredSet(key: string): Set<string> {
   try {
@@ -19,6 +20,7 @@ function loadStoredSet(key: string): Set<string> {
 interface ExpansionPreferences {
   projects: Map<string, boolean>
   tasks?: boolean
+  projectSectionExpanded?: boolean
 }
 
 function loadPreferences(): ExpansionPreferences {
@@ -29,7 +31,11 @@ function loadPreferences(): ExpansionPreferences {
       const projects = stored.projects && typeof stored.projects === 'object' && !Array.isArray(stored.projects)
         ? Object.entries(stored.projects).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')
         : []
-      return { projects: new Map(projects), tasks: typeof stored.tasks === 'boolean' ? stored.tasks : undefined }
+      return {
+        projects: new Map(projects),
+        tasks: typeof stored.tasks === 'boolean' ? stored.tasks : undefined,
+        projectSectionExpanded: typeof stored.projectSectionExpanded === 'boolean' ? stored.projectSectionExpanded : undefined
+      }
     }
   } catch { /* Fall back to legacy preferences or collapsed defaults. */ }
 
@@ -52,7 +58,8 @@ function save(preferences: ExpansionPreferences): void {
   try {
     localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({
       projects: Object.fromEntries(preferences.projects),
-      tasks: preferences.tasks
+      tasks: preferences.tasks,
+      projectSectionExpanded: preferences.projectSectionExpanded ?? true
     }))
   } catch {
     // The sidebar remains usable if storage is unavailable.
@@ -67,6 +74,15 @@ export function useSidebarExpansion(options: {
   const stored = loadPreferences()
   const projectOverrides = ref(stored.projects)
   const taskOverride = ref(stored.tasks)
+  const projectSectionOverride = ref(stored.projectSectionExpanded)
+
+  function persist(): void {
+    save({
+      projects: projectOverrides.value,
+      tasks: taskOverride.value,
+      projectSectionExpanded: projectSectionOverride.value
+    })
+  }
 
   // Loading or changing session history must never change a group's state.
   const expandedProjects = computed(() => new Set(options.projectIds().filter((id) =>
@@ -75,7 +91,14 @@ export function useSidebarExpansion(options: {
     get: () => taskOverride.value ?? false,
     set: (expanded: boolean) => {
       taskOverride.value = expanded
-      save({ projects: projectOverrides.value, tasks: expanded })
+      persist()
+    }
+  })
+  const projectSectionExpanded = computed({
+    get: () => projectSectionOverride.value ?? true,
+    set: (expanded: boolean) => {
+      projectSectionOverride.value = expanded
+      persist()
     }
   })
 
@@ -86,7 +109,7 @@ export function useSidebarExpansion(options: {
     const next = new Map([...projectOverrides.value].filter(([id]) => currentIds.has(id)))
     if (next.size !== projectOverrides.value.size) {
       projectOverrides.value = next
-      save({ projects: next, tasks: taskOverride.value })
+      persist()
     }
   }, { immediate: true })
 
@@ -94,8 +117,25 @@ export function useSidebarExpansion(options: {
     const next = new Map(projectOverrides.value)
     next.set(id, !expandedProjects.value.has(id))
     projectOverrides.value = next
-    save({ projects: next, tasks: taskOverride.value })
+    persist()
   }
 
-  return { taskSectionExpanded, expandedProjects, toggleProject }
+  return { taskSectionExpanded, projectSectionExpanded, expandedProjects, toggleProject }
+}
+
+/** Persist every existing sidebar toggle through the same writable ref. */
+export function useSidebarVisibility() {
+  let stored: boolean | undefined
+  try {
+    const raw = localStorage.getItem(SIDEBAR_VISIBILITY_STORAGE_KEY)
+    if (raw === 'true' || raw === 'false') stored = raw === 'true'
+  } catch { /* A restricted or unavailable storage must not block startup. */ }
+
+  const sidebarOpen = ref(stored ?? true)
+  watch(sidebarOpen, (open) => {
+    try {
+      localStorage.setItem(SIDEBAR_VISIBILITY_STORAGE_KEY, String(open))
+    } catch { /* Keep the control usable when preferences cannot be saved. */ }
+  }, { flush: 'sync' })
+  return sidebarOpen
 }

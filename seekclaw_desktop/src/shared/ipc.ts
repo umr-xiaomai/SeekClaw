@@ -1,4 +1,8 @@
+import type { ConversationBrowserApi } from './browser.js'
 export type DaemonEventName =
+  | 'session.title'
+  | 'browser.request'
+  | 'browser.cancel'
   | 'provider_retry'
   | 'stream_reset'
   | 'pong'
@@ -139,6 +143,7 @@ export interface RevertDiffsResult {
 }
 
 export interface DesktopApi {
+  browser: ConversationBrowserApi
   getAppInfo(): Promise<AppInfo>
   selectWorkspace(): Promise<string | null>
   selectImages(): Promise<DesktopImageSelection>
@@ -148,6 +153,7 @@ export interface DesktopApi {
   selectSkillFiles(): Promise<DesktopSkillFileSelection>
   showItemInFolder(path: string): Promise<void>
   closeApp(): Promise<void>
+  exitApp(): Promise<void>
   openDevTools(): Promise<void>
   setTheme(theme: AppearanceTheme): Promise<void>
   setZoomFactor?(factor: number): void

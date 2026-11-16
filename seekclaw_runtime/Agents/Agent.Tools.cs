@@ -26,7 +26,7 @@ public sealed partial class Agent
     {
         var tool = toolRegistry.Resolve(call.Name);
         var argsSummary = SummarizeArguments(call.ArgumentsJson);
-        events.Publish(new ToolCallStartedEvent(call.Id, call.Name, argsSummary));
+        events.Publish(new ToolCallStartedEvent(call.Id, call.Name, argsSummary) { ArgumentsJson = call.ArgumentsJson });
 
         if (tool is null)
         {

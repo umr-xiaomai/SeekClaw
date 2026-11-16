@@ -9,7 +9,11 @@ public sealed class SessionHeader
 {
     public string Id { get; set; } = "";
     public string? Title { get; set; }
+    /// <summary>pending | input | generated | manual. Existing titles are preserved as manual.</summary>
+    public string TitleSource { get; set; } = "pending";
     public string? Workspace { get; set; }
+    /// <summary>Owning conversation for an internal child session; null for user and scheduled conversations.</summary>
+    public string? ParentSessionId { get; set; }
     public bool Archived { get; set; }
     public ReasoningLevel ReasoningLevel { get; set; } = ReasoningLevel.High;
     /// <summary>Per-session "联网" toggle; controls web_search + web_fetch together.</summary>

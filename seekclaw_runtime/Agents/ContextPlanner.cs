@@ -53,7 +53,7 @@ public static class ContextPlanner
     /// <summary>Character budget for a single tool result, scaled to the context window.</summary>
     public static int ToolOutputBudget(ModelConfig model, AgentConfig agent)
     {
-        var byWindow = (int)(model.ContextWindow * CharsPerToken * 0.05); // ≤5% of the window per tool call
+        var byWindow = (int)(model.EffectiveContextWindow * CharsPerToken * 0.05); // ≤5% of the window per tool call
         return Math.Clamp(byWindow, 4_000, agent.MaxToolOutputChars);
     }
 
@@ -64,11 +64,11 @@ public static class ContextPlanner
     /// <summary>Token budget available for conversation history inside the active model window.</summary>
     public static int WindowBudget(ModelConfig model, string systemPrompt)
     {
-        var budget = model.ContextWindow
-                     - model.MaxOutput
+        var budget = model.EffectiveContextWindow
+                     - model.EffectiveMaxOutput
                      - EstimateTokens(systemPrompt)
                      - 1_500; // safety reserve for wire format overhead
-        return budget > 0 ? budget : model.ContextWindow / 2;
+        return budget > 0 ? budget : model.EffectiveContextWindow / 2;
     }
 
     /// <summary>

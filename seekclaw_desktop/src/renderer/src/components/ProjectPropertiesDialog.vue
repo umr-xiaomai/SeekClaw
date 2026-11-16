@@ -3,7 +3,6 @@ import {
   Blocks,
   ExternalLink,
   Folder,
-  FolderCog,
   GitBranch,
   Info,
   LoaderCircle,
@@ -12,7 +11,7 @@ import {
   Wrench,
   X
 } from '@lucide/vue'
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { GitOverview } from '../../../shared/ipc'
 import type { ProjectItem, ThreadItem } from '../types'
 
@@ -43,11 +42,13 @@ const props = defineProps<{
   open: boolean
   project?: ProjectItem
   threads?: ThreadItem[]
+  saving?: boolean
+  saveError?: string
 }>()
 
 const emit = defineEmits<{
   close: []
-  initializeWorkspace: [project: ProjectItem]
+  saveName: [name: string]
   openExtensions: [tab: 'mcp' | 'skills']
 }>()
 
@@ -58,6 +59,14 @@ const mcpServers = ref<McpServerInfo[]>([])
 const skills = ref<SkillInfo[]>([])
 const loadingData = ref(false)
 const error = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
+const projectName = ref('')
+const canSaveName = computed(() => Boolean(projectName.value.trim())
+  && projectName.value.trim() !== props.project?.name && !props.saving)
+
+function saveName(): void {
+  if (canSaveName.value) emit('saveName', projectName.value.trim())
+}
 
 async function requestJson<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   const response = await window.seekclaw.daemon.request(method, params)
@@ -95,6 +104,8 @@ async function loadProjectData(): Promise<void> {
 watch(() => [props.open, props.project?.id] as const, ([isOpen, projectId]) => {
   if (isOpen && projectId) {
     activeTab.value = 'general'
+    projectName.value = props.project?.name ?? ''
+    void nextTick(() => nameInput.value?.select())
     void loadProjectData()
   }
 }, { immediate: true })
@@ -139,6 +150,7 @@ async function toggleSkill(skill: SkillInfo): Promise<void> {
 }
 
 function navigateToExtensions(tab: 'mcp' | 'skills'): void {
+  if (props.saving) return
   emit('close')
   emit('openExtensions', tab)
 }
@@ -146,40 +158,41 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 
 <template>
   <Transition name="modal-fade">
-    <div v-if="open && project" class="modal-backdrop project-properties-backdrop" @mousedown.self="emit('close')">
+    <div v-if="open && project" class="modal-backdrop project-properties-backdrop" @mousedown.self="!saving && emit('close')"
+      @keydown.esc.stop="!saving && emit('close')">
       <section class="project-properties-dialog" role="dialog" aria-modal="true"
-        aria-labelledby="project-properties-title">
+        aria-labelledby="project-properties-title" :aria-busy="saving || loadingData">
         <!-- Minimal Header -->
         <header class="properties-header">
           <div class="header-title">
             <span class="project-icon">
               <Folder :size="20" />
             </span>
-            <h2 id="project-properties-title">{{ project.name }}</h2>
+            <h2 id="project-properties-title">编辑项目</h2>
           </div>
           <div class="header-actions">
-            <button type="button" class="icon-button" title="刷新数据" :disabled="loadingData" @click="loadProjectData">
+            <button type="button" class="icon-button" title="刷新数据" aria-label="刷新数据" :disabled="loadingData || saving" @click="loadProjectData">
               <RefreshCw :size="14" :class="{ spin: loadingData }" />
             </button>
-            <button type="button" class="icon-button" title="关闭" @click="emit('close')">
+            <button type="button" class="icon-button" title="关闭" aria-label="关闭" :disabled="saving" @click="emit('close')">
               <X :size="16" />
             </button>
           </div>
         </header>
 
         <!-- Clean Underline Tabs -->
-        <nav class="properties-tabs">
-          <button type="button" class="tab-item" :class="{ active: activeTab === 'general' }"
+        <nav class="properties-tabs" aria-label="项目设置分类">
+          <button type="button" class="tab-item" :class="{ active: activeTab === 'general' }" :aria-pressed="activeTab === 'general'"
             @click="activeTab = 'general'">
             <Info :size="14" />
             <span>概览属性</span>
           </button>
-          <button type="button" class="tab-item" :class="{ active: activeTab === 'mcp' }" @click="activeTab = 'mcp'">
+          <button type="button" class="tab-item" :class="{ active: activeTab === 'mcp' }" :aria-pressed="activeTab === 'mcp'" @click="activeTab = 'mcp'">
             <Blocks :size="14" />
             <span>项目MCP</span>
             <span v-if="projectMcpServers.length > 0" class="tab-badge">{{ projectMcpServers.length }}</span>
           </button>
-          <button type="button" class="tab-item" :class="{ active: activeTab === 'skills' }"
+          <button type="button" class="tab-item" :class="{ active: activeTab === 'skills' }" :aria-pressed="activeTab === 'skills'"
             @click="activeTab = 'skills'">
             <Wrench :size="14" />
             <span>项目Skills</span>
@@ -187,14 +200,22 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
           </button>
         </nav>
 
-        <div v-if="error" class="properties-error">
-          {{ error }}
+        <div v-if="saveError || error" class="properties-error" role="alert">
+          {{ saveError || error }}
         </div>
 
         <!-- Body Content -->
         <div class="properties-body">
           <!-- 1. Minimal Property List -->
           <div v-if="activeTab === 'general'" class="property-list">
+            <div class="property-row">
+              <label class="row-label" for="project-display-name">项目名称</label>
+              <div class="row-value">
+                <input id="project-display-name" ref="nameInput" v-model="projectName" class="project-name-input"
+                  maxlength="120" placeholder="输入项目名称" autocomplete="off" :disabled="saving"
+                  @keydown.enter.prevent="!$event.isComposing && saveName()">
+              </div>
+            </div>
             <!-- Row: Path -->
             <div class="property-row">
               <span class="row-label">项目路径</span>
@@ -235,16 +256,6 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
               </div>
             </div>
 
-            <!-- Row: Environment -->
-            <div class="property-row">
-              <span class="row-label">工作区环境</span>
-              <div class="row-value row-actions-between">
-                <span class="text-muted">.seekclaw/ 专属配置目录</span>
-                <button type="button" class="secondary-button compact" @click="emit('initializeWorkspace', project)">
-                  <FolderCog :size="13" /> 初始化环境
-                </button>
-              </div>
-            </div>
           </div>
 
           <!-- 2. Project MCP Tab -->
@@ -326,8 +337,12 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 
         <!-- Footer -->
         <footer class="properties-footer">
-          <button type="button" class="secondary-button primary-action" @click="emit('close')">
-            关闭
+          <button type="button" class="secondary-button" :disabled="saving" @click="emit('close')">
+            取消
+          </button>
+          <button type="button" class="secondary-button primary-action" :disabled="!canSaveName" @click="saveName">
+            <LoaderCircle v-if="saving" :size="14" class="spin" />
+            {{ saving ? '保存中…' : '保存' }}
           </button>
         </footer>
       </section>
@@ -343,19 +358,19 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(8px);
+  background: rgb(0 0 0 / 36%);
+  backdrop-filter: blur(3px);
 }
 
 .project-properties-dialog {
   width: min(100%, 580px);
-  max-height: 80vh;
+  max-height: min(720px, calc(100dvh - 48px));
   display: flex;
   flex-direction: column;
-  background: var(--surface-raised, #ffffff);
+  background: var(--modal-surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22), 0 2px 10px rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-dialog, 16px);
+  box-shadow: var(--dialog-shadow, var(--shadow));
   overflow: hidden;
 }
 
@@ -365,7 +380,7 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 20px 14px;
+  padding: 20px 24px 16px;
   background: var(--surface-raised);
 }
 
@@ -379,7 +394,7 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 .project-icon {
   display: grid;
   place-items: center;
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .header-title h2 {
@@ -403,13 +418,17 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 .properties-tabs {
   display: flex;
   gap: 18px;
-  padding: 0 20px;
+  padding: 0 24px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
   background: var(--surface-raised);
   border-bottom: 1px solid var(--border);
 }
 
 .tab-item {
   position: relative;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -428,7 +447,7 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 }
 
 .tab-item.active {
-  color: var(--accent);
+  color: var(--text);
   font-weight: 600;
 }
 
@@ -439,7 +458,7 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   left: 0;
   right: 0;
   height: 2px;
-  background: var(--accent);
+  background: var(--text);
   border-radius: 2px 2px 0 0;
 }
 
@@ -448,8 +467,8 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   padding: 0 5px;
   font-size: 10px;
   font-weight: 600;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
   border-radius: 999px;
   line-height: 1.4;
 }
@@ -457,13 +476,14 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 /* ================= Body ================= */
 .properties-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 12px 24px 20px;
   background: var(--surface-raised);
 }
 
 .properties-error {
-  margin: 10px 20px 0;
+  margin: 12px 24px 0;
   padding: 8px 12px;
   font-size: 12px;
   color: var(--danger);
@@ -494,7 +514,7 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   flex: none;
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .row-value {
@@ -506,9 +526,21 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   color: var(--text);
 }
 
-.row-actions-between {
-  justify-content: space-between;
-  gap: 12px;
+.project-name-input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.project-name-input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .path-value {
@@ -529,7 +561,8 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 .git-status-inline {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
+  flex-wrap: wrap;
 }
 
 .branch-pill {
@@ -540,8 +573,8 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   font-size: 11.5px;
   font-weight: 550;
   border-radius: 4px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
 }
 
 .status-text {
@@ -549,11 +582,11 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 }
 
 .status-text.clean {
-  color: #10b981;
+  color: var(--success);
 }
 
 .status-text.warning {
-  color: #f59e0b;
+  color: var(--warning);
 }
 
 .inline-loading {
@@ -611,8 +644,10 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   text-align: center;
   font-size: 12.5px;
   color: var(--text-muted);
-  background: var(--surface-hover);
-  border-radius: 8px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-control, 8px);
+  line-height: 1.7;
 }
 
 .empty-hint code {
@@ -634,9 +669,9 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
-  background: var(--surface-hover);
-  border-radius: 8px;
+  padding: 12px 0;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
 }
 
 .row-main {
@@ -650,13 +685,15 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 .row-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
+  flex-wrap: wrap;
 }
 
 .row-title .name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .transport-tag,
@@ -685,11 +722,11 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
 }
 
 .status-indicator.is-connected {
-  color: #10b981;
+  color: var(--success);
 }
 
 .status-indicator.is-connected .dot {
-  background: #10b981;
+  background: var(--success);
 }
 
 .status-indicator.is-error {
@@ -738,8 +775,34 @@ function navigateToExtensions(tab: 'mcp' | 'skills'): void {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 10px 20px;
-  background: var(--surface-raised);
-  border-top: 1px solid var(--border);
+  gap: 8px;
+  padding: 14px 24px 20px;
+  background: transparent;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.tab-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.settings-list-row:last-child { border-bottom: 0; }
+.row-desc, .row-error { overflow-wrap: anywhere; line-height: 1.6; }
+.project-name-input:disabled { opacity: .6; }
+
+@media (max-width: 560px) {
+  .project-properties-backdrop { padding: 12px; }
+  .project-properties-dialog { max-height: calc(100dvh - 24px); }
+  .properties-header { padding: 18px; }
+  .properties-tabs { padding: 0 18px; gap: 14px; }
+  .properties-body { padding: 12px 18px 18px; }
+  .properties-error { margin: 10px 18px 0; }
+  .properties-footer { padding: 12px 18px 18px; }
+  .property-row { align-items: flex-start; flex-direction: column; gap: 8px; padding: 12px 0; }
+  .row-label { width: auto; }
+  .row-value { width: 100%; }
+  .tab-toolbar { align-items: flex-start; flex-direction: column; }
 }
 </style>

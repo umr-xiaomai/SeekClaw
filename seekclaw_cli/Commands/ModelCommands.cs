@@ -47,8 +47,8 @@ public static class ModelCommands
                 model.Ref.Equals(activeRef, StringComparison.OrdinalIgnoreCase) ? "[green]●[/]" : "",
                 Markup.Escape(model.Ref),
                 Markup.Escape(model.Model.Alias ?? ""),
-                $"{model.Model.ContextWindow / 1000}k",
-                $"{model.Model.MaxOutput / 1000}k",
+                $"{model.Model.EffectiveContextWindow / 1000}k",
+                $"{model.Model.EffectiveMaxOutput / 1000}k",
                 Markup.Escape(capText),
                 model.Model.InputPricePerMTok > 0 || model.Model.OutputPricePerMTok > 0
                     ? $"{model.Model.InputPricePerMTok:0.##}·{model.Model.OutputPricePerMTok:0.##}"
@@ -120,8 +120,8 @@ public static class ModelCommands
             grid.AddRow("Provider", $"{Markup.Escape(model.Provider.DisplayName)} ({Markup.Escape(model.Provider.Kind)})");
             grid.AddRow("Base URL", Markup.Escape(model.Provider.BaseUrl));
             grid.AddRow("Alias", Markup.Escape(model.Model.Alias ?? "-"));
-            grid.AddRow("Context window", $"{model.Model.ContextWindow:N0} tokens");
-            grid.AddRow("Max output", $"{model.Model.MaxOutput:N0} tokens");
+            grid.AddRow("Context window", $"{model.Model.EffectiveContextWindow:N0} tokens");
+            grid.AddRow("Max output", $"{model.Model.EffectiveMaxOutput:N0} tokens");
             grid.AddRow("Streaming", Yn(caps.Streaming));
             grid.AddRow("Tool calling", Yn(caps.ToolCalling));
             grid.AddRow("Thinking", Yn(caps.Thinking));

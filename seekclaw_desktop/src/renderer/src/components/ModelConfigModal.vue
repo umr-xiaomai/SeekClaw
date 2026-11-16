@@ -19,7 +19,11 @@ export interface ModelDetailConfig {
   alias?: string
   contextWindow: number
   maxOutput: number
-  vision: boolean
+  vision?: boolean
+  contextWindowAuto?: boolean
+  maxOutputAuto?: boolean
+  detectedContextWindow?: number | null
+  detectedMaxOutput?: number | null
 }
 
 const props = defineProps<{
@@ -37,7 +41,7 @@ const form = reactive<ModelDetailConfig>({
   alias: '',
   contextWindow: 1000000,
   maxOutput: 128000,
-  vision: false
+  contextWindowAuto: true, maxOutputAuto: true
 })
 
 const firstInput = ref<HTMLInputElement | null>(null)
@@ -52,7 +56,8 @@ function handleSave(): void {
     alias: form.alias?.trim() || undefined,
     contextWindow: Number(form.contextWindow) || 1000000,
     maxOutput: Number(form.maxOutput) || 128000,
-    vision: Boolean(form.vision)
+    contextWindowAuto: form.contextWindowAuto, maxOutputAuto: form.maxOutputAuto,
+    detectedContextWindow: form.detectedContextWindow, detectedMaxOutput: form.detectedMaxOutput
   })
 }
 
@@ -74,7 +79,10 @@ watch(() => props.open, (open) => {
     form.alias = props.model.alias ?? ''
     form.contextWindow = props.model.contextWindow || 1000000
     form.maxOutput = props.model.maxOutput || 128000
-    form.vision = Boolean(props.model.vision)
+    form.contextWindowAuto = props.model.contextWindowAuto ?? false
+    form.maxOutputAuto = props.model.maxOutputAuto ?? false
+    form.detectedContextWindow = props.model.detectedContextWindow
+    form.detectedMaxOutput = props.model.detectedMaxOutput
   }
   document.addEventListener('keydown', handleKeydown)
   void nextTick(() => firstInput.value?.focus())
@@ -97,9 +105,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
         >
           <header class="model-config-header">
             <div>
-              <h2 id="model-config-title">配置模型能力与参数</h2>
+              <h2 id="model-config-title">配置模型参数</h2>
             </div>
-            <button class="icon-button" type="button" title="关闭" @click="close">
+            <button class="icon-button" type="button" title="关闭" aria-label="关闭" @click="close">
               <X :size="18" />
             </button>
           </header>
@@ -143,7 +151,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                     help="单次会话支持的最大上下文 Token 总量。可直接输入数值，或点击右侧下拉箭头选择常用预设值。"
                     required
                   />
+                  <span class="limit-mode"><input v-model="form.contextWindowAuto" type="checkbox"> 自动
+                    <small>{{ form.detectedContextWindow ? '供应商：' + form.detectedContextWindow.toLocaleString() : '未提供参数，使用 1M' }}</small></span>
                   <ComboboxInput
+                    v-if="!form.contextWindowAuto"
                     v-model="form.contextWindow"
                     :options="tokenPresets"
                     placeholder="例如 1000000"
@@ -156,7 +167,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                     help="模型单次响应允许输出的最大 Token 数量。可直接输入数值，或点击右侧下拉箭头选择常用预设值。"
                     required
                   />
+                  <span class="limit-mode"><input v-model="form.maxOutputAuto" type="checkbox"> 自动
+                    <small>{{ form.detectedMaxOutput ? '供应商：' + form.detectedMaxOutput.toLocaleString() : '未提供参数，使用 128K' }}</small></span>
                   <ComboboxInput
+                    v-if="!form.maxOutputAuto"
                     v-model="form.maxOutput"
                     :options="tokenPresets"
                     placeholder="例如 128000"
@@ -166,19 +180,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               <small class="model-context-hint">当会话估算 Tokens 接近该上下文长度时，运行时会自动压缩较早的历史消息。</small>
             </section>
 
-            <section class="model-form-section">
-              <div class="model-section-heading">
-                <strong>多模态能力</strong>
-              </div>
-              <label class="model-enabled-row">
-                <span>
-                  <strong>视觉 / 多模态输入</strong>
-                  <small>启用后，在对话中上传或粘贴图片时将优先调用该模型</small>
-                </span>
-                <input v-model="form.vision" class="sr-only" type="checkbox" />
-                <span class="toggle-switch" aria-hidden="true"><span /></span>
-              </label>
-            </section>
+
           </div>
 
           <footer class="model-config-footer">
@@ -204,19 +206,19 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(8px);
+  background: rgb(0 0 0 / 36%);
+  backdrop-filter: blur(3px);
 }
 
 .model-config-dialog {
   display: flex;
   flex-direction: column;
   width: min(100%, 580px);
-  max-height: min(760px, calc(100vh - 40px));
-  background: var(--surface-raised, #ffffff);
+  max-height: min(760px, calc(100dvh - 40px));
+  background: var(--modal-surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28), 0 2px 10px rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-dialog, 16px);
+  box-shadow: var(--dialog-shadow, var(--shadow));
   overflow: hidden;
 }
 
@@ -226,13 +228,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   justify-content: space-between;
   gap: 20px;
   padding: 18px 24px;
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
+  background: transparent;
 }
 
 .model-config-header h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 650;
   color: var(--text);
   letter-spacing: -0.01em;
@@ -240,25 +241,19 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 
 .model-config-body {
   flex: 1;
-  padding: 20px 24px;
+  min-height: 0;
+  padding: 4px 24px 20px;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  background: var(--surface-raised);
+  gap: 24px;
+  background: transparent;
 }
 
 .model-form-section {
   display: flex;
   flex-direction: column;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--border);
-}
-
-.model-form-section:last-of-type {
-  padding-bottom: 0;
-  border-bottom: none;
 }
 
 .model-section-heading {
@@ -302,7 +297,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   min-height: 38px;
   padding: 8px 12px;
   color: var(--text);
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   outline: none;
@@ -335,79 +330,33 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   line-height: 1.5;
 }
 
-.model-enabled-row {
+.limit-mode {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 12px 14px;
-  background: color-mix(in srgb, var(--surface-hover) 65%, transparent);
-  border-radius: 9px;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  transition: background-color 140ms ease;
-}
-
-.model-enabled-row:hover {
-  background: var(--surface-hover);
-}
-
-.model-enabled-row > span:first-child {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.model-enabled-row strong {
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 38px;
   font-size: 13px;
-  color: var(--text);
+  cursor: pointer;
 }
 
-.model-enabled-row small {
+.limit-mode input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.limit-mode input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.limit-mode small {
+  min-width: 0;
   color: var(--text-muted);
-  font-size: 11.5px;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  white-space: nowrap;
-  border: 0;
-  clip: rect(0, 0, 0, 0);
-}
-
-.toggle-switch {
-  display: flex;
-  width: 38px;
-  height: 22px;
-  flex: 0 0 auto;
-  align-items: center;
-  padding: 2px;
-  background: var(--border-strong);
-  border-radius: 999px;
-  transition: background-color 160ms ease;
-}
-
-.toggle-switch > span {
-  width: 18px;
-  height: 18px;
-  background: white;
-  border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.model-enabled-row input:checked + .toggle-switch {
-  background: var(--accent);
-}
-
-.model-enabled-row input:checked + .toggle-switch > span {
-  transform: translateX(16px);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .model-config-footer {
@@ -415,9 +364,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 13px 24px;
-  background: color-mix(in srgb, var(--sidebar) 72%, var(--surface-raised));
-  border-top: 1px solid var(--border);
+  padding: 14px 24px 20px;
+  flex-wrap: wrap;
+  background: transparent;
 }
 
 .model-config-footer > span {
@@ -428,5 +377,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 .footer-buttons {
   display: flex;
   gap: 8px;
+}
+
+@media (max-width: 560px) {
+  .model-config-backdrop { padding: 12px; }
+  .model-config-dialog { max-height: calc(100dvh - 24px); }
+  .model-config-header { padding: 18px; }
+  .model-config-body { padding: 0 18px 18px; }
+  .model-config-footer { padding: 12px 18px 18px; }
+  .model-form-grid.two-columns { grid-template-columns: minmax(0, 1fr); }
+  .model-config-footer > span { flex-basis: 100%; }
+  .footer-buttons { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 }
 </style>

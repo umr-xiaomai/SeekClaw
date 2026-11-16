@@ -44,16 +44,6 @@ internal sealed partial class DaemonAdminApi(
         return locks.ToJsonString();
     }
 
-    public string InitializeWorkspace()
-    {
-        var created = runtime.Workspaces.Bootstrap(runtime.Workspace);
-        return new JsonObject
-        {
-            ["path"] = runtime.Workspace.Root,
-            ["created"] = Strings(created),
-        }.ToJsonString();
-    }
-
     /// <summary>
     /// Restores SeekClaw's global user state to factory defaults: configuration,
     /// runtime state, SQLite data, usage history, logs, global prompts/skills and
@@ -164,7 +154,7 @@ internal sealed partial class DaemonAdminApi(
             请把这段文本改写得更清晰、更工整、更有条理，同时完整保留原始目标和语气。
             直接输出改写后的提示词本身，不要解释，不要添加前后缀，不要输出除优化结果以外的任何内容。
             """;
-        var maxTokens = Math.Clamp(selectedModel.Model.MaxOutput, 512, 4096);
+        var maxTokens = Math.Clamp(selectedModel.Model.EffectiveMaxOutput, 512, 4096);
         var request = new LlmRequest
         {
             Provider = selectedModel.Provider,
@@ -379,13 +369,11 @@ internal sealed partial class DaemonAdminApi(
     {
         var id = RequiredString(parameters, "id");
         var config = runtime.ConfigStore.Config;
-        var provider = config.FindProvider(id);
-        var isNew = provider is null;
-        if (provider is null)
-        {
-            provider = new ProviderConfig { Id = id };
-            config.Providers.Add(provider);
-        }
+        var existingProvider = config.FindProvider(id);
+        // Validate a detached draft so a rejected edit cannot alter live configuration.
+        var provider = existingProvider is null ? new ProviderConfig { Id = id }
+            : JsonSerializer.Deserialize(JsonSerializer.Serialize(existingProvider, SeekClawJsonContext.Default.ProviderConfig),
+                SeekClawJsonContext.Default.ProviderConfig)!;
 
         var kind = OptionalString(parameters, "kind") ?? provider.Kind;
         if (kind is not ("openai" or "anthropic"))
@@ -422,8 +410,11 @@ internal sealed partial class DaemonAdminApi(
                         model.ContextWindow = cw;
                     if (node["maxOutput"]?.GetValue<int?>() is { } mo && mo > 0)
                         model.MaxOutput = mo;
-                    if (node["vision"]?.GetValue<bool?>() is { } v)
-                        model.Capabilities.Vision = v;
+                    model.ContextWindowAuto = node["contextWindowAuto"]?.GetValue<bool>() ?? model.ContextWindowAuto;
+                    model.MaxOutputAuto = node["maxOutputAuto"]?.GetValue<bool>() ?? model.MaxOutputAuto;
+                    if (node["detectedContextWindow"]?.GetValue<int?>() is > 0 and var dc) model.DetectedContextWindow = dc;
+                    if (node["detectedMaxOutput"]?.GetValue<int?>() is > 0 and var dm) model.DetectedMaxOutput = dm;
+
                     return model;
                 })
                 .ToList();
@@ -443,15 +434,15 @@ internal sealed partial class DaemonAdminApi(
 
         if (string.IsNullOrWhiteSpace(provider.BaseUrl))
         {
-            if (isNew) config.Providers.Remove(provider);
             throw new DaemonRequestException("Provider baseUrl is required");
         }
         if (provider.Models.Count == 0)
         {
-            if (isNew) config.Providers.Remove(provider);
             throw new DaemonRequestException("At least one model is required");
         }
 
+        if (existingProvider is null) config.Providers.Add(provider);
+        else config.Providers[config.Providers.IndexOf(existingProvider)] = provider;
         runtime.ConfigStore.Save();
         return ProviderJson(provider, provider.Id.Equals(config.Provider, StringComparison.OrdinalIgnoreCase)).ToJsonString();
     }
@@ -526,8 +517,12 @@ internal sealed partial class DaemonAdminApi(
                 ["providerEnabled"] = model.Provider.Enabled,
                 ["id"] = model.Model.Id,
                 ["alias"] = model.Model.Alias,
-                ["contextWindow"] = model.Model.ContextWindow,
-                ["maxOutput"] = model.Model.MaxOutput,
+                ["contextWindow"] = model.Model.EffectiveContextWindow,
+                ["maxOutput"] = model.Model.EffectiveMaxOutput,
+                ["contextWindowAuto"] = model.Model.ContextWindowAuto,
+                ["maxOutputAuto"] = model.Model.MaxOutputAuto,
+                ["detectedContextWindow"] = model.Model.DetectedContextWindow,
+                ["detectedMaxOutput"] = model.Model.DetectedMaxOutput,
                 ["tags"] = Strings(model.Model.Tags ?? []),
                 ["capabilities"] = new JsonObject
                 {
@@ -559,23 +554,43 @@ internal sealed partial class DaemonAdminApi(
         }.ToJsonString();
     }
 
+    public async Task<string> PreviewProviderModelsAsync(JsonObject parameters, CancellationToken ct)
+    {
+        var draft = parameters["draft"] as JsonObject ?? throw new DaemonRequestException("params.draft is required");
+        var existing = OptionalString(parameters, "editingId") is { } id ? runtime.ConfigStore.Config.FindProvider(id) : null;
+        var kind = OptionalString(draft, "kind") ?? existing?.Kind ?? "openai";
+        if (kind is not ("openai" or "anthropic")) throw new DaemonRequestException("Unsupported provider kind");
+        var provider = new ProviderConfig
+        {
+            Id = OptionalString(draft, "id") ?? existing?.Id ?? "draft", Kind = kind,
+            BaseUrl = OptionalString(draft, "baseUrl") ?? throw new DaemonRequestException("Provider baseUrl is required"),
+            ApiKey = draft.ContainsKey("apiKey") ? OptionalString(draft, "apiKey") : existing?.ApiKey,
+            Proxy = OptionalString(draft, "proxy"), TimeoutSeconds = draft["timeoutSeconds"]?.GetValue<int>() ?? 120,
+            Organization = existing?.Organization, Headers = existing?.Headers,
+        };
+        var models = await runtime.Providers.FetchModelDetailsAsync(provider, OptionalString(draft, "modelListUrl"), ct).ConfigureAwait(false);
+        return new JsonArray(models.Select(model => (JsonNode)ModelDetailJson(model)).ToArray()).ToJsonString();
+    }
+
     public async Task<string> FetchProviderModelsAsync(JsonObject parameters, CancellationToken ct)
     {
         var id = RequiredString(parameters, "id");
         var provider = runtime.ConfigStore.Config.FindProvider(id)
                        ?? throw new DaemonRequestException($"Provider not found: {id}");
         var url = OptionalString(parameters, "url") ?? provider.ModelListUrl;
-        var ids = await runtime.Providers.FetchModelsAsync(provider, url, ct).ConfigureAwait(false);
+        var fetched = await runtime.Providers.FetchModelDetailsAsync(provider, url, ct).ConfigureAwait(false);
         var existing = provider.Models.ToDictionary(model => model.Id, StringComparer.OrdinalIgnoreCase);
-        foreach (var modelId in ids)
+        foreach (var detected in fetched)
         {
-            if (existing.ContainsKey(modelId)) continue;
-            var model = new ModelConfig { Id = modelId };
-            provider.Models.Add(model);
-            existing[modelId] = model;
+            if (existing.TryGetValue(detected.Id, out var model))
+            {
+                model.DetectedContextWindow = detected.DetectedContextWindow;
+                model.DetectedMaxOutput = detected.DetectedMaxOutput;
+            }
+            else provider.Models.Add(detected);
         }
         runtime.ConfigStore.Save();
-        return Strings(ids).ToJsonString();
+        return Strings(fetched.Select(model => model.Id)).ToJsonString();
     }
 
     public string UpdateModel(JsonObject parameters)
@@ -602,8 +617,8 @@ internal sealed partial class DaemonAdminApi(
                 throw new DaemonRequestException("params.maxOutput must be positive");
             model.MaxOutput = maxOutput;
         }
-        if (parameters["vision"]?.GetValue<bool?>() is { } vision)
-            model.Capabilities.Vision = vision;
+        model.ContextWindowAuto = parameters["contextWindowAuto"]?.GetValue<bool>() ?? model.ContextWindowAuto;
+        model.MaxOutputAuto = parameters["maxOutputAuto"]?.GetValue<bool>() ?? model.MaxOutputAuto;
         runtime.ConfigStore.Save();
         return new JsonObject
         {
@@ -1119,6 +1134,7 @@ internal sealed partial class DaemonAdminApi(
                     ["id"] = call.Id,
                     ["name"] = call.Name,
                     ["detail"] = SeekClaw.Runtime.Agents.Agent.SummarizeArguments(call.ArgumentsJson),
+                    ["input"] = call.ArgumentsJson,
                 });
             }
             messages.Add((JsonNode)new JsonObject
@@ -1149,6 +1165,7 @@ internal sealed partial class DaemonAdminApi(
         {
             ["id"] = session.Header.Id,
             ["title"] = session.Header.Title,
+            ["titleSource"] = session.Header.TitleSource,
             ["workspace"] = workspace.IsGlobal ? null : session.Header.Workspace ?? workspace.Root,
             ["executionWorkspace"] = runtime.Worktrees.Get(workspace.Root, id) is { } worktree
                 ? (worktree["workspacePath"] ?? worktree["path"])?.DeepClone() : JsonValue.Create(workspace.IsGlobal ? null : workspace.Root),
@@ -1306,14 +1323,7 @@ internal sealed partial class DaemonAdminApi(
         ["apiKey"] = provider.ApiKey,
         ["apiKeyConfigured"] = !string.IsNullOrWhiteSpace(provider.ResolveApiKey()),
         ["models"] = Strings(provider.Models.Select(model => model.Id)),
-        ["modelDetails"] = new JsonArray(provider.Models.Select(m => (JsonNode)new JsonObject
-        {
-            ["id"] = m.Id,
-            ["alias"] = m.Alias ?? "",
-            ["contextWindow"] = m.ContextWindow,
-            ["maxOutput"] = m.MaxOutput,
-            ["vision"] = m.Capabilities.Vision,
-        }).ToArray()),
+        ["modelDetails"] = new JsonArray(provider.Models.Select(m => (JsonNode)ModelDetailJson(m)).ToArray()),
         ["enabled"] = provider.Enabled,
         ["priority"] = provider.Priority,
         ["timeoutSeconds"] = provider.TimeoutSeconds,
@@ -1322,6 +1332,23 @@ internal sealed partial class DaemonAdminApi(
         ["proxy"] = provider.Proxy,
         ["active"] = active,
     };
+
+    private static JsonObject ModelDetailJson(ModelConfig model) => new()
+    {
+        ["id"] = model.Id, ["alias"] = model.Alias ?? "",
+        ["contextWindow"] = model.ContextWindow, ["maxOutput"] = model.MaxOutput,
+        ["contextWindowAuto"] = model.ContextWindowAuto, ["maxOutputAuto"] = model.MaxOutputAuto,
+        ["detectedContextWindow"] = model.DetectedContextWindow, ["detectedMaxOutput"] = model.DetectedMaxOutput,
+        ["vision"] = true,
+    };
+
+    public string BrowserScope(JsonObject parameters)
+    {
+        var workspace = SessionWorkspace(parameters);
+        var id = RequiredString(parameters, "sessionId");
+        if (runtime.Sessions.Load(workspace, id) is null) throw new DaemonRequestException("Conversation not found in this workspace");
+        return new JsonObject { ["scope"] = Browser.BrowserTool.Scope(workspace.Root, id), ["sessionId"] = id }.ToJsonString();
+    }
 
     private static JsonObject McpServerJson(
         string name,

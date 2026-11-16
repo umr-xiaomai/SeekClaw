@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ToolActivity } from '../types'
 
-defineProps<{ tool: ToolActivity }>()
+defineProps<{ tool: ToolActivity; embedded?: boolean }>()
 
 function mediaUrl(block: Record<string, unknown>, kind: 'image' | 'audio'): string | undefined {
   const mime = typeof block.mimeType === 'string' ? block.mimeType : ''
@@ -25,8 +25,8 @@ function resource(block: Record<string, unknown>): Record<string, unknown> {
 </script>
 
 <template>
-  <details v-if="tool.content?.length || tool.structuredContent != null || tool.output" class="mcp-result">
-    <summary>{{ tool.name }} · 查看结果</summary>
+  <component :is="embedded ? 'div' : 'details'" v-if="tool.content?.length || tool.structuredContent != null || tool.output" class="mcp-result" :class="{ embedded }">
+    <summary v-if="!embedded">{{ tool.name }} · 查看结果</summary>
     <div class="mcp-result-body">
       <template v-for="(block, index) in tool.content" :key="index">
         <pre v-if="block.type === 'text'">{{ block.text }}</pre>
@@ -47,7 +47,7 @@ function resource(block: Record<string, unknown>): Record<string, unknown> {
       <pre v-if="tool.structuredContent != null">{{ JSON.stringify(tool.structuredContent, null, 2) }}</pre>
       <pre v-if="!tool.content?.length && tool.structuredContent == null && tool.output">{{ tool.output }}</pre>
     </div>
-  </details>
+  </component>
 </template>
 
 <style scoped>
@@ -57,4 +57,7 @@ function resource(block: Record<string, unknown>): Record<string, unknown> {
 .mcp-result img { max-width: 100%; max-height: 320px; object-fit: contain; }
 .mcp-result pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .mcp-result audio { max-width: 100%; }
+.embedded { margin: 0; }
+.embedded .mcp-result-body { max-height: 280px; padding: 0; border: 0; border-radius: 0; font: 12.5px/1.65 var(--font-mono); color: var(--text-secondary); }
+.embedded pre { white-space: pre; overflow: auto; }
 </style>

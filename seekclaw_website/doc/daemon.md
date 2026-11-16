@@ -26,7 +26,6 @@ SeekClaw Daemon 通过本地 IPC 向桌面端、IDE 插件和其他客户端开�
 | `protocol.info` | 无 | 返回协议版本、能力与方法列表 |
 | `workspace.get` | 无 | 返回当前工作区路径、项目类型和模式 |
 | `workspace.open` | `{ "path": "..." }` | 验证并切换 Runtime 工作区 |
-| `workspace.init` | 无 | 初始化当前工作区的 SeekClaw 目录 |
 | `agent.mode.get` | 无 | 返回 `plan`、`readonly`、`edit` 或 `auto` |
 | `agent.mode.switch` | `{ "mode": "edit" }` | 切换并持久化 Agent 模式 |
 | `agent.steer` | `{ "sessionId": "...", "message": "..." }` | 向正在运行的 turn 添加指导，不取消当前请求 |
@@ -123,4 +122,12 @@ Daemon 进程内维护一个集中式文件写锁协调器（Task Coordinator）
 
 ## Desktop 的 Daemon 生命周期
 
-打包版 Desktop 启动时先连接本地端点。若没有 Daemon，它会从 `resources/runtime` 启动自包含 Runtime，并在 24 次短间隔探测内等待端点就绪。Desktop 只记录自己创建的子进程；退出时向该实例发送 `shutdown`，等待其退出，超时后才终止进程。若启动时连接的是外部 Daemon，退出 Desktop 只断开连接。
+打包版 Desktop 启动时先连接本地端点。若没有 Daemon，它会从 `resources/runtime` 启动自包含 Runtime，并在 28 次短间隔探测内等待端点就绪。Desktop 只记录自己创建的子进程；退出时向该实例发送 `shutdown`，等待其退出，超时后才终止进程。若启动时连接的是外部 Daemon，退出 Desktop 只断开连接。
+
+## Desktop 浏览器与模型发现
+
+`provider.models.preview` 接受 `{ "editingId"?: "...", "draft": { "id"?, "kind", "baseUrl", "modelListUrl"?, "apiKey"?, "proxy"?, "timeoutSeconds"? } }`，返回模型详情数组，不修改或保存供应商。`contextWindowAuto` / `maxOutputAuto` 表示自动模式，`detectedContextWindow` / `detectedMaxOutput` 为可选供应商限制；手动数值独立保存。
+
+`browser.scope` 根据 `{ "sessionId", "workspace"?, "global"? }` 校验会话归属并返回浏览器范围。Desktop 在每次连接建立后调用 `browser.attach`；Runtime 经该连接发送 `browser.request`，Desktop 使用 `browser.reply` 关联结果，`browser.cancel` 取消过期请求。浏览器工具仅在附加了 Desktop 桥接的回合可用，不使用系统鼠标或焦点。连接断开会取消操作，不会重放网页交互。
+
+常规设置不再显示 Runtime 配置。Desktop 连接失败经过有界重试后退出进程；关闭到托盘与退出进程是不同操作。升级本协议时应同时重建并重启 Desktop 与配套 Runtime。

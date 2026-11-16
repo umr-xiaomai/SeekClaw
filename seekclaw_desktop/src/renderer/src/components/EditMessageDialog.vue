@@ -22,7 +22,7 @@ function fileShortName(path: string): string {
 <template>
   <Transition name="modal-fade">
     <div v-if="open" class="modal-backdrop edit-message-backdrop" @mousedown.self="emit('close')">
-      <section class="edit-message-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title">
+      <section class="edit-message-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title" aria-describedby="edit-dialog-description">
         <header class="dialog-header">
           <h2 id="edit-dialog-title">编辑消息</h2>
           <button class="icon-button" title="关闭" aria-label="关闭" @click="emit('close')">
@@ -31,7 +31,7 @@ function fileShortName(path: string): string {
         </header>
 
         <div class="dialog-body">
-          <p class="dialog-desc">
+          <p id="edit-dialog-description" class="dialog-desc">
             回退将清除此消息之后的所有对话记录，并将内容填回输入框供您重新编辑。
           </p>
 
@@ -81,32 +81,34 @@ function fileShortName(path: string): string {
 
 .edit-message-dialog {
   width: min(520px, 92vw);
-  max-height: 85vh;
+  max-height: min(680px, calc(100dvh - 40px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--surface-raised);
+  background: var(--modal-surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-dialog, 16px);
+  box-shadow: var(--dialog-shadow, var(--shadow));
 }
 
 .dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px 12px;
+  gap: 16px;
+  padding: 20px 24px 16px;
 }
 
 .dialog-header h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text);
 }
 
 .dialog-body {
-  padding: 0 20px 18px;
+  min-height: 0;
+  padding: 0 24px 20px;
   overflow-y: auto;
   font-size: 13px;
   line-height: 1.5;
@@ -121,7 +123,7 @@ function fileShortName(path: string): string {
   margin-top: 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: transparent;
   overflow: hidden;
 }
 
@@ -132,12 +134,12 @@ function fileShortName(path: string): string {
   padding: 9px 12px;
   font-size: 12px;
   color: var(--text);
-  background: var(--surface-hover);
+  background: transparent;
   border-bottom: 1px solid var(--border);
 }
 
 .file-changes-header strong {
-  color: var(--accent);
+  color: var(--text);
 }
 
 .file-changes-list {
@@ -177,7 +179,7 @@ function fileShortName(path: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .dialog-footer {
@@ -185,8 +187,21 @@ function fileShortName(path: string): string {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 20px;
-  background: var(--sidebar);
-  border-top: 1px solid var(--border);
+  padding: 14px 24px 20px;
+  flex-wrap: wrap;
+  background: transparent;
+}
+
+@media (max-width: 560px) {
+  .edit-message-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+  }
+
+  .dialog-header { padding: 18px 18px 14px; }
+  .dialog-body { padding: 0 18px 18px; }
+  .dialog-footer { padding: 12px 18px 18px; }
+  .file-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-path { min-width: 0; }
 }
 </style>

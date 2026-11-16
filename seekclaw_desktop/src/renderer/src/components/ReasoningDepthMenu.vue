@@ -159,7 +159,7 @@ onBeforeUnmount(removeListeners)
         >
           <header class="reasoning-popover-header">
             <div><strong>思考深度</strong><small>固定档位 · 当前为{{ labels[modelValue] }}</small></div>
-            <button type="button" class="reasoning-close" title="收起" @click="hide(true)"><X :size="15" /></button>
+            <button type="button" class="reasoning-close" title="收起" aria-label="收起思考深度设置" @click="hide(true)"><X :size="15" /></button>
           </header>
 
           <div class="reasoning-slider" role="radiogroup" aria-label="思考深度档位">

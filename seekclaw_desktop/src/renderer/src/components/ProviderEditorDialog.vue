@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Eye, EyeOff, Plus, Save, Settings2, Trash2, X } from '@lucide/vue'
+import { Eye, EyeOff, Plus, RefreshCw, Save, Settings2, Trash2, X } from '@lucide/vue'
 import { nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import FieldLabel from './FieldLabel.vue'
 import SelectMenu from './SelectMenu.vue'
@@ -89,11 +89,46 @@ function syncModelsFromProps(): void {
       alias: undefined,
       contextWindow: 1000000,
       maxOutput: 128000,
-      vision: false
+      contextWindowAuto: true, maxOutputAuto: true
     }))
   } else {
     modelList.value = []
   }
+}
+
+const fetching = ref(false)
+const fetchError = ref('')
+const fetchNotice = ref('')
+let fetchSequence = 0
+watch(() => [props.open, form.kind, form.baseUrl, form.modelListUrl, form.apiKey, form.proxy], () => {
+  fetchSequence++
+  fetching.value = false
+  fetchError.value = ''
+  fetchNotice.value = ''
+}, { flush: 'sync' })
+async function fetchModels(): Promise<void> {
+  const sequence = ++fetchSequence
+  fetching.value = true
+  fetchError.value = ''
+  fetchNotice.value = ''
+  try {
+    const result = await window.seekclaw.daemon.request('provider.models.preview', { editingId: props.editingId,
+      draft: { id: form.id, kind: form.kind, baseUrl: form.baseUrl, modelListUrl: form.modelListUrl,
+        apiKey: form.apiKey, timeoutSeconds: form.timeoutSeconds, proxy: form.proxy } })
+    if (sequence !== fetchSequence || !props.open) return
+    const fetched = JSON.parse(result.data) as ModelDetailConfig[]
+    let added = 0
+    for (const model of fetched) {
+      const existing = modelList.value.find(item => item.id.toLowerCase() === model.id.toLowerCase())
+      if (existing) {
+        existing.detectedContextWindow = model.detectedContextWindow
+        existing.detectedMaxOutput = model.detectedMaxOutput
+      } else { modelList.value.push(model); added++ }
+    }
+    fetchNotice.value = `已获取 ${fetched.length} 个模型，新增 ${added} 个。保存后生效。`
+  } catch (error) {
+    if (sequence === fetchSequence) fetchError.value = error instanceof Error ? error.message : String(error)
+  } finally { if (sequence === fetchSequence) fetching.value = false }
 }
 
 function addModel(): void {
@@ -107,7 +142,7 @@ function addModel(): void {
         alias: undefined,
         contextWindow: 1000000,
         maxOutput: 128000,
-        vision: false
+        contextWindowAuto: true, maxOutputAuto: true
       })
     }
   }
@@ -178,7 +213,7 @@ watch(() => props.open, (open) => {
   if (!showAdvanced.value) {
     resetAdvancedToDefaults()
   }
-  revealKey.value = true
+  revealKey.value = false
   document.addEventListener('keydown', handleKeydown)
   void nextTick(() => firstInput.value?.focus())
 }, { immediate: true })
@@ -188,19 +223,20 @@ watch(() => props.open, (open, previous) => {
 })
 
 onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
+onBeforeUnmount(() => { fetchSequence++ })
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="modal-fade">
       <div v-if="open" class="modal-backdrop provider-editor-backdrop" @mousedown.self="close">
-        <form class="provider-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-editor-title"
+        <form class="provider-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-editor-title" :aria-busy="saving"
           @submit.prevent="save">
           <header class="provider-editor-header">
             <div>
               <h2 id="provider-editor-title">{{ editingId ? '编辑模型提供商' : '新增模型提供商' }}</h2>
             </div>
-            <button class="icon-button" type="button" title="关闭" :disabled="saving" @click="close">
+            <button class="icon-button" type="button" title="关闭" aria-label="关闭" :disabled="saving" @click="close">
               <X :size="18" />
             </button>
           </header>
@@ -246,6 +282,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                     <input v-model="form.apiKey" :type="revealKey ? 'text' : 'password'" placeholder="sk-…"
                       autocomplete="new-password" />
                     <button type="button" :title="revealKey ? '隐藏 API Key' : '显示 API Key'"
+                      :aria-label="revealKey ? '隐藏 API Key' : '显示 API Key'" :aria-pressed="revealKey"
                       @click="revealKey = !revealKey">
                       <EyeOff v-if="revealKey" :size="16" />
                       <Eye v-else :size="16" />
@@ -254,10 +291,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                 </label>
                 <div class="span-2 provider-models-block">
                   <div class="provider-models-header">
-                    <FieldLabel en="Models" zh="模型列表" help="此模型提供商可用的模型。可点击每行右侧设置按钮配置多模态/视觉支持与上下文参数。" required />
+                    <FieldLabel en="Models" zh="模型列表" help="此模型提供商可用的模型。可点击每行右侧设置按钮配置上下文长度与最大输出参数。" required />
+                    <button type="button" class="secondary-button compact-button" :disabled="fetching || !form.baseUrl.trim()" @click="fetchModels">
+                      <RefreshCw :size="13" :class="{ spin: fetching }" /> {{ fetching ? '正在获取…' : '获取模型' }}
+                    </button>
                     <small class="models-count-badge">{{ modelList.length }} 个模型</small>
                   </div>
 
+                  <p v-if="fetchError" class="inline-error" role="alert">{{ fetchError }}</p>
+                  <p v-if="fetchNotice" class="fetch-notice" role="status">{{ fetchNotice }}</p>
                   <div class="model-add-bar">
                     <input v-model="newModelInput" class="model-add-input" placeholder="输入模型 ID，如 gpt-5，支持逗号或换行粘贴批量输入"
                       @keydown.enter.prevent="addModel" />
@@ -268,26 +310,23 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                   </div>
 
                   <div v-if="modelList.length === 0" class="models-empty-tip">
-                    暂未添加模型，请在上方输入框添加模型 ID
+                    填写连接信息后点击「获取模型」，也可以手动添加模型 ID
                   </div>
 
                   <div v-else class="provider-models-table">
                     <div v-for="(model, idx) in modelList" :key="model.id" class="model-table-row">
                       <div class="model-row-left">
                         <span class="model-row-id">{{ model.id }}</span>
-                        <span v-if="model.vision" class="model-badge vision-badge" title="支持多模态 / 视觉">
-                          <Eye :size="11" /> 多模态
-                        </span>
                         <span v-if="model.alias" class="model-badge alias-badge" :title="`别名: ${model.alias}`">
                           {{ model.alias }}
                         </span>
                         <span class="model-badge context-badge"
-                          :title="`上下文窗口: ${(model.contextWindow || 1000000).toLocaleString()} Tokens`">
-                          {{ formatTokenCount(model.contextWindow) }}
+                          :title="`上下文窗口: ${(model.contextWindowAuto ? model.detectedContextWindow || 1000000 : model.contextWindow || 1000000).toLocaleString()} Tokens`">
+                          {{ model.contextWindowAuto ? '自动 · ' : '' }}{{ formatTokenCount(model.contextWindowAuto ? model.detectedContextWindow || 1000000 : model.contextWindow) }}
                         </span>
                       </div>
                       <div class="model-row-actions">
-                        <button type="button" class="icon-button compact" title="配置模型参数与多模态"
+                        <button type="button" class="icon-button compact" title="配置模型参数"
                           @click="openModelConfig(model)">
                           <Settings2 :size="15" />
                         </button>
@@ -303,12 +342,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
             </section>
 
             <div class="provider-advanced-section">
-              <label class="provider-advanced-check" style="margin-top: 10px;">
-                <input v-model="showAdvanced" type="checkbox" @change="onAdvancedToggle" />
+              <label class="provider-advanced-check">
+                <input v-model="showAdvanced" type="checkbox" aria-controls="provider-advanced-options" :aria-expanded="showAdvanced" @change="onAdvancedToggle" />
                 <span>高级选项</span>
               </label>
 
-              <div v-if="showAdvanced" class="provider-advanced-content">
+              <div v-if="showAdvanced" id="provider-advanced-options" class="provider-advanced-content">
                 <div class="provider-section-heading">
                   <strong>请求与路由</strong>
                 </div>
@@ -345,7 +384,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               </div>
             </div>
 
-            <div v-if="error" class="provider-editor-error">{{ error }}</div>
+            <div v-if="error" class="provider-editor-error" role="alert">{{ error }}</div>
           </div>
 
           <footer class="provider-editor-footer">
@@ -365,3 +404,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   <ModelConfigModal :open="modelConfigModalOpen" :model="selectedModelConfig" @close="modelConfigModalOpen = false"
     @save="handleModelConfigSave" />
 </template>
+
+<style scoped>
+.fetch-notice { font-size: 12px; color: var(--text-muted); margin: 6px 0; }
+</style>

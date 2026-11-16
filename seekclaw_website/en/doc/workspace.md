@@ -20,7 +20,7 @@ Desktop shows the complete workspace path in the task header and scopes open-loc
 
 ## The `.seekclaw` directory
 
-After `seekclaw init` or Desktop workspace initialization, the default layout is:
+After `seekclaw init`, the default layout is:
 
 ```text
 <workspace>/

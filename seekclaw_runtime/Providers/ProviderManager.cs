@@ -32,6 +32,8 @@ public interface IProviderManager
 
     /// <summary>Fetches model identifiers from a provider's model-list endpoint.</summary>
     Task<IReadOnlyList<string>> FetchModelsAsync(ProviderConfig provider, string? url = null, CancellationToken ct = default);
+    async Task<IReadOnlyList<ModelConfig>> FetchModelDetailsAsync(ProviderConfig provider, string? url = null, CancellationToken ct = default)
+        => (await FetchModelsAsync(provider, url, ct).ConfigureAwait(false)).Select(id => new ModelConfig { Id = id }).ToList();
 }
 
 public sealed class ProviderManager(
@@ -263,7 +265,10 @@ public sealed class ProviderManager(
         }
     }
 
-    public async Task<IReadOnlyList<string>> FetchModelsAsync(
+    public async Task<IReadOnlyList<string>> FetchModelsAsync(ProviderConfig provider, string? url = null, CancellationToken ct = default)
+        => (await FetchModelDetailsAsync(provider, url, ct).ConfigureAwait(false)).Select(model => model.Id).ToList();
+
+    public async Task<IReadOnlyList<ModelConfig>> FetchModelDetailsAsync(
         ProviderConfig provider,
         string? url = null,
         CancellationToken ct = default)
@@ -300,7 +305,7 @@ public sealed class ProviderManager(
 
         using (response)
         {
-            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 var detail = body.Length > 240 ? body[..240] : body;
@@ -322,17 +327,32 @@ public sealed class ProviderManager(
             if (array is null)
                 throw new LlmException($"Model list response from {provider.Id} does not contain a model array.", retryable: false);
 
-            var ids = array
-                .Select(ModelId)
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Select(id => id!.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            if (ids.Count == 0)
+            var models = array.Select(ParseModelMetadata).Where(model => model is not null)
+                .Select(model => model!).DistinctBy(model => model.Id, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(model => model.Id, StringComparer.OrdinalIgnoreCase).ToList();
+            if (models.Count == 0)
                 throw new LlmException($"Model list response from {provider.Id} contains no model IDs.", retryable: false);
-            return ids;
+            return models;
         }
+    }
+
+    internal static ModelConfig? ParseModelMetadata(JsonNode? node)
+    {
+        var id = ModelId(node)?.Trim();
+        if (string.IsNullOrEmpty(id)) return null;
+        var obj = node as JsonObject;
+        static int? Positive(params JsonNode?[] values)
+        {
+            foreach (var value in values)
+                if (value is JsonValue number && number.TryGetValue<int>(out var n) && n > 0) return n;
+            return null;
+        }
+        return new ModelConfig
+        {
+            Id = id, ContextWindowAuto = true, MaxOutputAuto = true,
+            DetectedContextWindow = Positive(obj?["context_window"], obj?["context_length"], obj?["max_context_length"], (obj?["limit"] as JsonObject)?["context"]),
+            DetectedMaxOutput = Positive(obj?["max_output_tokens"], obj?["max_completion_tokens"], obj?["max_output"], (obj?["limit"] as JsonObject)?["output"], (obj?["top_provider"] as JsonObject)?["max_completion_tokens"]),
+        };
     }
 
     // ---------------------------------------------------------------- helpers

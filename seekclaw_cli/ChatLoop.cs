@@ -285,7 +285,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
 
     private int? GetActiveContextWindow ()
     {
-        try { return runtime.Providers.ResolveActive(runtime.Workspace.Config).Model.ContextWindow; }
+        try { return runtime.Providers.ResolveActive(runtime.Workspace.Config).Model.EffectiveContextWindow; }
         catch (Exception) { return null; }
     }
 

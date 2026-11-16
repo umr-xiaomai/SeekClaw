@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { Archive, FolderOpen, RotateCcw, Save, Trash2, X } from '@lucide/vue'
-import { ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import type { ProjectItem, ThreadItem } from '../types'
 import TaskActivityPanel from './TaskActivityPanel.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
   thread?: ThreadItem
   project?: ProjectItem
   worktreeBusy?: boolean
   worktreeError?: string
-}>()
+  renameOnly?: boolean
+}>(), { renameOnly: false })
 
 const emit = defineEmits<{
   close: []
@@ -22,11 +23,25 @@ const emit = defineEmits<{
 }>()
 
 const title = ref('')
+const titleInput = ref<HTMLInputElement | null>(null)
 const baseRef = ref('HEAD')
 
-watch(() => [props.open, props.thread?.id, props.thread?.title] as const, () => {
-  if (props.open) title.value = props.thread?.title ?? ''
+function focusTitle(): void {
+  if (!props.open || !props.renameOnly) return
+  void nextTick(() => {
+    if (!props.open || !props.renameOnly) return
+    titleInput.value?.focus({ preventScroll: true })
+    titleInput.value?.select()
+  })
+}
+
+watch(() => [props.open, props.thread?.id, props.renameOnly] as const, () => {
+  if (props.open) {
+    title.value = props.thread?.title ?? ''
+    focusTitle()
+  }
 }, { immediate: true })
+onMounted(focusTitle)
 
 function save(): void {
   const value = title.value.trim()
@@ -38,29 +53,43 @@ function showWorkspace(): void {
   const path = props.thread?.executionWorkspace || props.project?.path
   if (path) void window.seekclaw.showItemInFolder(path)
 }
+
+function handleTitleKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || event.isComposing) return
+  event.preventDefault()
+  save()
+}
+
+function handleDialogKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || event.isComposing) return
+  event.preventDefault()
+  event.stopPropagation()
+  emit('close')
+}
 </script>
 
 <template>
   <Transition name="modal-fade">
     <div v-if="open && thread" class="modal-backdrop task-settings-backdrop" @mousedown.self="emit('close')">
-      <section class="task-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="task-settings-title">
+      <section class="task-settings-dialog" :class="{ 'rename-only': renameOnly }" role="dialog" aria-modal="true" aria-labelledby="task-settings-title" @keydown="handleDialogKeydown">
       <header class="task-settings-header">
         <div>
-          <h2 id="task-settings-title">任务设置</h2>
+          <h2 id="task-settings-title">{{ renameOnly ? '重命名任务' : '任务设置' }}</h2>
         </div>
-        <button class="icon-button" title="关闭" @click="emit('close')"><X :size="18" /></button>
+        <button class="icon-button" title="关闭" aria-label="关闭" @click="emit('close')"><X :size="18" /></button>
       </header>
 
       <div class="task-settings-body">
         <label class="task-settings-field">
           <span>标题</span>
-          <input v-model="title" maxlength="120" @keydown.enter="save" />
+          <input ref="titleInput" v-model="title" aria-label="任务标题" maxlength="120" @keydown="handleTitleKeydown" />
         </label>
 
+        <template v-if="!renameOnly">
         <div class="task-settings-field">
           <span>工作目录</span>
           <div class="workspace-path-control">
-            <input :value="thread.executionWorkspace || project?.path || '无工作目录（任务）'" readonly />
+            <input aria-label="工作目录" :value="thread.executionWorkspace || project?.path || '无工作目录（任务）'" readonly />
             <button v-if="project" class="secondary-button" @click="showWorkspace">
               <FolderOpen :size="16" />打开
             </button>
@@ -83,17 +112,24 @@ function showWorkspace(): void {
           <small v-if="worktreeError" role="alert">{{ worktreeError }}</small>
         </div>
         <TaskActivityPanel v-if="thread.sessionId" :key="thread.sessionId" :session-id="thread.sessionId" :workspace="project?.path" />
+        </template>
       </div>
 
       <footer class="task-settings-footer">
-        <div class="task-danger-actions">
+        <div v-if="!renameOnly" class="task-danger-actions">
           <button v-if="thread.archived" class="secondary-button" @click="emit('restore')"><RotateCcw :size="16" />恢复</button>
           <button v-else class="secondary-button" @click="emit('archive')"><Archive :size="16" />归档</button>
           <button class="danger-button" @click="emit('delete')"><Trash2 :size="16" />删除</button>
         </div>
-        <button class="secondary-button primary-action" :disabled="!title.trim()" @click="save"><Save :size="16" />保存标题</button>
+        <button v-else class="secondary-button" @click="emit('close')">取消</button>
+        <button class="secondary-button primary-action" :disabled="!title.trim()" @click="save"><Save v-if="!renameOnly" :size="16" />{{ renameOnly ? '保存' : '保存标题' }}</button>
       </footer>
       </section>
     </div>
   </Transition>
 </template>
+
+<style scoped>
+.task-settings-dialog.rename-only { width: min(420px, calc(100vw - 32px)); }
+.rename-only .task-settings-footer { justify-content: flex-end; gap: 8px; }
+</style>

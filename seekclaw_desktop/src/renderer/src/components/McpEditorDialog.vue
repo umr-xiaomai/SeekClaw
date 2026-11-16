@@ -122,13 +122,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   <Teleport to="body">
     <Transition name="modal-fade">
       <div v-if="open" class="modal-backdrop mcp-editor-backdrop" @mousedown.self="close">
-        <form class="mcp-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="mcp-editor-title" @submit.prevent="save">
+        <form class="mcp-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="mcp-editor-title" aria-describedby="mcp-editor-description" @submit.prevent="save">
           <header class="mcp-editor-header">
             <div>
               <h2 id="mcp-editor-title">{{ editing ? '编辑 MCP 服务器' : '新增 MCP 服务器' }}</h2>
-              <p>{{ editing ? form.name : '配置一个 MCP Server 并重新加载工具' }}</p>
+              <p id="mcp-editor-description">{{ editing ? form.name : '配置一个 MCP Server 并重新加载工具' }}</p>
             </div>
-            <button class="icon-button" type="button" title="关闭" :disabled="saving" @click="close">
+            <button class="icon-button" type="button" title="关闭" aria-label="关闭" :disabled="saving" @click="close">
               <X :size="18" />
             </button>
           </header>
@@ -218,7 +218,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               </label>
             </section>
 
-            <p v-if="message" class="mcp-editor-error">{{ message }}</p>
+            <p v-if="message" class="mcp-editor-error" role="alert">{{ message }}</p>
           </div>
 
           <footer class="mcp-editor-footer">
@@ -244,20 +244,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(8px);
+  background: rgb(0 0 0 / 36%);
+  backdrop-filter: blur(3px);
 }
 
 .mcp-editor-dialog {
   display: flex;
   flex-direction: column;
   width: min(100%, 620px);
-  max-height: min(760px, calc(100vh - 40px));
+  max-height: min(760px, calc(100dvh - 40px));
   overflow: hidden;
-  background: var(--surface-raised, #ffffff);
+  background: var(--modal-surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28), 0 2px 10px rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-dialog, 16px);
+  box-shadow: var(--dialog-shadow, var(--shadow));
 }
 
 .mcp-editor-header {
@@ -266,13 +266,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   justify-content: space-between;
   gap: 20px;
   padding: 20px 24px 16px;
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
+  background: transparent;
 }
 
 .mcp-editor-header h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 650;
   color: var(--text);
   letter-spacing: -0.01em;
@@ -288,12 +287,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 .mcp-editor-body {
   display: flex;
   flex: 1;
+  min-height: 0;
   flex-direction: column;
-  gap: 18px;
-  padding: 20px 24px;
+  gap: 20px;
+  padding: 4px 24px 20px;
   overflow-x: hidden;
   overflow-y: auto;
-  background: var(--surface-raised);
+  background: transparent;
 }
 
 .mcp-form-section {
@@ -347,7 +347,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
 }
 
 .form-field > span {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -359,7 +359,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   color: var(--text);
   font-size: 13px;
   font-family: inherit;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   outline: none;
@@ -389,11 +389,10 @@ textarea.form-input {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 12px 14px;
+  padding: 10px 0;
   cursor: pointer;
-  background: color-mix(in srgb, var(--surface-hover) 65%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 9px;
+  background: transparent;
+  border-radius: var(--radius-control, 8px);
   transition: background-color 140ms ease;
 }
 
@@ -433,9 +432,9 @@ textarea.form-input {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 13px 24px;
-  background: color-mix(in srgb, var(--sidebar) 72%, var(--surface-raised));
-  border-top: 1px solid var(--border);
+  padding: 14px 24px 20px;
+  flex-wrap: wrap;
+  background: transparent;
 }
 
 .mcp-editor-footer > span {
@@ -487,5 +486,23 @@ textarea.form-input {
 
 .mcp-enabled-row input:checked + .toggle-switch > span {
   transform: translateX(16px);
+}
+
+.mcp-editor-header > div { min-width: 0; }
+.mcp-editor-header p { overflow-wrap: anywhere; }
+.mcp-enabled-row input:focus-visible + .toggle-switch {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 560px) {
+  .mcp-editor-backdrop { padding: 12px; }
+  .mcp-editor-dialog { max-height: calc(100dvh - 24px); }
+  .mcp-editor-header { padding: 18px 18px 16px; }
+  .mcp-editor-body { padding: 0 18px 18px; }
+  .mcp-editor-footer { padding: 12px 18px 18px; }
+  .mcp-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .mcp-editor-footer > span { flex-basis: 100%; }
+  .mcp-editor-footer > div { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 }
 </style>

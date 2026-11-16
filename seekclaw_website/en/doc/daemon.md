@@ -26,7 +26,6 @@ Responses use a stable event envelope: `id` identifies the request, `event` iden
 | `protocol.info` | none | Returns the protocol version, capabilities, and methods |
 | `workspace.get` | none | Returns the active path, project kinds, and mode |
 | `workspace.open` | `{ "path": "..." }` | Validates and switches the Runtime workspace |
-| `workspace.init` | none | Initializes SeekClaw directories in the active workspace |
 | `agent.mode.get` | none | Returns `plan`, `readonly`, `edit`, or `auto` |
 | `agent.mode.switch` | `{ "mode": "edit" }` | Switches and persists the Agent mode |
 | `agent.steer` | `{ "sessionId": "...", "message": "..." }` | Adds guidance to a running turn without cancelling the current request |
@@ -109,4 +108,12 @@ Each `chat` request is assigned an isolated Runtime, workspace Prompt/Skills sta
 
 ## Desktop Daemon lifecycle
 
-Packaged Desktop first connects to the local endpoint. If no Daemon is present, it starts the self-contained Runtime under `resources/runtime` and probes for readiness using 24 short attempts. Desktop tracks only the child process it creates. On exit it sends `shutdown`, waits for graceful termination, and kills the child only after a timeout. If Desktop connected to an externally started Daemon, exiting Desktop only disconnects the client.
+Packaged Desktop first connects to the local endpoint. If no Daemon is present, it starts the self-contained Runtime under `resources/runtime` and probes for readiness using 28 short attempts. Desktop tracks only the child process it creates. On exit it sends `shutdown`, waits for graceful termination, and kills the child only after a timeout. If Desktop connected to an externally started Daemon, exiting Desktop only disconnects the client.
+
+## Desktop browser and model discovery
+
+`provider.models.preview` accepts `{ "editingId"?: "...", "draft": { "id"?, "kind", "baseUrl", "modelListUrl"?, "apiKey"?, "proxy"?, "timeoutSeconds"? } }` and returns model details without changing or persisting a provider. Independent automatic flags use optional detected limits while preserving manual values.
+
+`browser.scope` validates `{ "sessionId", "workspace"?, "global"? }` ownership and returns the browser scope. Desktop calls `browser.attach` on each connection. Runtime sends `browser.request` on that connection; Desktop correlates `browser.reply` and cancels expired operations with `browser.cancel`. The tool is available only to turns with a Desktop bridge, uses browser-local input, and never activates the application window. Disconnects cancel operations without replaying webpage interactions.
+
+General settings no longer expose Runtime configuration. Desktop exits after bounded connection retries fail; exiting differs from minimizing to the tray. Rebuild and restart both Desktop and its bundled Runtime when upgrading this protocol.

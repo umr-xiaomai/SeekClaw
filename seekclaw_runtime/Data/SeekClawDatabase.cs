@@ -129,7 +129,9 @@ public sealed class SeekClawDatabase
                 scope TEXT NOT NULL,
                 id TEXT NOT NULL,
                 workspace TEXT NULL,
+                parent_session_id TEXT NULL,
                 title TEXT NULL,
+                title_source TEXT NOT NULL DEFAULT 'manual',
                 archived INTEGER NOT NULL DEFAULT 0,
                 reasoning_level INTEGER NOT NULL,
                 network_enabled INTEGER NOT NULL DEFAULT 1,
@@ -204,6 +206,8 @@ public sealed class SeekClawDatabase
         command.ExecuteNonQuery();
 
         EnsureColumn(connection, "sessions", "network_enabled", "INTEGER NOT NULL DEFAULT 1");
+        EnsureColumn(connection, "sessions", "parent_session_id", "TEXT NULL");
+        EnsureColumn(connection, "sessions", "title_source", "TEXT NOT NULL DEFAULT 'manual'");
         EnsureColumn(connection, "sessions", "llm_rounds", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "sessions", "execution_steps", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "sessions", "input_tokens", "INTEGER NOT NULL DEFAULT 0");

@@ -41,7 +41,10 @@ public sealed record ImageViewedEvent(string ImageId, string Name, string MediaT
 
 // ---------------------------------------------------------------- tools
 
-public sealed record ToolCallStartedEvent(string CallId, string ToolName, string ArgumentSummary) : RuntimeEvent;
+public sealed record ToolCallStartedEvent(string CallId, string ToolName, string ArgumentSummary) : RuntimeEvent
+{
+    public string? ArgumentsJson { get; init; }
+}
 
 public sealed record ToolCallProgressEvent(string CallId, string Message) : RuntimeEvent;
 
@@ -133,13 +136,17 @@ public sealed record SubAgentStartedEvent(
     string SubAgentId,
     string Role,
     string TaskPrompt,
-    string? ModelRef = null) : RuntimeEvent;
+    string? ModelRef = null,
+    string? ChildSessionId = null) : RuntimeEvent;
 
 public sealed record SubAgentProgressEvent(
     string SubAgentId,
     string Role,
     string Status,
-    string? Detail = null) : RuntimeEvent;
+    string? Detail = null,
+    string? Kind = null,
+    string? Delta = null,
+    string? ChildSessionId = null) : RuntimeEvent;
 
 public sealed record SubAgentCompletedEvent(
     string SubAgentId,

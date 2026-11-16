@@ -1,25 +1,15 @@
 <script setup lang="ts">
 import {
-  Braces,
   Bug,
-  Circle,
   CornerDownLeft,
   Folder,
-  FolderOpen,
-  Globe2,
   Hammer,
-  History,
   LoaderCircle,
-  MoreHorizontal,
-  PanelRight,
   RefreshCw,
-  Search,
   Telescope,
-  TerminalSquare,
-  Trash2,
-  X
+  Trash2
 } from '@lucide/vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowReactive, watch } from 'vue'
 import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
 import AppTitleBar from './components/AppTitleBar.vue'
 import ActivityBar from './components/ActivityBar.vue'
@@ -31,7 +21,11 @@ import ComposerProjectSelector from './components/ComposerProjectSelector.vue'
 import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
 
 import ConfirmDialog from './components/ConfirmDialog.vue'
-import ConversationMessage from './components/ConversationMessage.vue'
+import ConversationProcess from './components/ConversationProcess.vue'
+import SubAgentConversationPanel from './components/SubAgentConversationPanel.vue'
+import ConversationBrowserPanel from './components/ConversationBrowserPanel.vue'
+import ConversationToolbar from './components/ConversationToolbar.vue'
+import type { ConversationBrowserState } from '../../shared/browser'
 import CustomizationPage from './components/CustomizationPage.vue'
 import EditMessageDialog from './components/EditMessageDialog.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
@@ -40,7 +34,6 @@ import { extractConversationTurns, type ConversationTurn } from './components/co
 
 import OfficialSkillsDialog from './components/OfficialSkillsDialog.vue'
 import ProjectPropertiesDialog from './components/ProjectPropertiesDialog.vue'
-import RuntimeReconnectDialog from './components/RuntimeReconnectDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
@@ -52,27 +45,24 @@ import { widgetsAtTurnTails } from './conversation-widgets'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
-import type { ChatMessage, ConversationWidget, FileAttachment, ImageAttachment, ProjectItem, QueuedMessage, ThreadItem, ThreadStats, ToolActivity } from './types'
+import type { ChatMessage, ConversationWidget, FileAttachment, ImageAttachment, ProjectItem, QueuedMessage, SubAgentActivity, ThreadItem, ThreadStats, ToolActivity } from './types'
 import {
   DEFAULT_SIDEBAR_WIDTH,
   formatPromptWithFiles,
   hydrateMessages,
   loadStoredSidebarWidth,
   makeId,
-  messageMatches,
   MIN_SIDEBAR_WIDTH,
   normalizePath,
   normalizeReasoningLevel,
   pathName,
-  phaseLabel,
   plainImages,
   queuedImageUrl,
   queuedMessagePreview,
   samePath,
   sessionScope,
   sessionStats,
-  SIDEBAR_WIDTH_STORAGE_KEY,
-  updateThreadTitle
+  SIDEBAR_WIDTH_STORAGE_KEY
 } from './app-helpers'
 import type { RuntimeModelCatalogItem, RuntimeProject, RuntimeSession, RuntimeWorkspace } from './app-helpers'
 import {
@@ -83,6 +73,11 @@ import {
 } from './session-sync'
 import { createThreadActions } from './thread-actions'
 import { createDaemonEventHandler } from './daemon-event-handler'
+import { applySessionTitle } from './session-title'
+import { useSidebarVisibility } from './sidebar-expansion'
+import { createConversationScroller } from './conversation-scroll'
+import { projectConversationTurns } from './conversation-process'
+import { computeConversationVirtualWindow, correctConversationMeasurement } from './conversation-virtual'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
 const IMPLICIT_DOCUMENTS_MIGRATION_KEY = 'seekclaw-projects-remove-implicit-documents-v2'
@@ -108,7 +103,7 @@ const appInfo = ref<AppInfo>({
 })
 type AppPage = 'main' | 'settings' | 'customization' | 'extensions' | 'archived' | 'scheduled' | 'official-skills'
 
-const sidebarOpen = ref(true)
+const sidebarOpen = useSidebarVisibility()
 const activePage = ref<AppPage>('main')
 
 const currentActivityItem = computed<'chat' | 'archived' | 'scheduled' | 'customization' | 'settings'>(() => {
@@ -162,6 +157,48 @@ function handleSidebarResetWidth(): void {
 }
 const aboutOpen = ref(false)
 const gitPanelOpen = ref(false)
+const browserPanelOpen = ref(false)
+const selectedSubAgent = ref<{ agent: SubAgentActivity; threadId: string } | null>(null)
+const browserState = ref<ConversationBrowserState | null>(null)
+const browserError = ref('')
+let unsubscribeBrowser: (() => void) | undefined
+const browserAutoOpened = new Set<string>()
+let browserStateSequence = 0
+function handleBrowserState(state: ConversationBrowserState): void {
+  if (state.sessionId !== activeThread.value?.sessionId) return
+  browserState.value = state
+  if (state.busy && !browserAutoOpened.has(state.scope)) {
+    browserAutoOpened.add(state.scope)
+    browserPanelOpen.value = true
+    gitPanelOpen.value = false
+    selectedSubAgent.value = null
+  }
+}
+async function openConversationBrowser(): Promise<void> {
+  const thread = activeThread.value
+  if (!thread) return
+  browserError.value = ''
+  try {
+    const project = projects.value.find(project => project.id === thread.projectId)
+    if (project) await ensureRuntimeProject(project)
+    const scope = sessionScope(thread, project)
+    if (!thread.sessionId) {
+      const response = await window.seekclaw.daemon.request('session.new', { ...scope, reasoningLevel: thread.reasoningLevel, networkEnabled: thread.networkEnabled ?? true })
+      thread.sessionId = response.data
+      thread.sessionLoaded = true
+      if (thread.titleSource === 'manual')
+        await window.seekclaw.daemon.request('session.update', { ...scope, id: thread.sessionId, title: thread.title })
+    }
+    const state = await window.seekclaw.browser.open({ ...scope, sessionId: thread.sessionId })
+    if (thread !== activeThread.value) return
+    browserState.value = state
+    browserAutoOpened.add(state.scope)
+    browserPanelOpen.value = true
+    gitPanelOpen.value = false
+    selectedSubAgent.value = null
+  } catch (reason) { browserError.value = reason instanceof Error ? reason.message : String(reason) }
+}
+
 const gitPanelTab = ref<'diff' | 'history'>('diff')
 
 const DEFAULT_GIT_PANEL_WIDTH = 240
@@ -192,6 +229,8 @@ const taskSettingsThreadId = ref('')
 const worktreeBusy = ref(false)
 const worktreeError = ref('')
 const activePropertiesProject = ref<ProjectItem | null>(null)
+const projectNameSaving = ref(false)
+const projectNameError = ref('')
 const storedAccentColor = localStorage.getItem('seekclaw-accent-color') || 'default'
 const accentColor = ref<string>(storedAccentColor)
 const storedFontFamily = localStorage.getItem('seekclaw-font-family') || ''
@@ -208,7 +247,6 @@ const theme = ref<AppearanceTheme>(
 const daemonState = ref<DaemonState>({ connected: false, endpoint: '' })
 const reconnecting = ref(false)
 const reconnectAttempt = ref(0)
-const reconnectPrompt = ref<{ startup: boolean; error?: string } | null>(null)
 const configAnomaly = ref<{
   hasAnomaly: boolean
   detail?: string
@@ -228,17 +266,48 @@ const activeModel = ref('')
 const mode = ref('guardrail')
 const busy = computed(() => Boolean(activeThread.value?.running))
 const scrollArea = ref<HTMLElement | null>(null)
+const conversationContent = ref<HTMLElement | null>(null)
+let conversationResizeObserver: ResizeObserver | undefined
 const composer = ref<InstanceType<typeof Composer> | null>(null)
 const autoFollowConversation = ref(true)
 const conversationLoading = ref(false)
 const conversationLoadError = ref('')
 const conversationQuery = ref('')
-const messageHeights = new Map<string, number>()
+const turnHeights = shallowReactive(new Map<string, number>())
+const expandedProcesses = shallowReactive(new Map<string, boolean>())
+
+function turnViewKey(turnId: string): string {
+  return `${activeThreadId.value}:${turnId}`
+}
 const conversationScrollTop = ref(0)
 const conversationViewportHeight = ref(600)
+const conversationContentOffset = ref(0)
 const conversationSelectionToken = { value: 0 }
 
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value))
+const activeSubAgent = computed(() => {
+  const selected = selectedSubAgent.value
+  if (!selected || selected.threadId !== activeThread.value?.id) return null
+  return activeThread.value.messages.flatMap((message) => message.subAgents ?? [])
+    .findLast((agent) => agent.id === selected.agent.id) ?? selected.agent
+})
+watch(activeThreadId, () => { selectedSubAgent.value = null })
+
+function openSubAgent(agent: SubAgentActivity): void {
+  if (!activeThread.value?.sessionId) return
+  selectedSubAgent.value = { agent, threadId: activeThread.value.id }
+  gitPanelOpen.value = false
+  browserPanelOpen.value = false
+}
+watch(() => activeThread.value?.sessionId, async id => {
+  const sequence = ++browserStateSequence
+  browserState.value = null
+  browserError.value = ''
+  if (id) {
+    const state = await window.seekclaw.browser.state(id).catch(() => null)
+    if (sequence === browserStateSequence) browserState.value = state
+  }
+})
 const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? ReasoningLevel.High)
 const activeModelCatalogItem = computed(() =>
   modelCatalog.value.find((model) => model.ref === activeModel.value)
@@ -354,7 +423,6 @@ const sessionSyncContext = { daemonState, threads }
 let unsubscribeEvent: (() => void) | undefined
 let unsubscribeState: (() => void) | undefined
 let reconnectTask: Promise<boolean> | null = null
-let automaticReconnectPaused = false
 let appReadyForRecovery = false
 
 function loadStoredProjects(): ProjectItem[] {
@@ -382,12 +450,12 @@ function ensureProject(path: string, name?: string): ProjectItem {
   return project
 }
 
-async function saveProject(project: ProjectItem): Promise<ProjectItem> {
+async function saveProject(project: ProjectItem, name = project.name): Promise<ProjectItem> {
   const oldId = project.id
   const response = await window.seekclaw.daemon.request('project.upsert', {
     id: project.id,
     path: project.path,
-    name: project.name
+    name
   })
   const saved = JSON.parse(response.data) as RuntimeProject
   const duplicate = projects.value.find((item) => item !== project && item.id === saved.id)
@@ -453,6 +521,8 @@ function openGitPanel(tab: 'diff' | 'history'): void {
   if (!activeProject.value) return
   toolDiff.value = null
   gitPanelTab.value = tab
+  browserPanelOpen.value = false
+  selectedSubAgent.value = null
   gitPanelOpen.value = true
 }
 
@@ -463,6 +533,8 @@ function openDevTools(): void {
 function openToolDiff(path: string, diff: string): void {
   toolDiff.value = { path, diff }
   gitPanelTab.value = 'diff'
+  browserPanelOpen.value = false
+  selectedSubAgent.value = null
   gitPanelOpen.value = true
 }
 
@@ -552,6 +624,11 @@ function isNearConversationBottom(element: HTMLElement, threshold = 48): boolean
 
 function measureConversationViewport(): void {
   if (scrollArea.value) conversationViewportHeight.value = scrollArea.value.clientHeight
+  if (scrollArea.value && conversationContent.value) {
+    conversationContentOffset.value = conversationContent.value.getBoundingClientRect().top
+      - scrollArea.value.getBoundingClientRect().top + scrollArea.value.scrollTop
+      + (parseFloat(getComputedStyle(conversationContent.value).paddingTop) || 0)
+  }
 }
 
 const userTurns = computed<ConversationTurn[]>(() => {
@@ -618,12 +695,12 @@ function handleTimelineNavigate(turn: ConversationTurn): void {
     return
   }
 
-  const index = conversationItems.value.findIndex((item) => item.message.id === turn.id)
+  const index = conversationTurns.value.findIndex((item) => item.user?.message.id === turn.id)
   if (index >= 0) {
-    let top = 0
+    let top = conversationContentOffset.value
     for (let i = 0; i < index; i++) {
-      const id = conversationItems.value[i]?.message.id ?? ''
-      top += messageHeights.get(id) ?? VIRTUAL_ESTIMATED_HEIGHT
+      const id = conversationTurns.value[i]?.id ?? ''
+      top += turnHeights.get(turnViewKey(id)) ?? VIRTUAL_ESTIMATED_HEIGHT
     }
     container.scrollTo({ top, behavior: 'smooth' })
     setTimeout(() => {
@@ -643,12 +720,24 @@ function handleConversationScroll(): void {
   updateActiveTurn()
 }
 
-async function scrollToBottom(smooth = false, force = false): Promise<void> {
-  await nextTick()
-  const element = scrollArea.value
-  if (!element || (!force && !autoFollowConversation.value)) return
-  element.scrollTo({ top: element.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
-}
+const conversationScroller = createConversationScroller({
+  element: () => scrollArea.value,
+  shouldFollow: () => autoFollowConversation.value,
+  afterRender: nextTick,
+  requestFrame: (callback) => requestAnimationFrame(callback),
+  cancelFrame: (handle) => cancelAnimationFrame(handle)
+})
+const scrollToBottom = conversationScroller.scrollToBottom
+
+watch([scrollArea, conversationContent], () => {
+  conversationResizeObserver?.disconnect()
+  conversationResizeObserver = new ResizeObserver(() => {
+    measureConversationViewport()
+    void scrollToBottom()
+  })
+  if (scrollArea.value) conversationResizeObserver.observe(scrollArea.value)
+  if (conversationContent.value) conversationResizeObserver.observe(conversationContent.value)
+}, { flush: 'post' })
 
 async function handleScheduleUpdated(): Promise<void> {
   if (!daemonState.value.connected) return
@@ -732,7 +821,6 @@ async function loadRuntimeState(): Promise<void> {
     const catalog = JSON.parse(catalogResponse.data) as RuntimeModelCatalogItem[]
     const workspace = JSON.parse(workspaceResponse.data) as RuntimeWorkspace
     const currentProject = projects.value.find((project) => samePath(project.path, workspace.path))
-    if (currentProject && workspace.name) currentProject.name = workspace.name
     runtimeWorkspacePath.value = workspace.path
     if (!projects.value.some((project) => project.id === selectedProjectId.value))
       selectedProjectId.value = currentProject?.id ?? ''
@@ -784,34 +872,31 @@ async function handleRebuildConfig(): Promise<void> {
 
 function handleDaemonState(state: DaemonState): void {
   daemonState.value = state
+  if (!state.connected) threads.value.forEach((thread) => { thread.titleGenerating = false })
   if (state.connected) {
-    automaticReconnectPaused = false
-    reconnectPrompt.value = null
     return
   }
   if (conversationLoading.value) {
     conversationLoading.value = false
     conversationLoadError.value = '已与 SeekClaw Runtime 断开连接，正在尝试重连…'
   }
-  if (!appReadyForRecovery || reconnecting.value || reconnectTask || automaticReconnectPaused || reconnectPrompt.value) return
-  void runReconnectCycle(false)
+  if (!appReadyForRecovery || reconnecting.value || reconnectTask) return
+  void runReconnectCycle()
 }
 
-async function runReconnectCycle(startup: boolean): Promise<boolean> {
+async function runReconnectCycle(): Promise<boolean> {
   if (reconnectTask) return reconnectTask
   reconnectTask = (async () => {
     reconnecting.value = true
-    reconnectPrompt.value = null
     const state = await retryRuntimeConnection(
       () => window.seekclaw.daemon.connect(),
       { onAttempt: (attempt) => { reconnectAttempt.value = attempt } })
     daemonState.value = state
     if (state.connected) {
-      automaticReconnectPaused = false
-      await loadRuntimeState()
+        await loadRuntimeState()
       return true
     }
-    reconnectPrompt.value = { startup, error: state.error }
+    await window.seekclaw.exitApp()
     return false
   })().finally(() => {
     reconnecting.value = false
@@ -822,34 +907,16 @@ async function runReconnectCycle(startup: boolean): Promise<boolean> {
 }
 
 async function reconnectDaemon(): Promise<void> {
-  automaticReconnectPaused = false
-  reconnectPrompt.value = null
   if (daemonState.value.connected) {
     await loadRuntimeState()
     return
   }
-  await runReconnectCycle(false)
+  await runReconnectCycle()
 }
 
 async function refreshRuntimeState(): Promise<void> {
   if (daemonState.value.connected) await loadRuntimeState()
   else await reconnectDaemon()
-}
-
-function continueRuntimeReconnect(): void {
-  const startup = reconnectPrompt.value?.startup ?? false
-  reconnectPrompt.value = null
-  automaticReconnectPaused = false
-  void runReconnectCycle(startup)
-}
-
-function cancelRuntimeReconnect(): void {
-  if (reconnectPrompt.value?.startup) {
-    void window.seekclaw.closeApp()
-    return
-  }
-  reconnectPrompt.value = null
-  automaticReconnectPaused = true
 }
 
 async function openWorkspace(): Promise<void> {
@@ -1150,7 +1217,6 @@ async function ensureRuntimeProject(project: ProjectItem): Promise<void> {
   const response = await window.seekclaw.daemon.request('workspace.open', { path: project.path })
   const opened = JSON.parse(response.data) as RuntimeWorkspace
   project.path = opened.path
-  project.name = opened.name || project.name
   await saveProject(project)
   runtimeWorkspacePath.value = opened.path
   mode.value = opened.mode
@@ -1199,11 +1265,11 @@ async function selectThread(id: string): Promise<void> {
       if (selectionToken !== conversationSelectionToken.value) return
 
       const saved = JSON.parse(response.data) as RuntimeSession
-      thread.messages = hydrateMessages(saved)
+      thread.messages = hydrateMessages(saved, thread.messages)
       thread.sessionLoaded = true
       thread.executionWorkspace = saved.executionWorkspace
       thread.worktree = saved.worktree
-      thread.title = saved.title || thread.title
+      applySessionTitle(thread, saved)
       thread.archived = Boolean(saved.archived)
       thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
       thread.networkEnabled = saved.networkEnabled ?? true
@@ -1294,44 +1360,48 @@ const VIRTUAL_THRESHOLD = 60
 const VIRTUAL_OVERSCAN = 12
 const VIRTUAL_ESTIMATED_HEIGHT = 120
 
-/** Windowed rendering for very long conversations: only messages near the viewport are mounted. */
-const virtualWindow = computed(() => {
-  const items = conversationItems.value
-  const total = items.length
-  if (total <= VIRTUAL_THRESHOLD || conversationQuery.value.trim()) {
-    return { active: false, start: 0, end: total, topPad: 0, bottomPad: 0, items }
-  }
-  const heightOf = (index: number): number =>
-    messageHeights.get(items[index]?.message.id ?? '') ?? VIRTUAL_ESTIMATED_HEIGHT
+const conversationTurns = computed(() => projectConversationTurns(conversationItems.value, {
+  running: activeThread.value?.running,
+  assistantId: activeThread.value?.assistantId
+}))
 
-  const targetTop = Math.max(0, conversationScrollTop.value - VIRTUAL_OVERSCAN * VIRTUAL_ESTIMATED_HEIGHT)
-  let topPad = 0
-  let start = 0
-  for (; start < total; start++) {
-    const height = heightOf(start)
-    if (topPad + height >= targetTop) break
-    topPad += height
-  }
-
-  const targetBottom = conversationScrollTop.value + conversationViewportHeight.value
-    + VIRTUAL_OVERSCAN * VIRTUAL_ESTIMATED_HEIGHT
-  let end = start
-  let acc = topPad
-  while (end < total && acc < targetBottom) {
-    acc += heightOf(end)
-    end++
-  }
-
-  let bottomPad = 0
-  for (let i = end; i < total; i++) bottomPad += heightOf(i)
-  return { active: true, start, end, topPad, bottomPad, items: items.slice(start, end) }
-})
+/** Measure the same turn units that are rendered, including their disclosure state. */
+const virtualWindow = computed(() => computeConversationVirtualWindow({
+  items: conversationTurns.value,
+  getHeight: (turn) => turnHeights.get(turnViewKey(turn.id)),
+  scrollTop: conversationScrollTop.value,
+  viewportHeight: conversationViewportHeight.value,
+  contentOffsetTop: conversationContentOffset.value,
+  enabled: !conversationQuery.value.trim(),
+  threshold: VIRTUAL_THRESHOLD,
+  overscan: VIRTUAL_OVERSCAN,
+  estimatedHeight: VIRTUAL_ESTIMATED_HEIGHT
+}))
 
 const vMeasure = {
   mounted(el: HTMLElement, binding: { value: string }): void {
     const report = (): void => {
       const height = el.getBoundingClientRect().height
-      if (height > 0) messageHeights.set(binding.value, height)
+      if (height <= 0 || turnHeights.get(binding.value) === height) return
+      const container = scrollArea.value
+      if (container && virtualWindow.value.active) {
+        const top = correctConversationMeasurement({
+          items: conversationTurns.value,
+          getHeight: (turn) => turnHeights.get(turnViewKey(turn.id)),
+          scrollTop: conversationScrollTop.value,
+          following: autoFollowConversation.value,
+          measuredIndex: conversationTurns.value.findIndex((turn) => turnViewKey(turn.id) === binding.value),
+          height,
+          contentOffsetTop: conversationContentOffset.value,
+          estimatedHeight: VIRTUAL_ESTIMATED_HEIGHT
+        })
+        // Publish the corrected viewport before the new height can change its window.
+        if (top !== conversationScrollTop.value) {
+          conversationScrollTop.value = top
+          container.scrollTop = top
+        }
+      }
+      turnHeights.set(binding.value, height)
     }
     report()
     const observer = new ResizeObserver(report)
@@ -1482,7 +1552,7 @@ async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Pr
   thread.messages.push(guidanceMessage)
   thread.updatedAt = Date.now()
   thread.pendingGuidance = (thread.pendingGuidance ?? 0) + 1
-  if (thread.id === activeThreadId.value) void scrollToBottom(true, true)
+  if (thread.id === activeThreadId.value) void scrollToBottom(false, true)
   try {
     await window.seekclaw.daemon.request('agent.steer', {
       message: formatPromptWithFiles(queued.content, queued.files),
@@ -1527,10 +1597,12 @@ async function runMessageTurn(
   }
   thread.messages.push(userMessage, assistant)
   thread.updatedAt = Date.now()
-  const titlePrompt = content.trim()
-    || (files?.length ? `处理文件：${files.map((f) => f.name).join('、')}` : '')
-    || `查看图片：${images.map((image) => image.name).join('、')}`
-  const titleChanged = updateThreadTitle(thread, titlePrompt)
+  if (thread.titleSource === 'pending' || thread.titleSource === 'input'
+    || (turnStartIndex === 0 && thread.title === '新任务')) {
+    thread.titleSource = 'pending'
+    thread.title = '未命名任务'
+    thread.titleGenerating = true
+  }
   thread.running = true
   thread.activeTurnToken = turnToken
   thread.activeTurnStartId = userMessage.id
@@ -1538,7 +1610,7 @@ async function runMessageTurn(
   thread.requestId = undefined
   let terminalAssistant = assistant
   autoFollowConversation.value = true
-  await scrollToBottom(true, true)
+  await scrollToBottom(false, true)
 
   try {
     if (project) await ensureRuntimeProject(project)
@@ -1554,7 +1626,7 @@ async function runMessageTurn(
       thread.sessionLoaded = true
       sessionCreated = true
     }
-    if (sessionCreated || titleChanged) {
+    if (sessionCreated && thread.titleSource !== 'pending') {
       await window.seekclaw.daemon.request('session.update', {
         id: thread.sessionId,
         ...scope,
@@ -1582,6 +1654,7 @@ async function runMessageTurn(
       if (!finalAssistant.content && response.data) finalAssistant.content = response.data
     }
   } catch (error) {
+    thread.titleGenerating = false
     const requestId = error instanceof Error
       ? (error as Error & { requestId?: unknown }).requestId
       : undefined
@@ -1614,7 +1687,7 @@ async function runMessageTurn(
     if (thread.sessionId && terminalAssistant.state !== 'error') {
       await reloadThreadSession(thread, project).catch(() => undefined)
     }
-    if (thread.id === activeThreadId.value) await scrollToBottom(true)
+    if (thread.id === activeThreadId.value) await scrollToBottom()
     scheduleQueuedDrain(thread)
   }
 }
@@ -1630,8 +1703,64 @@ function reloadBackgroundThreadIfIdle(thread: ThreadItem): void {
 }
 
 function openTaskSettings(thread: ThreadItem = activeThread.value!): void {
+  taskRenameOnly.value = false
   worktreeError.value = ''
   if (thread) taskSettingsThreadId.value = thread.id
+}
+
+const taskRenameOnly = ref(false)
+const sidebarActionError = ref('')
+
+function showProject(project: ProjectItem): void {
+  void runSidebarAction(() => window.seekclaw.showItemInFolder(project.path))
+}
+
+function renameTask(thread: ThreadItem): void {
+  openTaskSettings(thread)
+  taskRenameOnly.value = true
+}
+
+async function runSidebarAction(action: () => Promise<unknown>): Promise<void> {
+  sidebarActionError.value = ''
+  try { await action() }
+  catch (error) { sidebarActionError.value = error instanceof Error ? error.message : String(error) }
+}
+
+async function copyTask(thread: ThreadItem, format: 'text' | 'id'): Promise<void> {
+  await runSidebarAction(async () => {
+    if (format === 'id') {
+      if (thread.sessionId) await navigator.clipboard.writeText(thread.sessionId)
+      return
+    }
+    const project = projects.value.find((item) => item.id === thread.projectId)
+    if (thread.projectId && !project) return
+    let messages = thread.messages
+    if (thread.sessionId && !thread.sessionLoaded) {
+      const response = await window.seekclaw.daemon.request('session.get', {
+        id: thread.sessionId, ...sessionScope(thread, project)
+      })
+      messages = hydrateMessages(JSON.parse(response.data) as RuntimeSession)
+    }
+    await navigator.clipboard.writeText(messages.filter((message) => message.content.trim())
+      .map((message) => `${message.role === 'user' ? '用户' : 'SeekClaw'}\n${message.content}`).join('\n\n'))
+  })
+}
+
+async function forkTask(thread: ThreadItem): Promise<void> {
+  if (!thread.sessionId || thread.running) return
+  await runSidebarAction(async () => {
+    const project = projects.value.find((item) => item.id === thread.projectId)
+    if (thread.projectId && !project) return
+    const response = await window.seekclaw.daemon.request('session.fork', {
+      id: thread.sessionId, ...sessionScope(thread, project), keepCount: 0,
+      title: `${thread.title} (分支)`
+    })
+    const saved = JSON.parse(response.data) as { id: string }
+    if (project) await refreshProjectSessions(project)
+    else await refreshGlobalSessions()
+    const fork = threads.value.find((item) => item.sessionId === saved.id && item.projectId === thread.projectId)
+    if (fork) await selectThread(fork.id)
+  })
 }
 
 async function manageTaskWorktree(action: 'create' | 'archive' | 'restore', baseRef: string): Promise<void> {
@@ -1645,7 +1774,8 @@ async function manageTaskWorktree(action: 'create' | 'archive' | 'restore', base
     if (!thread.sessionId) {
       const response = await window.seekclaw.daemon.request('session.new', { ...scope, reasoningLevel: thread.reasoningLevel, networkEnabled: thread.networkEnabled ?? true })
       thread.sessionId = response.data
-      await window.seekclaw.daemon.request('session.update', { ...scope, id: thread.sessionId, title: thread.title })
+      if (thread.titleSource === 'manual')
+        await window.seekclaw.daemon.request('session.update', { ...scope, id: thread.sessionId, title: thread.title })
     }
     await window.seekclaw.daemon.request(`worktree.${action}`, { ...scope, sessionId: thread.sessionId, baseRef }, { timeoutMs: 150_000 })
     await reloadThreadSession(thread, project)
@@ -1657,14 +1787,30 @@ async function manageTaskWorktree(action: 'create' | 'archive' | 'restore', base
 }
 
 function openProjectProperties(project: ProjectItem): void {
+  projectNameError.value = ''
   activePropertiesProject.value = project
+}
+
+async function saveProjectName(name: string): Promise<void> {
+  const project = activePropertiesProject.value
+  const value = name.trim()
+  if (!project || !value || projectNameSaving.value) return
+  projectNameSaving.value = true
+  projectNameError.value = ''
+  try {
+    await saveProject(project, value)
+    activePropertiesProject.value = null
+  } catch (reason) {
+    projectNameError.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    projectNameSaving.value = false
+  }
 }
 
 async function saveTaskTitle(title: string): Promise<void> {
   const thread = settingsThread.value
   const project = settingsProject.value
   if (!thread || (thread.projectId && !project)) return
-  thread.title = title
   if (thread.sessionId) {
     await window.seekclaw.daemon.request('session.update', {
       id: thread.sessionId,
@@ -1672,6 +1818,9 @@ async function saveTaskTitle(title: string): Promise<void> {
       title
     })
   }
+  thread.title = title
+  thread.titleSource = 'manual'
+  thread.titleGenerating = false
   taskSettingsThreadId.value = ''
 }
 
@@ -1701,28 +1850,19 @@ const {
   reconnectDaemon
 })
 
-async function initializeProjectWorkspace(project: ProjectItem): Promise<void> {
-  if (!daemonState.value.connected) {
-    await reconnectDaemon()
-    if (!daemonState.value.connected) return
-  }
-  try {
-    await ensureRuntimeProject(project)
-    const response = await window.seekclaw.daemon.request('workspace.init')
-    const result = JSON.parse(response.data) as { created: string[] }
-    await window.seekclaw.notify(
-      '工作区元数据已初始化',
-      result.created.length > 0 ? `已创建 ${result.created.length} 项元数据` : '工作区元数据已就绪'
-    )
-  } catch (reason) {
-    await window.seekclaw.notify('工作区元数据初始化失败', reason instanceof Error ? reason.message : String(reason))
-  }
-}
-
 const handleDaemonEvent = createDaemonEventHandler({
   threads,
   activeThreadId,
   projects,
+  readSubAgentStatus: async (thread, taskId) => {
+    const project = projects.value.find((item) => item.id === thread.projectId)
+    if (!thread.sessionId || (thread.projectId && !project)) throw new Error('找不到父会话')
+    const response = await window.seekclaw.daemon.request('subagent.status', {
+      ...sessionScope(thread, project), sessionId: thread.sessionId, taskId
+    })
+    const record = JSON.parse(response.data) as { status: SubAgentActivity['status']; output?: string; error?: string; sessionId?: string }
+    return { status: record.status, output: record.error || record.output, childSessionId: record.sessionId }
+  },
   handleScheduleUpdated,
   scrollToBottom,
   reloadThreadSession,
@@ -1823,10 +1963,11 @@ onMounted(async () => {
   document.documentElement.dataset.platform = appInfo.value.platform
   document.documentElement.dataset.material = appInfo.value.supportsMica ? 'mica' : 'solid'
   projects.value = loadStoredProjects()
+  unsubscribeBrowser = window.seekclaw.browser.onChanged(handleBrowserState)
   unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonMessage)
   unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
   appReadyForRecovery = true
-  await runReconnectCycle(true)
+  await runReconnectCycle()
   measureConversationViewport()
   window.addEventListener('resize', measureConversationViewport)
   if (!daemonState.value.connected) projects.value.forEach((project) => { project.loaded = true })
@@ -1835,7 +1976,10 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   appReadyForRecovery = false
+  conversationScroller.dispose()
+  conversationResizeObserver?.disconnect()
   window.removeEventListener('resize', measureConversationViewport)
+  unsubscribeBrowser?.()
   unsubscribeEvent?.()
   unsubscribeState?.()
 })
@@ -1883,12 +2027,15 @@ watch(theme, applyTheme)
               @open-workspace="openWorkspace"
               @select-thread="selectThread"
               @task-settings="openTaskSettings"
+              @rename-task="renameTask"
+              @copy-task="copyTask"
+              @fork-task="forkTask"
+              @show-project="showProject"
               @archive-task="archiveTask"
               @restore-task="restoreTask"
               @delete-task="deleteTask"
               @delete-project="deleteProject"
               @archive-project-tasks="archiveProjectTasks"
-              @initialize-project-workspace="initializeProjectWorkspace"
               @open-project-properties="openProjectProperties"
               @delete-project-tasks="deleteProjectTasks"
               @archive-global-tasks="archiveGlobalTasks"
@@ -1906,52 +2053,37 @@ watch(theme, applyTheme)
         <main class="workspace-main" v-show="activePage === 'main'">
           <header class="conversation-header">
             <div class="conversation-title">
-              <strong>{{ conversationTitle }}</strong>
+              <span v-if="activeThread?.titleGenerating" class="task-title-skeleton" role="status" aria-label="正在生成任务标题" />
+              <strong v-else>{{ conversationTitle }}</strong>
               <!--  <small v-if="activeThread">{{ activeProject?.name || '任务' }}</small>-->
-              <span v-if="activeThread?.running && activeThread?.phase" class="task-phase-chip">
-                <span class="phase-dot" />{{ activeThread.phase }}
-              </span>
             </div>
-            <div class="conversation-actions">
-              <label class="conversation-search" :class="{ active: Boolean(conversationQuery.trim()) }">
-                <Search :size="15" />
-                <input v-model="conversationQuery" placeholder="搜索对话" aria-label="搜索对话" />
-                <button v-if="conversationQuery" type="button" class="conversation-search-clear" title="清除搜索"
-                  @click="conversationQuery = ''">
-                  <X :size="13" />
-                </button>
-              </label>
-              <button v-if="!daemonState.connected" class="connection-button"
-                :title="daemonState.error || daemonState.endpoint" :disabled="reconnecting" @click="reconnectDaemon">
-                <Circle :size="9" fill="currentColor" />
-                {{ runtimeConnectionLabel }}
-                <RefreshCw :class="{ spin: reconnecting }" :size="14" />
-              </button>
-              <button v-if="activeProject" class="open-location-button" title="打开项目所在文件夹" @click="showActiveProject">
-                <FolderOpen :size="17" />
-                <span>打开位置</span>
-              </button>
-              <button v-if="activeProject || runtimeWorkspacePath" class="icon-button project-tool-button" title="在工作区目录打开终端"
-                @click="openProjectTerminal">
-                <TerminalSquare :size="18" />
-              </button>
-              <button v-if="activeProject" class="icon-button project-tool-button" title="查看代码更改"
-                @click="openGitPanel('diff')">
-                <Braces :size="18" />
-              </button>
-              <button v-if="activeProject" class="icon-button project-tool-button" title="查看 Git 提交记录"
-                @click="openGitPanel('history')">
-                <History :size="18" />
-              </button>
-              <button class="icon-button" title="任务设置" :disabled="!activeThread" @click="openTaskSettings()">
-                <MoreHorizontal :size="18" />
-              </button>
-              <button class="icon-button" title="切换侧栏" @click="handleToggleSidebar">
-                <PanelRight :size="18" />
-              </button>
-            </div>
+            <ConversationToolbar
+              v-model="conversationQuery"
+              :context-key="`${activePage}:${activeThreadId}:${activeProject?.id || ''}`"
+              :has-project="Boolean(activeProject)"
+              :has-workspace="Boolean(activeProject || runtimeWorkspacePath)"
+              :has-thread="Boolean(activeThread)"
+              :connected="daemonState.connected"
+              :reconnecting="reconnecting"
+              :connection-title="daemonState.error || daemonState.endpoint"
+              :connection-label="runtimeConnectionLabel"
+              :changes-open="gitPanelOpen && gitPanelTab === 'diff'"
+              :history-open="gitPanelOpen && gitPanelTab === 'history'"
+              :browser-open="browserPanelOpen"
+              :sidebar-open="sidebarOpen"
+              @show-project="showActiveProject"
+              @open-terminal="openProjectTerminal"
+              @open-changes="openGitPanel('diff')"
+              @open-history="openGitPanel('history')"
+              @open-browser="openConversationBrowser"
+              @open-task-settings="openTaskSettings()"
+              @toggle-sidebar="handleToggleSidebar"
+              @reconnect="reconnectDaemon"
+            />
           </header>
 
+          <p v-if="browserError" class="inline-error" role="alert">{{ browserError }}</p>
+          <p v-if="sidebarActionError" class="inline-error" role="alert">{{ sidebarActionError }}</p>
           <ConversationTimeline
             v-if="userTurns.length > 0"
             :turns="userTurns"
@@ -1959,7 +2091,7 @@ watch(theme, applyTheme)
             @select-turn="handleTimelineNavigate"
           />
 
-          <section ref="scrollArea" class="conversation-scroll" @scroll="handleConversationScroll">
+          <section ref="scrollArea" class="conversation-scroll" :class="{ following: autoFollowConversation, virtualized: virtualWindow.active }" @scroll="handleConversationScroll">
             <div v-if="conversationLoading" class="conversation-content conversation-skeleton" role="status" aria-label="正在加载会话">
               <div class="skeleton-bubble user" style="width: 130px;" />
               <div class="skeleton-bubble assistant" style="width: 240px;" />
@@ -1974,37 +2106,18 @@ watch(theme, applyTheme)
                 <button class="secondary-button empty-state-action" @click="selectThread(activeThreadId)">重新加载</button>
               </div>
             </div>
-            <div v-else-if="activeThread && activeThread.messages.length > 0" class="conversation-content">
-              <template v-if="virtualWindow.active">
-                <div class="virtual-pad" :style="{ height: `${virtualWindow.topPad}px` }" />
-                <template v-for="item in virtualWindow.items" :key="item.message.id">
-                  <div v-measure="item.message.id" class="virtual-message">
-                    <ConversationMessage :message="item.message" :image-sources="activeImageSources"
-                      :widgets="item.widgets" :session-id="activeThread.sessionId" :workspace="activeProject?.path"
-                      :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
-                      :show-footer="item.showFooter"
-                      :is-intermediate="item.isIntermediate"
-                      :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
-                      @open-diff="openToolDiff"
-                      @branch="branchFromMessage"
-                      @edit="onEditUserMessage" />
-                  </div>
-                </template>
-                <div class="virtual-pad" :style="{ height: `${virtualWindow.bottomPad}px` }" />
-              </template>
-              <template v-else>
-                <template v-for="item in conversationItems" :key="item.message.id">
-                  <ConversationMessage :message="item.message" :image-sources="activeImageSources"
-                    :widgets="item.widgets" :session-id="activeThread.sessionId" :workspace="activeProject?.path"
-                    :streaming="item.message.id === activeThread?.assistantId && activeThread?.running === true"
-                    :show-footer="item.showFooter"
-                    :is-intermediate="item.isIntermediate"
-                    :dimmed="Boolean(conversationQuery.trim()) && !messageMatches(item.message, conversationQuery)"
-                    @open-diff="openToolDiff"
-                    @branch="branchFromMessage"
-                    @edit="onEditUserMessage" />
-                </template>
-              </template>
+            <div v-else-if="activeThread && activeThread.messages.length > 0" ref="conversationContent" class="conversation-content">
+              <div v-if="virtualWindow.active" class="virtual-pad" :style="{ height: `${virtualWindow.topPad}px` }" />
+              <div v-for="turn in virtualWindow.items" :key="turnViewKey(turn.id)" v-measure="turnViewKey(turn.id)" class="virtual-message">
+                <ConversationProcess :turn="turn" :image-sources="activeImageSources"
+                  :session-id="activeThread.sessionId" :workspace="activeProject?.path"
+                  :assistant-id="activeThread.assistantId" :query="conversationQuery"
+                  :expanded="expandedProcesses.get(turnViewKey(turn.id)) ?? false"
+                  @update:expanded="expandedProcesses.set(turnViewKey(turn.id), $event)"
+                  @open-sub-agent="openSubAgent"
+                  @open-diff="openToolDiff" @branch="branchFromMessage" @edit="onEditUserMessage" />
+              </div>
+              <div v-if="virtualWindow.active" class="virtual-pad" :style="{ height: `${virtualWindow.bottomPad}px` }" />
             </div>
             <div v-else-if="activeThread" class="empty-state">
               <h1>今天从哪里开始？</h1>
@@ -2051,16 +2164,6 @@ watch(theme, applyTheme)
 
             <TaskStepList :steps="activeThreadTurnSteps" :running="activeThread?.running"
               :phase="activeThread?.phase" />
-            <ComposerProjectSelector
-              v-if="showComposerProjectSelector"
-              :projects="projects"
-              :active-project="activeProject"
-              :is-global-explicit="isGlobalExplicit"
-              :disabled="activeThread?.archived"
-              @select-project="onSelectProjectFromComposer"
-              @select-global="onSelectGlobalFromComposer"
-              @create-project="handleCreateProjectFromComposer"
-            />
             <Composer ref="composer" :busy="busy"
               :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
               :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
@@ -2068,11 +2171,30 @@ watch(theme, applyTheme)
               :supports-reasoning="activeModelSupportsReasoning" :network-enabled="activeThread?.networkEnabled ?? true"
               :optimize-prompt="optimizePrompt" @send="sendMessage" @stop="stopTurn" @change-model="changeModel"
               @change-mode="changeMode" @change-reasoning-level="changeReasoningLevel"
-              @change-network="changeNetwork" />
+              @change-network="changeNetwork">
+              <template v-if="showComposerProjectSelector" #context>
+                <ComposerProjectSelector
+                  :projects="projects"
+                  :active-project="activeProject"
+                  :is-global-explicit="isGlobalExplicit"
+                  :disabled="activeThread?.archived"
+                  @select-project="onSelectProjectFromComposer"
+                  @select-global="onSelectGlobalFromComposer"
+                  @create-project="handleCreateProjectFromComposer"
+                />
+              </template>
+            </Composer>
             <p class="composer-caption">{{ composerCaption }}</p>
           </footer>
         </main>
 
+        <div v-if="activePage === 'main' && activeSubAgent && activeThread?.sessionId" class="subagent-panel-host">
+          <div class="subagent-panel-tab"><span>子智能体</span></div>
+          <SubAgentConversationPanel :agent="activeSubAgent" :session-id="activeThread.sessionId" :workspace="activeProject?.path"
+            @close="selectedSubAgent = null" @open-diff="openToolDiff" />
+        </div>
+        <ConversationBrowserPanel v-if="activePage === 'main' && browserPanelOpen && browserState && browserState.sessionId === activeThread?.sessionId"
+          :state="browserState" @changed="handleBrowserState" @close="browserPanelOpen = false" />
         <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="activeProject && activeThread?.executionWorkspace ? { ...activeProject, path: activeThread.executionWorkspace } : activeProject"
           :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="gitPanelWidth" @close="closeGitPanel"
           @resize="resizeGitPanel" @open-terminal="openProjectTerminal" />
@@ -2094,7 +2216,7 @@ watch(theme, applyTheme)
       :font-family="fontFamily"
       :mono-font-family="monoFontFamily"
       :zoom-factor="zoomFactor"
-      :daemon-connected="daemonState.connected" :daemon-endpoint="daemonState.endpoint"
+      :daemon-connected="daemonState.connected"
       :initial-section="activePage === 'settings' ? settingsSection : extensionsSection"
       :workspace-path="currentWorkspacePath"
       :projects="projects"
@@ -2104,7 +2226,7 @@ watch(theme, applyTheme)
       @change-font-family="applyFontFamily"
       @change-mono-font-family="applyMonoFontFamily"
       @change-zoom-factor="applyZoomFactor"
-      @reconnect="reconnectDaemon" @open-workspace="openWorkspace"
+       @open-workspace="openWorkspace"
       @open-official-skills="openOfficialSkills" @runtime-changed="refreshRuntimeState" />
 
     <OfficialSkillsDialog :open="activePage === 'official-skills'" @close="closePage" />
@@ -2121,18 +2243,18 @@ watch(theme, applyTheme)
 
 
     <TaskSettingsDialog :open="Boolean(taskSettingsThreadId)" :thread="settingsThread" :project="settingsProject"
+      :rename-only="taskRenameOnly"
       :worktree-busy="worktreeBusy" :worktree-error="worktreeError" @worktree="manageTaskWorktree"
       @close="taskSettingsThreadId = ''" @save-title="saveTaskTitle"
       @archive="settingsThread && archiveTask(settingsThread)" @restore="settingsThread && restoreTask(settingsThread)"
       @delete="settingsThread && deleteTask(settingsThread)" />
 
     <ProjectPropertiesDialog :open="Boolean(activePropertiesProject)" :project="activePropertiesProject ?? undefined"
-      :threads="threads" @close="activePropertiesProject = null" @initialize-workspace="initializeProjectWorkspace"
+      :threads="threads" :saving="projectNameSaving" :save-error="projectNameError"
+      @close="activePropertiesProject = null" @save-name="saveProjectName"
       @open-extensions="openExtensions" />
 
-    <RuntimeReconnectDialog :open="Boolean(reconnectPrompt)" :startup="reconnectPrompt?.startup ?? false"
-      :endpoint="daemonState.endpoint" :error="reconnectPrompt?.error" @retry="continueRuntimeReconnect"
-      @cancel="cancelRuntimeReconnect" />
+
 
     <ConfigAnomalyDialog v-if="configAnomaly && configAnomaly.hasAnomaly" :open="true" :detail="configAnomaly.detail"
       :config-file="configAnomaly.configFile" :backup-file="configAnomaly.backupFile" :rebuilding="rebuildingConfig"

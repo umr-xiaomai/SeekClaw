@@ -219,6 +219,13 @@ public sealed class SubAgentTests
 
             Assert.Contains(events, e => e is SubAgentStartedEvent start && start.Role == "researcher");
             Assert.Contains(events, e => e is SubAgentCompletedEvent done && done.Role == "researcher");
+            var text = Assert.Single(events.OfType<SubAgentProgressEvent>(), e => e.Kind == "text");
+            Assert.Equal("Sub-agent completed research: found 2 services.", text.Delta);
+            Assert.False(string.IsNullOrWhiteSpace(text.ChildSessionId));
+            Assert.Contains(events.OfType<SubAgentProgressEvent>(), e => e.Kind == "thinking" && e.Delta == "Inspecting services");
+            Assert.Contains(events.OfType<SubAgentProgressEvent>(), e => e.Kind == "model" && !string.IsNullOrWhiteSpace(e.Delta));
+            Assert.DoesNotContain(events, e => e is AssistantTextDeltaEvent or ThinkingDeltaEvent);
+            Assert.True(events.IndexOf(text) < events.FindIndex(e => e is SubAgentCompletedEvent));
         }
         finally
         {
@@ -238,6 +245,8 @@ public sealed class SubAgentTests
                 LlmRequest request, [EnumeratorCancellation] CancellationToken ct)
             {
                 await Task.Yield();
+                yield return new LlmThinkingDelta("Inspecting services");
+                yield return new LlmTextDelta(responseText);
                 yield return new LlmCompleted(new LlmCompletion { Text = responseText, FinishReason = "stop" });
             }
         }

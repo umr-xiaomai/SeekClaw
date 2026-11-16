@@ -6,14 +6,14 @@ import { confirmationState, settleConfirmation } from '../confirmation'
 <template>
   <Transition name="modal-fade">
     <div v-if="confirmationState.open" class="modal-backdrop confirmation-backdrop" @mousedown.self="settleConfirmation(false)">
-      <section class="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title">
+      <section class="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-description">
         <header>
           <span class="confirmation-icon" :class="{ danger: confirmationState.danger }"><CircleAlert :size="21" /></span>
           <div>
             <h2 id="confirmation-title">{{ confirmationState.title }}</h2>
-            <p>{{ confirmationState.message }}</p>
+            <p id="confirmation-description">{{ confirmationState.message }}</p>
           </div>
-          <button class="icon-button" title="关闭" @click="settleConfirmation(false)"><X :size="18" /></button>
+          <button class="icon-button" title="关闭" aria-label="关闭" @click="settleConfirmation(false)"><X :size="18" /></button>
         </header>
         <footer>
           <button class="secondary-button" @click="settleConfirmation(false)">取消</button>

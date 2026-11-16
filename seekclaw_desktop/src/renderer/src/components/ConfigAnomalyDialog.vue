@@ -19,20 +19,20 @@ const emit = defineEmits<{
   <Teleport to="body">
     <Transition name="modal-fade">
       <div v-if="open" class="modal-backdrop config-anomaly-backdrop" @mousedown.self="!rebuilding && emit('close')">
-        <section class="config-anomaly-dialog" role="alertdialog" aria-modal="true" aria-labelledby="config-anomaly-title">
+        <section class="config-anomaly-dialog" role="alertdialog" aria-modal="true" aria-labelledby="config-anomaly-title" aria-describedby="config-anomaly-description" :aria-busy="rebuilding">
           <header class="config-anomaly-header">
             <div class="config-anomaly-icon">
               <AlertTriangle :size="24" />
             </div>
             <div class="config-anomaly-title-area">
               <h2 id="config-anomaly-title">检测到配置文件异常</h2>
-              <p>SeekClaw 无法正常读取主配置文件，现已自动切换至安全默认状态。</p>
+              <p id="config-anomaly-description">SeekClaw 无法正常读取主配置文件，现已自动切换至安全默认状态。</p>
             </div>
             <button
               v-if="!rebuilding"
               class="icon-button"
               type="button"
-              title="稍后处理"
+              title="稍后处理" aria-label="稍后处理"
               @click="emit('close')"
             >
               <X :size="18" />

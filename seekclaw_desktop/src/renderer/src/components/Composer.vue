@@ -591,90 +591,100 @@ watch(() => props.supportsImages, async (supported) => {
 </script>
 
 <template>
-  <div class="composer-shell" :class="{ 'drag-over': isDragOver }" @dragenter="handleDragEnter"
-    @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop">
-    <!--  <p v-if="dropNotice" class="composer-image-notice">{{ dropNotice }}</p>-->
-    <div v-if="attachedFiles.length" class="composer-files-strip" aria-label="待发送文件附件">
-      <div v-for="file in attachedFiles" :key="file.id" class="composer-file-chip" :title="file.path">
-        <span class="file-ext-badge" :class="fileExtClass(file.extension)">
-          {{ fileBadgeText(file.extension) }}
-        </span>
-        <span class="file-chip-name">{{ file.name }}</span>
-        <button type="button" class="file-chip-remove" :title="`移除 ${file.name}`" @click="removeAttachedFile(file.id)">
-          <X :size="12" />
-        </button>
-      </div>
+  <div class="composer-frame">
+    <div v-if="$slots.context" class="composer-context-strip">
+      <slot name="context" />
     </div>
-    <div v-if="images.length" class="composer-image-strip" aria-label="待发送图片">
-      <div v-for="image in images" :key="image.id" class="composer-image-card">
-        <button type="button" class="composer-image-preview" :title="`预览 ${image.name}`" @click="previewImage = image">
-          <img :src="imageUrl(image)" :alt="image.name">
-        </button>
-        <button type="button" class="composer-image-remove" :title="`移除 ${image.name}`" @click="removeImage(image.id)">
-          <X :size="12" />
-        </button>
+    <div class="composer-shell" :class="{ 'drag-over': isDragOver }" @dragenter="handleDragEnter"
+      @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop">
+      <!--  <p v-if="dropNotice" class="composer-image-notice">{{ dropNotice }}</p>-->
+      <div v-if="attachedFiles.length" class="composer-files-strip" aria-label="待发送文件附件">
+        <div v-for="file in attachedFiles" :key="file.id" class="composer-file-chip" :title="file.path">
+          <span class="file-ext-badge" :class="fileExtClass(file.extension)">
+            {{ fileBadgeText(file.extension) }}
+          </span>
+          <span class="file-chip-name">{{ file.name }}</span>
+          <button type="button" class="file-chip-remove" :title="`移除 ${file.name}`" @click="removeAttachedFile(file.id)">
+            <X :size="12" />
+          </button>
+        </div>
       </div>
-    </div>
-    <p v-if="imageNotice" class="composer-image-notice">{{ imageNotice }}</p>
-    <textarea ref="textarea" v-model="value" :disabled="disabled" rows="1"
-      :placeholder="disabled ? '恢复任务后可继续对话' : '随心输入'" aria-label="消息" @keydown="handleKeydown"
-      @paste="handlePaste" />
-    <div class="composer-toolbar">
-      <div class="composer-toolbar-left">
-        <!-- + Action Button -->
-        <button
-          ref="plusTrigger"
-          class="composer-plus-btn"
-          type="button"
-          title="添加附件或优化提示词"
-          :disabled="disabled || selectingFiles"
-          @click="togglePlusMenu"
-        >
-          <Plus :size="18" />
-        </button>
-
-        <!-- Approval Mode Selector -->
-        <ApprovalModeMenu
-          :model-value="mode"
-          :disabled="busy || disabled"
-          @update:model-value="emit('changeMode', $event)"
-        />
+      <div v-if="images.length" class="composer-image-strip" aria-label="待发送图片">
+        <div v-for="image in images" :key="image.id" class="composer-image-card">
+          <button type="button" class="composer-image-preview" :title="`预览 ${image.name}`" @click="previewImage = image">
+            <img :src="imageUrl(image)" :alt="image.name">
+          </button>
+          <button type="button" class="composer-image-remove" :title="`移除 ${image.name}`" @click="removeImage(image.id)">
+            <X :size="12" />
+          </button>
+        </div>
       </div>
+      <p v-if="imageNotice" class="composer-image-notice" role="status">{{ imageNotice }}</p>
+      <textarea ref="textarea" v-model="value" :disabled="disabled" rows="1"
+        :placeholder="disabled ? '恢复任务后可继续对话' : '随心输入'" aria-label="消息" @keydown="handleKeydown"
+        @paste="handlePaste" />
+      <div class="composer-toolbar">
+        <div class="composer-toolbar-left">
+          <!-- + Action Button -->
+          <button
+            ref="plusTrigger"
+            class="composer-plus-btn"
+            type="button"
+            title="添加附件或优化提示词"
+            aria-label="添加附件或优化提示词"
+            aria-haspopup="menu"
+            :aria-expanded="plusMenuOpen"
+            :disabled="disabled || selectingFiles"
+            @click="togglePlusMenu"
+          >
+            <Plus :size="18" />
+          </button>
 
-      <span class="toolbar-spacer" />
+          <!-- Approval Mode Selector -->
+          <ApprovalModeMenu
+            :model-value="mode"
+            :disabled="busy || disabled"
+            @update:model-value="emit('changeMode', $event)"
+          />
+        </div>
 
-      <div class="composer-toolbar-right">
-        <!-- Unified Model & Reasoning Depth Menu -->
-        <ModelReasoningMenu
-          :model="model"
-          :models="models"
-          :reasoning-level="reasoningLevel"
-          :max-reasoning-level="maxReasoningLevel"
-          :supports-reasoning="supportsReasoning"
-          :disabled="busy || disabled"
-          @update:model="emit('changeModel', $event)"
-          @update:reasoning-level="emit('changeReasoningLevel', $event)"
-        />
+        <div class="composer-toolbar-right">
+          <!-- Unified Model & Reasoning Depth Menu -->
+          <ModelReasoningMenu
+            :model="model"
+            :models="models"
+            :reasoning-level="reasoningLevel"
+            :max-reasoning-level="maxReasoningLevel"
+            :supports-reasoning="supportsReasoning"
+            :disabled="busy || disabled"
+            @update:model="emit('changeModel', $event)"
+            @update:reasoning-level="emit('changeReasoningLevel', $event)"
+          />
 
-        <!-- Send / Stop Button -->
-        <button
-          v-if="busy && !value.trim() && images.length === 0 && attachedFiles.length === 0"
-          class="send-button active"
-          title="停止"
-          @click="emit('stop')"
-        >
-          <Square :size="13" fill="currentColor" />
-        </button>
-        <button
-          v-else
-          class="send-button"
-          :class="{ active: Boolean(value.trim() || images.length > 0 || attachedFiles.length > 0) }"
-          :title="busy ? '排队发送（本轮结束后自动发送）' : '发送'"
-          :disabled="disabled || (!value.trim() && images.length === 0 && attachedFiles.length === 0) || (images.length > 0 && !supportsImages)"
-          @click="submit"
-        >
-          <ArrowUp :size="18" />
-        </button>
+          <!-- Send / Stop Button -->
+          <button
+            v-if="busy && !value.trim() && images.length === 0 && attachedFiles.length === 0"
+            class="send-button active"
+            type="button"
+            title="停止"
+            aria-label="停止生成"
+            @click="emit('stop')"
+          >
+            <Square :size="13" fill="currentColor" />
+          </button>
+          <button
+            v-else
+            class="send-button"
+            type="button"
+            :class="{ active: Boolean(value.trim() || images.length > 0 || attachedFiles.length > 0) }"
+            :title="busy ? '排队发送（本轮结束后自动发送）' : '发送'"
+            :aria-label="busy ? '排队发送消息' : '发送消息'"
+            :disabled="disabled || (!value.trim() && images.length === 0 && attachedFiles.length === 0) || (images.length > 0 && !supportsImages)"
+            @click="submit"
+          >
+            <ArrowUp :size="18" />
+          </button>
+        </div>
       </div>
     </div>
   </div>

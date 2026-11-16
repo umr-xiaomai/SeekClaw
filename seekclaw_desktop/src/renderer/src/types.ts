@@ -21,6 +21,7 @@ export interface ToolActivity {
   callId?: string
   name: string
   detail?: string
+  input?: string
   output?: string
   filePath?: string
   diff?: string
@@ -31,6 +32,40 @@ export interface ToolActivity {
   structuredContent?: unknown
   metadata?: Record<string, unknown>
   widgets?: ConversationWidget[]
+}
+
+/** Display state from the existing sub-agent lifecycle events and task records. */
+export interface SubAgentActivity {
+  id: string
+  role: string
+  name?: string
+  status: 'starting' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown'
+  task?: string
+  progress?: string
+  detail?: string
+  model?: string
+  elapsedMs?: number
+  output?: string
+  sourceToolId?: string
+  /** Real persisted child session, when supplied by the runtime. */
+  childSessionId?: string
+  workspace?: string
+  /** UI identity for one instruction to a persistent child; never a child task id. */
+  runId?: string
+  /** Parent request that emitted this instruction's lifecycle. */
+  requestId?: number
+  /** Historical running snapshots establish that work started, not that it is still live. */
+  live?: boolean
+}
+
+/** Immutable lifecycle entries retained where the parent received the event. */
+export interface SubAgentLifecycleEvent {
+  id: string
+  agentId: string
+  kind: 'started' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  agent: SubAgentActivity
+  createdAt: number
+  contentOffset: number
 }
 
 export interface ImageAttachment {
@@ -67,6 +102,8 @@ export interface ChatMessage {
   viewedImages?: ImageReference[]
   state?: 'thinking' | 'streaming' | 'done' | 'error'
   tools?: ToolActivity[]
+  subAgents?: SubAgentActivity[]
+  subAgentEvents?: SubAgentLifecycleEvent[]
   createdAt: number
   errorMessage?: string
 }
@@ -134,6 +171,8 @@ export interface ThreadStats {
 export interface ThreadItem {
   id: string
   title: string
+  titleSource?: 'pending' | 'input' | 'generated' | 'manual'
+  titleGenerating?: boolean
   projectId?: string
   updatedAt: number
   messages: ChatMessage[]

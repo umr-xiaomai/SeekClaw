@@ -66,6 +66,8 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     internal void ShareTaskServices(IServiceCollection services)
     {
         TaskServices.ShareWith(services);
+        if (_services.GetService<Browser.IBrowserBridge>() is { } browser)
+            services.AddSingleton(browser);
         services.AddSingleton<IConfigStore>(new TaskConfigStore(ConfigStore));
     }
 
@@ -265,6 +267,8 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     private void RegisterBuiltinTools()
     {
         var prompts = Prompts;
+        if (_services.GetService<Browser.IBrowserBridge>() is { } browser)
+            Tools.Register(new Browser.BrowserTool(prompts, browser));
         foreach (var tool in new ITool[]
                  {
                      new PlanTool(prompts),

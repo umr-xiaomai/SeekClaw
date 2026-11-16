@@ -21,7 +21,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
     <Transition name="image-preview-fade">
       <div v-if="src" class="image-preview-backdrop" role="dialog" aria-modal="true" :aria-label="name || '图片预览'" @click.self="emit('close')">
         <figure class="image-preview-dialog">
-          <button type="button" class="image-preview-close" title="关闭预览" @click="emit('close')"><X :size="18" /></button>
+          <button type="button" class="image-preview-close" title="关闭预览" aria-label="关闭预览" @click="emit('close')"><X :size="18" /></button>
           <img :src="src" :alt="name || '图片预览'">
           <figcaption v-if="name">{{ name }}</figcaption>
         </figure>

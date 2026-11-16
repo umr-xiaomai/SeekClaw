@@ -18,6 +18,7 @@ const api: DesktopApi = {
   selectSkillFiles: () => ipcRenderer.invoke('app:select-skill-files'),
   showItemInFolder: (path) => ipcRenderer.invoke('app:show-item', path),
   closeApp: () => ipcRenderer.invoke('app:close'),
+  exitApp: () => ipcRenderer.invoke('app:exit'),
   openDevTools: () => ipcRenderer.invoke('app:open-devtools'),
   setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),
   setZoomFactor: (factor: number) => {
@@ -45,6 +46,19 @@ const api: DesktopApi = {
     createBranch: (path, branch) => ipcRenderer.invoke('project:create-branch', path, branch),
     revertFileDiffs: (workspace, patches) => ipcRenderer.invoke('project:revert-file-diffs', workspace, patches),
     gitCommitDiff: (path, hash) => ipcRenderer.invoke('project:git-commit-diff', path, hash)
+  },
+  browser: {
+    open: params => ipcRenderer.invoke('browser:open', toIpcPayload(params)),
+    state: id => ipcRenderer.invoke('browser:state', id),
+    command: (scope, command) => ipcRenderer.invoke('browser:command', scope, toIpcPayload(command)),
+    pause: (scope, paused) => ipcRenderer.invoke('browser:pause', scope, paused),
+    layout: layout => ipcRenderer.invoke('browser:layout', layout === null ? null : toIpcPayload(layout)),
+    overlay: visible => ipcRenderer.invoke('browser:overlay', visible),
+    onChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, state: import('../shared/browser.js').ConversationBrowserState) => listener(state)
+      ipcRenderer.on('browser:changed', handler)
+      return () => ipcRenderer.removeListener('browser:changed', handler)
+    }
   },
   daemon: {
     connect: () => ipcRenderer.invoke('daemon:connect'),

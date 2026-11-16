@@ -1,28 +1,24 @@
 <script setup lang="ts">
 import {
-  Braces,
   Check,
   ChevronDown,
   CircleAlert,
   Copy,
-  Eye,
-  FileText,
   Image as ImageIcon,
   Layers,
   LoaderCircle,
   Pencil,
-  Search,
-  Split,
-  SquareTerminal,
-  Wrench
+  Split
 } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { ChatMessage, ConversationWidget, ToolActivity } from '../types'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import type { ChatMessage, ConversationWidget, SubAgentActivity } from '../types'
 import { fileBadgeText, fileExtClass, formatMessageTime } from '../app-helpers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
-import McpToolContent from './McpToolContent.vue'
+import ToolActivityList from './ToolActivityList.vue'
 import ConversationWidgets from './ConversationWidgets.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
+import SubAgentActivityList from './SubAgentActivityList.vue'
+import { messageSubAgents } from '../subagent-activity'
 
 const props = withDefaults(defineProps<{
   message: ChatMessage
@@ -34,16 +30,21 @@ const props = withDefaults(defineProps<{
   dimmed?: boolean
   /** True while this bubble belongs to the actively running turn. Gates the "..." placeholder. */
   streaming?: boolean
+  /** Search reveals all received text immediately, even in a live response. */
+  smoothOutput?: boolean
   /** Only true at the final bubble tail of an assistant turn. */
   showFooter?: boolean
   /** True when this assistant message is an intermediate step in a multi-step turn. */
   isIntermediate?: boolean
-}>(), { imageSources: () => ({}), widgets: () => [], showFooter: false, isIntermediate: false })
+  /** A parent process summary can render these activities outside its disclosure. */
+  hideSubAgents?: boolean
+}>(), { imageSources: () => ({}), widgets: () => [], showFooter: false, isIntermediate: false, smoothOutput: true })
 
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
   branch: [message: ChatMessage]
   edit: [message: ChatMessage]
+  openSubAgent: [activity: SubAgentActivity]
 }>()
 
 const thinkingOpen = ref(false)
@@ -71,42 +72,6 @@ async function copyContent(): Promise<void> {
   } catch (err) {
     console.error('Failed to copy to clipboard', err)
   }
-}
-
-const regularTools = computed(() => (props.message.tools ?? []).filter((tool) => !tool.diff))
-const editedTools = computed(() => (props.message.tools ?? []).filter((tool) => tool.diff && tool.filePath))
-const resultTools = computed(() => regularTools.value.filter((tool) => !tool.widgets?.length))
-
-function getToolIcon(tool: ToolActivity) {
-  if (tool.state === 'running') return LoaderCircle
-  if (tool.state === 'error') return CircleAlert
-  const name = tool.name?.toLowerCase() || ''
-  if (['bash', 'cmd', 'powershell', 'sh', 'terminal', 'exec_command'].includes(name)) return SquareTerminal
-  if (['read_file', 'cat', 'view_file'].includes(name)) return FileText
-  if (['glob', 'list_dir', 'search', 'search_code', 'find'].includes(name)) return Search
-  if (['update_plan', 'plan'].includes(name)) return Layers
-  return Wrench
-}
-
-function getToolVerb(tool: ToolActivity): string {
-  const name = tool.name?.toLowerCase() || ''
-  if (tool.state === 'running') {
-    if (['bash', 'cmd', 'powershell', 'sh', 'terminal', 'exec_command'].includes(name)) return '正在运行'
-    if (['read_file', 'cat', 'view_file'].includes(name)) return '正在读取'
-    if (['write_file', 'apply_patch', 'edit_file'].includes(name)) return '正在修改'
-    if (['glob', 'list_dir', 'search', 'search_code', 'find'].includes(name)) return '正在搜索'
-    if (['update_plan', 'plan'].includes(name)) return '正在更新计划'
-    return '正在调用'
-  }
-  if (tool.state === 'error') {
-    return '运行失败'
-  }
-  if (['bash', 'cmd', 'powershell', 'sh', 'terminal', 'exec_command'].includes(name)) return '已运行'
-  if (['read_file', 'cat', 'view_file'].includes(name)) return '已读取'
-  if (['write_file', 'apply_patch', 'edit_file'].includes(name)) return '已修改'
-  if (['glob', 'list_dir', 'search', 'search_code', 'find'].includes(name)) return '已搜索'
-  if (['update_plan', 'plan'].includes(name)) return '已更新计划'
-  return '已调用'
 }
 
 /** System-injected messages (compaction / verification) get dedicated cards. */
@@ -150,23 +115,6 @@ function previewImage(id: string, name: string): void {
   const src = imageUrl(id)
   if (src) preview.value = { src, name }
 }
-
-function diffStats(diff?: string): { added: number; removed: number } {
-  if (!diff) return { added: 0, removed: 0 }
-  return diff.split(/\r?\n/).reduce((stats, line) => {
-    if (line.startsWith('+++') || line.startsWith('---')) return stats
-    if (line.startsWith('+')) stats.added++
-    else if (line.startsWith('-')) stats.removed++
-    return stats
-  }, { added: 0, removed: 0 })
-}
-
-const editStats = computed(() => editedTools.value.reduce((stats, tool) => {
-  const current = diffStats(tool.diff)
-  stats.added += current.added
-  stats.removed += current.removed
-  return stats
-}, { added: 0, removed: 0 }))
 
 function openFileLocation(path?: string): void {
   if (path) {
@@ -261,6 +209,11 @@ const hasContent = computed(() => Boolean(displayContent.value?.trim()))
 const hasError = computed(() => Boolean(activeError.value))
 const hasThinking = computed(() => Boolean(props.message.thinking?.trim()))
 const hasTools = computed(() => (props.message.tools?.length ?? 0) > 0)
+const subAgents = computed(() => messageSubAgents(props.message))
+const visibleTools = computed(() => {
+  const represented = new Set([...(props.message.subAgents ?? []), ...subAgents.value].map((agent) => agent.sourceToolId).filter(Boolean))
+  return props.message.tools?.filter((tool) => !represented.has(tool.id)) ?? []
+})
 const hasImages = computed(() =>
   (props.message.viewedImages?.length ?? 0) > 0 ||
   (props.message.images?.length ?? 0) > 0 ||
@@ -271,7 +224,8 @@ const isVisible = computed(() => {
   if (props.message.content?.startsWith('>>> [output truncated]')) return false
   if (props.message.role === 'user') return true
   if (props.streaming) return true
-  return hasContent.value || hasThinking.value || hasTools.value || hasImages.value || hasError.value || props.widgets.length > 0
+  return hasContent.value || hasThinking.value || hasTools.value || subAgents.value.length > 0
+    || (props.message.subAgentEvents?.length ?? 0) > 0 || hasImages.value || hasError.value || props.widgets.length > 0
 })
 
 const isToolsOnly = computed(() => {
@@ -279,61 +233,6 @@ const isToolsOnly = computed(() => {
   return hasTools.value && !hasContent.value && !hasThinking.value && !hasError.value
 })
 
-function getToolTarget(tool: ToolActivity): string {
-  if (tool.widgets?.length) return tool.widgets[0]!.title
-  if (tool.filePath) {
-    return tool.filePath
-  }
-
-  let text = tool.detail?.trim() || ''
-  if (!text) return tool.name
-
-  if (text.startsWith('{') && text.endsWith('}')) {
-    try {
-      const obj = JSON.parse(text)
-      if (typeof obj.path === 'string') return obj.path
-      if (typeof obj.file_path === 'string') return obj.file_path
-      if (typeof obj.file === 'string') return obj.file
-      if (typeof obj.directory === 'string') return obj.directory
-      if (typeof obj.dir === 'string') return obj.dir
-      if (typeof obj.command === 'string') return obj.command.trim().replace(/\r?\n/g, ' ')
-      if (typeof obj.cmd === 'string') return obj.cmd.trim().replace(/\r?\n/g, ' ')
-      if (typeof obj.pattern === 'string') return obj.pattern
-      if (typeof obj.query === 'string') return obj.query
-    } catch {
-      // fallback
-    }
-  }
-
-  const pathMatch = text.match(/(?:^|\s*)(?:path|file_path|file|directory|dir)\s*:\s*([^,]+)/i)
-  if (pathMatch?.[1]) {
-    return pathMatch[1].trim()
-  }
-
-  const cmdMatch = text.match(/(?:^|\s*)(?:command|cmd)\s*:\s*([^,]+)/i)
-  if (cmdMatch?.[1]) {
-    return cmdMatch[1].trim()
-  }
-
-  const patternMatch = text.match(/(?:^|\s*)(?:pattern|query)\s*:\s*([^,]+)/i)
-  if (patternMatch?.[1]) {
-    return patternMatch[1].trim()
-  }
-
-  const readLinesMatch = text.match(/Read\s+\d+\s+lines\s+from\s+(.+)/i)
-  if (readLinesMatch?.[1]) {
-    return readLinesMatch[1].trim()
-  }
-
-  if (text.includes('\n')) {
-    const firstLine = text.split('\n')[0]?.trim() || ''
-    if (/^\d+\t/.test(firstLine) || firstLine.startsWith('#') || firstLine.startsWith('using ') || firstLine.startsWith('import ')) {
-      return tool.name
-    }
-    return firstLine || tool.name
-  }
-  return text
-}
 </script>
 
 <template>
@@ -394,19 +293,16 @@ function getToolTarget(tool: ToolActivity): string {
     </template>
 
     <div v-else class="assistant-message" :class="{ 'tools-only': isToolsOnly }">
-      <div v-if="message.viewedImages?.length" class="image-view-list" aria-label="AI 已查看的图片">
-        <button v-for="image in message.viewedImages" :key="image.id" type="button" class="image-view-row"
-          :class="{ previewable: Boolean(imageUrl(image.id)) }" :disabled="!imageUrl(image.id)"
-          :title="imageUrl(image.id) ? `预览 ${image.name}` : image.name" @click="previewImage(image.id, image.name)">
-          <span class="image-view-thumbnail">
-            <img v-if="imageUrl(image.id)" :src="imageUrl(image.id)" :alt="image.name">
-            <ImageIcon v-else :size="16" />
-          </span>
-          <Eye :size="15" />
-          <span>已查看</span>
-          <small>{{ image.name }}</small>
-        </button>
-      </div>
+      <details v-if="message.viewedImages?.length" class="image-activity">
+        <summary><ImageIcon :size="16" /> 已查看 {{ message.viewedImages.length }} 张图像 <ChevronDown :size="14" /></summary>
+        <div class="image-activity-thumbnails">
+          <button v-for="image in message.viewedImages" :key="image.id" type="button" :disabled="!imageUrl(image.id)"
+            :title="image.name" @click="previewImage(image.id, image.name)">
+            <img v-if="imageUrl(image.id)" :src="imageUrl(image.id)" :alt="image.name" loading="lazy">
+            <span v-else>{{ image.name }}</span>
+          </button>
+        </div>
+      </details>
 
       <div v-if="hasThinking" class="thinking-wrapper">
         <button class="thinking-toggle" :class="{ active: streaming && message.state === 'thinking' }"
@@ -419,43 +315,13 @@ function getToolTarget(tool: ToolActivity): string {
         <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
       </div>
 
-      <div v-if="isIntermediate && hasContent" class="step-preamble">
-        <MarkdownMessage :content="displayContent" />
+      <MarkdownMessage v-if="hasContent" :key="message.id" :content="displayContent"
+        :streaming="smoothOutput && streaming && message.state === 'streaming' && !hasError" />
+      <SubAgentActivityList :agents="subAgents" :events="message.subAgentEvents" :show-summary="!hideSubAgents"
+        @open-sub-agent="emit('openSubAgent', $event)" />
+      <div v-if="visibleTools.length" class="tool-list">
+        <ToolActivityList :tools="visibleTools" :streaming="streaming" @open-diff="(path, diff) => emit('openDiff', path, diff)" />
       </div>
-      <MarkdownMessage v-else-if="hasContent" :content="displayContent" />
-
-      <div v-if="regularTools.length" class="tool-list">
-        <div v-for="tool in regularTools" :key="tool.id" class="tool-item"
-          :class="{ 'is-running': tool.state === 'running', 'is-error': tool.state === 'error' }"
-          :title="getToolTarget(tool)">
-          <component :is="getToolIcon(tool)" :size="14" class="tool-item-icon"
-            :class="{ spin: tool.state === 'running' }" />
-          <span class="tool-verb">{{ getToolVerb(tool) }}</span>
-          <span class="tool-target">{{ getToolTarget(tool) }}</span>
-        </div>
-      </div>
-
-      <McpToolContent v-for="tool in resultTools" :key="`content:${tool.id}`" :tool="tool" />
-
-      <section v-if="editedTools.length" class="change-card" aria-label="代码修改">
-        <header class="change-card-header">
-          <Braces :size="14" />
-          <strong>已编辑 {{ editedTools.length }} 个文件</strong>
-          <span class="change-file-stats">
-            <b class="change-added">+{{ editStats.added }}</b>
-            <b class="change-removed">-{{ editStats.removed }}</b>
-          </span>
-          <span class="change-card-state">已完成</span>
-        </header>
-        <button v-for="tool in editedTools" :key="tool.id" type="button" class="change-file-row"
-          :title="`查看 ${tool.filePath} 的 Diff`" @click="emit('openDiff', tool.filePath!, tool.diff!)">
-          <span class="change-file-path">{{ tool.filePath }}</span>
-          <span class="change-file-stats">
-            <b class="change-added">+{{ diffStats(tool.diff).added }}</b>
-            <b class="change-removed">-{{ diffStats(tool.diff).removed }}</b>
-          </span>
-        </button>
-      </section>
       <ConversationWidgets :widgets="widgets" :session-id="sessionId" :workspace="workspace" />
       <div v-if="activeError" class="model-error-card" role="alert">
         <CircleAlert :size="16" class="model-error-icon" />
@@ -671,8 +537,8 @@ function getToolTarget(tool: ToolActivity): string {
 .tool-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin: 3px 0 10px;
+  gap: 8px;
+  margin: 10px 0;
 }
 
 .response-placeholder {
@@ -683,78 +549,15 @@ function getToolTarget(tool: ToolActivity): string {
   padding: 3px 0;
 }
 
-.tool-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.45;
-  user-select: text;
-}
-
-.tool-item.is-running {
-  color: var(--accent);
-}
-
-.tool-item.is-error {
-  color: var(--danger);
-}
-
-.tool-item-icon {
-  flex: none;
-  color: var(--text-muted);
-}
-
-.tool-item.is-running .tool-item-icon {
-  color: var(--accent);
-}
-
-.tool-item.is-error .tool-item-icon {
-  color: var(--danger);
-}
-
-.tool-verb {
-  color: var(--text-secondary);
-  font-size: 13px;
-  flex: none;
-}
-
-.tool-target {
-  color: var(--text-secondary);
-  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
-  font-size: 12.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 720px;
-}
-
-.step-preamble {
-  margin: 2px 0 6px;
-  color: var(--text-secondary);
-  font-size: 13.5px;
-  line-height: 1.55;
-}
-
-.step-preamble :deep(.markdown-body p) {
-  margin: 0 0 4px;
-  color: var(--text-secondary);
-  font-size: 13.5px;
-}
-
-.message.is-intermediate {
-  margin-bottom: 8px;
-}
-
-.message.is-intermediate.is-tools-only {
-  margin-bottom: 0;
-}
-
-.message.is-intermediate.is-tools-only .tool-list {
-  margin-top: 0;
-  margin-bottom: 10px;
-}
+.image-activity { margin: 4px 0 14px; color: var(--text-muted); font-size: 14px; }
+.image-activity summary { display: flex; align-items: center; gap: 8px; min-height: 32px; list-style: none; cursor: pointer; }
+.image-activity summary:hover { color: var(--text); }
+.image-activity summary::-webkit-details-marker { display: none; }
+.image-activity-thumbnails { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.image-activity-thumbnails button { width: 96px; height: 96px; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: transparent; }
+.image-activity-thumbnails img { width: 100%; height: 100%; object-fit: cover; }
+.message.is-intermediate { margin-bottom: 16px; }
+.message.is-intermediate.is-tools-only { margin-bottom: 8px; }
 
 .model-error-card {
   display: flex;

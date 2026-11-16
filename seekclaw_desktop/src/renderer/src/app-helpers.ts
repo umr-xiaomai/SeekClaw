@@ -33,7 +33,9 @@ export const samePath = (left?: string, right?: string): boolean => Boolean(left
 export interface RuntimeSessionHeader {
   id: string
   title?: string
+  titleSource?: ThreadItem['titleSource']
   workspace?: string
+  parentSessionId?: string | null
   archived?: boolean
   createdAt: string
   updatedAt: string
@@ -60,7 +62,7 @@ export interface RuntimeSession extends RuntimeSessionHeader {
     finishReason?: string | null
     errorMessage?: string | null
     viewedImages?: Array<{ id: string; name: string }>
-    toolCalls?: Array<{ id: string; name: string; detail?: string }>
+    toolCalls?: Array<{ id: string; name: string; detail?: string; input?: string }>
     toolCallId?: string
     toolName?: string
     toolSuccess?: boolean
@@ -183,7 +185,56 @@ export function fileExtClass(ext?: string): string {
   return 'badge-default'
 }
 
-export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
+/** Preserve in-memory child event state when saved messages replace live bubbles. */
+export function mergeSubAgentActivities(messages: ChatMessage[], previous: ChatMessage[]): ChatMessage[] {
+  const byMessageId = new Map(messages.filter((message) => message.role === 'assistant').map((message) => [message.id, message]))
+  const byToolId = new Map<string, { message: ChatMessage; tool: ToolActivity }>()
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue
+    for (const tool of message.tools ?? []) {
+      byToolId.set(tool.id, { message, tool })
+      if (tool.callId) byToolId.set(tool.callId, { message, tool })
+    }
+  }
+  for (const oldMessage of previous) {
+    for (const activity of oldMessage.subAgents ?? []) {
+      const oldTool = oldMessage.tools?.find((tool) => tool.id === activity.sourceToolId || tool.callId === activity.sourceToolId)
+      const source = activity.sourceToolId ? byToolId.get(activity.sourceToolId)
+        ?? (oldTool?.callId ? byToolId.get(oldTool.callId) : undefined) : undefined
+      const target = source?.message ?? byMessageId.get(oldMessage.id)
+      if (!target) continue
+      target.subAgents ??= []
+      if (target.subAgents.some((agent) => agent.id === activity.id && agent.runId === activity.runId)) continue
+      target.subAgents.push({ ...activity, sourceToolId: source?.tool.id ?? activity.sourceToolId })
+    }
+  }
+  const eventIds = new Set(messages.flatMap((message) => (message.subAgentEvents ?? []).map((event) => event.id)))
+  const oldTools = new Map(previous.flatMap((message) => (message.tools ?? []).map((tool) => [tool.id, tool] as const)))
+  for (const oldMessage of previous) {
+    if (!oldMessage.subAgentEvents?.length) continue
+    const toolAnchor = oldMessage.tools?.map((tool) => byToolId.get(tool.callId ?? tool.id)).find(Boolean)?.message
+    const contentAnchors = oldMessage.content.trim()
+      ? messages.filter((message) => message.role === 'assistant' && message.content === oldMessage.content) : []
+    for (const event of oldMessage.subAgentEvents) {
+      if (eventIds.has(event.id)) continue
+      const oldTool = event.agent.sourceToolId ? oldTools.get(event.agent.sourceToolId) : undefined
+      const source = event.agent.sourceToolId ? byToolId.get(event.agent.sourceToolId)
+        ?? (oldTool?.callId ? byToolId.get(oldTool.callId) : undefined) : undefined
+      // Prefer the receiving message over the launch tool, so completion remains
+      // after the parent's intervening work when runtime ids replace live ids.
+      const target = byMessageId.get(oldMessage.id) ?? toolAnchor
+        ?? (contentAnchors.length === 1 ? contentAnchors[0] : undefined) ?? source?.message
+      if (!target) continue
+      target.subAgentEvents ??= []
+      target.subAgentEvents.push({ ...event, agent: { ...event.agent, sourceToolId: source?.tool.id ?? event.agent.sourceToolId } })
+      target.subAgentEvents.sort((left, right) => left.createdAt - right.createdAt)
+      eventIds.add(event.id)
+    }
+  }
+  return messages
+}
+
+export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] = []): ChatMessage[] {
   const messages: ChatMessage[] = []
   saved.messages.forEach((item, index) => {
     if (item.role === 'tool') {
@@ -239,6 +290,7 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
         callId: call.id,
         name: call.name,
         detail: call.detail,
+        input: call.input,
         state: 'done'
       })),
       state: item.role === 'assistant'
@@ -250,7 +302,7 @@ export function hydrateMessages(saved: RuntimeSession): ChatMessage[] {
         : new Date(saved.createdAt).getTime() + index
     })
   })
-  return messages
+  return mergeSubAgentActivities(messages, previous)
 }
 
 export function sessionStats(saved: RuntimeSession): ThreadStats {
@@ -299,12 +351,6 @@ export function queuedMessagePreview(message: QueuedMessage): string {
 
 export function queuedImageUrl(image?: ImageAttachment): string {
   return image ? `data:${image.mediaType};base64,${image.data}` : ''
-}
-
-export function updateThreadTitle(thread: ThreadItem, prompt: string): boolean {
-  if (thread.title !== '新任务') return false
-  thread.title = prompt.length > 42 ? `${prompt.slice(0, 42)}…` : prompt
-  return true
 }
 
 export function formatTokenCount(tokens?: number): string {

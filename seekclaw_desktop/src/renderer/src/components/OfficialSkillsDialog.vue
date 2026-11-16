@@ -273,7 +273,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
       <template #sidebar>
         <div class="skills-nav">
           <div class="skills-nav-header">
-            <button class="page-back-button" type="button" title="返回" @click="emit('close')">
+            <button class="page-back-button" type="button" title="返回" aria-label="返回" @click="emit('close')">
               <ArrowLeft :size="16" />
               <span>返回</span>
             </button>
@@ -291,9 +291,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
           <div class="skills-nav-list">
             <button v-for="cat in categories" :key="cat.id" class="skills-nav-item"
-              :class="{ active: activeCategory === cat.id }" @click="activeCategory = cat.id">
+              :class="{ active: activeCategory === cat.id }" :aria-pressed="activeCategory === cat.id" @click="activeCategory = cat.id">
               <component :is="cat.icon" :size="16" />
-              <span class="nav-item-label">{{ cat.label }}</span>
+              <span class="nav-item-label" :title="cat.label">{{ cat.label }}</span>
               <span class="nav-item-count">{{ cat.count }}</span>
             </button>
           </div>
@@ -313,19 +313,19 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
               <Upload v-else :size="13" />
               <span>导入本地技能</span>
             </button>
-            <button class="icon-button" title="刷新技能列表" :disabled="loading" @click="loadCatalog">
+            <button class="icon-button" title="刷新技能列表" aria-label="刷新技能列表" :disabled="loading" @click="loadCatalog">
               <RefreshCw :size="16" :class="{ spin: loading }" />
             </button>
           </div>
         </header>
 
         <div class="skills-main-scroll">
-          <div v-if="loading && catalog.length === 0" class="official-skills-loading">
+          <div v-if="loading && catalog.length === 0" class="official-skills-loading" role="status">
             <LoaderCircle :size="32" class="spin text-accent" />
             <span>正在连接 SeekClaw 技能市场…</span>
           </div>
 
-          <div v-else-if="errorMessage && catalog.length === 0" class="official-skills-empty error">
+          <div v-else-if="errorMessage && catalog.length === 0" class="official-skills-empty error" role="alert">
             <Wrench :size="38" />
             <strong>获取技能市场目录失败</strong>
             <span>{{ errorMessage }}</span>
@@ -387,7 +387,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
                     <button class="switch-control" :class="{ active: isSkillEnabled(skill) }"
                       :disabled="actionLoadingSlug === skill.slug" :title="isSkillEnabled(skill) ? '点击禁用技能' : '点击启用技能'"
-                      aria-label="启用/禁用技能" @click="toggleSkill(skill)">
+                      :aria-label="`${isSkillEnabled(skill) ? '禁用' : '启用'} ${skill.name}`" :aria-pressed="isSkillEnabled(skill)" @click="toggleSkill(skill)">
                       <span />
                     </button>
 
@@ -451,7 +451,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
                 <span>已安装</span>
               </div>
               <button class="switch-control" :class="{ active: isSkillEnabled(selectedSkill) }"
-                :disabled="actionLoadingSlug === selectedSkill.slug" title="启用/禁用技能"
+                :disabled="actionLoadingSlug === selectedSkill.slug" :title="isSkillEnabled(selectedSkill) ? '禁用技能' : '启用技能'"
+                :aria-label="`${isSkillEnabled(selectedSkill) ? '禁用' : '启用'} ${selectedSkill.name}`" :aria-pressed="isSkillEnabled(selectedSkill)"
                 @click="toggleSkill(selectedSkill)">
                 <span />
               </button>
@@ -470,7 +471,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
               </button>
             </template>
 
-            <button class="close-icon-button" title="关闭详情" @click="closeDetail">
+            <button class="close-icon-button" title="关闭详情" aria-label="关闭详情" @click="closeDetail">
               <X :size="18" />
             </button>
           </div>
@@ -513,7 +514,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 10px 12px 14px;
+  padding: 12px 12px 16px;
   overflow-y: auto;
   user-select: none;
   box-sizing: border-box;
@@ -565,9 +566,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   height: 34px;
   padding: 0 10px;
   margin: 4px 0 10px;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-control, 8px);
   color: var(--text-secondary);
 }
 
@@ -609,6 +610,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
 .nav-item-label {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item-count {
@@ -626,17 +631,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
 .skills-nav-item.active {
   color: var(--text);
-  background: var(--surface-raised);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  background: var(--surface-active);
 }
 
 .skills-nav-item.active .nav-item-count {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
   font-weight: 600;
 }
 
 .skills-main {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -649,20 +654,26 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 28px;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 20px 28px;
   border-bottom: 1px solid var(--border);
 }
 
 .skills-content-title {
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 12px;
 }
 
 .skills-content-title h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
-  font-size: 17px;
-  font-weight: 650;
+  font-size: 18px;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
@@ -675,6 +686,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .skills-main-scroll {
@@ -691,7 +703,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   align-items: center;
   justify-content: center;
   gap: 12px;
-  padding: 80px 0;
+  min-height: 280px;
+  padding: 48px 16px;
   color: var(--text-muted);
   text-align: center;
 }
@@ -709,28 +722,28 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
 .official-skills-items {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 14px;
 }
 
 .official-skill-card {
   display: flex;
   flex-direction: column;
-  padding: 16px;
-  background: var(--surface);
+  min-width: 0;
+  padding: 18px;
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+  border-radius: var(--radius-popover, 12px);
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .official-skill-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--surface-hover) 24%, transparent);
 }
 
 .official-skill-card.is-installed {
-  border-left: 3px solid var(--accent);
+  border-color: var(--border-strong);
 }
 
 .skill-card-top {
@@ -752,8 +765,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .official-skill-icon.official {
-  background: color-mix(in srgb, #16a34a 12%, transparent);
-  color: #16a34a;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
 }
 
 .skill-header-meta {
@@ -772,6 +785,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   font-size: 14.5px;
   font-weight: 600;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .skill-version {
@@ -785,8 +799,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   font-size: 10.5px;
   font-weight: 600;
   border-radius: 4px;
-  background: color-mix(in srgb, #16a34a 14%, transparent);
-  color: #16a34a;
+  background: color-mix(in srgb, light-dark(#18743b, #79c996) 14%, transparent);
+  color: light-dark(#18743b, #79c996);
 }
 
 .badge-community {
@@ -801,8 +815,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .skill-slug-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 2px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 4px;
   font-size: 12px;
 }
 
@@ -833,15 +848,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
   margin-top: auto;
 }
 
 .card-link-button {
   background: transparent;
   border: none;
-  padding: 4px 6px;
+  padding: 6px 0;
   font-size: 12px;
   color: var(--text-muted);
   cursor: pointer;
@@ -857,6 +873,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .installed-tag {
@@ -864,8 +881,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   align-items: center;
   gap: 4px;
   font-size: 11.5px;
-  color: #16a34a;
-  background: color-mix(in srgb, #16a34a 12%, transparent);
+  color: light-dark(#18743b, #79c996);
+  background: color-mix(in srgb, light-dark(#18743b, #79c996) 12%, transparent);
   padding: 2px 8px;
   border-radius: 12px;
   font-weight: 500;
@@ -875,7 +892,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: 32px;
   padding: 0 12px;
   border: none;
   border-radius: 6px;
@@ -900,11 +917,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 26px;
+  height: 32px;
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 11.5px;
   cursor: pointer;
@@ -920,8 +937,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 28px;
-  font-size: 12px;
+  gap: 6px 16px;
+  flex-wrap: wrap;
+  padding: 14px 28px;
+  font-size: 11.5px;
+  line-height: 1.6;
   color: var(--text-muted);
   border-top: 1px solid var(--border);
   background: var(--surface);
@@ -940,7 +960,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .skill-detail-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgb(0 0 0 / 36%);
   backdrop-filter: blur(2px);
   z-index: 100;
   display: flex;
@@ -955,35 +975,38 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   flex-direction: column;
   width: 100%;
   max-width: 720px;
-  max-height: 85vh;
-  background: var(--surface);
+  max-height: min(850px, calc(100% - 16px));
+  background: var(--modal-surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+  border-radius: var(--radius-dialog, 16px);
+  box-shadow: var(--dialog-shadow, var(--shadow));
   overflow: hidden;
 }
 
 .detail-header {
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   padding: 20px 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-raised);
+  background: transparent;
 }
 
 .detail-title {
   margin: 6px 0 4px;
   font-size: 18px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .detail-slug-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px 12px;
+  flex-wrap: wrap;
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -1003,8 +1026,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .detail-header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .close-icon-button {
@@ -1027,6 +1051,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
 .detail-body {
   flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 24px;
 }
@@ -1036,7 +1061,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  background: var(--surface-raised);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 8px;
   margin-bottom: 20px;
@@ -1060,6 +1085,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .detail-markdown-content {
+  overflow-wrap: anywhere;
   color: var(--text);
   font-size: 13.5px;
   line-height: 1.65;
@@ -1078,7 +1104,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .detail-markdown-content :deep(pre) {
-  background: var(--surface-raised);
+  background: transparent;
   border: 1px solid var(--border);
   padding: 12px;
   border-radius: 8px;
@@ -1102,5 +1128,37 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   to {
     transform: rotate(360deg);
   }
+}
+
+.skills-sidebar-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.skills-nav-item > svg { flex-shrink: 0; }
+.nav-item-count { flex-shrink: 0; }
+.skill-slug-row code, .skill-author, .detail-slug-meta code { overflow-wrap: anywhere; min-width: 0; }
+.detail-title-area { min-width: 0; flex: 1 1 260px; }
+.detail-install-cmd { overflow-x: auto; }
+.detail-install-cmd code { white-space: nowrap; }
+
+@container workbench-content (max-width: 560px) {
+  .skills-content-header { padding: 18px; }
+  .skills-main-scroll { padding: 18px; }
+  .skills-content-title { gap: 6px 12px; }
+  .skills-header-actions { margin-left: auto; }
+  .official-skills-footer { padding: 12px 18px; }
+  .official-skill-card { padding: 16px; }
+}
+
+@container workbench-layout (max-width: 580px) {
+  .skills-nav { padding-inline: 8px; }
+  .skills-nav-item { gap: 6px; padding-inline: 8px; }
+}
+
+@media (max-width: 700px) {
+  .skill-detail-overlay { padding: 12px; }
+  .detail-header, .detail-body { padding: 18px; }
+  .detail-header-actions { margin-left: auto; }
 }
 </style>

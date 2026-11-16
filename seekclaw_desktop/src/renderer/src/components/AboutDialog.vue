@@ -39,7 +39,7 @@ function platformLabel(): string {
               <p>AI Agent 运行时</p>
             </div>
           </div>
-          <button class="icon-button" title="关闭" @click="emit('close')"><X :size="18" /></button>
+          <button class="icon-button" title="关闭" aria-label="关闭" @click="emit('close')"><X :size="18" /></button>
         </header>
 
         <dl class="about-meta">

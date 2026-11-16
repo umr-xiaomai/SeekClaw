@@ -5,6 +5,50 @@ import type { DaemonMessage } from '../../shared/ipc'
 import type { ProjectItem, ThreadItem } from './types'
 
 describe('createDaemonEventHandler', () => {
+  it('routes generated titles to their owning session without changing the active chat request', () => {
+    const active: ThreadItem = { id: 'active', title: 'Active', sessionId: 'active-session', messages: [], updatedAt: 0, running: true, requestId: 7 }
+    const owner: ThreadItem = { id: 'owner', title: 'Input', titleSource: 'input', sessionId: 'owner-session', messages: [], updatedAt: 0 }
+    const handler = createDaemonEventHandler({
+      threads: ref([active, owner]), activeThreadId: ref(active.id), projects: ref([]),
+      handleScheduleUpdated: vi.fn(), scrollToBottom: vi.fn().mockResolvedValue(undefined),
+      reloadThreadSession: vi.fn(), rememberFinishedRequest: vi.fn(), isFinishedRequest: () => false,
+      scheduleQueuedDrain: vi.fn(), reloadBackgroundThreadIfIdle: vi.fn()
+    })
+    handler({ id: 0, event: 'session.title', data: '', details: { sessionId: 'owner-session', generating: true } })
+    expect(owner.titleGenerating).toBe(true)
+    handler({ id: 0, event: 'session.title', data: '', details: { sessionId: 'owner-session', generating: false, title: '  Generated title  ' } })
+    expect(owner).toMatchObject({ title: 'Generated title', titleSource: 'generated', titleGenerating: false })
+    owner.title = 'My title'
+    owner.titleSource = 'manual'
+    handler({ id: 0, event: 'session.title', data: '', details: { sessionId: 'owner-session', generating: true } })
+    handler({ id: 0, event: 'session.title', data: '', details: { sessionId: 'owner-session', title: 'Late generated title' } })
+    expect(owner).toMatchObject({ title: 'My title', titleSource: 'manual', titleGenerating: false })
+    expect(active).toMatchObject({ title: 'Active', running: true, requestId: 7 })
+  })
+
+  it('does not force a late guidance acknowledgement to pull the reader to the bottom', () => {
+    const thread: ThreadItem = {
+      id: 'thread', title: 'Guidance', sessionId: 'session', requestId: 10, assistantId: 'current',
+      running: true, pendingGuidance: 1, updatedAt: 0,
+      messages: [{ id: 'current', role: 'assistant', content: 'Earlier answer', state: 'streaming', createdAt: 0 }]
+    }
+    const scrollToBottom = vi.fn().mockResolvedValue(undefined)
+    const handler = createDaemonEventHandler({
+      threads: ref([thread]), activeThreadId: ref(thread.id), projects: ref([]),
+      handleScheduleUpdated: vi.fn(), scrollToBottom,
+      reloadThreadSession: vi.fn().mockResolvedValue(undefined), rememberFinishedRequest: vi.fn(),
+      isFinishedRequest: () => false, scheduleQueuedDrain: vi.fn(), reloadBackgroundThreadIfIdle: vi.fn()
+    })
+
+    handler({ id: 10, event: 'steer', data: 'Guidance accepted', requestMethod: 'chat', sessionId: 'session' })
+
+    expect(thread.pendingGuidance).toBe(0)
+    expect(thread.messages[0]!.state).toBe('done')
+    expect(thread.messages).toHaveLength(2)
+    expect(thread.assistantId).toBe(thread.messages[1]!.id)
+    expect(scrollToBottom).toHaveBeenCalledExactlyOnceWith()
+  })
+
   it('replaces only the interrupted stream and preserves completed tools when retrying', () => {
     const thread: ThreadItem = {
       id: 'thread', title: 'Retry', sessionId: 'session', requestId: 10, assistantId: 'current',

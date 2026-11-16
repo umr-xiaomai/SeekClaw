@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Folder, Plus, Search } from '@lucide/vue'
+import { Check, ChevronDown, Folder, Laptop, Plus, Search } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ProjectItem } from '../types'
 import { pathName } from '../app-helpers'
@@ -148,12 +148,19 @@ onBeforeUnmount(() => {
       type="button"
       class="composer-project-btn"
       :disabled="disabled"
-      title="选择项目或无工作目录"
+      :title="activeProject ? `${activeProject.name} · ${activeProject.path}` : '选择项目或无工作目录'"
+      :aria-label="`选择项目：${buttonLabel}`"
+      aria-haspopup="dialog"
+      :aria-expanded="isOpen"
       @click="toggleMenu"
     >
       <Folder :size="15" class="composer-project-icon" />
       <span class="composer-project-name">{{ buttonLabel }}</span>
+      <ChevronDown :size="12" class="composer-project-chevron" :class="{ rotated: isOpen }" />
     </button>
+    <span class="composer-environment" title="在当前电脑上执行">
+      <Laptop :size="14" aria-hidden="true" />本地
+    </span>
   </div>
 
   <Teleport to="body">
@@ -185,11 +192,13 @@ onBeforeUnmount(() => {
             type="button"
             class="project-menu-item"
             :class="{ active: isGlobalActive }"
+            :aria-pressed="isGlobalActive"
             @click="onSelectGlobal"
           >
             <Folder :size="15" class="project-item-icon" />
             <span class="project-item-name">无工作目录</span>
             <span class="project-item-sub">全局环境</span>
+            <Check v-if="isGlobalActive" :size="15" class="project-item-check" />
           </button>
 
           <button
@@ -198,6 +207,8 @@ onBeforeUnmount(() => {
             type="button"
             class="project-menu-item"
             :class="{ active: activeProject?.id === project.id }"
+            :aria-pressed="activeProject?.id === project.id"
+            :title="project.path"
             @click="onSelectProject(project)"
           >
             <Folder :size="15" class="project-item-icon" />
@@ -208,6 +219,7 @@ onBeforeUnmount(() => {
             >
               {{ pathName(project.path) }}
             </span>
+            <Check v-if="activeProject?.id === project.id" :size="15" class="project-item-check" />
           </button>
 
           <div v-if="filteredProjects.length === 0 && !showGlobalOption" class="project-empty-item">
@@ -234,13 +246,9 @@ onBeforeUnmount(() => {
 .composer-project-bar {
   display: flex;
   align-items: center;
-  width: min(100%, 940px);
-  margin: 0 auto -12px auto;
-  padding: 6px 14px 18px 14px;
-  background: var(--sidebar-panel);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: 20px 20px 0 0;
+  width: 100%;
+  min-width: 0;
+  gap: 12px;
   position: relative;
   z-index: 1;
 }
@@ -249,13 +257,17 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
+  min-height: 28px;
   padding: 4px 8px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   transition: background-color 140ms ease, color 140ms ease;
   user-select: none;
@@ -264,6 +276,17 @@ onBeforeUnmount(() => {
 .composer-project-btn:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text);
+}
+
+.composer-project-btn[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.composer-project-btn:focus-visible,
+.project-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .composer-project-btn:disabled {
@@ -276,35 +299,52 @@ onBeforeUnmount(() => {
 }
 
 .composer-project-name {
+  min-width: 0;
   max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.composer-environment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.composer-project-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 140ms ease;
+}
+
+.composer-project-chevron.rotated {
+  transform: rotate(180deg);
+}
+
 .composer-project-popover {
   position: fixed;
   width: 280px;
-  background: var(--surface);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--popover-shadow);
   z-index: 1000;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-:root[data-theme="dark"] .composer-project-popover {
-  background: var(--surface-raised);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
-}
-
 .project-search-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 12px;
+  min-height: 42px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -328,6 +368,10 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 
+.project-search-row:focus-within {
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
 .project-list-scroll {
   max-height: 240px;
   overflow-y: auto;
@@ -342,12 +386,13 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 34px;
   width: 100%;
   padding: 7px 10px;
   font-size: 13px;
   border: none;
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   text-align: left;
   transition: background-color 120ms ease;
@@ -360,8 +405,8 @@ onBeforeUnmount(() => {
 }
 
 .project-menu-item.active {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  color: var(--accent);
+  background: var(--surface-subtle);
+  color: var(--text);
 }
 
 .project-item-icon {
@@ -370,10 +415,11 @@ onBeforeUnmount(() => {
 }
 
 .project-menu-item.active .project-item-icon {
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .project-item-name {
+  min-width: 0;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -381,6 +427,8 @@ onBeforeUnmount(() => {
 }
 
 .project-item-sub {
+  min-width: 0;
+  flex: 0 1 auto;
   color: var(--text-muted);
   font-size: 12px;
   margin-left: 2px;
@@ -390,7 +438,13 @@ onBeforeUnmount(() => {
 }
 
 .project-menu-item.active .project-item-sub {
-  color: color-mix(in srgb, var(--accent) 70%, var(--text-muted));
+  color: var(--text-muted);
+}
+
+.project-item-check {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text);
 }
 
 .project-popover-divider {

@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using SeekClaw.Runtime;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Data;
@@ -71,6 +72,50 @@ public sealed class ProviderTests : IDisposable
                 _store.Config.Providers[0], "https://models.test/catalog");
 
         Assert.Equal(["new-model", "other"], ids);
+    }
+
+    [Fact]
+    public async Task FetchModelDetails_ResolvesProviderMetadata_AndFallsBackWithoutGuessing()
+    {
+        var models = await NewManager(new StubHttpFactory(
+            """{"data":[{"id":"rich","context_length":250000,"top_provider":{"max_completion_tokens":32000}},{"id":"plain"},{"id":"invalid","context_length":-5,"max_output_tokens":0}]}"""))
+            .FetchModelDetailsAsync(_store.Config.Providers[0]);
+        var rich = models.Single(m => m.Id == "rich");
+        Assert.True(rich.ContextWindowAuto);
+        Assert.Equal(250000, rich.EffectiveContextWindow);
+        Assert.Equal(32000, rich.EffectiveMaxOutput);
+        rich.ContextWindowAuto = false;
+        rich.ContextWindow = 64000;
+        Assert.Equal(64000, rich.EffectiveContextWindow);
+        foreach (var model in models.Where(m => m.Id != "rich"))
+        {
+            Assert.Null(model.DetectedContextWindow);
+            Assert.Equal(1_000_000, model.EffectiveContextWindow);
+            Assert.Equal(128_000, model.EffectiveMaxOutput);
+        }
+        Assert.Equal(2, _store.Config.Providers[0].Models.Count); // Discovery never imports or saves.
+    }
+
+    [Fact]
+    public void AutomaticLimitsAndLegacyVisionFlags_RoundTripWithManualOverrides()
+    {
+        var model = _store.Config.Providers[0].Models[0];
+        model.ContextWindow = 64000;
+        model.ContextWindowAuto = true;
+        model.DetectedContextWindow = 512000;
+        model.MaxOutputAuto = false;
+        model.MaxOutput = 16384;
+        model.Capabilities.Vision = false; // Old configuration files cannot disable image input.
+        _store.Save();
+        _store.Reload();
+        model = _store.Config.Providers[0].Models[0];
+        Assert.True(model.ContextWindowAuto);
+        Assert.Equal(512000, model.EffectiveContextWindow);
+        Assert.False(model.MaxOutputAuto);
+        Assert.Equal(16384, model.EffectiveMaxOutput);
+        Assert.True(model.Capabilities.Vision);
+        model.ContextWindowAuto = false;
+        Assert.Equal(64000, model.EffectiveContextWindow); // Auto mode never overwrites the manual override.
     }
 
     [Fact]
@@ -329,85 +374,139 @@ public sealed class ProviderTests : IDisposable
     [Fact]
     public async Task SseReader_SlidingIdleWatchdog_AllowsLongStreamWithActivity()
     {
-        var pipe = new System.IO.Pipelines.Pipe();
-        var stream = pipe.Reader.AsStream();
-
-        var producer = Task.Run(async () =>
-        {
-            for (var i = 1; i <= 3; i++)
-            {
-                await Task.Delay(100);
-                var bytes = System.Text.Encoding.UTF8.GetBytes($"data: chunk{i}\n\n");
-                await pipe.Writer.WriteAsync(bytes);
-            }
-            pipe.Writer.Complete();
-        });
+        var clock = new FakeTimeProvider();
+        using var stream = new TimedSseStream(clock,
+            (TimeSpan.FromMilliseconds(100), "data: chunk1\n\n"),
+            (TimeSpan.FromMilliseconds(100), "data: chunk2\n\n"),
+            (TimeSpan.FromMilliseconds(100), "data: chunk3\n\n"));
 
         var messages = new List<string>();
-        await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(250)))
+        await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(250), clock))
         {
             messages.Add(msg.Data);
         }
 
-        await producer;
         Assert.Equal(["chunk1", "chunk2", "chunk3"], messages);
     }
 
     [Fact]
     public async Task SseReader_SlidingIdleWatchdog_TimesOutWhenIdleExceedsThreshold()
     {
-        var pipe = new System.IO.Pipelines.Pipe();
-        var stream = pipe.Reader.AsStream();
-
-        var producer = Task.Run(async () =>
-        {
-            var bytes = System.Text.Encoding.UTF8.GetBytes("data: first\n\n");
-            await pipe.Writer.WriteAsync(bytes);
-            await Task.Delay(400);
-            pipe.Writer.Complete();
-        });
+        var clock = new FakeTimeProvider();
+        using var stream = new TimedSseStream(clock,
+            (TimeSpan.Zero, "data: first\n\n"),
+            (TimeSpan.FromMilliseconds(101), "data: late\n\n"));
 
         var messages = new List<string>();
-        await Assert.ThrowsAsync<TimeoutException>(async () =>
+        var error = await Assert.ThrowsAsync<TimeoutException>(async () =>
         {
-            await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(100)))
+            await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(100), clock))
             {
                 messages.Add(msg.Data);
             }
         });
 
-        await producer;
         Assert.Single(messages);
         Assert.Equal("first", messages[0]);
+        Assert.Contains("0.1s", error.Message);
     }
 
     [Fact]
     public async Task SseReader_SlidingIdleWatchdog_CommentsResetIdleTimeout()
     {
-        var pipe = new System.IO.Pipelines.Pipe();
-        var stream = pipe.Reader.AsStream();
-
-        var producer = Task.Run(async () =>
-        {
-            var bytes1 = System.Text.Encoding.UTF8.GetBytes("data: hello\n\n");
-            await pipe.Writer.WriteAsync(bytes1);
-            await Task.Delay(80);
-            var ping = System.Text.Encoding.UTF8.GetBytes(": keep-alive\n\n");
-            await pipe.Writer.WriteAsync(ping);
-            await Task.Delay(80);
-            var bytes2 = System.Text.Encoding.UTF8.GetBytes("data: world\n\n");
-            await pipe.Writer.WriteAsync(bytes2);
-            pipe.Writer.Complete();
-        });
+        var clock = new FakeTimeProvider();
+        using var stream = new TimedSseStream(clock,
+            (TimeSpan.Zero, "data: hello\n\n"),
+            (TimeSpan.FromMilliseconds(80), ": keep-alive\n\n"),
+            (TimeSpan.FromMilliseconds(80), "data: world\n\n"));
 
         var messages = new List<string>();
-        await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(120)))
+        await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(120), clock))
         {
             messages.Add(msg.Data);
         }
 
-        await producer;
         Assert.Equal(["hello", "world"], messages);
+    }
+
+    [Fact]
+    public async Task SseReader_SlidingIdleWatchdog_DoesNotCountConsumerProcessingTime()
+    {
+        var clock = new FakeTimeProvider();
+        using var stream = new TimedSseStream(clock,
+            (TimeSpan.Zero, "data: first\n\n"),
+            (TimeSpan.FromMilliseconds(50), "data: second\n\n"));
+        await using var events = SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(100), clock).GetAsyncEnumerator();
+
+        Assert.True(await events.MoveNextAsync());
+        Assert.Equal("first", events.Current.Data);
+        clock.Advance(TimeSpan.FromHours(1));
+
+        Assert.True(await events.MoveNextAsync());
+        Assert.Equal("second", events.Current.Data);
+        Assert.False(await events.MoveNextAsync());
+    }
+
+    [Fact]
+    public async Task SseReader_SlidingIdleWatchdog_ResetsOnPartialLineActivity()
+    {
+        var clock = new FakeTimeProvider();
+        using var stream = new TimedSseStream(clock,
+            (TimeSpan.FromMilliseconds(80), "data: a long "),
+            (TimeSpan.FromMilliseconds(80), "fragmented "),
+            (TimeSpan.FromMilliseconds(80), "message\n\n"));
+
+        var messages = new List<string>();
+        await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(100), clock))
+            messages.Add(msg.Data);
+
+        Assert.Equal(["a long fragmented message"], messages);
+    }
+
+    [Fact]
+    public async Task SseReader_SlidingIdleWatchdog_CancelsPendingTransportRead()
+    {
+        var clock = new FakeTimeProvider();
+        var pipe = new System.IO.Pipelines.Pipe();
+        using var stream = pipe.Reader.AsStream();
+        await using var events = SseReader.ReadAsync(stream, TimeSpan.FromSeconds(1), clock).GetAsyncEnumerator();
+        var pending = events.MoveNextAsync().AsTask();
+        Assert.False(pending.IsCompleted);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        await Assert.ThrowsAsync<TimeoutException>(() => pending).WaitAsync(TimeSpan.FromSeconds(10));
+        await pipe.Writer.CompleteAsync();
+    }
+
+    [Fact]
+    public async Task SseReader_SlidingIdleWatchdog_PreservesCallerCancellation()
+    {
+        var clock = new FakeTimeProvider();
+        using var cancellation = new CancellationTokenSource();
+        using var stream = new TimedSseStream(clock, (TimeSpan.Zero, "data: first\n\ndata: buffered\n\n"));
+        await using var events = SseReader.ReadAsync(stream, TimeSpan.FromSeconds(1), clock, cancellation.Token).GetAsyncEnumerator();
+
+        Assert.True(await events.MoveNextAsync());
+        cancellation.Cancel();
+
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await events.MoveNextAsync());
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task SseReader_DisabledIdleWatchdog_AllowsLongIdleGaps(int timeoutMilliseconds)
+    {
+        var clock = new FakeTimeProvider();
+        using var stream = new TimedSseStream(clock, (TimeSpan.FromHours(1), "data: late\n\n"));
+
+        var messages = new List<string>();
+        await foreach (var msg in SseReader.ReadAsync(stream, TimeSpan.FromMilliseconds(timeoutMilliseconds), clock))
+            messages.Add(msg.Data);
+
+        Assert.Equal(["late"], messages);
     }
 
     [Fact]
@@ -1199,6 +1298,44 @@ public sealed class ProviderTests : IDisposable
             ]),
         ],
     };
+
+    // Advance virtual transport time only when the parser requests the next chunk.
+    // No worker scheduling or wall-clock sleeps can change these timeout scenarios.
+    private sealed class TimedSseStream(FakeTimeProvider clock, params (TimeSpan Delay, string Text)[] chunks) : Stream
+    {
+        private int _nextChunk;
+        private ReadOnlyMemory<byte> _pending;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (buffer.IsEmpty) return ValueTask.FromResult(0);
+            if (_pending.IsEmpty)
+            {
+                if (_nextChunk == chunks.Length) return ValueTask.FromResult(0);
+                var chunk = chunks[_nextChunk++];
+                clock.Advance(chunk.Delay);
+                cancellationToken.ThrowIfCancellationRequested();
+                _pending = Encoding.UTF8.GetBytes(chunk.Text);
+            }
+            var count = Math.Min(buffer.Length, _pending.Length);
+            _pending[..count].CopyTo(buffer);
+            _pending = _pending[count..];
+            return ValueTask.FromResult(count);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 
     private sealed class StubHttpFactory(string body, string? mediaType = null) : ILlmHttpFactory
     {

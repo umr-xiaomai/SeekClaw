@@ -109,11 +109,9 @@ function formatModelName(name?: string): string {
   if (!name) return '未配置模型'
   const trimmed = name.trim()
   if (!trimmed) return '未配置模型'
-  // If format is provider/model, keep it readable
-  if (trimmed.includes('/')) {
-    const parts = trimmed.split('/')
-    return parts[parts.length - 1] || trimmed
-  }
+  // Model references are providerId/modelId; the model id itself may contain '/'.
+  const separator = trimmed.indexOf('/')
+  if (separator > 0 && separator < trimmed.length - 1) return trimmed.slice(separator + 1)
   return trimmed
 }
 
@@ -123,10 +121,12 @@ const triggerLabel = computed(() => {
   if (open.value && currentView.value === 'intensity') {
     return '选择强度'
   }
-  if (!props.model) return '未配置模型'
-  if (!props.supportsReasoning) return displayModel.value
-  return `${displayModel.value} ${currentLabel.value}`
+  return displayModel.value
 })
+
+const showTriggerReasoning = computed(() =>
+  Boolean(props.model) && props.supportsReasoning && !(open.value && currentView.value === 'intensity')
+)
 
 const filteredModels = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -282,7 +282,10 @@ onBeforeUnmount(removeListeners)
       @click="toggle"
       @keydown="handleKeydown"
     >
-      <span class="trigger-label">{{ triggerLabel }}</span>
+      <span class="trigger-label">
+        <span class="trigger-model-name">{{ triggerLabel }}</span>
+        <span v-if="showTriggerReasoning" class="trigger-reasoning-label">{{ currentLabel }}</span>
+      </span>
       <ChevronDown :size="12" class="trigger-chevron" :class="{ rotated: open }" />
     </button>
 
@@ -339,7 +342,6 @@ onBeforeUnmount(removeListeners)
                     : `calc(12px + (100% - 24px) * (${currentStepIndex} / ${steps.length - 1}))`
                 }"
               >
-                <!-- Particle Stream effect when max tier -->
                 <div v-if="isMaxTier" class="max-particle-stream" aria-hidden="true">
                   <div class="stream-line l-1" />
                   <div class="stream-line l-2" />
@@ -386,6 +388,7 @@ onBeforeUnmount(removeListeners)
                 type="button"
                 class="model-back-btn"
                 title="返回强度设置"
+                aria-label="返回强度设置"
                 @click="currentView = 'intensity'"
               >
                 <ChevronLeft :size="15" />
@@ -411,6 +414,7 @@ onBeforeUnmount(removeListeners)
                 type="button"
                 class="model-option-row"
                 :class="{ active: m === model }"
+                :title="m"
                 role="option"
                 :aria-selected="m === model"
                 @click="selectModel(m)"
@@ -434,24 +438,29 @@ onBeforeUnmount(removeListeners)
   position: relative;
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
 }
 
 .model-reasoning-trigger {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
-  padding: 0 4px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 5px 8px;
   font-size: 13px;
-  font-weight: 450;
-  border-radius: 6px;
+  font-weight: 400;
+  border-radius: var(--radius-control);
   border: none;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
-  transition: all 140ms ease;
-  white-space: nowrap;
+  transition: background-color 140ms ease, color 140ms ease;
+  text-align: left;
 }
 
 .model-reasoning-trigger:hover:not(:disabled) {
@@ -460,14 +469,8 @@ onBeforeUnmount(removeListeners)
 }
 
 .model-reasoning-trigger.open {
-  background: var(--surface-hover, rgba(0, 0, 0, 0.06));
+  background: var(--surface-hover);
   color: var(--text);
-  border-radius: 14px;
-  padding: 0 10px;
-}
-
-:root[data-theme="dark"] .model-reasoning-trigger.open {
-  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
 }
 
 .model-reasoning-trigger:disabled {
@@ -476,11 +479,26 @@ onBeforeUnmount(removeListeners)
 }
 
 .trigger-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 4px;
+  min-width: 0;
   font-size: 12.5px;
-  line-height: 1;
+  line-height: 1.4;
+}
+
+.trigger-model-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.trigger-reasoning-label {
+  white-space: nowrap;
 }
 
 .trigger-chevron {
+  flex-shrink: 0;
   opacity: 0.55;
   transition: transform 140ms ease;
 }
@@ -494,16 +512,11 @@ onBeforeUnmount(removeListeners)
   position: fixed;
   z-index: 1000;
   box-sizing: border-box;
-  padding: 14px 16px 16px;
-  border-radius: 16px;
+  padding: 14px;
+  border-radius: var(--radius-popover);
   border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.14), 0 2px 10px rgba(0, 0, 0, 0.06);
-}
-
-:root[data-theme="dark"] .model-reasoning-popover {
   background: var(--surface-raised);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45), 0 3px 12px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--popover-shadow);
 }
 
 /* Intensity View */
@@ -518,27 +531,26 @@ onBeforeUnmount(removeListeners)
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 12px;
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 14px;
 }
 
 .intensity-title {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 15.5px;
-  font-weight: 600;
-  color: #1677ff;
-  line-height: 1.2;
-}
-
-:root[data-theme="dark"] .intensity-title {
-  color: #38bdf8;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
 }
 
 .intensity-model-link {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  max-width: 100%;
   margin-top: 3px;
   padding: 2px 6px;
   border: none;
@@ -546,7 +558,7 @@ onBeforeUnmount(removeListeners)
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 400;
-  border-radius: 5px;
+  border-radius: 6px;
   cursor: pointer;
   transition: color 120ms ease, background 120ms ease;
 }
@@ -556,7 +568,14 @@ onBeforeUnmount(removeListeners)
   background: var(--surface-hover);
 }
 
+.intensity-model-link span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
 .link-chevron {
+  flex-shrink: 0;
   opacity: 0.6;
 }
 
@@ -566,16 +585,12 @@ onBeforeUnmount(removeListeners)
   width: 100%;
   height: 20px;
   border-radius: 10px;
-  background: #e2e8f0;
+  background: var(--surface-active);
   cursor: pointer;
   user-select: none;
   touch-action: none;
   outline: none;
   transition: box-shadow 200ms ease;
-}
-
-:root[data-theme="dark"] .slider-bar-track {
-  background: #2d3039;
 }
 
 .slider-bar-track.max-track {
@@ -588,14 +603,10 @@ onBeforeUnmount(removeListeners)
   left: 0;
   height: 100%;
   border-radius: 10px;
-  background: #1677ff;
+  background: var(--accent);
   pointer-events: none;
   transition: width 130ms cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
-}
-
-:root[data-theme="dark"] .slider-bar-fill {
-  background: #0ea5e9;
 }
 
 .slider-bar-fill.max-energy {
@@ -605,23 +616,17 @@ onBeforeUnmount(removeListeners)
   box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
 }
 
-:root[data-theme="dark"] .slider-bar-fill.max-energy {
+:global(:root[data-theme="dark"]) .slider-bar-fill.max-energy {
   background: linear-gradient(90deg, #0369a1, #0284c7, #38bdf8, #60a5fa, #0284c7);
   background-size: 200% 100%;
-  animation: max-bar-flow 2.4s linear infinite;
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
 }
 
 @keyframes max-bar-flow {
-  0% {
-    background-position: 100% 0;
-  }
-  100% {
-    background-position: -100% 0;
-  }
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
 }
 
-/* Particle Stream Effects */
 .max-particle-stream {
   position: absolute;
   inset: 0;
@@ -661,20 +666,10 @@ onBeforeUnmount(removeListeners)
 .stream-spark.s-4 { top: 76%; width: 2px; height: 2px; animation-duration: 1.08s; animation-delay: 0.06s; }
 
 @keyframes stream-rush {
-  0% {
-    left: -48px;
-    opacity: 0;
-  }
-  18% {
-    opacity: 1;
-  }
-  82% {
-    opacity: 0.95;
-  }
-  100% {
-    left: 105%;
-    opacity: 0;
-  }
+  0% { left: -48px; opacity: 0; }
+  18% { opacity: 1; }
+  82% { opacity: 0.95; }
+  100% { left: 105%; opacity: 0; }
 }
 
 .slider-bar-track.dragging .slider-bar-fill,
@@ -690,20 +685,12 @@ onBeforeUnmount(removeListeners)
   height: 4px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  background: rgba(0, 0, 0, 0.22);
+  background: color-mix(in srgb, var(--text) 25%, transparent);
   pointer-events: none;
   transition: background-color 130ms ease;
 }
 
 .slider-step-dot.active {
-  background: rgba(255, 255, 255, 0.85);
-}
-
-:root[data-theme="dark"] .slider-step-dot {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-:root[data-theme="dark"] .slider-step-dot.active {
   background: rgba(255, 255, 255, 0.85);
 }
 
@@ -745,7 +732,7 @@ onBeforeUnmount(removeListeners)
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   transition: color 120ms ease, background 120ms ease;
 }
@@ -756,9 +743,9 @@ onBeforeUnmount(removeListeners)
 }
 
 .model-select-title {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .model-search-box {
@@ -777,12 +764,12 @@ onBeforeUnmount(removeListeners)
 
 .model-search-input {
   width: 100%;
-  height: 30px;
+  height: 34px;
   padding: 0 8px 0 28px;
-  font-size: 12.5px;
-  border-radius: 8px;
+  font-size: 13px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--surface-subtle);
   color: var(--text);
   outline: none;
   box-sizing: border-box;
@@ -799,18 +786,21 @@ onBeforeUnmount(removeListeners)
   max-height: 240px;
   overflow-y: auto;
   scrollbar-width: thin;
+  overscroll-behavior: contain;
 }
 
 .model-option-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   width: 100%;
-  padding: 8px 10px;
+  min-height: 34px;
+  padding: 7px 8px;
   border: none;
   background: transparent;
   color: var(--text);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   text-align: left;
   transition: background-color 120ms ease;
@@ -820,16 +810,24 @@ onBeforeUnmount(removeListeners)
   background: var(--surface-hover);
 }
 
+.model-option-row.active {
+  background: var(--surface-subtle);
+}
+
+.model-option-row.active:hover {
+  background: var(--surface-hover);
+}
+
 .model-option-name {
-  font-size: 13.5px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .model-option-check {
-  color: var(--accent, #1677ff);
+  color: var(--text);
   flex-shrink: 0;
 }
 
@@ -838,5 +836,40 @@ onBeforeUnmount(removeListeners)
   text-align: center;
   font-size: 12.5px;
   color: var(--text-muted);
+}
+
+.model-reasoning-trigger:focus-visible,
+.intensity-model-link:focus-visible,
+.model-back-btn:focus-visible,
+.model-option-row:focus-visible,
+.slider-bar-track:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.model-option-row:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slider-bar-fill.max-energy {
+    animation: none;
+  }
+
+  .max-particle-stream {
+    display: none;
+  }
+
+  .model-reasoning-trigger,
+  .trigger-chevron,
+  .intensity-model-link,
+  .slider-bar-track,
+  .slider-bar-fill,
+  .slider-bar-thumb,
+  .slider-step-dot,
+  .model-back-btn,
+  .model-option-row {
+    transition: none;
+  }
 }
 </style>

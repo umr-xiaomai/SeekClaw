@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import type { DaemonState } from '../../shared/ipc'
 import type { ProjectItem, ThreadItem } from './types'
+import { applySessionTitle } from './session-title'
 import {
   hydrateMessages,
   normalizeReasoningLevel,
@@ -24,7 +25,8 @@ export async function refreshProjectSessions(context: SessionSyncContext, projec
       workspace: project.path,
       includeArchived: true
     })
-    const savedSessions = JSON.parse(response.data) as RuntimeSessionHeader[]
+    const savedSessions = (JSON.parse(response.data) as RuntimeSessionHeader[])
+      .filter((session) => !session.parentSessionId)
     const sessionIds = new Set(savedSessions.map((session) => session.id))
     threads.value = threads.value.filter((thread) =>
       thread.projectId !== project.id || !thread.sessionId || sessionIds.has(thread.sessionId))
@@ -34,7 +36,7 @@ export async function refreshProjectSessions(context: SessionSyncContext, projec
         thread.projectId === project.id && thread.sessionId === saved.id)
       const fallbackTitle = `任务 ${new Date(saved.createdAt).toLocaleString()}`
       if (existing) {
-        existing.title = saved.title || existing.title || fallbackTitle
+        applySessionTitle(existing, saved)
         existing.updatedAt = new Date(saved.updatedAt).getTime()
         existing.archived = Boolean(saved.archived)
         existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
@@ -42,7 +44,8 @@ export async function refreshProjectSessions(context: SessionSyncContext, projec
       } else {
         threads.value.push({
           id: `${project.id}:session:${saved.id}`,
-          title: saved.title || fallbackTitle,
+          title: saved.titleSource === 'input' || saved.titleSource === 'pending' ? '未命名任务' : saved.title || fallbackTitle,
+          titleSource: saved.titleSource ?? 'manual',
           projectId: project.id,
           updatedAt: new Date(saved.updatedAt).getTime(),
           messages: [],
@@ -66,7 +69,8 @@ export async function refreshGlobalSessions(context: SessionSyncContext): Promis
     global: true,
     includeArchived: true
   })
-  const savedSessions = JSON.parse(response.data) as RuntimeSessionHeader[]
+  const savedSessions = (JSON.parse(response.data) as RuntimeSessionHeader[])
+    .filter((session) => !session.parentSessionId)
   const sessionIds = new Set(savedSessions.map((session) => session.id))
   threads.value = threads.value.filter((thread) =>
     thread.projectId || !thread.sessionId || sessionIds.has(thread.sessionId))
@@ -75,7 +79,7 @@ export async function refreshGlobalSessions(context: SessionSyncContext): Promis
     const existing = threads.value.find((thread) => !thread.projectId && thread.sessionId === saved.id)
     const fallbackTitle = `任务 ${new Date(saved.createdAt).toLocaleString()}`
     if (existing) {
-      existing.title = saved.title || existing.title || fallbackTitle
+      applySessionTitle(existing, saved)
       existing.updatedAt = new Date(saved.updatedAt).getTime()
       existing.archived = Boolean(saved.archived)
       existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
@@ -83,7 +87,8 @@ export async function refreshGlobalSessions(context: SessionSyncContext): Promis
     } else {
       threads.value.push({
         id: `global:session:${saved.id}`,
-        title: saved.title || fallbackTitle,
+        title: saved.titleSource === 'input' || saved.titleSource === 'pending' ? '未命名任务' : saved.title || fallbackTitle,
+        titleSource: saved.titleSource ?? 'manual',
         updatedAt: new Date(saved.updatedAt).getTime(),
         messages: [],
         sessionId: saved.id,
@@ -120,11 +125,11 @@ export async function reloadThreadSession(
     // 让出事件循环，避免后台同步任务卡顿前台动画与交互
     await new Promise((resolve) => setTimeout(resolve, 0))
     const saved = JSON.parse(response.data) as RuntimeSession
-    thread.messages = hydrateMessages(saved)
+    thread.messages = hydrateMessages(saved, thread.messages)
     thread.sessionLoaded = true
     thread.executionWorkspace = saved.executionWorkspace
     thread.worktree = saved.worktree
-    thread.title = saved.title || thread.title
+    applySessionTitle(thread, saved)
     thread.archived = Boolean(saved.archived)
     thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
     thread.stats = sessionStats(saved)

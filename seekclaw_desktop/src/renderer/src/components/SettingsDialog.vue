@@ -161,7 +161,6 @@ const props = defineProps<{
   monoFontFamily?: string
   zoomFactor?: number
   daemonConnected: boolean
-  daemonEndpoint: string
   initialSection?: SettingsSection
   workspacePath?: string
   projects?: ProjectItem[]
@@ -174,7 +173,6 @@ const emit = defineEmits<{
   changeFontFamily: [font: string]
   changeMonoFontFamily: [font: string]
   changeZoomFactor: [factor: number]
-  reconnect: []
   openWorkspace: []
   openOfficialSkills: []
   runtimeChanged: []
@@ -1178,7 +1176,8 @@ onBeforeUnmount(() => {
 
           <div class="settings-nav-list">
             <button v-for="item in visibleSections" :key="item.id" class="settings-nav-item"
-              :class="{ active: section === item.id }" @click="section = item.id">
+              :class="{ active: section === item.id }" :title="item.label" :aria-label="item.label"
+              :aria-current="section === item.id ? 'page' : undefined" @click="section = item.id">
               <component :is="item.icon" :size="17" />
               <span>{{ item.label }}</span>
             </button>
@@ -1213,12 +1212,6 @@ onBeforeUnmount(() => {
                   <Moon :size="16" />
                 </button>
               </div>
-            </div>
-            <div class="settings-row">
-              <div><strong>运行时Runtime</strong><small>{{ daemonEndpoint }}</small></div>
-              <button class="secondary-button" @click="emit('reconnect')">
-                <RefreshCw :size="15" /> 重新连接
-              </button>
             </div>
           </section>
 

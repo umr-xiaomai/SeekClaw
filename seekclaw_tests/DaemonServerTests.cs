@@ -872,10 +872,6 @@ public sealed class DaemonServerTests : IAsyncDisposable
             (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)),
             workspace);
 
-        await connection.SendAsync(10, "workspace.init");
-        var initialized = ParseData(await connection.ReadAsync());
-        Assert.Equal(Path.GetFullPath(workspace), initialized["path"]!.GetValue<string>());
-
         await connection.SendAsync(11, "provider.upsert", new JsonObject
         {
             ["id"] = "local",

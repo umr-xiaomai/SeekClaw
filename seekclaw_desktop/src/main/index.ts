@@ -7,6 +7,8 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, s
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
 import type { DaemonMessage, DaemonRequestOptions, RevertDiffItem } from '../shared/ipc.js'
+import { ConversationBrowser } from './conversation-browser.js'
+import type { BrowserCommand, BrowserPanelLayout } from '../shared/browser.js'
 import { DaemonClient } from './daemon-client.js'
 import { PendingApprovalCache } from './pending-approval-cache.js'
 import { checkoutGitBranch, createGitBranch, getGitBranches, getGitCommitDiff, getGitHistory, getGitOverview, openProjectTerminal, revertFileDiffs } from './project-tools.js'
@@ -21,6 +23,9 @@ import {
 const daemon = new DaemonClient()
 const pendingApprovals = new PendingApprovalCache()
 let mainWindow: BrowserWindow | null = null
+let conversationBrowser: ConversationBrowser | null = null
+let browserAttachment: Promise<void> | null = null
+let browserConnectionGeneration = 0
 let tray: Tray | null = null
 let isQuitting = false
 let managedDaemon: ChildProcess | null = null
@@ -284,6 +289,8 @@ function createWindow(): void {
     }
   })
 
+  conversationBrowser = new ConversationBrowser(mainWindow, state => mainWindow?.webContents.send('browser:changed', state))
+
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
@@ -291,7 +298,7 @@ function createWindow(): void {
       mainWindow?.hide()
     }
   })
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => { conversationBrowser?.dispose(); conversationBrowser = null; mainWindow = null })
   // Artifact previews have an opaque sandbox origin. Keep them on srcdoc/blank,
   // including attempts to navigate via links, forms or script-assigned locations.
   mainWindow.webContents.on('will-frame-navigate', (event) => {
@@ -306,6 +313,19 @@ function createWindow(): void {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   else
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+}
+
+async function attachBrowser(): Promise<void> {
+  const generation = browserConnectionGeneration
+  if (!browserAttachment) browserAttachment = daemon.request('browser.attach', undefined, { timeoutMs: 5000 })
+    .then(() => undefined).catch(error => { if (generation === browserConnectionGeneration) browserAttachment = null; throw error })
+  return browserAttachment
+}
+
+function browserFor(event: Electron.IpcMainInvokeEvent): ConversationBrowser {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame || !conversationBrowser)
+    throw new Error('Browser control is available only to the main application')
+  return conversationBrowser
 }
 
 function registerIpc(): void {
@@ -417,6 +437,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('app:close', () => mainWindow?.close())
+  ipcMain.handle('app:exit', () => app.quit())
 
   ipcMain.handle('app:open-devtools', () => {
     mainWindow?.webContents.openDevTools({ mode: 'detach' })
@@ -452,9 +473,29 @@ function registerIpc(): void {
     getGitCommitDiff(path, hash)
   )
 
+  ipcMain.handle('browser:open', async (event, params: { sessionId: string; workspace?: string; global?: boolean }) => {
+    const browser = browserFor(event)
+    const response = await daemon.request('browser.scope', params)
+    const { scope, sessionId } = JSON.parse(response.data) as { scope: string; sessionId: string }
+    const state = browser.ensure(scope, sessionId)
+    if (!state.tabs.length) await browser.execute(scope, sessionId, { action: 'open' })
+    return browser.state(scope)
+  })
+  ipcMain.handle('browser:state', (event, id: string) => browserFor(event).stateForSession(id))
+  ipcMain.handle('browser:command', async (event, scope: string, command: BrowserCommand) => {
+    const browser = browserFor(event)
+    const state = browser.state(scope)
+    await browser.execute(scope, state.sessionId, command)
+    return browser.state(scope)
+  })
+  ipcMain.handle('browser:pause', (event, scope: string, paused: boolean) => browserFor(event).pause(scope, !!paused))
+  ipcMain.handle('browser:layout', (event, layout: BrowserPanelLayout | null) => browserFor(event).setLayout(layout))
+  ipcMain.handle('browser:overlay', (event, visible: boolean) => browserFor(event).setModalVisible(!!visible))
+
   ipcMain.handle('daemon:connect', async () => {
     const state = await daemon.connect()
     if (state.connected) {
+      await attachBrowser()
       // The renderer subscribes before connecting, so replay approvals that were
       // emitted while a reload was in progress. Without this, the runtime waits
       // for its full approval timeout even though the user can see the turn.
@@ -470,6 +511,7 @@ function registerIpc(): void {
   ipcMain.handle(
     'daemon:request',
     async (_event, method: string, params?: Record<string, unknown>, options?: DaemonRequestOptions) => {
+      if (method === 'chat') await attachBrowser()
       const response = await daemon.request(method, params, options)
       if (method === 'agent.approve' || method === 'agent.approval')
         pendingApprovals.acknowledge(params?.approvalId)
@@ -477,6 +519,28 @@ function registerIpc(): void {
     })
 
   daemon.on('event', (message) => {
+    if (message.event === 'browser.cancel') {
+      if (typeof message.details?.requestId === 'string') conversationBrowser?.cancel(message.details.requestId)
+      return
+    }
+    if (message.event === 'browser.request') {
+      const { requestId, scope, sessionId, command } = message.details ?? {}
+      if (typeof requestId !== 'string' || typeof scope !== 'string' || typeof sessionId !== 'string' || !command || typeof command !== 'object') return
+      const browser = conversationBrowser
+      const connection = browserAttachment
+      const generation = browserConnectionGeneration
+      void (async () => {
+        let result: Record<string, unknown>
+        try {
+          if (!browser) throw new Error('Desktop browser is unavailable')
+          result = await browser.execute(scope, sessionId, command as BrowserCommand, requestId)
+        } catch (error) { result = { error: error instanceof Error ? error.message : String(error) } }
+        // Never reconnect to deliver a response from an obsolete connection.
+        if (connection && connection === browserAttachment && generation === browserConnectionGeneration)
+          await daemon.request('browser.reply', { requestId, result }).catch(() => undefined)
+      })()
+      return
+    }
     pendingApprovals.remember(message)
     pendingApprovals.finish(message)
     if (message.event === 'tool_start' && (message.data === 'computer' || message.data === 'computer_inspect')) {
@@ -496,7 +560,7 @@ function registerIpc(): void {
     mainWindow?.webContents.send('daemon:event', message)
   })
   daemon.on('state', (state) => {
-    if (!state.connected) pendingApprovals.clear()
+    if (!state.connected) { pendingApprovals.clear(); browserConnectionGeneration++; browserAttachment = null; conversationBrowser?.cancelAgentRequests() }
     mainWindow?.webContents.send('daemon:state', state)
   })
 }
@@ -528,6 +592,7 @@ app.on('before-quit', (event) => {
   isQuitting = true
   pendingApprovals.clear()
   destroyComputerOverlay()
+  conversationBrowser?.dispose()
   if (tray) {
     tray.destroy()
     tray = null

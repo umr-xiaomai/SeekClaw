@@ -47,7 +47,7 @@ public sealed partial class Agent
                     Messages = [ChatMessage.User(input)],
                     System = instruction,
                     Temperature = 0,
-                    MaxTokens = Math.Min(candidate.Model.MaxOutput, 1_200),
+                    MaxTokens = Math.Min(candidate.Model.EffectiveMaxOutput, 1_200),
                     EnableThinking = false,
                     ReasoningLevel = ReasoningLevel.None,
                 },

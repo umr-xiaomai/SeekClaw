@@ -46,7 +46,7 @@ public sealed partial class Agent
             System = systemPrompt,
             Tools = definitions,
             Temperature = temperature,
-            MaxTokens = model.Model.MaxOutput,
+            MaxTokens = model.Model.EffectiveMaxOutput,
             EnableThinking = reasoningLevel != ReasoningLevel.None && model.Model.Capabilities.Thinking,
             ThinkingBudgetTokens = config.Agent.ThinkingBudgetTokens,
             ReasoningLevel = reasoningLevel,

@@ -20,7 +20,7 @@ Desktop 在任务顶栏显示完整工作区目录，并把打开位置、终端
 
 ## `.seekclaw` 目录
 
-新工作区执行 `seekclaw init` 或 Desktop 初始化后，默认结构为：
+新工作区执行 `seekclaw init` 后，默认结构为：
 
 ```text
 <workspace>/

@@ -353,7 +353,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         {
             ["model"] = request.Model.Id,
             ["messages"] = messages,
-            ["max_tokens"] = request.MaxTokens ?? request.Model.MaxOutput,
+            ["max_tokens"] = request.MaxTokens ?? request.Model.EffectiveMaxOutput,
             // Some Anthropic-compatible vision gateways keep an image SSE request open
             // without emitting message_stop. Use the complete response path for image turns.
             ["stream"] = !request.Messages.Any(message => message.Images is { Count: > 0 }),

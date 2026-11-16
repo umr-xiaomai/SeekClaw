@@ -131,7 +131,7 @@ public static class ReasoningLevelAdapter
             _ => 0.0,
         };
 
-        var maxOutput = request.MaxTokens ?? request.Model.MaxOutput;
+        var maxOutput = request.MaxTokens ?? request.Model.EffectiveMaxOutput;
         if (maxOutput < 2_048) return 0; // no room for a meaningful thinking budget plus an answer
 
         // The old cap of max_tokens / 2 truncated long reasoning phases mid-thought, forcing

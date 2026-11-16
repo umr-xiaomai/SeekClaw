@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Bot, ChevronRight, RefreshCw, Terminal } from '@lucide/vue'
 
 const props = defineProps<{ sessionId: string; workspace?: string }>()
 interface CommandInfo { sessionId: string; command: string; status: string }
@@ -67,36 +68,64 @@ onBeforeUnmount(() => { generation++; unsubscribe?.() })
 </script>
 
 <template>
-  <details class="task-activity">
-    <summary>命令会话与子任务（{{ commands.length + children.length }}）</summary>
-    <button class="secondary-button" :disabled="busy" @click="refresh">刷新</button>
-    <p v-if="error" role="alert">{{ error }}</p>
-    <div v-for="command in commands" :key="command.sessionId" class="activity-row">
-      <code>{{ command.command }}</code><small>{{ command.status }}</small>
-      <button class="secondary-button" :disabled="busy" @click="act(() => readCommand(command.sessionId))">读取输出</button>
-      <button class="secondary-button" :disabled="busy" @click="act(async () => { await request('command.terminate', { commandId: command.sessionId }) })">停止</button>
+  <details class="task-activity" :aria-busy="busy">
+    <summary class="activity-summary"><ChevronRight :size="14" class="activity-chevron" /><span>命令会话与子任务</span><span class="activity-count">{{ commands.length + children.length }}</span></summary>
+    <div class="activity-content">
+      <div class="activity-toolbar"><span>当前会话的运行记录</span><button class="secondary-button" :disabled="busy" @click="refresh"><RefreshCw :size="13" />刷新</button></div>
+      <p v-if="error" class="activity-error" role="alert">{{ error }}</p>
+      <p v-if="!commands.length && !children.length && !error" class="activity-empty">暂无命令会话或子任务</p>
+      <div v-for="command in commands" :key="command.sessionId" class="activity-row" :class="{ 'is-selected': selected === command.sessionId }">
+        <div class="activity-heading"><Terminal :size="14" /><span>命令会话</span><small class="activity-status" :class="`status-${command.status}`">{{ command.status }}</small></div>
+        <code>{{ command.command }}</code>
+        <div class="activity-actions"><button class="secondary-button" :disabled="busy" @click="act(() => readCommand(command.sessionId))">读取输出</button><button class="secondary-button" :disabled="busy" @click="act(async () => { await request('command.terminate', { commandId: command.sessionId }) })">停止</button></div>
+      </div>
+      <div v-if="selected" class="command-console">
+        <div class="activity-heading"><Terminal :size="14" /><span>命令输出</span></div>
+        <pre tabindex="0" aria-label="命令输出">{{ output || '尚无输出' }}</pre>
+        <textarea v-model="input" rows="2" aria-label="命令输入" placeholder="输入文本，发送时自动添加换行" />
+        <div class="activity-actions"><button class="secondary-button" :disabled="busy || !input" @click="act(() => writeCommand())">发送输入</button><button class="secondary-button" :disabled="busy" @click="act(() => writeCommand(true))">关闭输入</button></div>
+      </div>
+      <details v-for="child in children" :key="child.id" class="activity-row child-activity">
+        <summary><ChevronRight :size="13" class="activity-chevron" /><Bot :size="14" /><span>{{ child.role || '子任务' }}</span><small class="activity-status" :class="`status-${child.status}`">{{ child.status }}</small></summary>
+        <pre tabindex="0" :aria-label="`${child.role || '子任务'}的输出`" :class="{ 'activity-error': child.error }">{{ child.error || child.output?.slice(-20000) || '尚无结果' }}</pre>
+        <div v-if="child.status === 'running'" class="activity-actions"><button class="secondary-button" :disabled="busy" @click="act(async () => { await request('subagent.cancel', { taskId: child.id }) })">取消子任务</button></div>
+      </details>
     </div>
-    <div v-if="selected" class="command-console">
-      <pre>{{ output || '尚无输出' }}</pre>
-      <textarea v-model="input" rows="2" aria-label="命令输入" placeholder="输入文本，发送时自动添加换行" />
-      <button class="secondary-button" :disabled="busy || !input" @click="act(() => writeCommand())">发送输入</button>
-      <button class="secondary-button" :disabled="busy" @click="act(() => writeCommand(true))">关闭输入</button>
-    </div>
-    <details v-for="child in children" :key="child.id" class="activity-row">
-      <summary>{{ child.role || '子任务' }} · {{ child.status }}</summary>
-      <pre>{{ child.error || child.output?.slice(-20000) || '尚无结果' }}</pre>
-      <button v-if="child.status === 'running'" class="secondary-button" :disabled="busy" @click="act(async () => { await request('subagent.cancel', { taskId: child.id }) })">取消子任务</button>
-    </details>
   </details>
 </template>
 
 <style scoped>
-.task-activity { display: grid; gap: 8px; font-size: 12px; }
-.task-activity summary { cursor: pointer; padding: 6px 0; }
-.activity-row { margin: 8px 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
-.activity-row code { display: block; overflow-wrap: anywhere; max-height: 60px; overflow: auto; }
-.activity-row small { display: block; margin: 4px 0; }
-.task-activity pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-.task-activity textarea { width: 100%; }
-.task-activity button { margin: 4px 4px 4px 0; }
+.task-activity { min-width: 0; color: var(--text-secondary); font-size: 12px; }
+.task-activity summary { display: flex; align-items: center; gap: 7px; min-height: 36px; cursor: pointer; list-style: none; }
+.task-activity summary::-webkit-details-marker { display: none; }
+.activity-summary { width: fit-content; max-width: 100%; border-radius: 7px; }
+.activity-summary:hover { color: var(--text); }
+.activity-chevron { flex-shrink: 0; color: var(--text-muted); transition: transform 120ms; }
+.task-activity[open] > summary .activity-chevron, .child-activity[open] > summary .activity-chevron { transform: rotate(90deg); }
+.activity-count { min-width: 20px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-muted); font-size: 10px; text-align: center; font-variant-numeric: tabular-nums; }
+.activity-content { display: grid; gap: 8px; min-width: 0; padding: 4px 0 10px; }
+.activity-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 11px; }
+.activity-row, .command-console { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.activity-row.is-selected { border-color: var(--border-strong); }
+.activity-heading { display: flex; align-items: center; gap: 7px; min-width: 0; margin-bottom: 8px; font-size: 11px; color: var(--text-muted); }
+.activity-heading > svg, .child-activity summary > svg { flex-shrink: 0; }
+.activity-row code { display: block; overflow-wrap: anywhere; max-height: 60px; overflow: auto; color: var(--text); font: 11px/1.7 var(--font-mono); }
+.activity-status { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; font-size: 10px; color: var(--text-muted); }
+.activity-status::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.status-running { color: var(--text-secondary); }
+.status-failed, .activity-error { color: var(--danger); }
+.activity-error { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.activity-empty { margin: 0; padding: 24px 12px; color: var(--text-muted); text-align: center; }
+.activity-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-top: 8px; }
+.task-activity .secondary-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; padding: 4px 9px; border: 1px solid transparent; border-radius: 7px; color: var(--text-secondary); background: transparent; font-size: 11px; }
+.task-activity .secondary-button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.task-activity .secondary-button:disabled { opacity: .45; cursor: default; }
+.task-activity pre { max-height: 220px; margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary); background: var(--code-bg); border-radius: 7px; font: 11px/1.7 var(--font-mono); scrollbar-width: thin; }
+.task-activity pre.activity-error { color: var(--danger); }
+.task-activity textarea { display: block; width: 100%; min-height: 64px; margin-top: 10px; padding: 9px 10px; resize: vertical; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font: 12px/1.6 var(--font-sans); }
+.task-activity textarea::placeholder { color: var(--text-muted); }
+.child-activity > summary { min-height: 24px; }
+.child-activity[open] > summary { margin-bottom: 10px; }
+.task-activity :is(button, summary, textarea, pre):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .activity-chevron { transition: none; } }
 </style>

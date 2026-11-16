@@ -76,36 +76,26 @@ public static class SseReader
     /// As long as transport activity (data, events, or SSE comments/keep-alives) continues within the idle window,
     /// the watchdog timer is reset and the stream continues indefinitely.
     /// </summary>
-    public static async IAsyncEnumerable<SseMessage> ReadAsync(
-        Stream stream, TimeSpan idleTimeout, [EnumeratorCancellation] CancellationToken ct = default)
+    public static IAsyncEnumerable<SseMessage> ReadAsync(
+        Stream stream, TimeSpan idleTimeout, CancellationToken ct = default) =>
+        ReadAsync(stream, idleTimeout, TimeProvider.System, ct);
+
+    internal static async IAsyncEnumerable<SseMessage> ReadAsync(
+        Stream stream, TimeSpan idleTimeout, TimeProvider timeProvider, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
+        var hasTimeout = idleTimeout > TimeSpan.Zero && idleTimeout != Timeout.InfiniteTimeSpan;
+        using var timedStream = hasTimeout ? new IdleTimeoutReadStream(stream, idleTimeout, timeProvider) : null;
+        using var reader = new StreamReader(timedStream ?? stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
         var lines = new BoundedLineReader(reader, ProtocolText.MaximumMessageChars);
         string? eventName = null;
         var data = new List<string>();
         var dataChars = 0;
-        var hasTimeout = idleTimeout > TimeSpan.Zero && idleTimeout != Timeout.InfiniteTimeSpan;
-
-        using var idleCts = hasTimeout ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
-
         while (true)
         {
-            idleCts?.CancelAfter(idleTimeout);
-            string? line;
-            try
-            {
-                var readToken = idleCts?.Token ?? ct;
-                line = await lines.ReadLineAsync(readToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested && (idleCts?.IsCancellationRequested ?? false))
-            {
-                throw new TimeoutException($"Stream idle timeout after {idleTimeout.TotalSeconds:0}s without activity.");
-            }
+            ct.ThrowIfCancellationRequested();
+            var line = await lines.ReadLineAsync(ct).ConfigureAwait(false);
 
             if (line is null) break;
-
-            // Activity occurred (including comments/keep-alives) - reset idle timer
-            idleCts?.CancelAfter(idleTimeout);
 
             if (line.Length == 0)
             {

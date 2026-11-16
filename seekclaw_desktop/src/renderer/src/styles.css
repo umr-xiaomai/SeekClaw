@@ -1,29 +1,38 @@
 :root {
+  --modal-surface: var(--surface-raised);
   color-scheme: light;
   --font-sans: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "Cascadia Code", Consolas, monospace;
   font-family: var(--font-sans);
   font-synthesis: none;
   --bg: #fafafa;
-  --sidebar: #eceef2;
-  --sidebar-panel: #f5f6f8;
+  --sidebar: #ededed;
+  --sidebar-panel: #f5f5f5;
   --sidebar-width: 240px;
   /* The native overlay can occupy more CSS pixels when the app is zoomed out. */
   --app-titlebar-height: max(48px, env(titlebar-area-height, 0px));
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-hover: #e6e8ec;
-  --surface-active: #dde0e6;
+  --surface-subtle: #f7f7f7;
+  --surface-hover: #eaeaea;
+  --surface-active: #e2e2e2;
   --text: #252525;
   --text-secondary: #626262;
-  --text-muted: #929292;
-  --border: #dedede;
+  --text-muted: #767676;
+  --border: #e4e4e4;
   --border-strong: #cecece;
   --accent: #007acc;
   --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
   --danger: #b6473f;
+  --success: light-dark(#18743b, #79c996);
+  --warning: light-dark(#90531b, #e7b468);
   --shadow: 0 12px 38px rgb(0 0 0 / 8%);
-  --composer-shadow: 0 8px 28px rgb(0 0 0 / 8%);
+  --composer-shadow: 0 2px 8px light-dark(rgb(0 0 0 / 4%), rgb(0 0 0 / 14%));
+  --popover-shadow: 0 8px 28px light-dark(rgb(0 0 0 / 12%), rgb(0 0 0 / 32%)), 0 1px 4px light-dark(rgb(0 0 0 / 5%), rgb(0 0 0 / 16%));
+  --dialog-shadow: 0 24px 72px light-dark(rgb(0 0 0 / 18%), rgb(0 0 0 / 40%));
+  --radius-control: 8px;
+  --radius-popover: 12px;
+  --radius-dialog: 16px;
   --code-bg: #f5f6f8;
   --code-text: #24292f;
   --code-border: #e1e4e8;
@@ -45,21 +54,21 @@
   color-scheme: dark;
   --bg: #181818;
   --sidebar: #191919;
-  --sidebar-panel: #1f1f1f;
-  --surface: #262626;
+  --sidebar-panel: #1e1e1e;
+  --surface: #222222;
   --surface-raised: #282828;
+  --surface-subtle: #252525;
   --surface-hover: #2e2e2e;
   --surface-active: #363636;
   --text: #ededed;
   --text-secondary: #b6b6b6;
-  --text-muted: #858585;
+  --text-muted: #969696;
   --border: #353535;
   --border-strong: #454545;
   --accent: #388bfd;
   --accent-soft: color-mix(in srgb, var(--accent) 20%, var(--surface-raised));
   --danger: #df786f;
   --shadow: 0 12px 38px rgb(0 0 0 / 28%);
-  --composer-shadow: 0 8px 28px rgb(0 0 0 / 25%);
   --code-bg: #16181d;
   --code-text: #e6edf3;
   --code-border: #2d333b;
@@ -82,23 +91,36 @@
     color-scheme: dark;
     --bg: #181818;
     --sidebar: #191919;
-    --sidebar-panel: #1f1f1f;
-    --surface: #262626;
+    --sidebar-panel: #1e1e1e;
+    --surface: #222222;
     --surface-raised: #282828;
+    --surface-subtle: #252525;
     --surface-hover: #2e2e2e;
     --surface-active: #363636;
     --text: #ededed;
     --text-secondary: #b6b6b6;
-    --text-muted: #858585;
+    --text-muted: #969696;
     --border: #353535;
     --border-strong: #454545;
     --accent: #388bfd;
     --accent-soft: color-mix(in srgb, var(--accent) 20%, var(--surface-raised));
     --danger: #df786f;
     --shadow: 0 12px 38px rgb(0 0 0 / 28%);
-    --composer-shadow: 0 8px 28px rgb(0 0 0 / 25%);
-    --code-bg: #14171d;
+    --code-bg: #16181d;
     --code-text: #e6edf3;
+    --code-border: #2d333b;
+    --code-header-color: #8b949e;
+    --hl-keyword: #ff7b72;
+    --hl-string: #a5d6ff;
+    --hl-title: #d2a8ff;
+    --hl-number: #79c0ff;
+    --hl-comment: #8b949e;
+    --hl-attr: #7ee787;
+    --hl-meta: #d2a8ff;
+    --hl-addition-color: #7ee787;
+    --hl-addition-bg: #1d3022;
+    --hl-deletion-color: #ffa198;
+    --hl-deletion-bg: #38211f;
   }
 }
 
@@ -180,6 +202,19 @@ a {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: default;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 23%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 38%, transparent) transparent;
+}
+
 button:focus-visible,
 a:focus-visible,
 textarea:focus-visible,
@@ -253,10 +288,10 @@ select:focus-visible {
   width: 300px;
   padding: 8px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 13px;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 18%), 0 2px 7px rgb(0 0 0 / 8%);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--popover-shadow);
   backdrop-filter: blur(24px) saturate(120%);
   -webkit-app-region: no-drag !important;
 }
@@ -264,13 +299,13 @@ select:focus-visible {
 .app-menu-item {
   display: flex;
   width: 100%;
-  min-height: 39px;
+  min-height: 34px;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  padding: 8px 12px;
+  gap: 20px;
+  padding: 7px 10px;
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   text-align: left;
   background: transparent;
   border-radius: 7px;
@@ -412,7 +447,7 @@ select:focus-visible {
   place-items: center;
   color: var(--text-secondary);
   background: transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
 }
 
 .icon-button:hover:not(:disabled) {
@@ -438,7 +473,7 @@ select:focus-visible {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  padding: 10px 12px 0;
+  padding: 10px 10px 0;
   overflow: hidden;
   background: var(--sidebar-panel);
   border-top: 1px solid var(--border);
@@ -515,9 +550,6 @@ body.is-resizing-sidebar .app-body {
 .nav-item,
 .section-heading,
 .conversation-title,
-.conversation-actions,
-.connection-button,
-.open-location-button,
 .tool-row,
 .thinking-toggle,
 .composer-toolbar,
@@ -554,7 +586,12 @@ body.is-resizing-sidebar .app-body {
   color: var(--text-muted);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
+}
+
+.sidebar-search:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .collapse-enter-active,
@@ -600,7 +637,7 @@ body.is-resizing-sidebar .app-body {
   padding: 7px 9px;
   text-align: left;
   background: transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
 }
 
 .nav-item:hover,
@@ -646,10 +683,7 @@ body.is-resizing-sidebar .app-body {
   flex: 1;
   padding-bottom: 12px;
   overflow-y: auto;
-}
-
-.sidebar-scroll.menu-open {
-  overflow: visible;
+  overscroll-behavior: contain;
 }
 
 .tasks-section {
@@ -669,7 +703,7 @@ body.is-resizing-sidebar .app-body {
   min-width: 0;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px;
+  padding: 4px 0;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 550;
@@ -685,6 +719,18 @@ body.is-resizing-sidebar .app-body {
 
 .task-section-toggle svg {
   flex: 0 0 auto;
+}
+
+.section-disclosure {
+  transition: transform 160ms ease;
+}
+
+.section-disclosure.expanded {
+  transform: rotate(90deg);
+}
+
+.project-list {
+  min-width: 0;
 }
 
 .section-heading-actions {
@@ -718,8 +764,8 @@ body.is-resizing-sidebar .app-body {
 .thread-heading-row.active,
 .thread-heading-row.active:hover {
   color: var(--text);
-  background: var(--surface-raised);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  background: var(--surface-active);
+  box-shadow: none;
 }
 
 .project-heading-row .project-row,
@@ -748,6 +794,16 @@ body.is-resizing-sidebar .app-body {
   font-weight: 400;
 }
 
+.project-row-icon {
+  position: relative;
+  display: grid;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
 .project-heading-row svg,
 .nav-item svg {
   flex: 0 0 auto;
@@ -755,7 +811,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .project-tasks {
-  padding: 1px 0 5px 28px;
+  padding: 2px 0 6px 18px;
 }
 
 .project-collapse-enter-active,
@@ -787,6 +843,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .project-heading-row:hover .row-menu-button,
+.project-heading-row:focus-within .row-menu-button,
 .project-heading-row.has-menu .row-menu-button,
 .thread-heading-row:hover .row-menu-button,
 .row-menu-button:focus-visible {
@@ -807,6 +864,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .thread-heading-row:hover .thread-row-action,
+.thread-heading-row:focus-within .thread-row-action,
 .thread-heading-row.has-menu .thread-row-action,
 .thread-row-action:focus-visible {
   opacity: 1;
@@ -824,58 +882,6 @@ body.is-resizing-sidebar .app-body {
 .thread-heading-row.has-menu,
 .project-heading-row.has-menu {
   background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
-}
-
-.sidebar-context-menu {
-  position: absolute;
-  z-index: 25;
-  right: 2px;
-  top: calc(100% - 2px);
-  display: grid;
-  min-width: 145px;
-  padding: 5px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-  transform-origin: top right;
-}
-
-.sidebar-context-menu.menu-up {
-  top: auto;
-  bottom: calc(100% - 2px);
-  transform-origin: bottom right;
-}
-
-.context-menu-enter-active,
-.context-menu-leave-active {
-  transition: opacity 130ms ease, transform 150ms cubic-bezier(.2, .8, .2, 1);
-}
-
-.context-menu-enter-from,
-.context-menu-leave-to {
-  opacity: 0;
-  transform: translateY(-5px) scale(.97);
-}
-
-.sidebar-context-menu button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 9px;
-  color: var(--text-secondary);
-  text-align: left;
-  background: transparent;
-  border-radius: 5px;
-}
-
-.sidebar-context-menu button:hover {
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
-.sidebar-context-menu button.danger {
-  color: var(--danger);
 }
 
 .project-empty {
@@ -1023,6 +1029,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .conversation-header {
+  container: conversation-header / inline-size;
   z-index: 4;
   display: flex;
   align-items: center;
@@ -1060,117 +1067,6 @@ body.is-resizing-sidebar .app-body {
   flex: 0 0 auto;
 }
 
-.task-phase-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
-  padding: 3px 10px;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--accent-soft);
-  border-radius: 999px;
-  white-space: nowrap;
-}
-
-.phase-dot {
-  width: 6px;
-  height: 6px;
-  background: var(--accent);
-  border-radius: 50%;
-  animation: phase-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes phase-pulse {
-
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  50% {
-    opacity: .35;
-    transform: scale(.8);
-  }
-}
-
-.conversation-search {
-  position: relative;
-  display: inline-flex;
-  height: 34px;
-  width: 34px;
-  min-width: 34px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  padding: 0;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  cursor: pointer;
-  overflow: hidden;
-  transition: width 180ms ease, min-width 180ms ease, border-color 180ms ease, padding 180ms ease, color 140ms ease;
-}
-
-.conversation-search:hover {
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-
-.conversation-search:focus-within,
-.conversation-search.active {
-  width: 190px;
-  min-width: 190px;
-  padding: 0 8px 0 10px;
-  justify-content: flex-start;
-  gap: 7px;
-  cursor: text;
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-}
-
-.conversation-search svg {
-  flex: 0 0 auto;
-  pointer-events: none;
-}
-
-.conversation-search input {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 0;
-  height: 0;
-  min-width: 0;
-  padding: 0;
-  margin: 0;
-  border: 0;
-  outline: 0;
-  opacity: 0;
-  pointer-events: none;
-  color: var(--text);
-  font-size: 12px;
-  background: transparent;
-}
-
-.conversation-search:focus-within input,
-.conversation-search.active input {
-  position: static;
-  width: 100%;
-  height: 100%;
-  flex: 1;
-  min-width: 0;
-  opacity: 1;
-  pointer-events: auto;
-  margin: 0;
-}
-
-.conversation-search input::placeholder {
-  color: var(--text-muted);
-}
-
 .step-divider {
   display: flex;
   align-items: center;
@@ -1188,21 +1084,6 @@ body.is-resizing-sidebar .app-body {
   flex: 1;
   height: 1px;
   background: var(--border);
-}
-
-.conversation-search-clear {
-  display: grid;
-  width: 18px;
-  height: 18px;
-  flex: none;
-  place-items: center;
-  color: var(--text-muted);
-  border-radius: 5px;
-}
-
-.conversation-search-clear:hover {
-  color: var(--text);
-  background: var(--surface-hover);
 }
 
 .conversation-title strong {
@@ -1226,23 +1107,10 @@ body.is-resizing-sidebar .app-body {
   white-space: nowrap;
 }
 
-.conversation-actions {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  flex: 0 0 auto;
-  gap: 6px;
+.conversation-title button {
   -webkit-app-region: no-drag;
 }
 
-.conversation-actions *,
-.conversation-title button,
-.task-phase-chip {
-  -webkit-app-region: no-drag;
-}
-
-.connection-button,
-.open-location-button,
 .secondary-button {
   display: inline-flex;
   align-items: center;
@@ -1257,19 +1125,11 @@ body.is-resizing-sidebar .app-body {
   border-radius: 7px;
 }
 
-.open-location-button span {
-  white-space: nowrap;
-}
-
-.connection-button:hover:not(:disabled),
-.open-location-button:hover:not(:disabled),
 .secondary-button:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--border-strong);
 }
 
-.connection-button:disabled,
-.open-location-button:disabled,
 .secondary-button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -1285,15 +1145,22 @@ body.is-resizing-sidebar .app-body {
   color: var(--danger);
 }
 
-.connection-button svg:first-child {
-  color: var(--danger);
-}
-
 .conversation-scroll {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+
+/* The follow controller owns the bottom position while tokens arrive. Native
+   anchoring must not choose a replaced Markdown node or an animated status icon. */
+.conversation-scroll.following,
+.conversation-scroll.virtualized {
+  overflow-anchor: none;
+}
+
+.virtual-message {
+  display: flow-root;
 }
 
 .conversation-loading {
@@ -2422,29 +2289,39 @@ body.is-resizing-sidebar .app-body {
   padding: 0 6px;
 }
 
+.composer-frame {
+  min-width: 0;
+  width: min(100%, 940px);
+  margin: 0 auto;
+}
+
+.composer-context-strip {
+  position: relative;
+  min-width: 0;
+  margin: 0 9px -15px;
+  padding: 5px 10px 20px;
+  background: var(--surface-subtle);
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+}
+
 .composer-shell {
   position: relative;
   z-index: 2;
   min-width: 0;
-  width: min(100%, 940px);
-  margin: 0 auto;
-  padding: 13px 15px 10px;
-  background: var(--surface);
+  width: 100%;
+  padding: 13px 14px 10px;
+  background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 22px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02);
+  border-radius: 18px;
+  box-shadow: var(--composer-shadow);
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
-:root[data-theme="dark"] .composer-shell {
-  background: var(--surface-raised);
-  border-color: var(--border);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
-}
-
 .composer-shell:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), 0 4px 20px rgba(0, 0, 0, 0.06);
+  border-color: color-mix(in srgb, var(--text-muted) 50%, var(--border));
+  box-shadow: var(--composer-shadow);
 }
 
 .composer-shell.drag-over {
@@ -2721,6 +2598,7 @@ body.is-resizing-sidebar .app-body {
 
 .composer-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   min-width: 0;
@@ -2730,6 +2608,7 @@ body.is-resizing-sidebar .app-body {
 
 .composer-toolbar-left {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -2739,15 +2618,18 @@ body.is-resizing-sidebar .app-body {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  margin-left: auto;
 }
 
 .composer-plus-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: none;
   background: transparent;
@@ -2774,15 +2656,10 @@ body.is-resizing-sidebar .app-body {
   flex-direction: column;
   gap: 2px;
   padding: 6px;
-  border-radius: 14px;
+  border-radius: var(--radius-popover);
   border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-:root[data-theme="dark"] .composer-plus-popover {
   background: var(--surface-raised);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--popover-shadow);
 }
 
 .plus-popover-item {
@@ -2935,10 +2812,10 @@ body.is-resizing-sidebar .app-body {
   z-index: 120;
   padding: 14px 16px 13px;
   color: var(--text);
-  background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
-  border: 1px solid var(--border-strong);
-  border-radius: 13px;
-  box-shadow: 0 16px 40px rgb(0 0 0 / 18%);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--popover-shadow);
   backdrop-filter: blur(18px);
 }
 
@@ -3067,60 +2944,41 @@ body.is-resizing-sidebar .app-body {
   gap: 7px;
   align-items: flex-start;
   margin: 0;
-  padding: 8px 9px;
+  padding: 4px 0 0;
   color: var(--text-muted);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.45;
-  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
-  border-radius: 8px;
+  background: transparent;
 }
 
 .reasoning-hint svg {
   flex: 0 0 auto;
   margin-top: 1px;
-  color: var(--accent);
-}
-
-.toolbar-spacer {
-  flex: 1;
+  color: var(--text-muted);
 }
 
 .send-button {
   display: grid;
+  flex: 0 0 32px;
   width: 32px;
   height: 32px;
   padding: 0;
   place-items: center;
-  color: #ffffff;
-  background: #8e8e93;
+  color: var(--surface-raised);
+  background: var(--text-muted);
   border: none;
   border-radius: 50%;
   cursor: pointer;
   transition: background-color 140ms ease, transform 120ms ease, opacity 140ms ease;
 }
 
-:root[data-theme="dark"] .send-button {
-  background: #636366;
-  color: #ffffff;
-}
-
 .send-button.active {
-  background: #18181b;
-  color: #ffffff;
-}
-
-:root[data-theme="dark"] .send-button.active {
-  background: #ffffff;
-  color: #18181b;
+  background: var(--text);
+  color: var(--surface-raised);
 }
 
 .send-button.active:hover {
-  transform: scale(1.05);
-  background: #000000;
-}
-
-:root[data-theme="dark"] .send-button.active:hover {
-  background: #f4f4f5;
+  background: color-mix(in srgb, var(--text) 85%, var(--surface-raised));
 }
 
 .send-button.active:active {
@@ -3128,17 +2986,11 @@ body.is-resizing-sidebar .app-body {
 }
 
 .send-button:disabled {
-  background: #8e8e93;
-  color: #ffffff;
-  opacity: 0.9;
+  background: var(--surface-active);
+  color: var(--text-muted);
+  opacity: 1;
   cursor: not-allowed;
   transform: none;
-}
-
-:root[data-theme="dark"] .send-button:disabled {
-  background: #636366;
-  color: #ffffff;
-  opacity: 0.8;
 }
 
 .composer-caption {
@@ -3155,7 +3007,7 @@ body.is-resizing-sidebar .app-body {
   inset: 0;
   padding: 22px;
   place-items: center;
-  background: rgb(0 0 0 / 35%);
+  background: light-dark(rgb(0 0 0 / 28%), rgb(0 0 0 / 48%));
 }
 
 .modal-fade-enter-active,
@@ -3167,8 +3019,6 @@ body.is-resizing-sidebar .app-body {
 .modal-fade-leave-active .settings-dialog,
 .modal-fade-enter-active .task-settings-dialog,
 .modal-fade-leave-active .task-settings-dialog,
-.modal-fade-enter-active .runtime-reconnect-dialog,
-.modal-fade-leave-active .runtime-reconnect-dialog,
 .modal-fade-enter-active .confirmation-dialog,
 .modal-fade-leave-active .confirmation-dialog,
 .modal-fade-enter-active .archived-tasks-dialog,
@@ -3199,8 +3049,6 @@ body.is-resizing-sidebar .app-body {
 .modal-fade-leave-to .settings-dialog,
 .modal-fade-enter-from .task-settings-dialog,
 .modal-fade-leave-to .task-settings-dialog,
-.modal-fade-enter-from .runtime-reconnect-dialog,
-.modal-fade-leave-to .runtime-reconnect-dialog,
 .modal-fade-enter-from .confirmation-dialog,
 .modal-fade-leave-to .confirmation-dialog,
 .modal-fade-enter-from .archived-tasks-dialog,
@@ -3235,11 +3083,12 @@ body.is-resizing-sidebar .app-body {
 
 .confirmation-dialog {
   width: min(480px, 100%);
-  overflow: hidden;
-  background: var(--surface-raised);
+  max-height: calc(100dvh - 44px);
+  overflow-y: auto;
+  background: var(--modal-surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--dialog-shadow);
 }
 
 .confirmation-dialog header {
@@ -3262,7 +3111,7 @@ body.is-resizing-sidebar .app-body {
 .confirmation-dialog p {
   margin-top: 7px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -3272,8 +3121,8 @@ body.is-resizing-sidebar .app-body {
   width: 34px;
   height: 34px;
   place-items: center;
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
   border-radius: 50%;
 }
 
@@ -3286,9 +3135,8 @@ body.is-resizing-sidebar .app-body {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 13px 18px;
-  background: var(--sidebar);
-  border-top: 1px solid var(--border);
+  padding: 6px 22px 22px;
+  background: transparent;
 }
 
 .secondary-button.primary-action.confirm-danger {
@@ -3302,6 +3150,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .git-panel {
+  container-type: inline-size;
   position: relative;
   z-index: 6;
   flex: 0 0 auto;
@@ -3402,20 +3251,24 @@ body.is-resizing-sidebar .app-body {
 
 .git-panel-tabs {
   gap: 3px;
-  padding: 6px 14px;
-  background: var(--sidebar);
+  padding: 4px 12px 8px;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
 .git-panel-tabs button {
   display: inline-flex;
-  min-height: 31px;
+  justify-content: center;
+  min-width: 0;
+  min-height: 32px;
   align-items: center;
-  gap: 7px;
-  padding: 0 11px;
+  gap: 6px;
+  padding: 6px 10px;
   color: var(--text-secondary);
   background: transparent;
-  border-radius: 6px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
 }
 
 .git-panel-tabs button:hover,
@@ -3558,9 +3411,11 @@ body.is-resizing-sidebar .app-body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 28px;
+  padding: 28px 20px;
   color: var(--text-muted);
   text-align: center;
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .git-panel-state.is-error {
@@ -3604,7 +3459,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .git-timeline-row.is-selected {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--surface-hover);
 }
 
 .git-timeline-track {
@@ -3805,6 +3660,7 @@ body.is-resizing-sidebar .app-body {
 
 .git-timeline-view-btn {
   display: inline-flex;
+  min-height: 26px;
   align-items: center;
   gap: 3px;
   padding: 2px 6px;
@@ -3821,6 +3677,7 @@ body.is-resizing-sidebar .app-body {
 }
 
 .git-timeline-row:hover .git-timeline-view-btn,
+.git-timeline-row:focus-within .git-timeline-view-btn,
 .git-timeline-row.is-selected .git-timeline-view-btn {
   opacity: 1;
 }
@@ -3987,75 +3844,14 @@ body.is-resizing-git-panel .diff-file-card {
   transition: none !important;
 }
 
-.runtime-reconnect-backdrop {
-  z-index: 150;
-}
-
-.runtime-reconnect-dialog {
-  display: grid;
-  width: min(520px, 100%);
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 14px;
-  padding: 22px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
-}
-
-.runtime-alert-icon {
-  margin-top: 1px;
-  color: var(--danger);
-}
-
-.runtime-reconnect-copy {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-}
-
-.runtime-reconnect-copy h2,
-.runtime-reconnect-copy p {
-  margin: 0;
-}
-
-.runtime-reconnect-copy h2 {
-  font-size: 17px;
-}
-
-.runtime-reconnect-copy p,
-.runtime-reconnect-copy small {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.runtime-reconnect-copy code {
-  overflow: hidden;
-  padding: 8px 9px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.runtime-reconnect-dialog footer {
-  display: flex;
-  grid-column: 2;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 6px;
-}
-
 .task-settings-dialog {
   width: min(560px, 100%);
-  overflow: hidden;
-  background: var(--surface-raised);
+  max-height: calc(100dvh - 44px);
+  overflow-y: auto;
+  background: var(--modal-surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--dialog-shadow);
 }
 
 .task-settings-header {
@@ -4064,7 +3860,6 @@ body.is-resizing-git-panel .diff-file-card {
   justify-content: space-between;
   gap: 20px;
   padding: 20px 22px 17px;
-  border-bottom: 1px solid var(--border);
 }
 
 .task-settings-header h2,
@@ -4085,7 +3880,7 @@ body.is-resizing-git-panel .diff-file-card {
 .task-settings-body {
   display: grid;
   gap: 20px;
-  padding: 22px;
+  padding: 12px 22px 22px;
 }
 
 .task-settings-field {
@@ -4102,14 +3897,15 @@ body.is-resizing-git-panel .diff-file-card {
   height: 38px;
   padding: 0 11px;
   color: var(--text);
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   outline: 0;
 }
 
 .task-settings-field input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .task-settings-field input[readonly] {
@@ -4137,9 +3933,8 @@ body.is-resizing-git-panel .diff-file-card {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 15px 22px;
-  background: var(--sidebar);
-  border-top: 1px solid var(--border);
+  padding: 6px 22px 22px;
+  background: transparent;
 }
 
 .task-danger-actions {
@@ -4338,7 +4133,7 @@ body.is-resizing-git-panel .diff-file-card {
   min-width: 0;
   min-height: 0;
   height: 100%;
-  padding: 32px 48px 80px;
+  padding: 32px clamp(24px, 4vw, 56px) 64px;
   overflow-y: auto;
   box-sizing: border-box;
 }
@@ -4406,11 +4201,10 @@ body.is-resizing-git-panel .diff-file-card {
 
 .settings-row small {
   max-width: 520px;
-  overflow: hidden;
   color: var(--text-muted);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .row-actions,
@@ -4452,8 +4246,7 @@ body.is-resizing-git-panel .diff-file-card {
 .provider-editor-backdrop {
   z-index: 160;
   padding: 20px;
-  background: rgb(0 0 0 / 48%);
-  backdrop-filter: blur(3px);
+  background: light-dark(rgb(0 0 0 / 28%), rgb(0 0 0 / 48%));
 }
 
 .provider-editor-dialog {
@@ -4462,10 +4255,10 @@ body.is-resizing-git-panel .diff-file-card {
   width: min(820px, 100%);
   max-height: min(850px, calc(100vh - 40px));
   overflow: hidden;
-  background: var(--surface-raised);
+  background: var(--modal-surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 24px 70px rgb(0 0 0 / 26%), 0 2px 10px rgb(0 0 0 / 10%);
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--dialog-shadow);
 }
 
 .provider-editor-header {
@@ -4474,7 +4267,6 @@ body.is-resizing-git-panel .diff-file-card {
   justify-content: space-between;
   gap: 24px;
   padding: 23px 25px 20px;
-  border-bottom: 1px solid var(--border);
 }
 
 .provider-editor-header h2,
@@ -4496,7 +4288,7 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .provider-editor-eyebrow {
-  color: var(--accent);
+  color: var(--text-muted);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: .12em;
@@ -4511,13 +4303,11 @@ body.is-resizing-git-panel .diff-file-card {
 .provider-form-section {
   padding-bottom: 21px;
   margin-bottom: 21px;
-  border-bottom: 1px solid var(--border);
 }
 
 .provider-form-section:last-of-type {
   padding-bottom: 0;
   margin-bottom: 0;
-  border-bottom: 0;
 }
 
 .provider-section-heading {
@@ -4567,9 +4357,9 @@ body.is-resizing-git-panel .diff-file-card {
   min-height: 38px;
   padding: 8px 10px;
   color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
   outline: 0;
 }
 
@@ -4762,7 +4552,6 @@ body.is-resizing-git-panel .diff-file-card {
 .provider-advanced-content {
   margin-top: 17px;
   padding-top: 17px;
-  border-top: 1px solid var(--border);
 }
 
 .provider-editor-error {
@@ -4781,8 +4570,7 @@ body.is-resizing-git-panel .diff-file-card {
   justify-content: space-between;
   gap: 16px;
   padding: 14px 25px;
-  background: color-mix(in srgb, var(--sidebar) 72%, var(--surface-raised));
-  border-top: 1px solid var(--border);
+  background: transparent;
 }
 
 .provider-editor-footer>span {
@@ -4807,8 +4595,8 @@ body.is-resizing-git-panel .diff-file-card {
   overflow: hidden;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 24px 70px rgb(0 0 0 / 26%), 0 2px 10px rgb(0 0 0 / 10%);
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--dialog-shadow);
 }
 
 .model-editor-header {
@@ -4855,13 +4643,11 @@ body.is-resizing-git-panel .diff-file-card {
 .model-form-section {
   padding-bottom: 18px;
   margin-bottom: 18px;
-  border-bottom: 1px solid var(--border);
 }
 
 .model-form-section:last-of-type {
   padding-bottom: 0;
   margin-bottom: 0;
-  border-bottom: 0;
 }
 
 .model-section-heading {
@@ -4937,8 +4723,7 @@ body.is-resizing-git-panel .diff-file-card {
   justify-content: space-between;
   gap: 16px;
   padding: 14px 24px;
-  background: color-mix(in srgb, var(--sidebar) 72%, var(--surface-raised));
-  border-top: 1px solid var(--border);
+  background: transparent;
 }
 
 .model-editor-footer>span {
@@ -5956,7 +5741,8 @@ body.is-resizing-git-panel .diff-file-card {
 
 .segmented-control {
   display: grid;
-  grid-template-columns: 38px 38px;
+  grid-auto-flow: column;
+  grid-auto-columns: 38px;
   padding: 3px;
   background: var(--surface-hover);
   border-radius: 7px;
@@ -5997,7 +5783,8 @@ body.is-resizing-git-panel .diff-file-card {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .workspace-content {
+  .workspace-content,
+  .app-body.sidebar-collapsed .workspace-content {
     grid-column: 1;
   }
 
@@ -6035,26 +5822,6 @@ body.is-resizing-git-panel .diff-file-card {
     background: rgb(0 0 0 / 20%);
   }
 
-  .connection-button {
-    width: 34px;
-    padding: 0;
-    justify-content: center;
-    font-size: 0;
-  }
-
-  .connection-button svg:last-child {
-    display: none;
-  }
-
-  .open-location-button span {
-    display: none;
-  }
-
-  .open-location-button {
-    width: 34px;
-    padding: 0;
-    justify-content: center;
-  }
 }
 
 @media (max-width: 1180px) {
@@ -6140,36 +5907,8 @@ body.is-resizing-git-panel .diff-file-card {
     height: calc(100vh - 16px);
   }
 
-  .settings-layout {
-    grid-template-columns: 52px minmax(0, 1fr);
-  }
-
   .settings-nav {
-    padding: 10px 6px;
-  }
-
-  .settings-nav-group-title {
-    display: none;
-  }
-
-  .settings-nav .page-back-button {
-    justify-content: center;
-    padding: 0;
-  }
-
-  .settings-nav .page-back-button span {
-    display: none;
-  }
-
-  .settings-nav button,
-  .settings-nav .settings-nav-item {
-    justify-content: center;
-    padding: 0;
-  }
-
-  .settings-nav button span,
-  .settings-nav .settings-nav-item span {
-    display: none;
+    padding: 10px 8px;
   }
 
   .settings-nav-footer {
@@ -6276,11 +6015,12 @@ body.is-resizing-git-panel .diff-file-card {
 
 .about-dialog {
   width: min(420px, 100%);
-  overflow: hidden;
+  max-height: calc(100dvh - 44px);
+  overflow-y: auto;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--dialog-shadow);
 }
 
 .about-header {
@@ -6530,6 +6270,8 @@ body.is-resizing-git-panel .diff-file-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .models-count-badge {
@@ -6542,11 +6284,13 @@ body.is-resizing-git-panel .diff-file-card {
 
 .model-add-bar {
   display: flex;
+  min-width: 0;
   gap: 8px;
 }
 
 .model-add-input {
   flex: 1;
+  min-width: 0;
 }
 
 .add-model-btn {
@@ -6656,12 +6400,13 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .config-anomaly-dialog {
-  width: min(520px, 94vw);
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 44px);
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
-  overflow: hidden;
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--dialog-shadow);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -6672,7 +6417,6 @@ body.is-resizing-git-panel .diff-file-card {
   gap: 14px;
   align-items: flex-start;
   padding: 20px 22px 16px;
-  border-bottom: 1px solid var(--border);
 }
 
 .config-anomaly-icon {
@@ -6709,9 +6453,7 @@ body.is-resizing-git-panel .diff-file-card {
 
 .anomaly-notice-box {
   padding: 10px 14px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
+  background: transparent;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -6723,7 +6465,7 @@ body.is-resizing-git-panel .diff-file-card {
 
 .anomaly-error-detail {
   padding: 10px 12px;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 11px;
@@ -6779,8 +6521,7 @@ body.is-resizing-git-panel .diff-file-card {
   justify-content: flex-end;
   gap: 10px;
   padding: 14px 22px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
+  background: transparent;
 }
 
 /* ============================================================
@@ -7499,30 +7240,32 @@ body.is-resizing-git-panel .diff-file-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 8px 12px 8px 16px;
   min-height: 48px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface-raised);
+  background: var(--surface);
 }
 
 .codex-git-workbench .git-panel-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .git-header-title-badge {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 550;
   color: var(--text);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.git-header-title-badge > svg {
+  color: var(--text-secondary);
 }
 
 .icon-button-badge-close {
@@ -7549,18 +7292,18 @@ body.is-resizing-git-panel .diff-file-card {
 .codex-git-workbench .git-panel-header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
 }
 
 .icon-button-mini {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -7574,8 +7317,7 @@ body.is-resizing-git-panel .diff-file-card {
 
 .icon-button-mini.active {
   background: var(--surface-hover);
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--text);
 }
 
 .icon-button-mini:disabled {
@@ -7586,12 +7328,12 @@ body.is-resizing-git-panel .diff-file-card {
 /* Toolbar Rows */
 .git-workbench-toolbar {
   position: relative;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
 }
 
 .git-toolbar-row-top {
@@ -7605,10 +7347,12 @@ body.is-resizing-git-panel .diff-file-card {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 12px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
+  min-height: 30px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -7660,7 +7404,7 @@ body.is-resizing-git-panel .diff-file-card {
 .git-toolbar-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   position: relative;
 }
 
@@ -7668,11 +7412,11 @@ body.is-resizing-git-panel .diff-file-card {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -7685,8 +7429,8 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .git-tool-btn.active {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 /* Dropdown Menu Popover */
@@ -7696,10 +7440,11 @@ body.is-resizing-git-panel .diff-file-card {
   right: 0;
   z-index: 100;
   width: 220px;
+  max-width: calc(100cqw - 24px);
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--popover-shadow);
   padding: 5px;
   display: flex;
   flex-direction: column;
@@ -7711,12 +7456,12 @@ body.is-resizing-git-panel .diff-file-card {
   align-items: center;
   gap: 9px;
   width: 100%;
-  height: 32px;
-  padding: 0 10px;
+  min-height: 34px;
+  padding: 8px;
   border: none;
   background: transparent;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text);
   cursor: pointer;
   text-align: left;
@@ -7748,10 +7493,13 @@ body.is-resizing-git-panel .diff-file-card {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 11px;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
+  min-height: 28px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
+  text-align: left;
   font-size: 11.5px;
   color: var(--text-secondary);
   user-select: none;
@@ -7766,6 +7514,8 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .git-upstream-tracking-pill .tracking-current {
+  flex-shrink: 0;
+  max-width: 55%;
   font-weight: 500;
   color: var(--text);
 }
@@ -7779,8 +7529,16 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .git-upstream-tracking-pill .tracking-chevron {
+  flex-shrink: 0;
   color: var(--text-muted);
   margin-left: 2px;
+}
+
+.git-upstream-tracking-pill :is(.tracking-current, .tracking-remote) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Workbench Body */
@@ -7799,21 +7557,20 @@ body.is-resizing-git-panel .diff-file-card {
   overflow-y: auto;
   overflow-x: auto;
   padding: 12px;
+  scrollbar-width: thin;
 }
 
 .diff-file-card {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
   background: var(--surface);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 .diff-file-card.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  border-color: var(--border-strong);
 }
 
 .diff-file-card.is-collapsed .diff-file-card-header {
@@ -7824,18 +7581,19 @@ body.is-resizing-git-panel .diff-file-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 12px;
-  background: var(--surface-raised);
+  min-height: 38px;
+  padding: 6px 10px;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   user-select: none;
-  gap: 10px;
+  gap: 6px;
 }
 
 .diff-file-card-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   flex: 1;
 }
@@ -7848,8 +7606,8 @@ body.is-resizing-git-panel .diff-file-card {
 
 .diff-card-filename {
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7859,17 +7617,17 @@ body.is-resizing-git-panel .diff-file-card {
 .diff-card-stats {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 10px;
+  font-weight: 500;
   flex-shrink: 0;
 }
 
 .diff-file-card-actions {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 1px;
   flex-shrink: 0;
 }
 
@@ -8055,7 +7813,7 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
   width: var(--git-tree-width, 250px);
   flex-shrink: 0;
   border-left: 1px solid var(--border);
-  background: var(--surface-raised);
+  background: var(--surface);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -8191,7 +7949,7 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 25px;
+  min-height: 28px;
   padding: 0 8px 0 28px;
   border-radius: 4px;
   cursor: pointer;
@@ -8210,7 +7968,7 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
 }
 
 .git-tree-file-row.active {
-  background: color-mix(in srgb, var(--accent) 14%, var(--surface-hover));
+  background: var(--surface-hover);
   font-weight: 500;
 }
 
@@ -8295,18 +8053,19 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
   position: absolute;
   bottom: 24px;
   left: 50%;
+  max-width: calc(100% - 24px);
   transform: translateX(-50%);
   z-index: 100;
   background: var(--text);
   color: var(--bg);
   padding: 6px 14px;
-  border-radius: 20px;
+  border-radius: 9px;
   font-size: 12px;
   font-weight: 500;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--popover-shadow);
   pointer-events: none;
 }
 /* Branch Switcher Popover */
@@ -8319,8 +8078,8 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
   max-width: calc(100% - 28px);
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--popover-shadow);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -8553,6 +8312,27 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
   color: var(--text-muted);
 }
 
+.git-panel :is(button, input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@container (max-width: 360px) {
+  .codex-git-workbench .git-panel-header { padding-left: 12px; }
+  .codex-git-workbench .git-panel-title { gap: 3px; }
+  .git-toolbar-row-top { gap: 4px; }
+  .git-branch-stats-chip { gap: 6px; padding-left: 4px; }
+  .git-tool-btn { width: 26px; }
+  .git-panel-tabs { padding-inline: 8px; }
+  .git-panel-tabs button { flex: 1; padding-inline: 6px; }
+  .git-panel-tabs button > svg { width: 13px; }
+  .git-diff-scrollable { padding: 8px; }
+  .diff-file-card-header { flex-wrap: wrap; }
+  .diff-file-card-title { flex-basis: 100%; }
+  .diff-file-card-actions { margin-left: auto; }
+  .git-timeline-meta { flex-wrap: wrap; row-gap: 4px; }
+}
+
 /* Conversation Timeline (Turn Minimap / 回溯进度) */
 .conversation-timeline-wrapper {
   position: absolute;
@@ -8727,4 +8507,50 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
 .target-highlight-flash {
   animation: target-pulse 1.4s ease-out forwards;
   border-radius: 10px;
+}
+
+/* Stable title placeholder while the separate naming request is in flight. */
+.task-title-skeleton {
+  display: inline-block;
+  flex: 0 1 148px;
+  width: 148px;
+  max-width: 75%;
+  height: 13px;
+  border-radius: 5px;
+  background: linear-gradient(100deg, var(--surface-hover) 20%, var(--border) 45%, var(--surface-hover) 70%);
+  background-size: 240% 100%;
+  animation: task-title-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes task-title-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .task-title-skeleton { animation: none; } }
+
+.subagent-panel-host {
+  display: flex;
+  flex: 0 0 clamp(340px, 40%, 600px);
+  flex-direction: column;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+.subagent-panel-tab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: 43px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.subagent-panel-tab > span {
+  padding: 6px 12px;
+  min-width: 160px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.subagent-panel-host > .subagent-conversation-panel { flex: 1; min-height: 0; }
+@media (max-width: 760px) {
+  .subagent-panel-host { position: absolute; inset: 0 0 0 auto; width: min(100%, 480px); max-width: 100%; z-index: 35; box-shadow: -12px 0 30px #00000014; }
 }

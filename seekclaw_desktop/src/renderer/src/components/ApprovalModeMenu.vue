@@ -184,6 +184,7 @@ onBeforeUnmount(removeListeners)
   position: relative;
   display: inline-flex;
   align-items: center;
+  min-width: 0;
 }
 
 .composer-approval-pill {
@@ -191,22 +192,29 @@ onBeforeUnmount(removeListeners)
   align-items: center;
   gap: 5px;
   height: 28px;
-  padding: 0 6px;
+  padding: 0 8px;
   font-size: 13px;
   font-weight: 500;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   border: none;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
-  transition: all 140ms ease;
+  transition: background-color 140ms ease, color 140ms ease;
   white-space: nowrap;
 }
 
-.composer-approval-pill:hover:not(:disabled) {
+.composer-approval-pill:hover:not(:disabled),
+.composer-approval-pill.open {
   background: var(--surface-hover);
   color: var(--text);
+}
+
+.composer-approval-pill:focus-visible,
+.approval-learn-more:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .composer-approval-pill:disabled {
@@ -217,11 +225,7 @@ onBeforeUnmount(removeListeners)
 /* Full Access Warning Orange Accent (as shown in Codex screenshot) */
 .composer-approval-pill.mode-full {
   background: transparent;
-  color: #ea580c;
-}
-
-:root[data-theme="dark"] .composer-approval-pill.mode-full {
-  color: #fb923c;
+  color: light-dark(#c45116, #fb923c);
 }
 
 .composer-approval-pill.mode-full:hover:not(:disabled) {
@@ -251,16 +255,11 @@ onBeforeUnmount(removeListeners)
   position: fixed;
   z-index: 1000;
   box-sizing: border-box;
-  padding: 10px 10px 8px;
-  border-radius: 14px;
+  padding: 6px;
+  border-radius: var(--radius-popover);
   border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.14), 0 2px 10px rgba(0, 0, 0, 0.06);
-}
-
-:root[data-theme="dark"] .approval-popover-card {
   background: var(--surface-raised);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45), 0 3px 12px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--popover-shadow);
 }
 
 .approval-popover-header {
@@ -268,8 +267,8 @@ onBeforeUnmount(removeListeners)
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  padding: 0 4px 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding: 7px 8px 9px;
+  border-bottom: 1px solid var(--border);
 }
 
 .approval-header-title {
@@ -304,8 +303,8 @@ onBeforeUnmount(removeListeners)
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 9px 8px;
+  border-radius: var(--radius-control);
   border: 1px solid transparent;
   background: transparent;
   text-align: left;
@@ -317,10 +316,14 @@ onBeforeUnmount(removeListeners)
   background: var(--surface-hover);
 }
 
+.approval-option-item.active {
+  background: var(--surface-subtle);
+}
+
 .approval-option-item:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
   background: var(--surface-hover);
-  border-color: var(--accent);
 }
 
 .option-icon-box {
@@ -340,16 +343,16 @@ onBeforeUnmount(removeListeners)
 }
 
 .option-title {
-  font-size: 12.5px;
-  font-weight: 550;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text);
-  line-height: 1.25;
+  line-height: 1.4;
 }
 
 .option-desc {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
-  line-height: 1.35;
+  line-height: 1.5;
   margin-top: 2px;
 }
 
@@ -361,29 +364,25 @@ onBeforeUnmount(removeListeners)
   width: 16px;
   height: 16px;
   align-self: center;
-  color: var(--accent);
+  color: var(--text);
 }
 
 /* Full Access Highlight Colors (as shown in Codex screenshot) */
 .approval-option-item.item-full.active .option-title,
-.approval-option-item.item-full.active .option-desc,
 .approval-option-item.item-full.active .option-icon-box,
 .approval-option-item.item-full.active .option-check-wrap {
-  color: #ea580c;
-}
-
-:root[data-theme="dark"] .approval-option-item.item-full.active .option-title,
-:root[data-theme="dark"] .approval-option-item.item-full.active .option-desc,
-:root[data-theme="dark"] .approval-option-item.item-full.active .option-icon-box,
-:root[data-theme="dark"] .approval-option-item.item-full.active .option-check-wrap {
-  color: #fb923c;
+  color: light-dark(#c45116, #fb923c);
 }
 
 .approval-option-item.item-full.active {
-  background: color-mix(in srgb, #f97316 7%, transparent);
+  background: color-mix(in srgb, #f97316 6%, var(--surface-raised));
 }
 
-:root[data-theme="dark"] .approval-option-item.item-full.active {
-  background: color-mix(in srgb, #ea580c 14%, transparent);
+@media (prefers-reduced-motion: reduce) {
+  .composer-approval-pill,
+  .approval-option-item,
+  .approval-learn-more {
+    transition: none;
+  }
 }
 </style>

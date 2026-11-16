@@ -124,6 +124,10 @@ onBeforeUnmount(() => {
         class="sidebar-resize-handle"
         role="separator"
         aria-orientation="vertical"
+        :aria-label="`${ariaLabel}宽度`"
+        :aria-valuenow="currentWidth"
+        :aria-valuemin="minWidth"
+        :aria-valuemax="maxWidth"
         :title="canCollapse ? '拖拽调节宽度，拖至最小时隐藏，双击重置' : '拖拽调节宽度，双击重置'"
         @pointerdown="startResize"
         @dblclick="resetWidth"
@@ -138,6 +142,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .two-pane-layout {
+  container: workbench-layout / inline-size;
   display: flex;
   width: 100%;
   height: 100%;
@@ -157,7 +162,7 @@ onBeforeUnmount(() => {
   background: var(--sidebar-panel);
   border-top: 1px solid var(--border);
   border-left: 1px solid var(--border);
-  border-top-left-radius: 12px;
+  border-top-left-radius: var(--radius-dialog, 16px);
   border-right: 1px solid var(--border);
   box-sizing: border-box;
   overflow: hidden;
@@ -205,6 +210,7 @@ onBeforeUnmount(() => {
 }
 
 .two-pane-content {
+  container: workbench-content / inline-size;
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
@@ -218,5 +224,14 @@ onBeforeUnmount(() => {
   border-left: none;
   box-sizing: border-box;
   overflow: hidden;
+}
+
+/* Constrain only the rendered navigation width; the user's stored width is preserved. */
+@container workbench-layout (max-width: 760px) {
+  .two-pane-sidebar { max-width: min(220px, 34cqw); }
+}
+
+@container workbench-layout (max-width: 580px) {
+  .two-pane-sidebar { max-width: min(180px, 34cqw); }
 }
 </style>

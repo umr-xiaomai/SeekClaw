@@ -307,7 +307,7 @@ onBeforeUnmount(() => {
       <template #sidebar>
         <div class="scheduled-nav">
           <div class="scheduled-nav-header">
-            <button class="page-back-button" type="button" title="返回应用" @click="emit('close')">
+            <button class="page-back-button" type="button" title="返回应用" aria-label="返回应用" @click="emit('close')">
               <ArrowLeft :size="16" />
               <span>返回应用</span>
             </button>
@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
           <div class="scheduled-nav-list">
             <button
               class="scheduled-nav-item"
-              :class="{ active: statusFilter === 'all' }"
+              :class="{ active: statusFilter === 'all' }" :aria-pressed="statusFilter === 'all'"
               @click="statusFilter = 'all'"
             >
               <CalendarClock :size="16" />
@@ -337,7 +337,7 @@ onBeforeUnmount(() => {
 
             <button
               class="scheduled-nav-item"
-              :class="{ active: statusFilter === 'enabled' }"
+              :class="{ active: statusFilter === 'enabled' }" :aria-pressed="statusFilter === 'enabled'"
               @click="statusFilter = 'enabled'"
             >
               <Clock :size="16" />
@@ -347,7 +347,7 @@ onBeforeUnmount(() => {
 
             <button
               class="scheduled-nav-item"
-              :class="{ active: statusFilter === 'disabled' }"
+              :class="{ active: statusFilter === 'disabled' }" :aria-pressed="statusFilter === 'disabled'"
               @click="statusFilter = 'disabled'"
             >
               <Power :size="16" />
@@ -393,10 +393,10 @@ onBeforeUnmount(() => {
         </header>
 
         <div class="scheduled-main-scroll">
-          <div v-if="notice" class="scheduled-tasks-notice">{{ notice }}</div>
-          <div v-if="error" class="scheduled-tasks-error">{{ error }}</div>
+          <div v-if="notice" class="scheduled-tasks-notice" role="status">{{ notice }}</div>
+          <div v-if="error" class="scheduled-tasks-error" role="alert">{{ error }}</div>
 
-          <div v-if="loading" class="scheduled-tasks-loading">
+          <div v-if="loading" class="scheduled-tasks-loading" role="status">
             <LoaderCircle class="spin" :size="20" /> 正在加载
           </div>
 
@@ -405,7 +405,7 @@ onBeforeUnmount(() => {
               <CalendarClock :size="32" />
               <p>还没有计划任务</p>
               <small>创建后由运行时在后台按时自动执行</small>
-              <button class="secondary-button" style="margin-top: 12px;" @click="newTask">
+              <button class="secondary-button" @click="newTask">
                 <Plus :size="15" /> 创建第一个任务
               </button>
             </div>
@@ -419,7 +419,7 @@ onBeforeUnmount(() => {
               <div v-for="task in filteredTasks" :key="task.id" class="scheduled-task-row">
                 <div class="scheduled-task-main">
                   <div class="scheduled-task-title">
-                    <strong>{{ task.name }}</strong>
+                    <strong :title="task.name">{{ task.name }}</strong>
                     <span class="scheduled-task-cron">{{ task.cron }}</span>
                   </div>
                   <small class="scheduled-task-meta">
@@ -430,19 +430,19 @@ onBeforeUnmount(() => {
                 <div class="scheduled-task-controls">
                   <span class="scheduled-task-status" :class="statusClass(task)">{{ statusLabel(task) }}</span>
                   <label class="scheduled-task-toggle" :title="task.enabled ? '暂停' : '启用'">
-                    <input class="sr-only" type="checkbox" :checked="task.enabled"
+                    <input class="sr-only" type="checkbox" :checked="task.enabled" :aria-label="`${task.enabled ? '暂停' : '启用'} ${task.name}`"
                       :disabled="action === `schedule.toggle:${task.id}`" @change="toggleTask(task)" />
                     <span class="toggle-switch" aria-hidden="true"><span /></span>
                   </label>
-                  <button class="icon-button compact" title="立即运行" :disabled="action === `schedule.run:${task.id}`"
+                  <button class="icon-button compact" :title="`立即运行 ${task.name}`" :aria-label="`立即运行 ${task.name}`" :disabled="action === `schedule.run:${task.id}`"
                     @click="runTask(task)">
                     <LoaderCircle v-if="action === `schedule.run:${task.id}`" class="spin" :size="14" />
                     <Play v-else :size="14" />
                   </button>
-                  <button class="icon-button compact" title="编辑" @click="editTask(task)">
+                  <button class="icon-button compact" :title="`编辑 ${task.name}`" :aria-label="`编辑 ${task.name}`" @click="editTask(task)">
                     <Pencil :size="14" />
                   </button>
-                  <button class="icon-button compact danger-icon" title="删除" @click="removeTask(task)">
+                  <button class="icon-button compact danger-icon" :title="`删除 ${task.name}`" :aria-label="`删除 ${task.name}`" @click="removeTask(task)">
                     <Trash2 :size="14" />
                   </button>
                 </div>
@@ -453,7 +453,7 @@ onBeforeUnmount(() => {
           <form v-else class="scheduled-task-editor" @submit.prevent="saveTask">
             <div class="scheduled-editor-heading">
               <strong>{{ editingId ? '编辑计划任务' : '新建计划任务' }}</strong>
-              <button type="button" class="icon-button compact" @click="editorOpen = false">
+              <button type="button" class="icon-button compact" title="关闭编辑器" aria-label="关闭编辑器" @click="editorOpen = false">
                 <X :size="15" />
               </button>
             </div>
@@ -529,7 +529,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 10px 12px 14px;
+  padding: 12px 12px 16px;
   overflow-y: auto;
   user-select: none;
   box-sizing: border-box;
@@ -612,7 +612,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 0 10px;
   color: var(--text-secondary);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 450;
   text-align: left;
   background: transparent;
@@ -630,8 +630,7 @@ onBeforeUnmount(() => {
 
 .scheduled-nav-item.active {
   color: var(--text);
-  background: var(--surface-raised);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  background: var(--surface-active);
 }
 
 .nav-item-title {
@@ -692,8 +691,7 @@ onBeforeUnmount(() => {
 
 .scheduled-quick-item.active {
   color: var(--text);
-  background: var(--surface-raised);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  background: var(--surface-active);
 }
 
 .quick-status-dot {
@@ -705,7 +703,7 @@ onBeforeUnmount(() => {
 }
 
 .quick-status-dot.enabled {
-  background: #10b981;
+  background: light-dark(#18743b, #79c996);
 }
 
 .quick-task-name {
@@ -719,10 +717,11 @@ onBeforeUnmount(() => {
 .quick-task-cron {
   font-size: 11px;
   color: var(--text-muted);
-  font-family: monospace;
+  font-family: var(--font-mono);
 }
 
 .scheduled-main {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -735,20 +734,26 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 28px;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 20px 28px;
   border-bottom: 1px solid var(--border);
 }
 
 .scheduled-content-title {
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
 
 .scheduled-content-title h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
-  font-size: 17px;
-  font-weight: 650;
+  font-size: 18px;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
@@ -782,9 +787,9 @@ onBeforeUnmount(() => {
 }
 
 .scheduled-tasks-notice {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
 }
 
 .scheduled-tasks-error {
@@ -800,14 +805,17 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 60px 0;
-  color: var(--text-muted);
+  min-height: 260px;
+  padding: 48px 16px;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.6;
 }
 
 .scheduled-task-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .scheduled-task-row {
@@ -816,9 +824,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 16px;
   padding: 16px;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-popover, 12px);
   transition: border-color 140ms ease;
 }
 
@@ -837,11 +845,16 @@ onBeforeUnmount(() => {
 .scheduled-task-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
+  flex-wrap: wrap;
 }
 
 .scheduled-task-title strong {
-  font-size: 15px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text);
 }
 
@@ -850,8 +863,9 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
   border: 1px solid var(--border);
   border-radius: 5px;
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 11.5px;
+  overflow-wrap: anywhere;
   color: var(--text-secondary);
 }
 
@@ -864,7 +878,8 @@ onBeforeUnmount(() => {
   margin: 4px 0 0;
   color: var(--text-secondary);
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -874,8 +889,11 @@ onBeforeUnmount(() => {
 .scheduled-task-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
 }
 
 .scheduled-task-status {
@@ -885,8 +903,8 @@ onBeforeUnmount(() => {
 }
 
 .status-success {
-  background: color-mix(in srgb, #10b981 14%, transparent);
-  color: #10b981;
+  background: color-mix(in srgb, light-dark(#18743b, #79c996) 10%, transparent);
+  color: light-dark(#18743b, #79c996);
 }
 
 .status-error {
@@ -910,9 +928,9 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 16px;
   padding: 20px;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-popover, 12px);
 }
 
 .scheduled-editor-heading {
@@ -927,27 +945,30 @@ onBeforeUnmount(() => {
 
 .scheduled-form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
 .scheduled-form-grid .span-2 {
-  grid-column: span 2;
+  grid-column: 1 / -1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.scheduled-form-grid span {
+.scheduled-form-grid label > span:first-child {
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
 }
 
-.scheduled-form-grid input,
+.scheduled-form-grid input:not([type="checkbox"]),
 .scheduled-form-grid textarea {
-  padding: 8px 12px;
-  background: var(--surface);
+  min-width: 0;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 7px;
   color: var(--text);
@@ -956,34 +977,37 @@ onBeforeUnmount(() => {
   transition: border-color 140ms ease;
 }
 
-.scheduled-form-grid input:focus,
+.scheduled-form-grid input:not([type="checkbox"]):focus,
 .scheduled-form-grid textarea:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .scheduled-cron-row {
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
 }
 
 .scheduled-cron-input {
-  flex: 1;
-  font-family: monospace;
+  flex: 1 1 220px;
+  font-family: var(--font-mono);
 }
 
-.scheduled-enabled-row {
+.scheduled-form-grid .scheduled-enabled-row {
   display: flex;
-  flex-direction: row !important;
+  flex-direction: row;
+  gap: 16px;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--surface-hover) 40%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 12px 0;
+  background: transparent;
 }
 
-.scheduled-enabled-row span {
+.scheduled-enabled-row > span:first-child {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -998,8 +1022,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  padding-top: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 
@@ -1009,13 +1034,45 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-.primary-action {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+
+.scheduled-nav-item > svg { flex-shrink: 0; }
+.quick-task-cron { flex-shrink: 0; max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-content-title { gap: 6px 12px; }
+.scheduled-count-tag { white-space: nowrap; }
+.scheduled-task-meta { overflow-wrap: anywhere; line-height: 1.6; }
+.scheduled-tasks-empty p { margin: 6px 0 0; color: var(--text); font-size: 15px; font-weight: 600; }
+.scheduled-tasks-empty > .secondary-button { margin-top: 10px; }
+.scheduled-cron-row > :deep(.custom-select) { flex: 1 1 180px; min-width: 0; }
+.scheduled-form-grid textarea { resize: vertical; line-height: 1.6; }
+.scheduled-enabled-row > input[type="checkbox"]:not(.sr-only) {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
 }
 
-.primary-action:hover {
-  filter: brightness(1.08);
+.scheduled-enabled-row input:focus-visible + .toggle-switch,
+.scheduled-task-toggle input:focus-visible + .toggle-switch {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@container workbench-content (max-width: 620px) {
+  .scheduled-content-header { padding: 18px; }
+  .scheduled-main-scroll { padding: 18px 18px 32px; }
+  .scheduled-task-row { flex-direction: column; gap: 14px; }
+  .scheduled-task-controls { align-self: flex-end; }
+  .scheduled-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .scheduled-task-editor { padding: 16px; }
+  .scheduled-editor-hint { flex-basis: 100%; line-height: 1.6; }
+}
+
+@container workbench-layout (max-width: 580px) {
+  .scheduled-nav { padding-inline: 8px; }
+  .scheduled-nav-item { gap: 6px; padding-inline: 8px; }
+  .nav-item-badge { padding-inline: 5px; }
+  .scheduled-create-btn { gap: 5px; padding-inline: 6px; font-size: 12px; }
+  .quick-task-cron { max-width: 36%; }
 }
 </style>

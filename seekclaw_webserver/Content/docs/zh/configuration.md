@@ -140,3 +140,9 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 Desktop 通过 Daemon 管理接口保存时，会立即更新该 Daemon 持有的配置。CLI 命令会持久化文件，后续 CLI 进程会读取新值；已经在运行的另一个 Daemon 不会自动感知这次外部修改。若在 CLI 或编辑器中改动 JSON，请重新连接 / 重启已有 Daemon，或通过对应管理接口更新。Prompt 文件的热加载与配置文件是不同机制。
 
 配置 JSON 损坏时，Runtime 会保留原文件用于检查，并回退到种子默认配置；先修复原文件再重启，避免无意保存回退结果。
+
+## 模型自动参数与多模态输入
+
+Desktop 新建或编辑供应商时，可直接使用未保存的地址、密钥、代理与超时设置获取模型列表，获取本身不会保存配置。每个模型的上下文和最大输出分别支持“自动”：`contextWindowAuto` / `maxOutputAuto` 为 true 时，优先使用模型列表接口返回的 `detectedContextWindow` / `detectedMaxOutput`；缺少信息时回退到 1,000,000 / 128,000 Tokens。只有模型 ID 的标准 `/models` 接口无法提供精确限制，自动不会凭模型名字猜测。
+
+`contextWindow` / `maxOutput` 保存手动值，切回手动模式后恢复；旧配置未指定自动标记时继续使用原有数字。运行时的请求和上下文预算使用解析后的实际限制。图像输入默认始终启用，旧的 `vision: false` 兼容读取但不再关闭图像输入；供应商 API 仍需实际支持收到的图像格式。

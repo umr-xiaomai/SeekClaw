@@ -19,9 +19,13 @@ import yaml from 'highlight.js/lib/languages/yaml'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import MarkdownIt from 'markdown-it'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
+import { renderMarkdownBlocks } from './markdown-blocks'
+import { encodeMarkdownData, isClosedFence, transformOutsideFences } from './markdown-fences'
+import { useStreamingText } from '../use-streaming-text'
 
-const props = defineProps<{ content: string }>()
+const props = defineProps<{ content: string; streaming?: boolean }>()
+const displayedContent = useStreamingText(() => props.content, () => props.streaming === true)
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('sh', bash)
@@ -126,17 +130,20 @@ function formatLanguage(lang: string): string {
 
 md.renderer.rules.fence = (tokens, index) => {
   const token = tokens[index]!
-  const rawLang = token.info.trim().split(/\\s+/)[0] ?? ''
+  const rawLang = token.info.trim().split(/\s+/)[0] ?? ''
 
   if (rawLang.toLocaleLowerCase() === 'mermaid') {
-    const encoded = encodeURIComponent(token.content)
+    if (props.streaming && !isClosedFence(token)) {
+      return '<div class="mermaid-render"><span class="mermaid-placeholder">正在生成图表…</span></div>'
+    }
+    const encoded = encodeMarkdownData(token.content)
     return `<div class="mermaid-render" data-src="${encoded}"><span class="mermaid-placeholder">加载图表…</span></div>`
   }
 
   const highlighted = rawLang && hljs.getLanguage(rawLang)
     ? hljs.highlight(token.content, { language: rawLang, ignoreIllegals: true }).value
     : md.utils.escapeHtml(token.content)
-  const encoded = encodeURIComponent(token.content)
+  const encoded = encodeMarkdownData(token.content)
   const label = formatLanguage(rawLang)
 
   return `<div class="code-block"><div class="code-header"><div class="code-lang-badge"><svg class="code-lang-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg><span>${md.utils.escapeHtml(label)}</span></div><button class="copy-code" type="button" data-code="${encoded}" title="复制代码" aria-label="复制代码"><svg class="copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><svg class="check-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span class="copy-text">复制</span></button></div><pre><code class="hljs language-${md.utils.escapeHtml(rawLang)}">${highlighted}</code></pre></div>`
@@ -154,17 +161,6 @@ md.renderer.rules.table_close = (tokens, index, options, _env, self) => {
 
 const mathHtml: string[] = []
 
-/** Extracts fenced code (math inside code must stay untouched). */
-function protectFences(source: string): { text: string; fences: string[] } {
-  const fences: string[] = []
-  const text = source.replace(/```[\s\S]*?```/g, (fence) => {
-    const token = `@@FENCE${fences.length}@@`
-    fences.push(fence)
-    return token
-  })
-  return { text, fences }
-}
-
 function renderMath(source: string): string {
   let result = source
   result = result.replace(/\$\$([\s\S]+?)\$\$/g, (_all, tex: string) => {
@@ -180,15 +176,13 @@ function renderMath(source: string): string {
   return result
 }
 
-const rendered = computed(() => {
+const renderedBlocks = computed(() => {
   mathHtml.length = 0
-  const { text, fences } = protectFences(props.content)
-  let processed = renderMath(text)
-  fences.forEach((fence, index) => {
-    processed = processed.replace(`@@FENCE${index}@@`, fence)
-  })
-  const html = md.render(processed)
-  return html.replace(/@@MATH(\d+)@@/g, (_all, index: string) => mathHtml[Number(index)] ?? '')
+  const source = displayedContent.value
+  const processed = source.includes('$') ? transformOutsideFences(md, source, renderMath) : source
+  return renderMarkdownBlocks(md, processed).map((html) =>
+    html.replace(/@@MATH(\d+)@@/g, (_all, index: string) => mathHtml[Number(index)] ?? '')
+  )
 })
 
 // ---------------------------------------------------------------- mermaid
@@ -196,12 +190,21 @@ const rendered = computed(() => {
 const body = ref<HTMLElement | null>(null)
 let mermaidPromise: Promise<typeof import('mermaid')> | null = null
 let mermaidSequence = 0
+const mermaidPrefix = useId()
+const pendingMermaids = new WeakSet<HTMLElement>()
+const renderedMermaids = new WeakMap<HTMLElement, string>()
+
+function isCurrentMermaid(node: HTMLElement, encodedSource: string): boolean {
+  return node.isConnected && body.value?.contains(node) === true && node.dataset.src === encodedSource
+}
 
 async function renderMermaid(): Promise<void> {
   const container = body.value
   if (!container) return
   const nodes = Array.from(container.querySelectorAll<HTMLElement>('.mermaid-render[data-src]'))
+    .filter((node) => !pendingMermaids.has(node) && renderedMermaids.get(node) !== node.dataset.src)
   if (nodes.length === 0) return
+  for (const node of nodes) pendingMermaids.add(node)
   try {
     mermaidPromise ??= import('mermaid').then((mod) => {
       mod.default.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' })
@@ -209,25 +212,35 @@ async function renderMermaid(): Promise<void> {
     })
     const mermaid = (await mermaidPromise).default
     for (const node of nodes) {
-      const source = decodeURIComponent(node.dataset.src ?? '')
+      const encodedSource = node.dataset.src ?? ''
+      if (!isCurrentMermaid(node, encodedSource)) continue
+      const source = decodeURIComponent(encodedSource)
       if (!source) continue
       node.classList.add('is-loading')
       try {
-        const id = `mermaid-${++mermaidSequence}`
+        const id = `mermaid-${mermaidPrefix}-${++mermaidSequence}`
         const { svg } = await mermaid.render(id, source)
-        node.innerHTML = svg
+        if (isCurrentMermaid(node, encodedSource)) {
+          node.innerHTML = svg
+          renderedMermaids.set(node, encodedSource)
+        }
       } catch {
-        node.innerHTML = `<pre class="mermaid-error">${md.utils.escapeHtml(source)}</pre>`
+        if (isCurrentMermaid(node, encodedSource)) {
+          node.innerHTML = `<pre class="mermaid-error">${md.utils.escapeHtml(source)}</pre>`
+          renderedMermaids.set(node, encodedSource)
+        }
       } finally {
         node.classList.remove('is-loading')
       }
     }
   } catch {
     // Rendering unavailable; leave placeholders as-is.
+  } finally {
+    for (const node of nodes) pendingMermaids.delete(node)
   }
 }
 
-watch(rendered, () => { void nextTick(() => void renderMermaid()) }, { immediate: true })
+watch(renderedBlocks, () => { void nextTick(() => void renderMermaid()) }, { immediate: true })
 
 async function handleClick(event: MouseEvent): Promise<void> {
   // 1. Copy code block
@@ -268,5 +281,21 @@ async function handleClick(event: MouseEvent): Promise<void> {
 </script>
 
 <template>
-  <div v-if="rendered.trim()" ref="body" class="markdown-body" @click="handleClick" v-html="rendered" />
+  <div v-if="renderedBlocks.length" ref="body" class="markdown-body" @click="handleClick">
+    <div v-for="(html, index) in renderedBlocks" :key="index" class="markdown-block" v-html="html" />
+  </div>
 </template>
+
+<style scoped>
+.markdown-block {
+  display: contents;
+}
+
+.markdown-body :deep(.markdown-block:first-child > :first-child) {
+  margin-top: 0;
+}
+
+.markdown-body :deep(.markdown-block:last-child > :last-child) {
+  margin-bottom: 0;
+}
+</style>

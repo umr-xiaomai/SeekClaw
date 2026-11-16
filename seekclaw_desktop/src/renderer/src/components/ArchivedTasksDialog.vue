@@ -124,7 +124,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
       <template #sidebar>
         <div class="archived-nav">
           <div class="archived-nav-header">
-            <button class="page-back-button" type="button" title="返回应用" @click="emit('close')">
+            <button class="page-back-button" type="button" title="返回应用" aria-label="返回应用" @click="emit('close')">
               <ArrowLeft :size="16" />
               <span>返回应用</span>
             </button>
@@ -143,6 +143,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
             <button
               class="archived-nav-item"
               :class="{ active: taskFilter === 'all' && projectFilter === 'all' }"
+              :aria-pressed="taskFilter === 'all' && projectFilter === 'all'"
               @click="taskFilter = 'all'; projectFilter = 'all'"
             >
               <Archive :size="16" />
@@ -152,7 +153,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
             <button
               class="archived-nav-item"
-              :class="{ active: taskFilter === 'global' }"
+              :class="{ active: taskFilter === 'global' }" :aria-pressed="taskFilter === 'global'"
               @click="taskFilter = 'global'; projectFilter = 'all'"
             >
               <Globe2 :size="16" />
@@ -170,6 +171,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
                 :key="item.id"
                 class="archived-nav-item"
                 :class="{ active: taskFilter === 'project' && projectFilter === item.id }"
+                :aria-pressed="taskFilter === 'project' && projectFilter === item.id"
                 @click="taskFilter = 'project'; projectFilter = item.id"
               >
                 <Folder :size="16" />
@@ -225,12 +227,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
             <div class="archive-task-card">
               <article v-for="thread in group.threads" :key="thread.id" class="archive-task-row">
-                <button class="archive-task-main" @click="emit('selectThread', thread.id)">
+                <button class="archive-task-main" :title="thread.title" @click="emit('selectThread', thread.id)">
                   <strong>{{ thread.title }}</strong>
                   <time>{{ formatDate(thread.updatedAt) }}</time>
                 </button>
                 <div class="archive-task-actions">
-                  <button class="icon-button compact archive-row-delete" title="永久删除"
+                  <button class="icon-button compact archive-row-delete" :title="`永久删除 ${thread.title}`" :aria-label="`永久删除 ${thread.title}`"
                     @click.stop="emit('deleteTask', thread)">
                     <Trash2 :size="16" />
                   </button>
@@ -265,7 +267,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 10px 12px 14px;
+  padding: 12px 12px 16px;
   overflow-y: auto;
   user-select: none;
   box-sizing: border-box;
@@ -313,9 +315,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   height: 34px;
   padding: 0 10px;
   margin: 4px 0 10px;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-control, 8px);
   color: var(--text-secondary);
 }
 
@@ -345,7 +347,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   gap: 10px;
   padding: 0 10px;
   color: var(--text-secondary);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 450;
   text-align: left;
   background: transparent;
@@ -363,8 +365,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 
 .archived-nav-item.active {
   color: var(--text);
-  background: var(--surface-raised);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  background: var(--surface-active);
 }
 
 .nav-item-title {
@@ -427,6 +428,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .archived-main {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -439,20 +441,26 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 28px;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 20px 28px;
   border-bottom: 1px solid var(--border);
 }
 
 .archived-content-title {
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
 
 .archived-content-title h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
-  font-size: 17px;
-  font-weight: 650;
+  font-size: 18px;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
@@ -477,8 +485,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 60px 0;
-  color: var(--text-muted);
+  min-height: 260px;
+  padding: 48px 16px;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.6;
 }
 
 .archive-group {
@@ -486,6 +497,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .archive-group-header {
+  min-width: 0;
+  gap: 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -493,6 +506,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .archive-group-title {
+  min-width: 0;
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -500,13 +515,22 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 }
 
 .archive-group-title strong {
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .archive-group-title small {
   color: var(--text-muted);
-  font-size: 12px;
-  margin-left: 6px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  margin-top: 3px;
 }
 
 .archive-group-meta {
@@ -517,9 +541,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .archive-task-card {
   display: flex;
   flex-direction: column;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-popover, 12px);
   overflow: hidden;
 }
 
@@ -581,11 +605,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
+  height: 32px;
   padding: 0 10px;
   color: var(--text);
   font-size: 12px;
-  background: var(--surface-raised);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
@@ -604,5 +628,30 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape))
 .archive-row-delete:hover {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.archived-sidebar-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.archive-group-title > div { min-width: 0; }
+.archive-group-title > svg, .archived-nav-item > svg { flex-shrink: 0; }
+.archive-group-meta { flex-shrink: 0; white-space: nowrap; }
+.archived-count-tag { white-space: nowrap; }
+.archived-empty strong { color: var(--text); font-size: 15px; font-weight: 600; }
+
+@container workbench-content (max-width: 560px) {
+  .archived-content-header { padding: 18px; }
+  .archived-list-scroll { padding: 18px 18px 32px; }
+  .archive-task-row { align-items: stretch; flex-direction: column; gap: 12px; padding: 14px; }
+  .archive-task-actions { justify-content: flex-end; }
+  .archive-group-header { align-items: flex-start; }
+}
+
+@container workbench-layout (max-width: 580px) {
+  .archived-nav { padding-inline: 8px; }
+  .archived-nav-item { gap: 6px; padding-inline: 8px; }
+  .nav-item-badge { padding-inline: 5px; }
 }
 </style>

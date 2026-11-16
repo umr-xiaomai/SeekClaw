@@ -937,6 +937,7 @@ onBeforeUnmount(() => {
           <button
             class="icon-button-mini"
             title="刷新 Git 状态"
+            aria-label="刷新 Git 状态"
             :disabled="loading || !project"
             @click.stop="refresh"
           >
@@ -949,6 +950,8 @@ onBeforeUnmount(() => {
             class="icon-button-mini"
             :class="{ active: showFileTree }"
             :title="showFileTree ? '隐藏文件列表' : '展开文件列表'"
+            :aria-label="showFileTree ? '隐藏文件列表' : '展开文件列表'"
+            :aria-pressed="showFileTree"
             @click="showFileTree = !showFileTree"
           >
             <component :is="showFileTree ? PanelRightClose : PanelRightOpen" :size="15" />
@@ -956,12 +959,13 @@ onBeforeUnmount(() => {
           <button
             class="icon-button-mini"
             title="在工作区目录打开终端"
+            aria-label="在工作区目录打开终端"
             :disabled="!project"
             @click="emit('openTerminal')"
           >
             <TerminalSquare :size="15" />
           </button>
-          <button class="icon-button-mini" title="关闭面板" @click="emit('close')">
+          <button class="icon-button-mini" title="关闭面板" aria-label="关闭 Git 面板" @click="emit('close')">
             <X :size="14" />
           </button>
         </div>
@@ -969,7 +973,7 @@ onBeforeUnmount(() => {
 
       <div v-if="!diffOverride && tab === 'diff'" class="git-workbench-toolbar">
         <div class="git-toolbar-row-top">
-          <div class="git-branch-stats-chip" title="切换分支" @click.stop="toggleBranchMenu">
+          <button type="button" class="git-branch-stats-chip" title="切换分支" aria-label="切换分支" :aria-expanded="branchMenuOpen" aria-haspopup="dialog" @click.stop="toggleBranchMenu">
             <span class="git-branch-label">
               <span>分支</span>
               <ChevronDown :size="13" />
@@ -979,7 +983,7 @@ onBeforeUnmount(() => {
               <span v-if="totalDeletions > 0" class="stat-del">-{{ totalDeletions }}</span>
               <span v-if="totalAdditions === 0 && totalDeletions === 0" class="stat-clean">0</span>
             </span>
-          </div>
+          </button>
 
           <div class="git-toolbar-actions" @click.stop>
             <button
@@ -987,6 +991,9 @@ onBeforeUnmount(() => {
               class="git-tool-btn"
               :class="{ active: menuOpen }"
               title="更多选项"
+              aria-label="更多 Git 选项"
+              :aria-expanded="menuOpen"
+              aria-haspopup="menu"
               @click.stop="toggleMenu"
             >
               <MoreHorizontal :size="15" />
@@ -996,6 +1003,7 @@ onBeforeUnmount(() => {
               type="button"
               class="git-tool-btn"
               :title="isAllCollapsed ? '展开全部差异' : '折叠全部差异'"
+              :aria-label="isAllCollapsed ? '展开全部差异' : '折叠全部差异'"
               @click="toggleCollapseAll"
             >
               <Layers :size="15" />
@@ -1005,6 +1013,7 @@ onBeforeUnmount(() => {
               type="button"
               class="git-tool-btn"
               title="复制完整 Patch"
+              aria-label="复制完整 Patch"
               @click="copyToClipboard(displayedDiff, '已复制完整差异 Patch')"
             >
               <Copy :size="15" />
@@ -1067,12 +1076,12 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="git-toolbar-row-bottom">
-          <div class="git-upstream-tracking-pill" :title="overview?.upstream ? `追踪远端: ${overview.upstream}` : '本地分支'" @click.stop="toggleBranchMenu">
+          <button type="button" class="git-upstream-tracking-pill" :title="overview?.upstream ? `追踪远端: ${overview.upstream}` : '本地分支'" :aria-expanded="branchMenuOpen" aria-haspopup="dialog" @click.stop="toggleBranchMenu">
             <span class="tracking-current">{{ overview?.branch || 'master' }}</span>
             <span v-if="overview?.upstream" class="tracking-arrow">→</span>
             <span v-if="overview?.upstream" class="tracking-remote">{{ overview.upstream }}</span>
             <ChevronDown :size="12" class="tracking-chevron" />
-          </div>
+          </button>
         </div>
 
         <Transition name="popover-fade">
@@ -1085,6 +1094,7 @@ onBeforeUnmount(() => {
                   v-model="branchSearchQuery"
                   type="text"
                   class="branch-search-input"
+                  aria-label="搜索分支"
                   placeholder="搜索分支..."
                   @keydown.esc="closeBranchMenu"
                 />
@@ -1203,12 +1213,12 @@ onBeforeUnmount(() => {
         </Transition>
       </div>
 
-      <div v-if="!diffOverride" class="git-panel-tabs" role="tablist">
-        <button :class="{ active: tab === 'diff' }" role="tab" @click="selectTab('diff')">
+      <div v-if="!diffOverride" class="git-panel-tabs" role="tablist" aria-label="Git 视图">
+        <button :class="{ active: tab === 'diff' }" role="tab" :aria-selected="tab === 'diff'" @click="selectTab('diff')">
           <Braces :size="15" />
           <span>更改 ({{ parsedFiles.length }})</span>
         </button>
-        <button :class="{ active: tab === 'history' }" role="tab" @click="selectTab('history')">
+        <button :class="{ active: tab === 'history' }" role="tab" :aria-selected="tab === 'history'" @click="selectTab('history')">
           <History :size="15" />
           <span>提交记录</span>
         </button>
@@ -1723,7 +1733,7 @@ onBeforeUnmount(() => {
       </div>
 
       <Transition name="fade">
-        <div v-if="copyToast" class="git-action-toast">
+        <div v-if="copyToast" class="git-action-toast" role="status">
           <Check :size="14" />
           <span>{{ copyToast }}</span>
         </div>
@@ -1731,4 +1741,3 @@ onBeforeUnmount(() => {
     </aside>
   </Transition>
 </template>
-
