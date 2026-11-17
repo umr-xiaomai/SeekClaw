@@ -12,6 +12,7 @@ public sealed class SubAgentControlTool(IPromptProvider prompts, SubAgentRunner 
         ("action", ToolSchema.String("spawn | list | status | wait | send | cancel"), true),
         ("id", ToolSchema.String("Persistent sub-agent task ID"), false),
         ("role", ToolSchema.String("researcher | coder | tester | general"), false),
+        ("name", ToolSchema.String("Optional short display name for the sub-agent (e.g. 'Demo explainer')"), false),
         ("task", ToolSchema.String("Self-contained task or follow-up instruction"), false),
         ("model", ToolSchema.String("Optional provider/model override"), false),
         ("worktree", ToolSchema.Boolean("Run in a dedicated Git worktree"), false),
@@ -21,10 +22,12 @@ public sealed class SubAgentControlTool(IPromptProvider prompts, SubAgentRunner 
         if (context.SubAgentDepth > 0) return ToolResult.Fail("Sub-agents cannot control other sub-agents.");
         var parent = SubAgentRunner.Parent(context);
         var id = GetString(args, "id") ?? "";
+        var name = GetString(args, "name")?.Trim();
+        if (string.IsNullOrWhiteSpace(name)) name = null;
         JsonNode result = GetString(args, "action") switch
         {
             "spawn" => await runner.StartAsync(new SubAgentTaskRequest(GetString(args, "role") ?? "general",
-                GetString(args, "task") ?? "", GetString(args, "model"), GetBool(args, "worktree")), context, ct).ConfigureAwait(false),
+                GetString(args, "task") ?? "", GetString(args, "model"), GetBool(args, "worktree"), name), context, ct).ConfigureAwait(false),
             "send" => await runner.SendAsync(id, GetString(args, "task") ?? "", context, ct).ConfigureAwait(false),
             "list" => tasks.List(parent),
             "status" => tasks.Get(parent, id),

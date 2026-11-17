@@ -812,5 +812,30 @@ public sealed class ToolAndAgentTests
     {
         Assert.Equal(expected, Agent.IsStandaloneActionPreamble(text));
     }
+
+    [Fact]
+    public void WebSearchAndFetch_StripBaiduCommentsUnclosedTagsAndEmbeddedJson()
+    {
+        var baiduHtml = """
+            <h3><a href="http://www.baidu.com/link?url=abc">世界模型行业观察</a></h3>
+            <div class="c-abstract">Kairos 3.1以混合Transformer架构实现端侧部署</div>
+            <!--s-data:{"title":"<span>标题</span>","clamp":2}],"isSingleLine":false},"isPc":true,"summarySpan":12,"rightGrid":0,"hasBottom":null}-->
+            <script>window.__DATA__ = {"isPc":true,"summarySpan":12};</script>
+            <h3><a href="http://www.baidu.com/link?url=def">具身智能百科</a></h3>
+            <div class="summary">基础概念介绍<div cl
+            """;
+
+        var results = WebSearchTool.ExtractBaiduResults(baiduHtml, 5);
+        Assert.Equal(2, results.Count);
+        Assert.Contains("Kairos 3.1", results[0].Snippet);
+        Assert.DoesNotContain("isPc", results[0].Snippet);
+        Assert.DoesNotContain("summarySpan", results[0].Snippet);
+        Assert.Equal("基础概念介绍", results[1].Snippet);
+        Assert.DoesNotContain("<div", results[1].Snippet);
+
+        var leakedJson = "大模型落地应用的核心代名词...\",\"clamp\":2}],\"isSingleLine\":false},\"isPc\":true,\"summarySpan\":12,\"rightGrid\":0,\"hasBottom\":null";
+        Assert.Equal("大模型落地应用的核心代名词...",
+            WebFetchTool.ExtractMainText(leakedJson.Replace("\",\"clamp\":2", "\"}],\"clamp\":2")));
+    }
 }
 

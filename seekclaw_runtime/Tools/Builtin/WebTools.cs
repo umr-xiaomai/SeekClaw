@@ -195,7 +195,8 @@ public sealed class WebSearchTool(IPromptProvider prompts) : BuiltinTool(prompts
         {
             var afterLink = html[Math.Min(match.Index + match.Length, html.Length)..];
             var snippetEnd = afterLink.IndexOf("<h3", StringComparison.OrdinalIgnoreCase);
-            var snippetBlock = snippetEnd > 0 ? afterLink[..Math.Min(snippetEnd, 1600)] : afterLink[..Math.Min(afterLink.Length, 1600)];
+            var sliceLen = snippetEnd > 0 ? Math.Min(snippetEnd, 8000) : Math.Min(afterLink.Length, 8000);
+            var snippetBlock = afterLink[..sliceLen];
             AddResult(results, match.Groups["title"].Value, match.Groups["url"].Value, snippetBlock, maxResults);
             if (results.Count >= maxResults) break;
         }
@@ -342,17 +343,26 @@ public sealed class WebFetchTool(IPromptProvider prompts) : BuiltinTool(prompts)
     {
         if (string.IsNullOrWhiteSpace(html)) return "(empty response)";
 
-        // Remove script and style tags completely
-        var clean = Regex.Replace(html, @"<(script|style)[^>]*?>.*?</\1>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var timeout = TimeSpan.FromSeconds(2);
+        // Strip HTML comments first (including unclosed trailing comments) so embedded
+        // JSON/SSR payloads containing '>' do not leak past tag stripping.
+        var clean = Regex.Replace(html, @"<!--.*?-->", "", RegexOptions.Singleline, timeout);
+        clean = Regex.Replace(clean, @"<!--.*$", "", RegexOptions.Singleline, timeout);
+        // Remove script, style, noscript, template, and svg tags (including unclosed trailing ones).
+        clean = Regex.Replace(clean, @"<(script|style|noscript|template|svg)\b[^>]*?>.*?</\1>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline, timeout);
+        clean = Regex.Replace(clean, @"<(script|style|noscript|template|svg)\b.*$", "", RegexOptions.IgnoreCase | RegexOptions.Singleline, timeout);
         // Replace common block breaks with newlines
-        clean = Regex.Replace(clean, @"</(p|h[1-6]|li|tr|div)>", "\n", RegexOptions.IgnoreCase);
-        clean = Regex.Replace(clean, @"<br\s*/?>", "\n", RegexOptions.IgnoreCase);
-        // Strip remaining HTML tags
-        clean = Regex.Replace(clean, @"<[^>]+>", "");
+        clean = Regex.Replace(clean, @"</(p|h[1-6]|li|tr|div)>", "\n", RegexOptions.IgnoreCase, timeout);
+        clean = Regex.Replace(clean, @"<br\s*/?>", "\n", RegexOptions.IgnoreCase, timeout);
+        // Strip remaining HTML tags and any trailing unclosed tag fragment (e.g. "<div cl").
+        clean = Regex.Replace(clean, @"<[^>]+>", "", RegexOptions.None, timeout);
+        clean = Regex.Replace(clean, @"<[^>]*$", "", RegexOptions.None, timeout);
         // Decode HTML entities
         clean = System.Net.WebUtility.HtmlDecode(clean);
+        // Strip leaked Baidu/SSR JSON fragments if any escaped outside comments/tags.
+        clean = Regex.Replace(clean, @"(?:""\}\]\s*,\s*""clamp""\s*:|\{""isPc""\s*:\s*true\s*,\s*""summarySpan""\s*:|""\]\s*,\s*""hasBottom""\s*:).*$", "", RegexOptions.Singleline, timeout);
         // Clean up excessive blank lines
-        clean = Regex.Replace(clean, @"\n\s*\n+", "\n\n");
+        clean = Regex.Replace(clean, @"\n\s*\n+", "\n\n", RegexOptions.None, timeout);
 
         return clean.Trim();
     }

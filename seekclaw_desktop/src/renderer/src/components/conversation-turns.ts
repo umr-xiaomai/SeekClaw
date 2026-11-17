@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../types'
+import { isInternalUserMessage } from '../internal-messages'
 
 export interface ConversationTurn {
   id: string
@@ -26,13 +27,10 @@ export function extractConversationTurns(messages: ChatMessage[] = []): Conversa
   let currentTurnIndex = -1
 
   for (const message of messages) {
-    if (message.content?.startsWith('>>> [output truncated]')) continue
+    if (isInternalUserMessage(message)) continue
 
     if (message.role === 'user') {
       const content = message.content?.trim() || ''
-      if (content.startsWith('System: [Memory Recall]') || content.startsWith('System: [Error]')) {
-        continue
-      }
 
       const turn: ConversationTurn = {
         id: message.id,

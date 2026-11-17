@@ -207,10 +207,9 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 var function = call["function"] as JsonObject;
                 var name = function?["name"]?.GetValue<string>() ?? "";
                 if (name.Length == 0) continue;
-                calls.Add(new ToolCallRequest(
-                    call["id"]?.GetValue<string>() ?? $"call_{calls.Count}",
-                    name,
-                    function?["arguments"]?.GetValue<string>() ?? "{}"));
+                var id = call["id"]?.GetValue<string>() ?? $"call_{calls.Count}";
+                var rawArgs = function?["arguments"]?.GetValue<string>() ?? "{}";
+                calls.AddRange(ExpandToolCalls(id, name, rawArgs));
             }
         }
 
@@ -441,12 +440,38 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
 
     private static string Truncate(string body) => body.Length > 400 ? body[..400] : body;
 
-    /// <summary>Accumulates streaming deltas into a full completion.</summary>
-    private sealed class Accumulator
+    private static IEnumerable<ToolCallRequest> ExpandToolCalls(string id, string name, string rawArgs)
     {
+        var parts = ToolArguments.SplitConcatenatedJsonObjects(rawArgs);
+        if (parts.Count <= 1)
+        {
+            yield return new ToolCallRequest(id, name, parts.Count == 1 && parts[0].Length > 0 ? parts[0] : "{}");
+            yield break;
+        }
+
+        for (var i = 0; i < parts.Count; i++)
+        {
+            var callId = i == 0 ? id : $"{id}_{i + 1}";
+            yield return new ToolCallRequest(callId, name, parts[i]);
+        }
+    }
+
+    /// <summary>Accumulates streaming deltas into a full completion.</summary>
+    internal sealed class Accumulator
+    {
+        private const int RepetitionMinLength = 10;
+        private const int RepetitionMaxLength = 120;
+        private const int RepetitionWindowChars = 2048;
+        private const int RepetitionMinTotalChars = 320;
+        private const int RepetitionMinRepeats = 10;
+        private const int RepetitionCheckStride = 128;
+
         private readonly StringBuilder _text = new();
         private readonly StringBuilder _thinking = new();
         private readonly Dictionary<int, (string Id, string Name, StringBuilder Args)> _toolCalls = [];
+        private readonly Dictionary<int, int> _activeSlotAliases = [];
+        private int _nextTextRepetitionCheck = 512;
+        private int _nextThinkingRepetitionCheck = 512;
         private long _inputTokens;
         private long _cachedInputTokens;
         private long _outputTokens;
@@ -481,12 +506,24 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             if (delta["reasoning_content"]?.GetValue<string>() is { Length: > 0 } reasoning)
             {
                 _thinking.Append(reasoning);
+                if (_thinking.Length >= _nextThinkingRepetitionCheck)
+                {
+                    _nextThinkingRepetitionCheck = _thinking.Length + RepetitionCheckStride;
+                    if (HasDegenerateRepetition(_thinking, out _))
+                        throw new LlmException("Model stream entered a degenerate repetition loop.", retryable: true);
+                }
                 yield return new LlmThinkingDelta(reasoning);
             }
 
             if (delta["content"]?.GetValue<string>() is { Length: > 0 } content)
             {
                 _text.Append(content);
+                if (_text.Length >= _nextTextRepetitionCheck)
+                {
+                    _nextTextRepetitionCheck = _text.Length + RepetitionCheckStride;
+                    if (HasDegenerateRepetition(_text, out _))
+                        throw new LlmException("Model stream entered a degenerate repetition loop.", retryable: true);
+                }
                 yield return new LlmTextDelta(content);
             }
 
@@ -495,28 +532,118 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 foreach (var callNode in toolCalls)
                 {
                     if (callNode is not JsonObject call) continue;
-                    var index = call["index"]?.GetValue<int>() ?? 0;
-
-                    if (!_toolCalls.TryGetValue(index, out var entry))
-                    {
-                        entry = ("", "", new StringBuilder());
-                        _toolCalls[index] = entry;
-                    }
+                    var rawIndex = call["index"]?.GetValue<int>() ?? 0;
+                    var slot = _activeSlotAliases.GetValueOrDefault(rawIndex, rawIndex);
 
                     var id = call["id"]?.GetValue<string>();
                     var name = call["function"]?["name"]?.GetValue<string>();
                     var args = call["function"]?["arguments"]?.GetValue<string>();
 
+                    if (_toolCalls.TryGetValue(slot, out var entry))
+                    {
+                        // Some relay gateways reuse index 0 for every parallel tool call.
+                        // Move to a fresh slot when a distinct call id or a new tool name
+                        // arrives after an already-complete JSON argument object.
+                        var idConflict = !string.IsNullOrEmpty(id)
+                            && !string.IsNullOrEmpty(entry.Id)
+                            && !string.Equals(id, entry.Id, StringComparison.Ordinal);
+                        var nameConflict = !string.IsNullOrEmpty(name)
+                            && !string.IsNullOrEmpty(entry.Name)
+                            && entry.Args.Length > 0
+                            && ToolArguments.StartsCompleteJsonObject(entry.Args.ToString());
+                        if (idConflict || nameConflict)
+                        {
+                            slot = AllocateNextSlot(slot);
+                            _activeSlotAliases[rawIndex] = slot;
+                            entry = ("", "", new StringBuilder());
+                            _toolCalls[slot] = entry;
+                        }
+                    }
+                    else
+                    {
+                        entry = ("", "", new StringBuilder());
+                        _toolCalls[slot] = entry;
+                    }
+
                     var announce = entry.Name.Length == 0 && !string.IsNullOrEmpty(name);
-                    _toolCalls[index] = (
+                    _toolCalls[slot] = (
                         string.IsNullOrEmpty(id) ? entry.Id : id,
                         string.IsNullOrEmpty(name) ? entry.Name : name,
                         entry.Args.Append(args ?? ""));
 
                     if (announce)
-                        yield return new LlmToolCallStarted(_toolCalls[index].Id, name!);
+                        yield return new LlmToolCallStarted(_toolCalls[slot].Id, name!);
                 }
             }
+        }
+
+        private int AllocateNextSlot(int start)
+        {
+            var candidate = Math.Max(start + 1, _toolCalls.Count);
+            while (_toolCalls.ContainsKey(candidate)) candidate++;
+            return candidate;
+        }
+
+        internal static bool HasDegenerateRepetition(StringBuilder sb, out string repeatedSample)
+        {
+            repeatedSample = "";
+            if (sb.Length < RepetitionMinTotalChars) return false;
+
+            var windowLen = Math.Min(sb.Length, RepetitionWindowChars);
+            var tail = sb.ToString(sb.Length - windowLen, windowLen);
+
+            for (var period = RepetitionMinLength; period <= RepetitionMaxLength; period++)
+            {
+                var minRepeats = Math.Max(RepetitionMinRepeats, (RepetitionMinTotalChars + period - 1) / period);
+                var needed = period * minRepeats;
+                if (tail.Length < needed) break;
+
+                var pattern = tail.AsSpan(tail.Length - period, period);
+                if (!HasEnoughDistinctNonWhitespaceChars(pattern, 4)) continue;
+
+                var matched = true;
+                for (var k = 1; k < minRepeats; k++)
+                {
+                    if (!tail.AsSpan(tail.Length - (k + 1) * period, period).SequenceEqual(pattern))
+                    {
+                        matched = false;
+                        break;
+                    }
+                }
+
+                if (matched)
+                {
+                    repeatedSample = pattern.ToString();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasEnoughDistinctNonWhitespaceChars(ReadOnlySpan<char> span, int required)
+        {
+            Span<char> seen = stackalloc char[required];
+            var count = 0;
+            foreach (var ch in span)
+            {
+                if (char.IsWhiteSpace(ch)) continue;
+                var exists = false;
+                for (var i = 0; i < count; i++)
+                {
+                    if (seen[i] == ch)
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists)
+                {
+                    seen[count++] = ch;
+                    if (count >= required) return true;
+                }
+            }
+            return false;
         }
 
         public LlmCompletion Build(LlmRequest? request = null)
@@ -531,7 +658,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 Thinking = _thinking.ToString(),
                 ToolCalls = _toolCalls
                     .OrderBy(kv => kv.Key)
-                    .Select(kv => new ToolCallRequest(
+                    .SelectMany(kv => ExpandToolCalls(
                         string.IsNullOrEmpty(kv.Value.Id) ? $"call_{kv.Key}" : kv.Value.Id,
                         kv.Value.Name,
                         kv.Value.Args.Length == 0 ? "{}" : kv.Value.Args.ToString()))

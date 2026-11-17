@@ -34,3 +34,28 @@ export function toolLabel(tool: ToolActivity): string {
   }
   return verbs[toolKind(tool)][tool.state === 'running' ? 0 : tool.state === 'error' ? 2 : 1]!
 }
+
+export function preparingToolLabel(toolName?: string): string {
+  const name = toolName?.trim()
+  if (!name || name === 'tool') return '正在准备工具调用…'
+  const kind = toolKind({ id: '', name, state: 'running' })
+  switch (kind) {
+    case 'shell': return '正在准备运行命令…'
+    case 'edit': return '正在准备编辑文件…'
+    case 'read': return '正在准备读取文件…'
+    case 'search': return '正在准备搜索…'
+    case 'image': return '正在准备查看图像…'
+    case 'browser': return '正在准备浏览操作…'
+    case 'plan': return '正在准备更新计划…'
+    default: return `正在准备调用 ${name}…`
+  }
+}
+
+export function phaseStatusText(phase?: string): string | null {
+  const p = phase?.trim()
+  if (!p) return null
+  if (p.includes('重试') || p.includes('压缩') || p.includes('验证') || p.includes('续写') || p.includes('续步') || p.includes('总结')) {
+    return p
+  }
+  return null
+}

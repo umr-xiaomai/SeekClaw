@@ -280,4 +280,58 @@ describe('createDaemonEventHandler', () => {
     expect(assistant?.content).toBe('Partial output')
     expect(assistant?.content).not.toContain('```text')
   })
+
+  it('tracks preparing tool call details and thinking_done transitions cleanly', () => {
+    const thread: ThreadItem = {
+      id: 'thread-prep',
+      title: 'Prep Thread',
+      messages: [
+        { id: 'u1', role: 'user', content: 'edit file', createdAt: 0 },
+        { id: 'a1', role: 'assistant', content: '', thinking: '', state: 'thinking', thinkingActive: false, createdAt: 0 }
+      ],
+      running: true,
+      assistantId: 'a1',
+      requestId: 40,
+      sessionId: 'sess-4',
+      updatedAt: 0
+    }
+
+    const handler = createDaemonEventHandler({
+      threads: ref([thread]),
+      activeThreadId: ref(thread.id),
+      projects: ref<ProjectItem[]>([]),
+      handleScheduleUpdated: vi.fn(),
+      scrollToBottom: vi.fn().mockResolvedValue(undefined),
+      reloadThreadSession: vi.fn().mockResolvedValue(undefined),
+      rememberFinishedRequest: vi.fn(),
+      isFinishedRequest: () => false,
+      scheduleQueuedDrain: vi.fn(),
+      reloadBackgroundThreadIfIdle: vi.fn()
+    })
+
+    // Status "Thinking" before any thinking token arrives must not mark thinkingActive.
+    handler({ id: 40, event: 'status', data: 'Thinking', requestMethod: 'chat', sessionId: 'sess-4' })
+    expect(thread.messages[1]!.thinkingActive).toBe(false)
+
+    // Real thinking delta marks thinkingActive true.
+    handler({ id: 40, event: 'thinking', data: 'Need to edit', requestMethod: 'chat', sessionId: 'sess-4' })
+    expect(thread.messages[1]!.thinkingActive).toBe(true)
+
+    // Commentary followed by Preparing tool call surfaces target tool detail.
+    handler({ id: 40, event: 'delta', data: 'Switching to HTML.', requestMethod: 'chat', sessionId: 'sess-4' })
+    expect(thread.messages[1]!.thinkingActive).toBe(false)
+    handler({ id: 40, event: 'status', data: 'Preparing tool call', requestMethod: 'chat', sessionId: 'sess-4', details: { detail: 'edit_file' } })
+    expect(thread.messages[1]!.preparingTool).toBe('edit_file')
+
+    // tool_start clears preparingTool.
+    handler({ id: 40, event: 'tool_start', data: 'edit_file', requestMethod: 'chat', sessionId: 'sess-4', details: { callId: 'c1' } })
+    expect(thread.messages[1]!.preparingTool).toBeUndefined()
+
+    // thinking_done ends active thinking when a step transitions without prose delta.
+    handler({ id: 40, event: 'thinking', data: 'More thought', requestMethod: 'chat', sessionId: 'sess-4' })
+    expect(thread.messages[1]!.thinkingActive).toBe(true)
+    handler({ id: 40, event: 'thinking_done', data: '', requestMethod: 'chat', sessionId: 'sess-4' })
+    expect(thread.messages[1]!.thinkingActive).toBe(false)
+    expect(thread.messages[1]!.state).toBe('streaming')
+  })
 })

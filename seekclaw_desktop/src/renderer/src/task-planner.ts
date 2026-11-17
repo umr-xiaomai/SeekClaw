@@ -26,11 +26,12 @@ export function computeTurnTaskSteps(params: {
   if (!customPlan || customPlan.length === 0) return []
   if (isTurnRunning) return customPlan
 
-  const allTools = turnAssistants.flatMap((assistant) => assistant.tools ?? [])
   const lastAssistant = turnAssistants[turnAssistants.length - 1]
-  const hasError = lastAssistant?.state === 'error' || allTools.some((tool) => tool.state === 'error')
+  const hasError = lastAssistant?.state === 'error' || Boolean(lastAssistant?.errorMessage?.trim())
   if (hasError) return customPlan
 
-  // A finished turn never leaves a step mid-flight.
-  return customPlan.map((step) => (step.state === 'running' ? { ...step, state: 'done' } : step))
+  // A finished turn never leaves steps running or pending.
+  return customPlan.map((step) =>
+    step.state === 'running' || step.state === 'pending' ? { ...step, state: 'done' } : step
+  )
 }

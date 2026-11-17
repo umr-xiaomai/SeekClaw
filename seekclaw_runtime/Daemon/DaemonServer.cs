@@ -1448,6 +1448,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["delayMs"] = retry.Delay.TotalMilliseconds,
                     }),
                 ThinkingDeltaEvent thinking => (Name: (string?)"thinking", Data: thinking.Delta, Details: (JsonObject?)null),
+                ThinkingCompletedEvent => (Name: (string?)"thinking_done", Data: "", Details: (JsonObject?)null),
                 UserSteerEvent steer => (Name: (string?)"steer", Data: steer.Instruction, Details: (JsonObject?)null),
                 ImageViewedEvent image => (
                     Name: (string?)"image_view",
@@ -1457,7 +1458,12 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["imageId"] = image.ImageId,
                         ["mediaType"] = image.MediaType,
                     }),
-                StatusEvent status => (Name: (string?)"status", Data: status.Status, Details: (JsonObject?)null),
+                StatusEvent status => (
+                    Name: (string?)"status",
+                    Data: status.Status,
+                    Details: string.IsNullOrWhiteSpace(status.Detail)
+                        ? null
+                        : new JsonObject { ["detail"] = status.Detail }),
                 ToolCallStartedEvent tool => (
                     Name: (string?)"tool_start",
                     Data: tool.ToolName,
@@ -1537,6 +1543,7 @@ public sealed class DaemonServer : IAsyncDisposable
                     {
                         ["subAgentId"] = subStart.SubAgentId,
                         ["role"] = subStart.Role,
+                        ["name"] = subStart.Name,
                         ["model"] = subStart.ModelRef,
                         ["childSessionId"] = subStart.ChildSessionId,
                     }),
@@ -1547,6 +1554,7 @@ public sealed class DaemonServer : IAsyncDisposable
                     {
                         ["subAgentId"] = subProg.SubAgentId,
                         ["role"] = subProg.Role,
+                        ["name"] = subProg.Name,
                         ["detail"] = subProg.Detail,
                         ["kind"] = subProg.Kind,
                         ["delta"] = subProg.Delta,
@@ -1559,6 +1567,7 @@ public sealed class DaemonServer : IAsyncDisposable
                     {
                         ["subAgentId"] = subDone.SubAgentId,
                         ["role"] = subDone.Role,
+                        ["name"] = subDone.Name,
                         ["success"] = subDone.Success,
                         ["elapsedMs"] = subDone.Elapsed.TotalMilliseconds,
                     }),

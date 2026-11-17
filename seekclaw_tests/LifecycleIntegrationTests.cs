@@ -216,6 +216,72 @@ public sealed class LifecycleIntegrationTests : IDisposable
         Assert.Null(runtime.Schedules.RecordRun(task.Id, ScheduleRunStatus.Success));
     }
 
+    [Fact]
+    public async Task IdenticalVerificationFailure_DoesNotRepeatRepairLoopThreeTimes()
+    {
+        var verifier = new ConstantFailureVerifier("dotnet build --nologo -v q", "warning MSB3026: DLL locked by PID 30676");
+        var client = new IdenticalRepairClient();
+        var config = new ConfigStore(Path.Combine(_root, "config-verify.json"), Path.Combine(_root, "state-verify.json"));
+        config.Config.Providers = [new ProviderConfig { Id = "test", Kind = "openai", BaseUrl = "https://example.invalid/v1", Models = [new ModelConfig { Id = "model", ContextWindow = 16000, MaxOutput = 256 }] }];
+        config.Config.Provider = "test";
+        config.Config.Model = "model";
+        config.Config.Routing.Fallback = ["test/model"];
+        config.Config.Mcp = new McpConfig();
+        config.Config.Agent.AutoVerify = true;
+        config.Config.Agent.MaxRepairAttempts = 3;
+        config.Config.Agent.EnableCrossSessionMemory = false;
+        config.Config.Agent.Mode = "auto";
+        var workspace = new WorkspaceInfo { Root = _root, ProjectKinds = ["dotnet"] };
+        await using var runtime = SeekClawRuntime.CreateIsolated(workspace, configureServices: services =>
+        {
+            services.AddSingleton<IConfigStore>(config);
+            services.AddSingleton(new SeekClawDatabase(Path.Combine(_root, "verify.db")));
+            services.AddSingleton<ILlmClientFactory>(client);
+            services.AddSingleton<IUsageTracker>(provider => new UsageTracker(provider.GetRequiredService<IEventBus>(), Path.Combine(_root, "verify-usage.jsonl")));
+            services.AddSingleton<SeekClaw.Runtime.Verification.IVerifier>(verifier);
+        });
+
+        var session = runtime.Sessions.Create(runtime.Workspace);
+        await runtime.Agent.RunTurnAsync(session, runtime.Workspace, "update note", CancellationToken.None);
+
+        var verifyUserPrompts = session.Messages.Count(m =>
+            m.Role == ChatRole.User && m.Text.StartsWith("The automatic verification step", StringComparison.Ordinal));
+        Assert.Equal(1, verifyUserPrompts);
+        Assert.Equal(2, verifier.Calls);
+        Assert.Equal(4, client.Calls);
+    }
+
+    private sealed class ConstantFailureVerifier(string command, string output) : SeekClaw.Runtime.Verification.IVerifier
+    {
+        public int Calls { get; private set; }
+        public string? ResolveCommand(WorkspaceInfo workspace) => command;
+        public Task<SeekClaw.Runtime.Verification.VerifyResult> VerifyAsync(WorkspaceInfo workspace, CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult(new SeekClaw.Runtime.Verification.VerifyResult(false, command, output));
+        }
+    }
+
+    private sealed class IdenticalRepairClient : ILlmClientFactory, ILlmClient
+    {
+        public string Kind => "openai";
+        private int _calls;
+        public int Calls => _calls;
+        public ILlmClient GetClient(string kind) => this;
+        public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(LlmRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            var n = Interlocked.Increment(ref _calls);
+            yield return new LlmCompleted(n switch
+            {
+                1 => new LlmCompletion { ToolCalls = [new ToolCallRequest("w1", "write_file", """{"path":"note.txt","content":"v1"}""")] },
+                2 => new LlmCompletion { Text = "updated note", FinishReason = "stop" },
+                3 => new LlmCompletion { ToolCalls = [new ToolCallRequest("w2", "write_file", """{"path":"tmp/check_lock.py","content":"print(1)"}""")] },
+                _ => new LlmCompletion { Text = "external process lock confirmed", FinishReason = "stop" },
+            });
+        }
+    }
+
     private SeekClawRuntime Runtime(ILlmClientFactory client)
     {
         var config = new ConfigStore(Path.Combine(_root, "config.json"), Path.Combine(_root, "state.json"));

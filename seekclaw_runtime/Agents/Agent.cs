@@ -94,6 +94,7 @@ public sealed partial class Agent(
 
         var mutated = false;
         var repairAttempts = 0;
+        string? lastFailedVerifySignature = null;
         var finalText = "";
         string? error = null;
         var cancelled = false;
@@ -344,13 +345,27 @@ public sealed partial class Agent(
                 if (mutated && ShouldVerify(workspace, agentConfig) && repairAttempts < agentConfig.MaxRepairAttempts)
                 {
                     PublishWorkflow(step, "verify", "构建验证");
-                    var repairMessage = await RunVerificationAsync(workspace, repairAttempts + 1, ct).ConfigureAwait(false);
-                    if (repairMessage is not null)
+                    var verification = await RunVerificationAsync(workspace, repairAttempts + 1, ct).ConfigureAwait(false);
+                    if (verification.RepairMessage is not null)
                     {
-                        repairAttempts++;
                         mutated = false; // reset; the repair edits set it again
-                        sessionStore.Append(session, ChatMessage.User(repairMessage));
-                        continue;
+                        if (lastFailedVerifySignature is not null
+                            && string.Equals(verification.FailureSignature, lastFailedVerifySignature, StringComparison.Ordinal))
+                        {
+                            // Verification failed identically (e.g. external file lock or non-code edits); avoid repeating the same repair prompt.
+                            events.Publish(new StatusEvent("Verification unchanged; stopping auto-repair"));
+                        }
+                        else
+                        {
+                            lastFailedVerifySignature = verification.FailureSignature;
+                            repairAttempts++;
+                            sessionStore.Append(session, ChatMessage.User(verification.RepairMessage));
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        lastFailedVerifySignature = null;
                     }
                 }
                 var lateGuidance = AppendSteering(session, steering);

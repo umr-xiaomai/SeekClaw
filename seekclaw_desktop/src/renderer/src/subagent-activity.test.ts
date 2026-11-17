@@ -74,7 +74,9 @@ describe('sub-agent conversation activity', () => {
     ] }) }))
     expect(html).toContain('Composer polish和Cards panels polish正在工作')
     expect(html).toContain('正在使用 edit_file')
-    expect(html).toContain('agent-avatars')
+    expect(html).toContain('agent-emblems')
+    expect(html).toContain('data-emblem-index="0"')
+    expect(html).toContain('data-emblem-index="1"')
     const historical = spawn()
     historical.state = 'done'
     historical.output = '{"id":"child","role":"coder","status":"running"}'
@@ -192,20 +194,34 @@ describe('sub-agent conversation activity', () => {
     expect(repeated[0]?.subAgentEvents?.[0]?.agent).not.toBe(first.subAgentEvents?.[0]?.agent)
   })
 
-  it('renders distinct real role icons and immutable lifecycle rows even after the summary settles', async () => {
-    const current = message()
-    applySubAgentEvent([current], { id: 1, event: 'subagent_start', data: 'Improve', details: { subAgentId: 'child', role: 'coder' } }, current)
-    applySubAgentEvent([current], { id: 1, event: 'subagent_done', data: 'Done', details: { subAgentId: 'child', success: true } }, current)
-    const events = current.subAgentEvents as SubAgentLifecycleEvent[]
-    const html = await renderToString(createSSRApp({ render: () => h(SubAgentActivityList, { agents: [
-      ...current.subAgents!, { id: 'researcher', role: 'researcher', status: 'running' }, { id: 'tester', role: 'tester', status: 'completed' }
-    ], events }) }))
-    expect(html).toContain('lucide-code-xml')
-    expect(html).toContain('lucide-search')
-    expect(html).toContain('lucide-flask-conical')
-    expect(html).toContain('代码工程师开始工作')
-    expect(html).toContain('代码工程师已完成工作')
-    expect(html.match(/data-subagent-event-id=/g)).toHaveLength(2)
+  it('renders Codex-style grouped starts, colored emblems, and terminal lifecycle rows', async () => {
+    const toolWithName: ToolActivity = {
+      id: 'spawn-named',
+      name: 'subagent',
+      input: JSON.stringify({ action: 'spawn', role: 'researcher', name: 'Demo explainer', task: 'Explain roles' }),
+      state: 'running'
+    }
+    expect(subAgentsFromTool(toolWithName)[0]?.name).toBe('Demo explainer')
+
+    const firstAgent = { id: 'a1', name: 'Demo explainer', role: 'researcher', status: 'running' as const, live: true }
+    const secondAgent = { id: 'a2', name: 'Demo scenario', role: 'general', status: 'completed' as const, live: false }
+    const events: SubAgentLifecycleEvent[] = [
+      { id: 'a1:start', agentId: 'a1', kind: 'started', agent: firstAgent, createdAt: 1, contentOffset: 0 },
+      { id: 'a2:start', agentId: 'a2', kind: 'started', agent: { ...secondAgent, status: 'running' }, createdAt: 2, contentOffset: 0 },
+      { id: 'a2:done', agentId: 'a2', kind: 'completed', agent: secondAgent, createdAt: 3, contentOffset: 0 }
+    ]
+    const html = await renderToString(createSSRApp({
+      render: () => h(SubAgentActivityList, { agents: [firstAgent, secondAgent], events })
+    }))
+    expect(html).toContain('agent-emblem')
+    expect(html).toContain('data-emblem-index="0"')
+    expect(html).toContain('data-emblem-index="1"')
+    expect(html).toContain('Demo explainer')
+    expect(html).toContain('Demo scenario')
+    expect(html).toContain('开始工作')
+    expect(html).toContain('Demo scenario已完成')
+    expect(html.match(/data-subagent-event-id=/g)).toHaveLength(3)
     expect(html).toContain('打开子智能体会话')
+    expect(html).not.toContain('已完成工作')
   })
 })

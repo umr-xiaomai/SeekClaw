@@ -1,4 +1,5 @@
 import type { ChatMessage, ConversationWidget, ToolActivity } from './types'
+import { isHiddenSystemUserMessage } from './internal-messages'
 
 /** Presentation metadata already produced by the conversation view. */
 export interface ConversationProcessItem {
@@ -43,6 +44,7 @@ export function projectConversationTurns<T extends ConversationProcessItem>(
 ): ConversationTurnProjection<T>[] {
   const turns: Array<{ id: string; user: T | null; assistants: T[] }> = []
   for (const item of items) {
+    if (isHiddenSystemUserMessage(item.message)) continue
     if (item.message.role === 'user') {
       turns.push({ id: `turn:${item.message.id}`, user: item, assistants: [] })
       continue

@@ -101,6 +101,10 @@ export interface ChatMessage {
   modelRef?: string
   viewedImages?: ImageReference[]
   state?: 'thinking' | 'streaming' | 'done' | 'error'
+  /** Transient runtime flag while thinking deltas are actively arriving on this step. */
+  thinkingActive?: boolean
+  /** Transient tool name while tool-call JSON arguments are streaming before tool_start fires. */
+  preparingTool?: string
   tools?: ToolActivity[]
   subAgents?: SubAgentActivity[]
   subAgentEvents?: SubAgentLifecycleEvent[]

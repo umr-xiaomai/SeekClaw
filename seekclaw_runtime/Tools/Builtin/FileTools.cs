@@ -168,7 +168,8 @@ public sealed class WriteFileTool(IPromptProvider prompts) : BuiltinTool(prompts
             $"{(existed ? "Updated" : "Created")} {relative} ({lineCount} lines)") with
         {
             Diff = diff, FilePath = path,
-            Widgets = SeekClaw.Runtime.Presentation.ArtifactWidget.IsHtml(path)
+            Widgets = SeekClaw.Runtime.Presentation.ArtifactWidget.ShouldAutoPreview(
+                    path, context.Workspace.Root, context.Workspace.WorkingDirectory)
                 ? [SeekClaw.Runtime.Presentation.ArtifactWidget.FromFile(path, executionRoot: context.Workspace.WorkingDirectory)] : null,
         };
     }
@@ -238,7 +239,8 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
         return ToolResult.Ok(summary, summary) with
         {
             Diff = diff, FilePath = path,
-            Widgets = SeekClaw.Runtime.Presentation.ArtifactWidget.IsHtml(path)
+            Widgets = SeekClaw.Runtime.Presentation.ArtifactWidget.ShouldAutoPreview(
+                    path, context.Workspace.Root, context.Workspace.WorkingDirectory)
                 ? [SeekClaw.Runtime.Presentation.ArtifactWidget.FromFile(path, executionRoot: context.Workspace.WorkingDirectory)] : null,
         };
     }

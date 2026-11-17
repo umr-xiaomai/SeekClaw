@@ -87,4 +87,18 @@ describe('conversation process projection', () => {
     expect(summary.latestMessage).toBe(source[1]?.message)
     expect(source[0]?.message.tools).toHaveLength(2)
   })
+
+  it('ignores hidden runtime verification and directive user prompts without splitting the turn', () => {
+    const user = item('u1', 'user', '继续')
+    const draft = item('a1', 'assistant', '已重做完成')
+    const verifyPrompt = item('u-verify', 'user', 'The automatic verification step reported errors:\nCommand: dotnet build')
+    const directivePrompt = item('u-dir', 'user', '>>> [System Directive: 本回合已达上限]')
+    const afterVerify = item('a2', 'assistant', '结论：构建失败是因为锁文件。')
+    const turns = projectConversationTurns([user, draft, verifyPrompt, directivePrompt, afterVerify])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.user).toBe(user)
+    expect(turns[0]?.process).toEqual([draft])
+    expect(turns[0]?.response).toBe(afterVerify)
+  })
 })

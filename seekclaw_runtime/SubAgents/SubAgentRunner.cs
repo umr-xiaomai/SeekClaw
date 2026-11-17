@@ -62,7 +62,7 @@ public sealed class SubAgentRunner(
         var record = new System.Text.Json.Nodes.JsonObject
         {
             ["id"] = id, ["sessionId"] = session.Header.Id, ["workspace"] = context.Workspace.Root,
-            ["role"] = request.Role, ["model"] = request.ModelOverride,
+            ["role"] = request.Role, ["name"] = request.Name, ["model"] = request.ModelOverride,
             ["mode"] = context.Workspace.Config?.Mode ?? context.Agent.Mode,
             ["networkEnabled"] = context.NetworkEnabled && context.Agent.NetworkEnabled,
         };
@@ -84,7 +84,11 @@ public sealed class SubAgentRunner(
             throw new InvalidOperationException("Sub-agent workspace changed; return to the original workspace before resuming.");
         var session = new SessionStore(taskServices.Database).Load(context.Workspace, record["sessionId"]!.GetValue<string>())
             ?? throw new InvalidOperationException("Sub-agent session is missing.");
-        var request = new SubAgentTaskRequest(record["role"]!.GetValue<string>(), instruction, record["model"]?.GetValue<string>());
+        var request = new SubAgentTaskRequest(
+            record["role"]!.GetValue<string>(),
+            instruction,
+            record["model"]?.GetValue<string>(),
+            Name: record["name"]?.GetValue<string>());
         // Preserve the original ceiling if the parent has gained broader permissions since spawning.
         var mode = AgentModeExtensions.Parse(record["mode"]?.GetValue<string>());
         var current = AgentModeExtensions.Parse(context.Workspace.Config?.Mode ?? context.Agent.Mode);
@@ -132,7 +136,8 @@ public sealed class SubAgentRunner(
             def.Role,
             request.Task,
             request.ModelOverride ?? def.DefaultModelOverride,
-            savedSession?.Header.Id));
+            savedSession?.Header.Id,
+            request.Name));
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -213,7 +218,7 @@ public sealed class SubAgentRunner(
             // inspect the child without mixing its tokens into the parent's answer.
             void Progress(string status, string? detail = null, string? kind = null, string? delta = null) =>
                 context.Events.Publish(new SubAgentProgressEvent(
-                    subAgentId, def.Role, status, detail, kind, delta, session.Header.Id));
+                    subAgentId, def.Role, status, detail, kind, delta, session.Header.Id, request.Name));
 
             // 4. Forward events from isolated runtime to parent event bus for live UI updates
             using var childSubscription = isolatedRuntime.Events.Subscribe();
@@ -292,14 +297,14 @@ public sealed class SubAgentRunner(
             if (turnResult.Cancelled)
             {
                 context.Events.Publish(new SubAgentCompletedEvent(
-                    subAgentId, def.Role, false, "Sub-agent was cancelled", stopwatch.Elapsed));
+                    subAgentId, def.Role, false, "Sub-agent was cancelled", stopwatch.Elapsed, request.Name));
                 return new SubAgentTaskResult(false, "", "Sub-agent execution was cancelled.", stopwatch.Elapsed);
             }
 
             if (turnResult.Error is not null)
             {
                 context.Events.Publish(new SubAgentCompletedEvent(
-                    subAgentId, def.Role, false, turnResult.Error, stopwatch.Elapsed));
+                    subAgentId, def.Role, false, turnResult.Error, stopwatch.Elapsed, request.Name));
                 return new SubAgentTaskResult(false, "", turnResult.Error, stopwatch.Elapsed);
             }
 
@@ -308,7 +313,7 @@ public sealed class SubAgentRunner(
                 : turnResult.Text;
 
             context.Events.Publish(new SubAgentCompletedEvent(
-                subAgentId, def.Role, true, $"Completed in {stopwatch.Elapsed.TotalSeconds:0.1}s", stopwatch.Elapsed));
+                subAgentId, def.Role, true, $"Completed in {stopwatch.Elapsed.TotalSeconds:0.1}s", stopwatch.Elapsed, request.Name));
 
             return new SubAgentTaskResult(true, output, null, stopwatch.Elapsed);
         }
@@ -316,14 +321,14 @@ public sealed class SubAgentRunner(
         {
             stopwatch.Stop();
             context.Events.Publish(new SubAgentCompletedEvent(
-                subAgentId, def.Role, false, "Sub-agent was cancelled", stopwatch.Elapsed));
+                subAgentId, def.Role, false, "Sub-agent was cancelled", stopwatch.Elapsed, request.Name));
             return new SubAgentTaskResult(false, "", "Sub-agent execution was cancelled.", stopwatch.Elapsed);
         }
         catch (Exception ex)
         {
             stopwatch.Stop();
             context.Events.Publish(new SubAgentCompletedEvent(
-                subAgentId, def.Role, false, ex.Message, stopwatch.Elapsed));
+                subAgentId, def.Role, false, ex.Message, stopwatch.Elapsed, request.Name));
             return new SubAgentTaskResult(false, "", $"Sub-agent error: {ex.Message}", stopwatch.Elapsed);
         }
         finally

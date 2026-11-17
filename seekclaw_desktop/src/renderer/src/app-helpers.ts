@@ -333,6 +333,7 @@ export function phaseLabel(status: string): string {
   const s = status.toLocaleLowerCase()
   if (s.includes('compacting')) return '压缩记忆'
   if (s.includes('verifying')) return '构建验证'
+  if (s.includes('preparing tool call')) return '准备工具调用'
   if (s.includes('truncated')) return '自动续写'
   if (s.includes('extending')) return '自动续步'
   if (s.includes('summarizing')) return '总结成果'

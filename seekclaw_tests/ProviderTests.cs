@@ -1337,6 +1337,68 @@ public sealed class ProviderTests : IDisposable
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
+    [Fact]
+    public void OpenAiCompatible_SplitsCollidingAndConcatenatedToolCalls()
+    {
+        var args = "{\"max_results\":8,\"query\":\"A\"}{\"max_results\":8,\"query\":\"B\"}";
+        Assert.Equal(["{\"max_results\":8,\"query\":\"A\"}", "{\"max_results\":8,\"query\":\"B\"}"],
+            ToolArguments.SplitConcatenatedJsonObjects(args));
+
+        // Streaming case 1: relay emits two concatenated JSON objects on the same index/id.
+        var accConcat = new OpenAiCompatibleClient.Accumulator();
+        _ = accConcat.Consume(JsonNode.Parse("""{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"toolu_1","function":{"name":"web_search","arguments":"{\"max_results\":8,\"query\":\"A\"}"}}]}}]}""")).ToList();
+        _ = accConcat.Consume(JsonNode.Parse("""{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"max_results\":8,\"query\":\"B\"}"}}]}}]}""")).ToList();
+        var concatCompletion = accConcat.Build();
+        Assert.Equal(2, concatCompletion.ToolCalls.Count);
+        Assert.Equal(("toolu_1", "web_search", "{\"max_results\":8,\"query\":\"A\"}"),
+            (concatCompletion.ToolCalls[0].Id, concatCompletion.ToolCalls[0].Name, concatCompletion.ToolCalls[0].ArgumentsJson));
+        Assert.Equal(("toolu_1_2", "web_search", "{\"max_results\":8,\"query\":\"B\"}"),
+            (concatCompletion.ToolCalls[1].Id, concatCompletion.ToolCalls[1].Name, concatCompletion.ToolCalls[1].ArgumentsJson));
+
+        // Streaming case 2: relay reuses index 0 for a second distinct tool call id.
+        var accCollide = new OpenAiCompatibleClient.Accumulator();
+        _ = accCollide.Consume(JsonNode.Parse("""{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"toolu_a","function":{"name":"web_search","arguments":"{\"query\":\"first\"}"}}]}}]}""")).ToList();
+        _ = accCollide.Consume(JsonNode.Parse("""{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"toolu_b","function":{"name":"web_fetch","arguments":"{\"url\":\"https://example.com\"}"}}]}}]}""")).ToList();
+        var collideCompletion = accCollide.Build();
+        Assert.Equal(2, collideCompletion.ToolCalls.Count);
+        Assert.Equal(("toolu_a", "web_search", "{\"query\":\"first\"}"),
+            (collideCompletion.ToolCalls[0].Id, collideCompletion.ToolCalls[0].Name, collideCompletion.ToolCalls[0].ArgumentsJson));
+        Assert.Equal(("toolu_b", "web_fetch", "{\"url\":\"https://example.com\"}"),
+            (collideCompletion.ToolCalls[1].Id, collideCompletion.ToolCalls[1].Name, collideCompletion.ToolCalls[1].ArgumentsJson));
+    }
+
+    [Fact]
+    public void OpenAiCompatible_AbortsDegenerateRepetitionLoopWithRetryableError()
+    {
+        const string repeatedUnit = "],\"hasBottom\":null}],\"isPc\":true,\"summarySpan\":12,\"rightGrid\":0,\"hasBottom\":null";
+        var acc = new OpenAiCompatibleClient.Accumulator();
+        var ex = Assert.Throws<LlmException>(() =>
+        {
+            for (var i = 0; i < 30; i++)
+            {
+                var chunk = new JsonObject
+                {
+                    ["choices"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["delta"] = new JsonObject { ["content"] = repeatedUnit },
+                        },
+                    },
+                };
+                foreach (var _ in acc.Consume(chunk)) { }
+            }
+        });
+        Assert.True(ex.Retryable);
+        Assert.Contains("repetition", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Normal prose and Markdown table separators must not trigger.
+        var normal = new StringBuilder();
+        for (var i = 0; i < 40; i++) normal.Append($"| Column {i} | Value {i} |\n");
+        normal.Append(new string('-', 400));
+        Assert.False(OpenAiCompatibleClient.Accumulator.HasDegenerateRepetition(normal, out _));
+    }
+
     private sealed class StubHttpFactory(string body, string? mediaType = null) : ILlmHttpFactory
     {
         public HttpClient GetClient(ProviderConfig provider) => new(new StubHandler(body, mediaType));

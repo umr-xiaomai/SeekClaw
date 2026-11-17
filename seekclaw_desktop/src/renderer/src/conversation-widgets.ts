@@ -1,4 +1,5 @@
 import type { ChatMessage, ConversationWidget } from './types'
+import { isHiddenSystemUserMessage, isInternalUserMessage } from './internal-messages'
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -31,7 +32,7 @@ export function widgetsAtTurnTails(
   const explicitStart = activeTurn?.startMessageId
     ? messages.findIndex((message) => message.id === activeTurn.startMessageId) : -1
   const activeStart = activeTurn?.running
-    ? (explicitStart >= 0 ? explicitStart : Math.max(0, messages.findLastIndex((message) => message.role === 'user')))
+    ? (explicitStart >= 0 ? explicitStart : Math.max(0, messages.findLastIndex((message) => message.role === 'user' && !isInternalUserMessage(message))))
     : messages.length
   let widgets = new Map<string, ConversationWidget>()
   let tail: string | undefined
@@ -42,6 +43,7 @@ export function widgetsAtTurnTails(
   }
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!
+    if (isHiddenSystemUserMessage(message)) continue
     if (message.role === 'user') { flush(); continue }
     // Tool completion is not turn completion. Publish the final resource snapshot
     // only after the owning turn settles, including when guidance adds user bubbles.

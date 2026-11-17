@@ -43,7 +43,7 @@ export function subAgentsFromTool(tool: ToolActivity): SubAgentActivity[] {
     return [{
       id,
       role: text(record.role) ?? text(args?.role) ?? 'general',
-      name: text(record.name),
+      name: text(record.name) ?? text(args?.name),
       status: subAgentStatus(record.status),
       task: text(record.task) ?? text(args?.task),
       model: text(record.model) ?? text(args?.model),
@@ -60,6 +60,7 @@ export function subAgentsFromTool(tool: ToolActivity): SubAgentActivity[] {
   return [{
     id: text(args?.id) ?? `tool:${tool.id}`,
     role: text(args?.role) ?? 'general',
+    name: text(args?.name),
     status: tool.state === 'error' ? 'failed'
       : tool.name.toLowerCase() === 'invoke_subagent' && tool.state === 'done' ? 'completed'
         : tool.state === 'running' ? 'starting' : 'unknown',
@@ -168,7 +169,7 @@ export function applySubAgentEvent(
   if (role) activity.role = role
   activity.childSessionId = text(event.details?.childSessionId) ?? activity.childSessionId
   activity.workspace = text(event.details?.workspace) ?? activity.workspace
-  activity.name = text(event.details?.name) ?? activity.name
+  activity.name = text(event.details?.name) ?? activity.name ?? (source ? text(subAgentArguments(source)?.name) : undefined)
   if (broadcast) {
     const status = subAgentStatus(event.details?.status)
     if (status === 'unknown') return false
@@ -217,8 +218,15 @@ export function subAgentRoleKind(agent: SubAgentActivity): 'researcher' | 'coder
 }
 
 export function subAgentLifecycleLabel(event: SubAgentLifecycleEvent): string {
-  const action = { started: '开始工作', completed: '已完成工作', failed: '执行失败', cancelled: '已取消工作', interrupted: '工作已中断' }
+  const action = { started: '开始工作', completed: '已完成', failed: '执行失败', cancelled: '已取消', interrupted: '已中断' }
   return `${subAgentName(event.agent)}${action[event.kind]}`
+}
+
+export function subAgentGroupStartLabel(agents: SubAgentActivity[]): string {
+  if (agents.length === 0) return ''
+  if (agents.length === 1) return `${subAgentName(agents[0]!)}开始工作`
+  if (agents.length === 2) return `${subAgentName(agents[0]!)}和${subAgentName(agents[1]!)}开始工作`
+  return `${agents.slice(0, 2).map(subAgentName).join('、')}等 ${agents.length} 个子智能体开始工作`
 }
 
 export function subAgentName(agent: SubAgentActivity): string {

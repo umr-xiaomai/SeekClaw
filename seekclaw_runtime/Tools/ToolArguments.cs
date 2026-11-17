@@ -72,6 +72,54 @@ internal static class ToolArguments
         return (null, "{}");
     }
 
+    /// <summary>
+    /// Returns true when <paramref name="raw"/> starts with a complete, balanced JSON object.
+    /// Used to detect relay-station <c>tool_calls</c> index collisions during streaming.
+    /// </summary>
+    public static bool StartsCompleteJsonObject(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        var start = raw.IndexOf('{');
+        if (start < 0) return false;
+        return Scan(raw, start).Balanced is not null;
+    }
+
+    /// <summary>
+    /// Splits back-to-back JSON objects (such as <c>{"a":1}{"b":2}</c>) emitted by gateways
+    /// that merge multiple parallel tool calls onto a single <c>index</c>.
+    /// Returns <c>[raw]</c> unchanged unless 2 or more valid JSON objects are found.
+    /// </summary>
+    public static IReadOnlyList<string> SplitConcatenatedJsonObjects(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return [raw ?? ""];
+
+        var objects = new List<string>();
+        var pos = 0;
+        while (pos < raw.Length)
+        {
+            while (pos < raw.Length && char.IsWhiteSpace(raw[pos])) pos++;
+            if (pos >= raw.Length) break;
+            if (raw[pos] != '{') return [raw];
+
+            var scan = Scan(raw, pos);
+            if (scan.Balanced is null) return [raw];
+
+            try
+            {
+                if (JsonNode.Parse(scan.Balanced) is not JsonObject) return [raw];
+            }
+            catch (JsonException)
+            {
+                return [raw];
+            }
+
+            objects.Add(scan.Balanced);
+            pos += scan.Balanced.Length;
+        }
+
+        return objects.Count > 1 ? objects : [raw];
+    }
+
     private static (string? Balanced, int OpenDepth) Scan(string text, int start)
     {
         var depth = 0;

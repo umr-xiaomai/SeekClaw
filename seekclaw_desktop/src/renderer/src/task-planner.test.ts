@@ -62,14 +62,17 @@ describe('computeTurnTaskSteps', () => {
     expect(steps).toEqual(plan())
   })
 
-  it('settles the running step once the turn completes', () => {
+  it('settles running and pending steps once the turn completes, even after recovered tool errors', () => {
     const steps = computeTurnTaskSteps({
-      turnAssistants: [assistant({ state: 'done', content: '完成了' })],
+      turnAssistants: [
+        assistant({ state: 'done', tools: [{ id: 't1', name: 'bash', state: 'error' }] }),
+        assistant({ state: 'done', content: '完成了' })
+      ],
       isTurnRunning: false,
       customPlan: plan()
     })
 
-    expect(steps.map((step) => step.state)).toEqual(['done', 'done', 'pending'])
+    expect(steps.map((step) => step.state)).toEqual(['done', 'done', 'done'])
   })
 
   it('leaves the plan untouched when the turn failed', () => {

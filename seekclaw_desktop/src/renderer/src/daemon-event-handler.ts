@@ -149,6 +149,8 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
       const currentAssistant = thread.messages.find((item) => item.id === thread.assistantId)
       if (currentAssistant) {
         currentAssistant.state = 'done'
+        currentAssistant.thinkingActive = false
+        currentAssistant.preparingTool = undefined
         const nextAssistant: ChatMessage = {
           id: makeId(),
           role: 'assistant',
@@ -156,6 +158,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
           thinking: '',
           tools: [],
           state: 'thinking',
+          thinkingActive: false,
           createdAt: Date.now()
         }
         thread.messages.push(nextAssistant)
@@ -221,20 +224,43 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         message.errorMessage = undefined
         message.modelRef = event.data || message.modelRef
         message.state = 'thinking'
+        message.thinkingActive = false
+        message.preparingTool = undefined
         break
       }
       case 'thinking':
         if (!message) break
         message.thinking = (message.thinking ?? '') + event.data
         message.state = 'thinking'
+        message.thinkingActive = true
+        message.preparingTool = undefined
+        break
+      case 'thinking_done':
+        if (!message) break
+        message.thinkingActive = false
+        if (message.state === 'thinking') message.state = 'streaming'
         break
       case 'delta':
         if (!message) break
         message.content += event.data
         message.state = 'streaming'
+        message.thinkingActive = false
+        message.preparingTool = undefined
         break
       case 'status': {
-        if (message && event.data.toLocaleLowerCase().includes('thinking')) message.state = 'thinking'
+        const lower = event.data.toLocaleLowerCase()
+        if (lower.includes('preparing tool call')) {
+          if (message) {
+            const detail = typeof event.details?.detail === 'string' && event.details.detail.trim()
+              ? event.details.detail.trim()
+              : 'tool'
+            message.preparingTool = detail
+            message.thinkingActive = false
+            if (message.state === 'thinking') message.state = 'streaming'
+          }
+        } else if (message && lower.includes('thinking') && message.state !== 'streaming') {
+          message.state = 'thinking'
+        }
         thread.phase = phaseLabel(event.data)
         break
       }
@@ -256,6 +282,8 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
       }
       case 'tool_start': {
         if (!message) break
+        message.preparingTool = undefined
+        message.thinkingActive = false
         thread.phase = '执行工具'
         message.tools ??= []
         message.tools.push({
@@ -309,6 +337,8 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
           message?.content || message?.thinking || (message?.tools?.length ?? 0))
         if (message && step > 1 && previousHasOutput) {
           message.state = 'done'
+          message.thinkingActive = false
+          message.preparingTool = undefined
           const nextAssistant: ChatMessage = {
             id: makeId(),
             role: 'assistant',
@@ -317,6 +347,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
             tools: [],
             modelRef,
             state: 'thinking',
+            thinkingActive: false,
             createdAt: Date.now()
           }
           thread.messages.push(nextAssistant)

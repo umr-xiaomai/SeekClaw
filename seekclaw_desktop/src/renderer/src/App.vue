@@ -42,6 +42,7 @@ import { computeTurnTaskSteps, type TaskStep } from './task-planner'
 import { confirmAction } from './confirmation'
 import { finalizeAssistantBubbles } from './conversation-state'
 import { widgetsAtTurnTails } from './conversation-widgets'
+import { isHiddenSystemUserMessage, isInternalUserMessage } from './internal-messages'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
@@ -1302,10 +1303,10 @@ interface ConversationItem {
 const conversationItems = computed<ConversationItem[]>(() => {
   const thread = activeThread.value
   const messages = (thread?.messages ?? []).filter(
-    (message) => !message.content?.startsWith('>>> [output truncated]')
+    (message) => !isHiddenSystemUserMessage(message)
   )
   const isThreadRunning = thread?.running === true
-  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
+  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user' && !isInternalUserMessage(m))
   const turnWidgets = widgetsAtTurnTails(messages, {
     running: isThreadRunning,
     startMessageId: thread?.activeTurnStartId
@@ -1345,7 +1346,7 @@ const activeThreadTurnSteps = computed<TaskStep[]>(() => {
   if (!thread) return []
 
   const messages = thread.messages ?? []
-  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
+  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user' && !isInternalUserMessage(m))
   const turnAssistants = (lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : messages)
     .filter((m) => m.role === 'assistant')
 
@@ -1593,7 +1594,7 @@ async function runMessageTurn(
     createdAt: Date.now()
   }
   const assistant: ChatMessage = {
-    id: makeId(), role: 'assistant', content: '', thinking: '', tools: [], state: 'thinking', createdAt: Date.now()
+    id: makeId(), role: 'assistant', content: '', thinking: '', tools: [], state: 'thinking', thinkingActive: false, createdAt: Date.now()
   }
   thread.messages.push(userMessage, assistant)
   thread.updatedAt = Date.now()
@@ -1741,7 +1742,7 @@ async function copyTask(thread: ThreadItem, format: 'text' | 'id'): Promise<void
       })
       messages = hydrateMessages(JSON.parse(response.data) as RuntimeSession)
     }
-    await navigator.clipboard.writeText(messages.filter((message) => message.content.trim())
+    await navigator.clipboard.writeText(messages.filter((message) => !isHiddenSystemUserMessage(message) && message.content.trim())
       .map((message) => `${message.role === 'user' ? '用户' : 'SeekClaw'}\n${message.content}`).join('\n\n'))
   })
 }
@@ -2111,6 +2112,7 @@ watch(theme, applyTheme)
               <div v-for="turn in virtualWindow.items" :key="turnViewKey(turn.id)" v-measure="turnViewKey(turn.id)" class="virtual-message">
                 <ConversationProcess :turn="turn" :image-sources="activeImageSources"
                   :session-id="activeThread.sessionId" :workspace="activeProject?.path"
+                  :phase="activeThread.phase"
                   :assistant-id="activeThread.assistantId" :query="conversationQuery"
                   :expanded="expandedProcesses.get(turnViewKey(turn.id)) ?? false"
                   @update:expanded="expandedProcesses.set(turnViewKey(turn.id), $event)"

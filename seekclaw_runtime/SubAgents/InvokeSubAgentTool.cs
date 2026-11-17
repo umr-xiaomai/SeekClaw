@@ -17,6 +17,7 @@ public sealed class InvokeSubAgentTool(
     public override JsonObject ParameterSchema => ToolSchema.Object(
         ("role", ToolSchema.String("Specialist role of the sub-agent: 'researcher', 'coder', 'tester', or 'general'"), true),
         ("task", ToolSchema.String("Clear, self-contained task description and instructions for the sub-agent"), true),
+        ("name", ToolSchema.String("Optional short display name for the sub-agent (e.g. 'Demo explainer')"), false),
         ("model", ToolSchema.String("Optional model override in 'provider/model' format (e.g. 'openai/gpt-4o-mini'). Omit to use the active or default model."), false)
     );
 
@@ -36,9 +37,12 @@ public sealed class InvokeSubAgentTool(
         if (string.IsNullOrWhiteSpace(task))
             return ToolResult.Fail("The 'task' argument is required with concrete instructions.");
 
+        var name = GetString(arguments, "name")?.Trim();
+        if (string.IsNullOrWhiteSpace(name)) name = null;
+
         var model = GetString(arguments, "model")?.Trim();
 
-        var request = new SubAgentTaskRequest(role, task, model);
+        var request = new SubAgentTaskRequest(role, task, model, Name: name);
         var result = await runner.ExecuteSubTaskAsync(request, context, ct).ConfigureAwait(false);
 
         if (!result.Success)

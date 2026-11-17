@@ -32,9 +32,9 @@ function label(tools: ToolActivity[]): string {
     <template v-for="group in groups" :key="group[0]!.id">
       <details v-if="group.length > 1" class="tool-group">
         <summary>
-          <Pencil v-if="group.some(tool => toolKind(tool) === 'edit')" :size="16" />
-          <SquareTerminal v-else-if="group.some(tool => toolKind(tool) === 'shell')" :size="16" />
-          <Search v-else :size="16" />
+          <Pencil v-if="group.some(tool => toolKind(tool) === 'edit')" :size="14" />
+          <SquareTerminal v-else-if="group.some(tool => toolKind(tool) === 'shell')" :size="14" />
+          <Search v-else :size="14" />
           <span>{{ label(group) }}</span><ChevronRight :size="14" class="group-chevron" />
         </summary>
         <div class="tool-group-items">
@@ -47,11 +47,11 @@ function label(tools: ToolActivity[]): string {
 </template>
 
 <style scoped>
-.tool-activities { display: grid; gap: 10px; min-width: 0; }
-.tool-group summary { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 3px 0; list-style: none; cursor: pointer; color: var(--text-muted); font-size: 14px; }
+.tool-activities { display: grid; gap: 2px; min-width: 0; }
+.tool-group summary { display: flex; align-items: center; gap: 7px; min-height: 26px; padding: 2px 0; list-style: none; cursor: pointer; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
 .tool-group summary::-webkit-details-marker { display: none; }
 .tool-group summary:hover, .tool-group[open] > summary { color: var(--text); }
 .group-chevron { flex: none; transition: transform 140ms ease; }
 .tool-group[open] > summary .group-chevron { transform: rotate(90deg); }
-.tool-group-items { display: grid; gap: 8px; padding-left: 23px; margin-top: 8px; }
+.tool-group-items { display: grid; gap: 2px; padding-left: 20px; margin-top: 2px; }
 </style>

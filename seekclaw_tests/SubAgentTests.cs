@@ -203,6 +203,7 @@ public sealed class SubAgentTests
             var args = new JsonObject
             {
                 ["role"] = "researcher",
+                ["name"] = "Demo explainer",
                 ["task"] = "Analyze services in project",
             };
 
@@ -217,8 +218,8 @@ public sealed class SubAgentTests
                 events.Add(evt);
             }
 
-            Assert.Contains(events, e => e is SubAgentStartedEvent start && start.Role == "researcher");
-            Assert.Contains(events, e => e is SubAgentCompletedEvent done && done.Role == "researcher");
+            Assert.Contains(events, e => e is SubAgentStartedEvent start && start.Role == "researcher" && start.Name == "Demo explainer");
+            Assert.Contains(events, e => e is SubAgentCompletedEvent done && done.Role == "researcher" && done.Name == "Demo explainer");
             var text = Assert.Single(events.OfType<SubAgentProgressEvent>(), e => e.Kind == "text");
             Assert.Equal("Sub-agent completed research: found 2 services.", text.Delta);
             Assert.False(string.IsNullOrWhiteSpace(text.ChildSessionId));

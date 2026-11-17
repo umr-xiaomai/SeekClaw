@@ -108,4 +108,25 @@ public sealed class ConversationWidgetTests : IDisposable
         result = await tool.ExecuteAsync(new JsonObject { ["path"] = "report.txt" }, context, CancellationToken.None);
         Assert.Equal("application/octet-stream", Assert.IsType<ArtifactWidget>(Assert.Single(result.Widgets!)).MediaType);
     }
+
+    [Fact]
+    public async Task ScratchHtmlFiles_DoNotAutoEmitArtifacts_UnlessExplicitlyPresented()
+    {
+        using var prompts = new FilePromptProvider([_root]);
+        var context = Context(new EventBus());
+        var write = await new WriteFileTool(prompts).ExecuteAsync(
+            new JsonObject { ["path"] = "tmp/roadmap_build/roadmap.html", ["content"] = "<h1>Draft</h1>" },
+            context, CancellationToken.None);
+        Assert.Null(write.Widgets);
+
+        var edit = await new EditFileTool(prompts).ExecuteAsync(
+            new JsonObject { ["path"] = "tmp/roadmap_build/roadmap.html", ["old_string"] = "Draft", ["new_string"] = "Updated" },
+            context, CancellationToken.None);
+        Assert.Null(edit.Widgets);
+
+        var explicitlyPresented = await new PresentArtifactTool(prompts).ExecuteAsync(
+            new JsonObject { ["path"] = "tmp/roadmap_build/roadmap.html" },
+            context, CancellationToken.None);
+        Assert.Single(explicitlyPresented.Widgets!);
+    }
 }

@@ -26,9 +26,9 @@ const input = computed(() => {
   <SubAgentActivityList v-if="subAgents.length" :agents="subAgents" />
   <details v-else class="tool-call" :class="{ 'is-running': tool.state === 'running', 'is-error': tool.state === 'error' }" @toggle="expanded = ($event.target as HTMLDetailsElement).open">
     <summary :title="target || tool.name">
-      <LoaderCircle v-if="tool.state === 'running'" :size="16" class="spin activity-icon" />
-      <CircleAlert v-else-if="tool.state === 'error'" :size="16" class="activity-icon" />
-      <component :is="icon" v-else :size="16" class="activity-icon" />
+      <LoaderCircle v-if="tool.state === 'running'" :size="14" class="spin activity-icon" />
+      <CircleAlert v-else-if="tool.state === 'error'" :size="14" class="activity-icon" />
+      <component :is="icon" v-else :size="14" class="activity-icon" />
       <span class="activity-verb">{{ toolLabel(tool) }}</span>
       <span v-if="target" class="activity-target">{{ target.replace(/\s+/g, ' ') }}</span>
       <span v-else-if="kind === 'shell'">命令</span>
@@ -53,8 +53,8 @@ const input = computed(() => {
 </template>
 
 <style scoped>
-.tool-call { min-width: 0; color: var(--text-muted); font-size: 14px; }
-.tool-call summary { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; padding: 3px 0; cursor: pointer; list-style: none; }
+.tool-call { min-width: 0; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
+.tool-call summary { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 26px; padding: 2px 0; cursor: pointer; list-style: none; }
 .tool-call summary::-webkit-details-marker { display: none; }
 .tool-call summary:hover, .tool-call[open] summary { color: var(--text); }
 .activity-icon, .activity-verb, .activity-chevron { flex: none; }

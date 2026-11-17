@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using SeekClaw.Runtime.Prompts;
 
 namespace SeekClaw.Runtime.Tools.Builtin;
@@ -205,9 +206,13 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
     {
         if (string.IsNullOrWhiteSpace(command)) return false;
 
-        var trimmed = command.Trim();
-        // File redirection or file-setting cmdlets mean not read-only
+        var trimmed = Regex.Replace(command.Trim(), @"(?<=\s|^)[12]>&[12](?=\s|$|[|;&])", "");
+        // File redirection, file-setting cmdlets, or script/subexpression blocks mean not guaranteed read-only
         if (trimmed.Contains('>') ||
+            trimmed.Contains('{') ||
+            trimmed.Contains('}') ||
+            trimmed.Contains("$(", StringComparison.Ordinal) ||
+            trimmed.Contains("::", StringComparison.Ordinal) ||
             trimmed.Contains("Out-File", StringComparison.OrdinalIgnoreCase) ||
             trimmed.Contains("Set-Content", StringComparison.OrdinalIgnoreCase) ||
             trimmed.Contains("Add-Content", StringComparison.OrdinalIgnoreCase))
@@ -233,12 +238,16 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         var tokens = segment.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (tokens.Length == 0) return false;
 
-        var cmd = Path.GetFileNameWithoutExtension(tokens[0]).ToLowerInvariant();
+        var rawCmd = tokens[0].Trim('"', '\'');
+        if (string.IsNullOrEmpty(rawCmd)) return false;
+        var cmd = Path.GetFileNameWithoutExtension(rawCmd).ToLowerInvariant();
 
         // Unwrap shell wrappers: powershell -Command ..., pwsh -c ..., cmd /c ...
         var index = 0;
+        var inPowerShell = false;
         if ((cmd is "powershell" or "pwsh" or "cmd") && tokens.Length > 1)
         {
+            inPowerShell = cmd is "powershell" or "pwsh";
             for (var i = 1; i < tokens.Length; i++)
             {
                 var arg = tokens[i].ToLowerInvariant();
@@ -249,14 +258,16 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
                 }
             }
             if (index >= tokens.Length) return false;
-            cmd = Path.GetFileNameWithoutExtension(tokens[index]).ToLowerInvariant();
+            rawCmd = tokens[index].Trim('"', '\'');
+            if (string.IsNullOrEmpty(rawCmd)) return false;
+            cmd = Path.GetFileNameWithoutExtension(rawCmd).ToLowerInvariant();
         }
 
         // Git inspection
         if (cmd == "git")
         {
             if (tokens.Length <= index + 1) return true;
-            var subCmd = tokens[index + 1].ToLowerInvariant();
+            var subCmd = tokens[index + 1].Trim('"', '\'').ToLowerInvariant();
             if (subCmd.StartsWith('-')) return true;
 
             return subCmd is "status" or "log" or "show" or "diff" or "branch"
@@ -268,8 +279,9 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (cmd is "ls" or "dir" or "get-childitem" or "gci" or "pwd" or "cd")
             return true;
 
-        // File reading
-        if (cmd is "cat" or "type" or "get-content" or "gc" or "head" or "tail" or "more" or "less")
+        // File reading & text measurement
+        if (cmd is "cat" or "type" or "get-content" or "gc" or "head" or "tail" or "more" or "less"
+            or "wc" or "uniq" or "cut" or "tr" or "stat" or "file" or "basename" or "dirname" or "realpath" or "readlink")
             return true;
 
         // Searching
@@ -279,12 +291,22 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (cmd == "find" && !segment.Contains("-delete", StringComparison.OrdinalIgnoreCase) && !segment.Contains("-exec", StringComparison.OrdinalIgnoreCase))
             return true;
 
-        // System / utility info
-        if (cmd is "echo" or "which" or "where" or "whoami" or "hostname" or "uname" or "env" or "printenv" or "date" or "time")
+        // System / process / utility info
+        if (cmd is "echo" or "which" or "where" or "whoami" or "hostname" or "uname" or "env" or "printenv" or "date" or "time"
+            or "tasklist" or "ps" or "pgrep" or "uptime" or "free" or "df" or "id")
+            return true;
+
+        // Safe read-only PowerShell inspection cmdlets (blockers above already exclude redirection, script blocks, ::, and $())
+        if (cmd is "get-process" or "select-object" or "select" or "format-list" or "fl"
+            or "format-table" or "ft" or "where-object" or "where" or "measure-object" or "measure"
+            or "test-path" or "get-item" or "get-itemproperty")
+            return true;
+
+        if (inPowerShell && cmd is "get-help")
             return true;
 
         // Version/help flags
-        if (tokens.Any(t => t is "--version" or "-v" or "--help" or "-h" or "--info" or "--list-sdks" or "--list-runtimes"))
+        if (tokens.Any(t => t.Trim('"', '\'') is "--version" or "-v" or "--help" or "-h" or "--info" or "--list-sdks" or "--list-runtimes"))
             return true;
 
         return false;

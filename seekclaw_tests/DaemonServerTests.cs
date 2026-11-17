@@ -1386,6 +1386,25 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.True(details[0]!["vision"]!.GetValue<bool>());
     }
 
+    [Fact]
+    public async Task Chat_Forwards_StatusDetail_And_ThinkingCompleted()
+    {
+        var connection = await StartServerAsync((_, _, _, _) =>
+        {
+            _runtime!.Events.Publish(new StatusEvent("Preparing tool call", "edit_file"));
+            _runtime.Events.Publish(new ThinkingCompletedEvent());
+            return Task.FromResult(new AgentTurnResult("done", false, null));
+        });
+
+        await connection.SendAsync(1, "chat", new JsonObject { ["message"] = "hi" });
+        var status = await connection.ReadUntilAsync(
+            item => item["event"]!.GetValue<string>() == "status" && item["data"]!.GetValue<string>() == "Preparing tool call");
+        Assert.Equal("edit_file", status["details"]!["detail"]!.GetValue<string>());
+
+        var thinkingDone = await connection.ReadUntilAsync(item => item["event"]!.GetValue<string>() == "thinking_done");
+        Assert.Equal("thinking_done", thinkingDone["event"]!.GetValue<string>());
+    }
+
     private string CreateWorkspace(string name, string? workspaceConfig = null)
     {
         var root = Path.Combine(_tempDir, name);

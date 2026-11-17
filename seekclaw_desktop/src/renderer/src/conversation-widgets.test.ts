@@ -61,4 +61,13 @@ describe('conversation widgets', () => {
     expect(result).toContain("frame-src 'none'")
     expect(result).toContain("script-src 'unsafe-inline'")
   })
+
+  it('keeps turn-tail widgets at the real turn end when internal verification prompts occur mid-turn', () => {
+    const user: ChatMessage = { id: 'u1', role: 'user', content: '继续', createdAt: 0 }
+    const verifyPrompt: ChatMessage = { id: 'u-verify', role: 'user', content: 'The automatic verification step reported errors:\nCommand: dotnet build', createdAt: 0 }
+    const finalReply: ChatMessage = { id: 'final', role: 'assistant', content: 'done', createdAt: 0 }
+    const result = widgetsAtTurnTails([user, assistant('a1'), verifyPrompt, finalReply], { running: false })
+    expect([...result.keys()]).toEqual(['final'])
+    expect(result.get('final')).toEqual([artifact])
+  })
 })

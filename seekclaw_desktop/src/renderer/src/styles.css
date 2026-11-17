@@ -1408,16 +1408,56 @@ body.is-resizing-sidebar .app-body {
 }
 
 .thinking-toggle {
-  gap: 7px;
-  margin: 0 0 8px;
-  padding: 3px 0;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 2px 0;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: 13.5px;
   background: transparent;
 }
 
 .thinking-toggle.active {
-  color: var(--accent);
+  color: var(--text-muted);
+}
+
+.thinking-shimmer {
+  display: inline-block;
+  color: var(--text-muted);
+  background-image: linear-gradient(
+    90deg,
+    var(--text-muted) 0%,
+    var(--text-muted) 34%,
+    var(--text) 50%,
+    var(--text-muted) 66%,
+    var(--text-muted) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .thinking-shimmer {
+    animation: thinking-text-shimmer 1.8s linear infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-shimmer {
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+@keyframes thinking-text-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
 
 .thinking-toggle svg:last-child {

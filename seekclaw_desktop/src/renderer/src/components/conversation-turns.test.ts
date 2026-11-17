@@ -56,8 +56,14 @@ describe('conversation-turns', () => {
     expect(turns[1]?.index).toBe(2)
   })
 
-  it('skips system memory and error cards', () => {
+  it('skips system memory, verification, directive, and compaction cards', () => {
     const messages: ChatMessage[] = [
+      {
+        id: 'sys-0',
+        role: 'user',
+        content: '>>> [Context compaction] 已压缩上下文',
+        createdAt: 1730454900000
+      },
       {
         id: 'sys-1',
         role: 'user',
@@ -69,6 +75,18 @@ describe('conversation-turns', () => {
         role: 'user',
         content: '帮我检查代码',
         createdAt: 1730455100000
+      },
+      {
+        id: 'sys-2',
+        role: 'user',
+        content: 'The automatic verification step reported errors:\nCommand: dotnet build',
+        createdAt: 1730455200000
+      },
+      {
+        id: 'sys-3',
+        role: 'user',
+        content: '>>> [System Directive: 请调用工具]',
+        createdAt: 1730455300000
       }
     ]
 

@@ -73,9 +73,12 @@ function onScroll(): void {
           </details>
           <template v-else>
             <details v-if="message.thinking" class="child-thinking">
-              <summary><LoaderCircle v-if="message.state === 'thinking'" :size="13" class="child-spin" /><Check v-else :size="13" /><span>{{ message.state === 'thinking' ? '正在思考' : '思考过程' }}</span><ChevronRight :size="13" /></summary>
+              <summary><Check v-if="message.state !== 'thinking'" :size="13" /><span :class="{ 'thinking-shimmer': message.state === 'thinking' }">{{ message.state === 'thinking' ? '正在思考' : '思考过程' }}</span><ChevronRight :size="13" /></summary>
               <div>{{ message.thinking }}</div>
             </details>
+            <div v-else-if="message.state === 'thinking' && !message.content && !message.tools?.length" class="child-thinking">
+              <span class="thinking-shimmer">正在思考</span>
+            </div>
             <MarkdownMessage v-if="message.content" :content="message.content" :streaming="message.state === 'streaming'" />
             <ToolActivityList v-if="message.tools?.length" :tools="message.tools" :streaming="running" @open-diff="(path, diff) => emit('openDiff', path, diff)" />
             <div v-if="message.errorMessage" class="child-message-error" role="alert"><CircleAlert :size="15" /><span>{{ message.errorMessage }}</span></div>

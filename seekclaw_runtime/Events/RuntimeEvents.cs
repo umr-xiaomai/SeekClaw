@@ -137,7 +137,8 @@ public sealed record SubAgentStartedEvent(
     string Role,
     string TaskPrompt,
     string? ModelRef = null,
-    string? ChildSessionId = null) : RuntimeEvent;
+    string? ChildSessionId = null,
+    string? Name = null) : RuntimeEvent;
 
 public sealed record SubAgentProgressEvent(
     string SubAgentId,
@@ -146,14 +147,16 @@ public sealed record SubAgentProgressEvent(
     string? Detail = null,
     string? Kind = null,
     string? Delta = null,
-    string? ChildSessionId = null) : RuntimeEvent;
+    string? ChildSessionId = null,
+    string? Name = null) : RuntimeEvent;
 
 public sealed record SubAgentCompletedEvent(
     string SubAgentId,
     string Role,
     bool Success,
     string Summary,
-    TimeSpan Elapsed) : RuntimeEvent;
+    TimeSpan Elapsed,
+    string? Name = null) : RuntimeEvent;
 
 // ---------------------------------------------------------------- diagnostics
 

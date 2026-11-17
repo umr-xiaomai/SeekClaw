@@ -1,4 +1,4 @@
-Deploys a specialized sub-agent with its own isolated context window to execute a focused, self-contained sub-task.
+Deploys a specialized sub-agent with its own isolated context window to execute a focused, self-contained sub-task. Provide an optional short display name (e.g. 'Demo explainer') to label the sub-agent in the UI.
 
 Use this tool to:
 - Perform deep or broad codebase exploration, searches, and analysis without polluting your own context window (use role: 'researcher').

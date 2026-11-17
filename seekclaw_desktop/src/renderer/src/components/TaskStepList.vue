@@ -40,8 +40,25 @@ const summaryText = computed(() => {
     }
     return props.phase ? `正在执行 · ${props.phase}` : '正在规划与执行…'
   }
+  if (completedCount.value < props.steps.length) {
+    return `已完成 ${completedCount.value} / ${props.steps.length} 项任务计划`
+  }
   return `已完成全部 ${props.steps.length} 项任务计划`
 })
+
+function effectiveStepState(step: TaskStep): TaskStep['state'] {
+  return !props.running && step.state === 'running' ? 'pending' : step.state
+}
+
+function stepStateLabel(step: TaskStep): string {
+  if (!props.running && step.state === 'running') return '未完成'
+  switch (step.state) {
+    case 'running': return '进行中'
+    case 'done': return '已完成'
+    case 'error': return '异常'
+    default: return '待执行'
+  }
+}
 </script>
 
 <template>
@@ -75,9 +92,9 @@ const summaryText = computed(() => {
         <div class="task-step-accordion-inner">
           <div class="task-step-body">
             <div class="task-step-items">
-              <div v-for="step in steps" :key="step.id" class="task-step-item" :class="`state-${step.state}`">
+              <div v-for="step in steps" :key="step.id" class="task-step-item" :class="`state-${effectiveStepState(step)}`">
                 <div class="task-step-status">
-                  <LoaderCircle v-if="step.state === 'running'" :size="16" class="spin status-running-icon" />
+                  <LoaderCircle v-if="running && step.state === 'running'" :size="16" class="spin status-running-icon" />
                   <span v-else-if="step.state === 'done'" class="status-done-icon">
                     <Check :size="11" />
                   </span>
@@ -96,9 +113,9 @@ const summaryText = computed(() => {
                   </div>
                 </div>
 
-                <div class="task-step-state-tag" :class="`tag-${step.state}`">
-                  <span v-if="step.state === 'running'" class="running-dot" />
-                  {{ step.state === 'running' ? '进行中' : step.state === 'done' ? '已完成' : step.state === 'error' ? '异常' : '待执行' }}
+                <div class="task-step-state-tag" :class="`tag-${effectiveStepState(step)}`">
+                  <span v-if="running && step.state === 'running'" class="running-dot" />
+                  {{ stepStateLabel(step) }}
                 </div>
               </div>
             </div>

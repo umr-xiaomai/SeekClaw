@@ -1,161 +1,310 @@
 <script setup lang="ts">
-import { Bot, Check, ChevronRight, CircleAlert, CodeXml, FlaskConical, LoaderCircle, Search, Square } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import type { SubAgentActivity, SubAgentLifecycleEvent } from '../types'
 import { phaseLabel } from '../app-helpers'
-import { subAgentLifecycleLabel, subAgentName, subAgentRoleKind, subAgentStatusLabel, subAgentSummary } from '../subagent-activity'
+import {
+  subAgentLifecycleLabel,
+  subAgentName,
+  subAgentSummary
+} from '../subagent-activity'
 
 const props = withDefaults(defineProps<{ agents: SubAgentActivity[]; events?: SubAgentLifecycleEvent[]; showSummary?: boolean }>(), {
-  events: () => [], showSummary: true
+  events: () => [],
+  showSummary: true
 })
 const emit = defineEmits<{ openSubAgent: [activity: SubAgentActivity] }>()
-const expanded = ref(false)
+
+interface EmblemSpec {
+  color: string
+  path: string
+}
+
+interface LifecycleWave {
+  key: string
+  started: SubAgentLifecycleEvent[]
+  terminals: SubAgentLifecycleEvent[]
+}
+
+function buildFlowerPath(petals: number, outerR: number, valleyR: number, holeR: number, rotationDeg = 0): string {
+  const cx = 8
+  const cy = 8
+  const step = (Math.PI * 2) / petals
+  const rot = (rotationDeg * Math.PI) / 180
+  const ctrlFactor = petals === 4 ? 1.24 : petals === 6 ? 1.18 : 1.14
+  const ctrlR = outerR * ctrlFactor
+  const pt = (r: number, angle: number) => `${(cx + r * Math.cos(angle)).toFixed(2)} ${(cy + r * Math.sin(angle)).toFixed(2)}`
+  const segments: string[] = []
+
+  for (let i = 0; i < petals; i++) {
+    const center = rot + i * step
+    const start = center - step / 2
+    const end = center + step / 2
+    const c1 = center - step * 0.24
+    const c2 = center + step * 0.24
+    if (i === 0) segments.push(`M ${pt(valleyR, start)}`)
+    segments.push(`C ${pt(ctrlR, c1)}, ${pt(ctrlR, c2)}, ${pt(valleyR, end)}`)
+  }
+  segments.push('Z')
+  segments.push(`M ${(cx + holeR).toFixed(2)} ${cy} A ${holeR} ${holeR} 0 1 0 ${(cx - holeR).toFixed(2)} ${cy} A ${holeR} ${holeR} 0 1 0 ${(cx + holeR).toFixed(2)} ${cy} Z`)
+  return segments.join(' ')
+}
+
+const EMBLEMS: readonly EmblemSpec[] = [
+  { color: '#4c8bf5', path: buildFlowerPath(4, 6.3, 2.7, 1.35, 0) },
+  { color: '#f59331', path: buildFlowerPath(8, 6.4, 3.6, 1.35, 0) },
+  { color: '#8b5cf6', path: buildFlowerPath(6, 6.3, 3.2, 1.35, 0) },
+  { color: '#10b981', path: buildFlowerPath(4, 6.3, 2.7, 1.35, 45) }
+]
+
+const emblemIndexById = computed(() => {
+  const map = new Map<string, number>()
+  let next = 0
+  for (const agent of props.agents) {
+    if (!map.has(agent.id)) {
+      map.set(agent.id, next % EMBLEMS.length)
+      next++
+    }
+  }
+  for (const event of props.events) {
+    if (!map.has(event.agentId)) {
+      map.set(event.agentId, next % EMBLEMS.length)
+      next++
+    }
+  }
+  return map
+})
+
+function emblemIndex(agentId: string): number {
+  return emblemIndexById.value.get(agentId) ?? 0
+}
+
+function emblemOf(agentId: string): EmblemSpec {
+  return EMBLEMS[emblemIndex(agentId)]!
+}
+
+const waves = computed<LifecycleWave[]>(() => {
+  const result: LifecycleWave[] = []
+  let current: LifecycleWave | null = null
+  let startedIds = new Set<string>()
+
+  for (const event of props.events) {
+    if (event.kind === 'started') {
+      if (!current || startedIds.has(event.agentId) || current.terminals.length > 0) {
+        current = { key: event.id, started: [], terminals: [] }
+        startedIds = new Set<string>()
+        result.push(current)
+      }
+      current.started.push(event)
+      startedIds.add(event.agentId)
+    } else {
+      if (!current) {
+        current = { key: event.id, started: [], terminals: [] }
+        result.push(current)
+      }
+      current.terminals.push(event)
+    }
+  }
+  return result
+})
+
 const summary = computed(() => subAgentSummary(props.agents))
 const running = computed(() => props.agents.some((agent) => agent.status === 'starting' || (agent.status === 'running' && agent.live)))
 const liveProgress = computed(() => props.agents.findLast((agent) => agent.status === 'running' && agent.live && agent.progress))
-
-function roleIcon(agent: SubAgentActivity) {
-  return { researcher: Search, coder: CodeXml, tester: FlaskConical, general: Bot }[subAgentRoleKind(agent)]
-}
 
 function latestActivity(event: SubAgentLifecycleEvent): SubAgentActivity {
   return props.agents.find((agent) => agent.id === event.agentId) ?? event.agent
 }
 
-function name(agent: SubAgentActivity): string {
-  const label = subAgentName(agent)
-  return props.agents.filter((item) => subAgentName(item) === label).length > 1 && !agent.id.startsWith('tool:')
-    ? `${label} · ${agent.id.slice(0, 6)}` : label
+function canOpen(agent: SubAgentActivity): boolean {
+  return !agent.id.startsWith('tool:')
 }
 
 function progress(agent: SubAgentActivity): string {
   return agent.progress?.startsWith('Using ')
-    ? `正在使用 ${agent.progress.slice(6)}` : phaseLabel(agent.progress ?? '')
-}
-
-function elapsed(agent: SubAgentActivity): string {
-  if (agent.elapsedMs === undefined) return ''
-  const seconds = agent.elapsedMs / 1000
-  return seconds < 60 ? `${seconds.toFixed(1)} 秒` : `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒`
+    ? `正在使用 ${agent.progress.slice(6)}`
+    : phaseLabel(agent.progress ?? '')
 }
 </script>
 
 <template>
-  <details v-if="showSummary && agents.length" class="subagent-activity" :class="{ 'is-working': running }"
-    @toggle="expanded = ($event.target as HTMLDetailsElement).open">
-    <summary :title="summary">
-      <span class="agent-avatars" aria-hidden="true">
-        <span v-for="agent in agents.slice(0, 3)" :key="agent.id" class="agent-avatar"
-          :class="{ failed: agent.status === 'failed', completed: agent.status === 'completed' }"><component :is="roleIcon(agent)" :size="13" /></span>
-      </span>
-      <span class="agent-summary" aria-live="polite" aria-atomic="true">{{ summary }}</span>
-      <span v-if="liveProgress" class="agent-inline-progress" :title="progress(liveProgress)">{{ progress(liveProgress) }}</span>
-      <LoaderCircle v-if="running" :size="13" class="agent-summary-status spin" aria-label="子智能体正在执行" />
-      <ChevronRight :size="14" class="agent-chevron" />
-    </summary>
-    <div v-if="expanded" class="agent-details">
-      <section v-for="agent in agents" :key="agent.id" class="agent-detail" :class="{ failed: agent.status === 'failed' }">
-        <header class="agent-heading">
-          <button type="button" class="agent-open" :disabled="agent.id.startsWith('tool:')"
-            :title="agent.id.startsWith('tool:') ? '正在等待子智能体标识' : `打开 ${name(agent)} 的会话`"
-            :aria-label="`打开 ${name(agent)} 的会话`" @click="emit('openSubAgent', agent)">
-            <component :is="roleIcon(agent)" :size="14" aria-hidden="true" />
-            <strong>{{ name(agent) }}</strong>
-            <ChevronRight :size="12" aria-hidden="true" />
-          </button>
-          <span class="agent-state">
-            <LoaderCircle v-if="agent.status === 'starting' || (agent.status === 'running' && agent.live)" :size="12" class="spin" />
-            <Check v-else-if="agent.status === 'completed'" :size="12" />
-            <CircleAlert v-else-if="agent.status === 'failed' || agent.status === 'interrupted'" :size="12" />
-            <Square v-else-if="agent.status === 'cancelled'" :size="11" />
-            {{ subAgentStatusLabel(agent) }}
-          </span>
-          <small v-if="elapsed(agent)" class="agent-elapsed">{{ elapsed(agent) }}</small>
-        </header>
-        <p v-if="agent.progress && agent.status === 'running' && agent.live" class="agent-progress">{{ progress(agent) }}</p>
-        <p v-if="agent.detail && agent.status === 'running' && agent.live" class="agent-progress-detail">{{ agent.detail }}</p>
-        <p v-if="agent.task" class="agent-task">{{ agent.task }}</p>
-        <pre v-if="agent.output" class="agent-output" tabindex="0" :aria-label="`${name(agent)}的结果`">{{ agent.output }}</pre>
-        <small v-if="agent.model" class="agent-model">{{ agent.model }}</small>
-      </section>
-    </div>
-  </details>
   <div v-if="events.length" class="agent-lifecycle" aria-label="子智能体工作动态">
-    <button v-for="event in events" :key="event.id" type="button" class="agent-lifecycle-row"
-      :class="`is-${event.kind}`" :data-subagent-event-id="event.id" :data-agent-id="event.agentId"
-      :aria-label="`${subAgentLifecycleLabel(event)}，打开子智能体会话`"
-      @click="emit('openSubAgent', latestActivity(event))">
-      <component :is="roleIcon(event.agent)" :size="14" class="lifecycle-role" aria-hidden="true" />
-      <span>{{ subAgentLifecycleLabel(event) }}</span>
-      <Check v-if="event.kind === 'completed'" :size="12" class="lifecycle-state" aria-hidden="true" />
-      <CircleAlert v-else-if="event.kind === 'failed' || event.kind === 'interrupted'" :size="12" class="lifecycle-state" aria-hidden="true" />
-      <Square v-else-if="event.kind === 'cancelled'" :size="10" class="lifecycle-state" aria-hidden="true" />
-      <ChevronRight :size="12" class="lifecycle-chevron" aria-hidden="true" />
-    </button>
+    <template v-for="wave in waves" :key="wave.key">
+      <button
+        v-if="wave.started.length === 1"
+        type="button"
+        class="agent-lifecycle-row is-started"
+        :data-subagent-event-id="wave.started[0]!.id"
+        :data-agent-id="wave.started[0]!.agentId"
+        :disabled="!canOpen(latestActivity(wave.started[0]!))"
+        :aria-label="`${subAgentLifecycleLabel(wave.started[0]!)}，打开子智能体会话`"
+        @click="emit('openSubAgent', latestActivity(wave.started[0]!))"
+      >
+        <svg
+          class="agent-emblem"
+          :data-emblem-index="emblemIndex(wave.started[0]!.agentId)"
+          viewBox="0 0 16 16"
+          width="16"
+          height="16"
+          aria-hidden="true"
+        >
+          <path :d="emblemOf(wave.started[0]!.agentId).path" :fill="emblemOf(wave.started[0]!.agentId).color" fill-rule="evenodd" />
+        </svg>
+        <span class="agent-lifecycle-text">{{ subAgentLifecycleLabel(wave.started[0]!) }}</span>
+      </button>
+
+      <div v-else-if="wave.started.length > 1" class="agent-lifecycle-group">
+        <span class="agent-emblems" aria-hidden="true">
+          <svg
+            v-for="event in wave.started"
+            :key="`icon-${event.id}`"
+            class="agent-emblem"
+            :data-emblem-index="emblemIndex(event.agentId)"
+            viewBox="0 0 16 16"
+            width="16"
+            height="16"
+          >
+            <path :d="emblemOf(event.agentId).path" :fill="emblemOf(event.agentId).color" fill-rule="evenodd" />
+          </svg>
+        </span>
+        <span class="agent-lifecycle-group-text">
+          <template v-for="(event, index) in wave.started" :key="event.id">
+            <span v-if="index > 0" class="agent-lifecycle-sep">{{ wave.started.length === 2 ? '和' : '、' }}</span>
+            <button
+              type="button"
+              class="agent-lifecycle-inline-btn"
+              :data-subagent-event-id="event.id"
+              :data-agent-id="event.agentId"
+              :disabled="!canOpen(latestActivity(event))"
+              :aria-label="`${subAgentName(event.agent)}，打开子智能体会话`"
+              @click="emit('openSubAgent', latestActivity(event))"
+            >{{ subAgentName(event.agent) }}</button>
+          </template>
+          <span class="agent-lifecycle-suffix">{{ wave.started.length > 2 ? `等 ${wave.started.length} 个子智能体开始工作` : '开始工作' }}</span>
+        </span>
+      </div>
+
+      <button
+        v-for="event in wave.terminals"
+        :key="event.id"
+        type="button"
+        class="agent-lifecycle-row"
+        :class="`is-${event.kind}`"
+        :data-subagent-event-id="event.id"
+        :data-agent-id="event.agentId"
+        :disabled="!canOpen(latestActivity(event))"
+        :aria-label="`${subAgentLifecycleLabel(event)}，打开子智能体会话`"
+        @click="emit('openSubAgent', latestActivity(event))"
+      >
+        <svg
+          class="agent-emblem"
+          :data-emblem-index="emblemIndex(event.agentId)"
+          viewBox="0 0 16 16"
+          width="16"
+          height="16"
+          aria-hidden="true"
+        >
+          <path :d="emblemOf(event.agentId).path" :fill="emblemOf(event.agentId).color" fill-rule="evenodd" />
+        </svg>
+        <span class="agent-lifecycle-text">{{ subAgentLifecycleLabel(event) }}</span>
+      </button>
+    </template>
+
+    <div v-if="running && liveProgress" class="agent-inline-progress-row">
+      <span class="agent-inline-progress" :title="progress(liveProgress)">{{ progress(liveProgress) }}</span>
+    </div>
+  </div>
+
+  <div v-else-if="showSummary && agents.length" class="agent-lifecycle" :class="{ 'is-working': running }">
+    <div class="agent-lifecycle-group">
+      <span class="agent-emblems" aria-hidden="true">
+        <svg
+          v-for="agent in agents.slice(0, 3)"
+          :key="agent.id"
+          class="agent-emblem"
+          :data-emblem-index="emblemIndex(agent.id)"
+          viewBox="0 0 16 16"
+          width="16"
+          height="16"
+        >
+          <path :d="emblemOf(agent.id).path" :fill="emblemOf(agent.id).color" fill-rule="evenodd" />
+        </svg>
+      </span>
+      <button
+        type="button"
+        class="agent-lifecycle-inline-btn agent-summary-btn"
+        :disabled="!canOpen(agents[0]!)"
+        :title="summary"
+        @click="emit('openSubAgent', agents[0]!)"
+      >
+        <span class="agent-summary">{{ summary }}</span>
+      </button>
+      <span v-if="liveProgress" class="agent-inline-progress" :title="progress(liveProgress)">{{ progress(liveProgress) }}</span>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.subagent-activity {
+.agent-lifecycle {
+  display: grid;
+  gap: 2px;
   min-width: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
+  margin: 2px 0;
 }
 
-.subagent-activity > summary {
-  display: flex;
+.agent-lifecycle-row {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 32px;
+  gap: 7px;
   width: fit-content;
   max-width: 100%;
-  padding: 3px 0;
-  border-radius: 6px;
-  list-style: none;
-  cursor: pointer;
+  min-height: 26px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: left;
 }
 
-.subagent-activity > summary::-webkit-details-marker {
-  display: none;
-}
-
-.subagent-activity > summary:hover,
-.subagent-activity[open] > summary {
+.agent-lifecycle-row:not(:disabled):hover,
+.agent-lifecycle-inline-btn:not(:disabled):hover {
   color: var(--text);
 }
 
-.subagent-activity > summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+.agent-lifecycle-row:disabled,
+.agent-lifecycle-inline-btn:disabled {
+  cursor: default;
 }
 
-.agent-avatars {
+.agent-lifecycle-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 26px;
+  padding: 2px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.agent-emblems {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   flex-shrink: 0;
-  padding-right: 2px;
 }
 
-.agent-avatar {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  color: var(--text-secondary);
-  background: var(--surface-subtle, var(--surface));
-  border: 1px solid var(--border);
-  border-radius: 7px;
+.agent-emblem {
+  display: block;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
 }
 
-.agent-avatar + .agent-avatar {
-  margin-left: -5px;
-}
-
-.agent-avatar.failed,
-.agent-detail.failed .agent-state {
-  color: var(--danger);
-}
-
+.agent-lifecycle-text,
 .agent-summary {
   min-width: 0;
   overflow: hidden;
@@ -163,186 +312,55 @@ function elapsed(agent: SubAgentActivity): string {
   white-space: nowrap;
 }
 
-.agent-inline-progress {
-  min-width: 0;
-  max-width: 220px;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-summary-status,
-.agent-chevron {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.agent-chevron {
-  transition: transform 140ms ease;
-}
-
-.subagent-activity[open] > summary .agent-chevron {
-  transform: rotate(90deg);
-}
-
-.agent-details {
-  display: grid;
-  gap: 14px;
-  min-width: 0;
-  margin: 8px 0 12px 10px;
-  padding: 2px 0 2px 18px;
-  border-left: 1px solid var(--border);
-}
-
-.agent-detail {
-  min-width: 0;
-}
-
-.agent-heading {
-  display: flex;
+.agent-lifecycle-group-text {
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
+  min-width: 0;
 }
 
-.agent-heading > svg {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.agent-open {
+.agent-lifecycle-inline-btn {
   display: inline-flex;
-  min-width: 0;
   align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-  color: var(--text-secondary);
+  min-height: 24px;
+  padding: 0;
+  border: 0;
   background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
   border-radius: 4px;
-  text-align: left;
 }
 
-.agent-open:not(:disabled):hover {
-  color: var(--text);
+.agent-lifecycle-sep,
+.agent-lifecycle-suffix {
+  color: inherit;
 }
 
-.agent-open > svg {
-  flex-shrink: 0;
-}
-
-.agent-open:disabled {
-  cursor: default;
-}
-
-.agent-open:focus-visible,
-.agent-lifecycle-row:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-.agent-lifecycle {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  margin: 4px 0 10px;
-}
-
-.agent-lifecycle-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: fit-content;
-  max-width: 100%;
-  min-height: 28px;
-  padding: 3px 0;
-  color: var(--text-secondary);
-  background: transparent;
-  border-radius: 5px;
-  font-size: 12px;
-  text-align: left;
-}
-
-.agent-lifecycle-row > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-lifecycle-row:hover {
-  color: var(--text);
-}
-
-.lifecycle-role,
-.lifecycle-state,
-.lifecycle-chevron {
-  flex-shrink: 0;
-}
-
-.lifecycle-state,
-.lifecycle-chevron {
-  color: var(--text-muted);
-}
-
-.agent-lifecycle-row.is-failed .lifecycle-state,
-.agent-lifecycle-row.is-interrupted .lifecycle-state {
+.agent-lifecycle-row.is-failed .agent-lifecycle-text,
+.agent-lifecycle-row.is-interrupted .agent-lifecycle-text {
   color: var(--danger);
 }
 
-.agent-heading strong {
+.agent-lifecycle-row:focus-visible,
+.agent-lifecycle-inline-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.agent-inline-progress-row {
+  padding-left: 24px;
+}
+
+.agent-inline-progress {
   min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.agent-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.agent-elapsed,
-.agent-model {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.agent-task,
-.agent-progress,
-.agent-progress-detail {
-  margin: 7px 0 0;
-  overflow-wrap: anywhere;
-  line-height: 1.6;
-}
-
-.agent-task,
-.agent-progress-detail {
+  max-width: 280px;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: 12px;
-  white-space: pre-wrap;
-}
-
-.agent-output {
-  max-height: 260px;
-  overflow: auto;
-  margin: 8px 0;
-  padding: 0;
-  color: var(--text-secondary);
-  font: 12px/1.65 var(--font-mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-chevron {
-    transition: none;
-  }
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

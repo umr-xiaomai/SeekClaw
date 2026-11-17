@@ -17,6 +17,8 @@ export function finalizeAssistantBubbles(
   const terminalState = kind === 'error' ? 'error' : 'done'
   for (const item of messages) {
     if (item.role !== 'assistant') continue
+    item.thinkingActive = false
+    item.preparingTool = undefined
     if (item.state !== 'thinking' && item.state !== 'streaming') continue
     item.state = terminalState
   }

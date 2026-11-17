@@ -19,12 +19,15 @@ import ConversationWidgets from './ConversationWidgets.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import SubAgentActivityList from './SubAgentActivityList.vue'
 import { messageSubAgents } from '../subagent-activity'
+import { isHiddenSystemUserMessage, isSystemBannerUserMessage } from '../internal-messages'
+import { preparingToolLabel, phaseStatusText } from './tool-presentation'
 
 const props = withDefaults(defineProps<{
   message: ChatMessage
   widgets?: ConversationWidget[]
   sessionId?: string
   workspace?: string
+  phase?: string
   imageSources?: Record<string, string>
   /** Dimmed while the conversation search does not match this message. */
   dimmed?: boolean
@@ -38,7 +41,9 @@ const props = withDefaults(defineProps<{
   isIntermediate?: boolean
   /** A parent process summary can render these activities outside its disclosure. */
   hideSubAgents?: boolean
-}>(), { imageSources: () => ({}), widgets: () => [], showFooter: false, isIntermediate: false, smoothOutput: true })
+  /** Control whether a fallback sub-agent summary row renders when events are absent. */
+  showSubAgentSummary?: boolean
+}>(), { imageSources: () => ({}), widgets: () => [], showFooter: false, isIntermediate: false, smoothOutput: true, showSubAgentSummary: true })
 
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
@@ -74,23 +79,16 @@ async function copyContent(): Promise<void> {
   }
 }
 
-/** System-injected messages (compaction / verification) get dedicated cards. */
-const systemKind = computed<'memory' | 'verify' | null>(() => {
-  const content = props.message.content
-  if (content.startsWith('>>> [Context compaction]')) return 'memory'
-  if (content.startsWith('The automatic verification step')) return 'verify'
-  return null
+/** Context compaction summaries render as neutral system cards instead of user bubbles. */
+const systemKind = computed<'memory' | null>(() => {
+  return isSystemBannerUserMessage(props.message) ? 'memory' : null
 })
 
 const systemMeta = computed(() => {
-  switch (systemKind.value) {
-    case 'memory':
-      return { title: '记忆压缩', subtitle: '较早的对话已被总结，以保持上下文可容纳' }
-    case 'verify':
-      return { title: '构建验证', subtitle: '修改后自动运行构建未通过，已自动继续修复' }
-    default:
-      return { title: '', subtitle: '' }
+  if (systemKind.value === 'memory') {
+    return { title: '记忆压缩', subtitle: '较早的对话已被总结，以保持上下文可容纳' }
   }
+  return { title: '', subtitle: '' }
 })
 
 const systemBody = computed(() => {
@@ -99,13 +97,13 @@ const systemBody = computed(() => {
   return marker >= 0 ? content.slice(marker + 1).trim() : ''
 })
 
-const thinkingLabel = computed(() => {
-  if (props.streaming && props.message.state === 'thinking') {
-    const chars = props.message.thinking?.length ?? 0
-    return chars > 0 ? `正在思考 · 已 ${chars.toLocaleString()} 字` : '正在思考'
-  }
-  return '已完成思考'
-})
+const isThinking = computed(() => Boolean(
+  props.streaming
+  && props.message.state === 'thinking'
+  && !props.message.preparingTool
+  && (props.message.thinkingActive ?? true)
+))
+const thinkingLabel = computed(() => isThinking.value ? '正在思考' : '已完成思考')
 
 function imageUrl(id: string): string | undefined {
   return props.imageSources[id]
@@ -220,31 +218,61 @@ const hasImages = computed(() =>
   (props.message.files?.length ?? 0) > 0
 )
 
+const hasVisibleSubAgents = computed(() =>
+  !props.hideSubAgents && (
+    (props.showSubAgentSummary && subAgents.value.length > 0)
+    || (props.message.subAgentEvents?.length ?? 0) > 0
+  )
+)
+
 const isVisible = computed(() => {
-  if (props.message.content?.startsWith('>>> [output truncated]')) return false
+  if (isHiddenSystemUserMessage(props.message)) return false
   if (props.message.role === 'user') return true
   if (props.streaming) return true
-  return hasContent.value || hasThinking.value || hasTools.value || subAgents.value.length > 0
-    || (props.message.subAgentEvents?.length ?? 0) > 0 || hasImages.value || hasError.value || props.widgets.length > 0
+  return hasContent.value || hasThinking.value || visibleTools.value.length > 0 || hasVisibleSubAgents.value
+    || hasImages.value || hasError.value || props.widgets.length > 0
 })
 
 const isToolsOnly = computed(() => {
   if (props.message.role !== 'assistant') return false
-  return hasTools.value && !hasContent.value && !hasThinking.value && !hasError.value
+  return visibleTools.value.length > 0 && !hasContent.value && !hasThinking.value && !hasError.value
+})
+
+const hasRunningTool = computed(() => (props.message.tools ?? []).some((tool) => tool.state === 'running'))
+const isPreparingTool = computed(() => Boolean(
+  props.streaming
+  && props.message.preparingTool
+  && !isThinking.value
+  && !hasRunningTool.value
+))
+const isWaitingResponse = computed(() => Boolean(
+  props.streaming
+  && (props.message.state === 'thinking' || props.message.state === 'streaming')
+  && !isThinking.value
+  && !isPreparingTool.value
+  && !hasRunningTool.value
+  && !hasContent.value
+  && !hasError.value
+  && !subAgents.value.length
+))
+const liveStatusLabel = computed(() => {
+  if (isPreparingTool.value) return preparingToolLabel(props.message.preparingTool)
+  const p = phaseStatusText(props.phase)
+  if (p) return p.endsWith('…') ? p : `${p}…`
+  return '正在等待模型响应…'
 })
 
 </script>
 
 <template>
   <article v-if="isVisible" :id="'message-' + message.id" class="message"
-    :class="[`message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate, 'is-tools-only': isToolsOnly }]">
+    :class="[systemKind ? 'message-system' : `message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate, 'is-tools-only': isToolsOnly }]">
     <!-- user: either a real message or a system-injected card -->
     <template v-if="message.role === 'user'">
       <div v-if="systemKind" class="system-card" :class="`system-${systemKind}`">
         <button class="system-card-header" type="button" @click="systemOpen = !systemOpen">
           <span class="system-card-icon">
-            <Layers v-if="systemKind === 'memory'" :size="15" />
-            <CircleAlert v-else :size="15" />
+            <Layers :size="15" />
           </span>
           <div class="system-card-title">
             <strong>{{ systemMeta.title }}</strong>
@@ -304,21 +332,19 @@ const isToolsOnly = computed(() => {
         </div>
       </details>
 
-      <div v-if="hasThinking" class="thinking-wrapper">
-        <button class="thinking-toggle" :class="{ active: streaming && message.state === 'thinking' }"
-          @click="thinkingOpen = !thinkingOpen">
-          <LoaderCircle v-if="streaming && message.state === 'thinking'" :size="15" class="spin" />
-          <Check v-else :size="15" />
-          <span>{{ thinkingLabel }}</span>
-          <ChevronDown :size="14" :class="{ rotated: thinkingOpen }" />
+      <div v-if="hasThinking || isThinking" class="thinking-wrapper">
+        <button type="button" class="thinking-toggle" :class="{ active: isThinking }"
+          :disabled="!hasThinking" @click="hasThinking && (thinkingOpen = !thinkingOpen)">
+          <span :class="{ 'thinking-shimmer': isThinking }">{{ thinkingLabel }}</span>
+          <ChevronDown v-if="hasThinking && !isThinking" :size="14" :class="{ rotated: thinkingOpen }" />
         </button>
         <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
       </div>
 
       <MarkdownMessage v-if="hasContent" :key="message.id" :content="displayContent"
         :streaming="smoothOutput && streaming && message.state === 'streaming' && !hasError" />
-      <SubAgentActivityList :agents="subAgents" :events="message.subAgentEvents" :show-summary="!hideSubAgents"
-        @open-sub-agent="emit('openSubAgent', $event)" />
+      <SubAgentActivityList v-if="!hideSubAgents" :agents="subAgents" :events="message.subAgentEvents"
+        :show-summary="showSubAgentSummary" @open-sub-agent="emit('openSubAgent', $event)" />
       <div v-if="visibleTools.length" class="tool-list">
         <ToolActivityList :tools="visibleTools" :streaming="streaming" @open-diff="(path, diff) => emit('openDiff', path, diff)" />
       </div>
@@ -333,9 +359,9 @@ const isToolsOnly = computed(() => {
         </div>
       </div>
 
-      <div v-if="streaming && (message.state === 'thinking' || message.state === 'streaming')"
-        class="response-placeholder" aria-label="AI 正在思考">
-        <span /><span /><span />
+      <div v-if="isPreparingTool || isWaitingResponse" class="live-status-row" role="status" aria-live="polite">
+        <LoaderCircle :size="14" class="spin live-status-icon" aria-hidden="true" />
+        <span>{{ liveStatusLabel }}</span>
       </div>
 
       <footer v-if="showFooter && !streaming && (displayContent || activeError)" class="assistant-footer" :class="{ active: isCopied }">
@@ -366,7 +392,12 @@ const isToolsOnly = computed(() => {
   transition: opacity 160ms ease;
 }
 
+.message-system {
+  justify-content: center;
+}
+
 .system-card {
+  width: min(100%, 670px);
   margin: 2px 0 10px;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -401,11 +432,6 @@ const isToolsOnly = computed(() => {
 .system-memory .system-card-icon {
   color: var(--accent);
   background: var(--accent-soft);
-}
-
-.system-verify .system-card-icon {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .system-card-title {
@@ -537,16 +563,24 @@ const isToolsOnly = computed(() => {
 .tool-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 10px 0;
+  gap: 2px;
+  margin: 4px 0;
 }
 
-.response-placeholder {
-  margin: 4px 0;
-  display: inline-flex;
+.live-status-row {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 0;
+  gap: 7px;
+  min-height: 26px;
+  margin: 4px 0 2px;
+  padding: 2px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.live-status-icon {
+  flex: none;
 }
 
 .image-activity { margin: 4px 0 14px; color: var(--text-muted); font-size: 14px; }
