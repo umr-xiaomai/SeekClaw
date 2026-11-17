@@ -16,6 +16,18 @@ describe('conversation widget rendering', () => {
     for (const text of ['每日进度', '每天 09:00', '延续此对话', '暂停', '立即运行', '编辑', '打开交互预览', '分析报告', '打开位置']) expect(html).toContain(text)
     expect(html).not.toContain('"notificationPolicy"')
     expect(html).not.toContain('<iframe') // Previews load only after an explicit click.
+    expect(html).not.toContain('独立沙箱')
+    expect(html).not.toContain('自适应宽度')
+    expect(html).not.toContain('is-single')
+  })
+
+  it('marks single-widget containers so standalone artifact cards remain compact', async () => {
+    const widgets: ConversationWidget[] = [
+      { version: 1, kind: 'artifact', id: 'artifact:demo', title: '页面演示', path: 'E:\\proj\\tmp\\demo.html', mediaType: 'text/html' }
+    ]
+    const html = await renderToString(createSSRApp({ render: () => h(ConversationWidgets, { widgets, sessionId: 'session', workspace: 'E:\\proj' }) }))
+    expect(html).toContain('is-single')
+    expect(html).toContain('tmp\\demo.html')
   })
 
   it('keeps a deleted task as a receipt without runnable controls', async () => {

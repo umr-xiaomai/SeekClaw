@@ -159,6 +159,35 @@ function handleSidebarResetWidth(): void {
 const aboutOpen = ref(false)
 const gitPanelOpen = ref(false)
 const browserPanelOpen = ref(false)
+const DEFAULT_BROWSER_PANEL_WIDTH = 520
+const MIN_BROWSER_PANEL_WIDTH = 320
+const MAX_BROWSER_PANEL_WIDTH = 1400
+const BROWSER_PANEL_WIDTH_STORAGE_KEY = 'seekclaw-browser-panel-width-v1'
+
+function loadStoredBrowserPanelWidth(): number {
+  try {
+    const raw = localStorage.getItem(BROWSER_PANEL_WIDTH_STORAGE_KEY)
+    if (!raw) return DEFAULT_BROWSER_PANEL_WIDTH
+    const val = Number(raw)
+    if (Number.isFinite(val) && val >= MIN_BROWSER_PANEL_WIDTH && val <= MAX_BROWSER_PANEL_WIDTH) {
+      return val
+    }
+    return DEFAULT_BROWSER_PANEL_WIDTH
+  } catch {
+    return DEFAULT_BROWSER_PANEL_WIDTH
+  }
+}
+
+const browserPanelWidth = ref(loadStoredBrowserPanelWidth())
+
+function resizeBrowserPanel(width: number): void {
+  if (!Number.isFinite(width)) return
+  const maxWidth = Math.min(MAX_BROWSER_PANEL_WIDTH, Math.max(MIN_BROWSER_PANEL_WIDTH, Math.floor(window.innerWidth * 0.85)))
+  const nextWidth = Math.min(maxWidth, Math.max(MIN_BROWSER_PANEL_WIDTH, Math.round(width)))
+  browserPanelWidth.value = nextWidth
+  localStorage.setItem(BROWSER_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
+}
+
 const selectedSubAgent = ref<{ agent: SubAgentActivity; threadId: string } | null>(null)
 const browserState = ref<ConversationBrowserState | null>(null)
 const browserError = ref('')
@@ -168,8 +197,15 @@ let browserStateSequence = 0
 function handleBrowserState(state: ConversationBrowserState): void {
   if (state.sessionId !== activeThread.value?.sessionId) return
   browserState.value = state
+  if (state.tabs.length === 0) {
+    browserAutoOpened.delete(state.scope)
+    if (browserPanelOpen.value && !state.busy) {
+      browserPanelOpen.value = false
+    }
+  }
   if (state.busy && !browserAutoOpened.has(state.scope)) {
     browserAutoOpened.add(state.scope)
+    window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
     browserPanelOpen.value = true
     gitPanelOpen.value = false
     selectedSubAgent.value = null
@@ -194,6 +230,7 @@ async function openConversationBrowser(): Promise<void> {
     if (thread !== activeThread.value) return
     browserState.value = state
     browserAutoOpened.add(state.scope)
+    window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
     browserPanelOpen.value = true
     gitPanelOpen.value = false
     selectedSubAgent.value = null
@@ -296,6 +333,7 @@ watch(activeThreadId, () => { selectedSubAgent.value = null })
 
 function openSubAgent(agent: SubAgentActivity): void {
   if (!activeThread.value?.sessionId) return
+  window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
   selectedSubAgent.value = { agent, threadId: activeThread.value.id }
   gitPanelOpen.value = false
   browserPanelOpen.value = false
@@ -520,6 +558,7 @@ function showActiveProject(): void {
 
 function openGitPanel(tab: 'diff' | 'history'): void {
   if (!activeProject.value) return
+  window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
   toolDiff.value = null
   gitPanelTab.value = tab
   browserPanelOpen.value = false
@@ -532,6 +571,7 @@ function openDevTools(): void {
 }
 
 function openToolDiff(path: string, diff: string): void {
+  window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
   toolDiff.value = { path, diff }
   gitPanelTab.value = 'diff'
   browserPanelOpen.value = false
@@ -1954,6 +1994,12 @@ function useStarterPrompt(prompt: string): void {
   composer.value?.setValue(prompt)
 }
 
+function handleArtifactPreviewOpen(): void {
+  gitPanelOpen.value = false
+  browserPanelOpen.value = false
+  selectedSubAgent.value = null
+}
+
 onMounted(async () => {
   applyTheme(theme.value)
   applyAccentColor(accentColor.value)
@@ -1964,6 +2010,7 @@ onMounted(async () => {
   document.documentElement.dataset.platform = appInfo.value.platform
   document.documentElement.dataset.material = appInfo.value.supportsMica ? 'mica' : 'solid'
   projects.value = loadStoredProjects()
+  window.addEventListener('seekclaw:artifact-preview-open', handleArtifactPreviewOpen)
   unsubscribeBrowser = window.seekclaw.browser.onChanged(handleBrowserState)
   unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonMessage)
   unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
@@ -1980,6 +2027,7 @@ onBeforeUnmount(() => {
   conversationScroller.dispose()
   conversationResizeObserver?.disconnect()
   window.removeEventListener('resize', measureConversationViewport)
+  window.removeEventListener('seekclaw:artifact-preview-open', handleArtifactPreviewOpen)
   unsubscribeBrowser?.()
   unsubscribeEvent?.()
   unsubscribeState?.()
@@ -2195,8 +2243,10 @@ watch(theme, applyTheme)
           <SubAgentConversationPanel :agent="activeSubAgent" :session-id="activeThread.sessionId" :workspace="activeProject?.path"
             @close="selectedSubAgent = null" @open-diff="openToolDiff" />
         </div>
-        <ConversationBrowserPanel v-if="activePage === 'main' && browserPanelOpen && browserState && browserState.sessionId === activeThread?.sessionId"
-          :state="browserState" @changed="handleBrowserState" @close="browserPanelOpen = false" />
+        <Transition name="side-panel">
+          <ConversationBrowserPanel v-if="activePage === 'main' && browserPanelOpen && browserState && browserState.sessionId === activeThread?.sessionId"
+            :state="browserState" :width="browserPanelWidth" @changed="handleBrowserState" @resize="resizeBrowserPanel" @close="browserPanelOpen = false" />
+        </Transition>
         <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="activeProject && activeThread?.executionWorkspace ? { ...activeProject, path: activeThread.executionWorkspace } : activeProject"
           :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="gitPanelWidth" @close="closeGitPanel"
           @resize="resizeGitPanel" @open-terminal="openProjectTerminal" />
