@@ -188,10 +188,11 @@ describe('conversation process presentation', () => {
     ]
     const turn = projectConversationTurns(polled)[0]!
     const html = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn, expanded: true }) }))
-    expect(html.match(/读取并探索了文件/g)).toHaveLength(1)
+    expect(html.match(/读取并探索了 2 项/g)).toHaveLength(1)
     expect(html.match(/>研究员已完成工作</g)).toHaveLength(1)
     expect(html).not.toContain('研究员已启动')
     expect(html.match(/class="process-step"/g)).toHaveLength(2)
+    expect(html).toContain('aria-label="重新生成"')
   })
 
   it('shows a non-thinking waiting indicator on TTFT and at the bottom of expanded process history', async () => {

@@ -35,40 +35,9 @@ import {
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { GitBranchInfo, GitCommit, GitHistory, GitOverview } from '../../../shared/ipc'
 import type { ProjectItem } from '../types'
+import { parseUnifiedDiff, type ParsedFileDiff as FileDiff } from '../diff-parser'
 
 type PanelTab = 'diff' | 'history'
-
-interface DiffLine {
-  type: 'context' | 'addition' | 'deletion'
-  content: string
-  oldLineNumber?: number
-  newLineNumber?: number
-  wordDiff?: Array<{ text: string; changed: boolean }>
-}
-
-interface DiffHunk {
-  header: string
-  oldStart: number
-  oldCount: number
-  newStart: number
-  newCount: number
-  unmodifiedBefore: number
-  lines: DiffLine[]
-}
-
-interface FileDiff {
-  id: string
-  oldPath: string
-  newPath: string
-  displayPath: string
-  fileName: string
-  dirPath: string
-  status: 'modified' | 'added' | 'deleted' | 'renamed'
-  additions: number
-  deletions: number
-  hunks: DiffHunk[]
-  collapsed: boolean
-}
 
 interface TreeNode {
   name: string
@@ -302,183 +271,9 @@ const panelStyle = computed(() => ({
   '--git-tree-width': `${fileTreeWidth.value}px`
 }))
 
-function computeWordDiff(
-  delText: string,
-  addText: string
-): { delParts: Array<{ text: string; changed: boolean }>; addParts: Array<{ text: string; changed: boolean }> } {
-  let prefixLen = 0
-  while (prefixLen < delText.length && prefixLen < addText.length && delText[prefixLen] === addText[prefixLen]) {
-    prefixLen++
-  }
-  let suffixLen = 0
-  while (
-    suffixLen < (delText.length - prefixLen) &&
-    suffixLen < (addText.length - prefixLen) &&
-    delText[delText.length - 1 - suffixLen] === addText[addText.length - 1 - suffixLen]
-  ) {
-    suffixLen++
-  }
-
-  const delPrefix = delText.slice(0, prefixLen)
-  const delMiddle = delText.slice(prefixLen, delText.length - suffixLen)
-  const delSuffix = delText.slice(delText.length - suffixLen)
-
-  const addPrefix = addText.slice(0, prefixLen)
-  const addMiddle = addText.slice(prefixLen, addText.length - suffixLen)
-  const addSuffix = addText.slice(addText.length - suffixLen)
-
-  return {
-    delParts: [
-      { text: delPrefix, changed: false },
-      { text: delMiddle, changed: true },
-      { text: delSuffix, changed: false }
-    ].filter((p) => p.text.length > 0),
-    addParts: [
-      { text: addPrefix, changed: false },
-      { text: addMiddle, changed: true },
-      { text: addSuffix, changed: false }
-    ].filter((p) => p.text.length > 0)
-  }
-}
-
-function attachWordDiffs(lines: DiffLine[]): void {
-  let i = 0
-  while (i < lines.length) {
-    const curLine = lines[i]
-    if (curLine && curLine.type === 'deletion') {
-      const delStart = i
-      while (i < lines.length && lines[i]?.type === 'deletion') i++
-      const addStart = i
-      while (i < lines.length && lines[i]?.type === 'addition') i++
-      const delCount = addStart - delStart
-      const addCount = i - addStart
-      const delLine = lines[delStart]
-      const addLine = lines[addStart]
-      if (delCount === 1 && addCount === 1 && delLine && addLine) {
-        const diff = computeWordDiff(delLine.content, addLine.content)
-        delLine.wordDiff = diff.delParts
-        addLine.wordDiff = diff.addParts
-      }
-    } else {
-      i++
-    }
-  }
-}
-
-function parseGitDiff(rawDiff: string): FileDiff[] {
-  if (!rawDiff || !rawDiff.trim()) return []
-
-  const fileChunks = rawDiff.split(/^diff --git /m)
-  const files: FileDiff[] = []
-
-  for (const chunk of fileChunks) {
-    if (!chunk.trim() || chunk.startsWith('# ')) continue
-
-    const lines = chunk.split(/\r?\n/)
-    const firstLine = lines[0] ?? ''
-    const matchPaths = firstLine.match(/^a\/(.+?)\s+b\/(.+)$/)
-    const oldPath = matchPaths?.[1] ?? ''
-    const newPath = matchPaths?.[2] ?? ''
-    const displayPath = newPath || oldPath || 'unknown'
-    const pathParts = displayPath.split('/')
-    const fileName = pathParts.pop() || displayPath
-    const dirPath = pathParts.join('/')
-
-    let status: 'modified' | 'added' | 'deleted' | 'renamed' = 'modified'
-    let additions = 0
-    let deletions = 0
-    const hunks: DiffHunk[] = []
-
-    let currentHunk: DiffHunk | null = null
-    let oldLine = 0
-    let newLine = 0
-    let lastOldEnd = 0
-
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i]
-      if (!line) continue
-      if (line.startsWith('new file mode')) {
-        status = 'added'
-      } else if (line.startsWith('deleted file mode')) {
-        status = 'deleted'
-      } else if (line.startsWith('similarity index') || line.startsWith('rename from')) {
-        status = 'renamed'
-      } else if (line.startsWith('@@')) {
-        const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/)
-        if (hunkMatch) {
-          const oldStart = parseInt(hunkMatch[1] ?? '1', 10)
-          const oldCount = hunkMatch[2] !== undefined ? parseInt(hunkMatch[2], 10) : 1
-          const newStart = parseInt(hunkMatch[3] ?? '1', 10)
-          const newCount = hunkMatch[4] !== undefined ? parseInt(hunkMatch[4], 10) : 1
-
-          const unmodifiedBefore = lastOldEnd > 0 ? Math.max(0, oldStart - lastOldEnd - 1) : Math.max(0, oldStart - 1)
-          lastOldEnd = oldStart + oldCount - 1
-
-          oldLine = oldStart
-          newLine = newStart
-
-          currentHunk = {
-            header: line,
-            oldStart,
-            oldCount,
-            newStart,
-            newCount,
-            unmodifiedBefore,
-            lines: []
-          }
-          hunks.push(currentHunk)
-        }
-      } else if (currentHunk) {
-        if (line.startsWith('+')) {
-          additions++
-          currentHunk.lines.push({
-            type: 'addition',
-            content: line.slice(1),
-            newLineNumber: newLine++
-          })
-        } else if (line.startsWith('-')) {
-          deletions++
-          currentHunk.lines.push({
-            type: 'deletion',
-            content: line.slice(1),
-            oldLineNumber: oldLine++
-          })
-        } else if (line.startsWith(' ')) {
-          currentHunk.lines.push({
-            type: 'context',
-            content: line.slice(1),
-            oldLineNumber: oldLine++,
-            newLineNumber: newLine++
-          })
-        }
-      }
-    }
-
-    if (hunks.length > 0 || status === 'deleted' || status === 'added') {
-      for (const hunk of hunks) {
-        attachWordDiffs(hunk.lines)
-      }
-
-      files.push({
-        id: displayPath.replace(/[^a-zA-Z0-9_-]/g, '_'),
-        oldPath,
-        newPath,
-        displayPath,
-        fileName,
-        dirPath,
-        status,
-        additions,
-        deletions,
-        hunks,
-        collapsed: false
-      })
-    }
-  }
-
-  return files
-}
-
-const parsedFiles = computed<FileDiff[]>(() => parseGitDiff(displayedDiff.value))
+const parsedFiles = computed<FileDiff[]>(() =>
+  parseUnifiedDiff(displayedDiff.value, props.diffOverride?.path || 'unknown')
+)
 const totalAdditions = computed(() => parsedFiles.value.reduce((sum, f) => sum + f.additions, 0))
 const totalDeletions = computed(() => parsedFiles.value.reduce((sum, f) => sum + f.deletions, 0))
 
@@ -1230,6 +1025,27 @@ onBeforeUnmount(() => {
             <div class="git-repository-summary tool-diff-summary">
               <span><Braces :size="15" />本次修改</span>
               <small>{{ diffOverride.path }}</small>
+              <div class="tool-diff-actions" style="display:flex;align-items:center;gap:4px;margin-left:auto;">
+                <button
+                  type="button"
+                  class="git-tool-btn"
+                  :class="{ active: wrapLines }"
+                  :title="wrapLines ? '取消自动换行' : '切换自动换行'"
+                  :aria-label="wrapLines ? '取消自动换行' : '切换自动换行'"
+                  @click="wrapLines = !wrapLines"
+                >
+                  <WrapText :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="git-tool-btn"
+                  title="复制完整 Patch"
+                  aria-label="复制完整 Patch"
+                  @click="copyToClipboard(displayedDiff, '已复制完整 Patch')"
+                >
+                  <Copy :size="14" />
+                </button>
+              </div>
             </div>
             <div
               v-for="file in parsedFiles"

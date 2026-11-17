@@ -4,6 +4,7 @@ import type { ChatMessage, ProjectItem, SubAgentActivity, ThreadItem } from './t
 import { finalizeAssistantBubbles } from './conversation-state'
 import { makeId, phaseLabel } from './app-helpers'
 import { parseConversationWidgets } from './conversation-widgets'
+import { countDiffLines } from './diff-parser'
 import { applySubAgentEvent, messageSubAgents } from './subagent-activity'
 
 export interface SubAgentStatusSnapshot {
@@ -322,8 +323,9 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
           const diff = typeof event.details?.diff === 'string' ? event.details.diff : ''
           tool.filePath = event.data
           tool.diff = diff
-          tool.addedLines = diff.split(/\r?\n/).filter((line) => line.startsWith('+') && !line.startsWith('+++')).length
-          tool.removedLines = diff.split(/\r?\n/).filter((line) => line.startsWith('-') && !line.startsWith('---')).length
+          const counts = countDiffLines(diff)
+          tool.addedLines = counts.addedLines
+          tool.removedLines = counts.removedLines
         }
         break
       }

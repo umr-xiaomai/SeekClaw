@@ -26,6 +26,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
   branch: [message: ChatMessage]
+  retry: [message: ChatMessage]
   edit: [message: ChatMessage]
   openSubAgent: [activity: SubAgentActivity]
   'update:expanded': [expanded: boolean]
@@ -418,7 +419,7 @@ function onToggle(event: Event): void {
               :show-footer="item.showFooter" :is-intermediate="item.isIntermediate"
               :hide-sub-agents="allEvents.length === 0" :show-sub-agent-summary="false"
               :dimmed="isDimmed(item.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
-              @branch="emit('branch', $event)" @edit="emit('edit', $event)" @open-sub-agent="emit('openSubAgent', $event)" />
+              @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)" @open-sub-agent="emit('openSubAgent', $event)" />
           </div>
           <SubAgentActivityList v-if="allEvents.length === 0 && agents.length > 0" :agents="agents"
             @open-sub-agent="emit('openSubAgent', $event)" />
@@ -444,7 +445,7 @@ function onToggle(event: Event): void {
         :streaming="isStreaming(turn.response.message)" :show-footer="turn.response.showFooter"
         :smooth-output="!query.trim()"
         :is-intermediate="turn.response.isIntermediate" :hide-sub-agents="true" :dimmed="isDimmed(turn.response.message)"
-        @open-diff="(path, diff) => emit('openDiff', path, diff)" @branch="emit('branch', $event)" @edit="emit('edit', $event)"
+        @open-diff="(path, diff) => emit('openDiff', path, diff)" @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)"
         @open-sub-agent="emit('openSubAgent', $event)" />
     </div>
   </div>
