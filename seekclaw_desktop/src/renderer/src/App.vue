@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import {
+  ArrowDown,
+  ArrowUp,
   Bug,
   CornerDownLeft,
   Folder,
   Hammer,
   LoaderCircle,
+  Pencil,
   RefreshCw,
   Telescope,
   Trash2
@@ -19,6 +22,7 @@ import ScheduledTasksDialog from './components/ScheduledTasksDialog.vue'
 import Composer from './components/Composer.vue'
 import ComposerProjectSelector from './components/ComposerProjectSelector.vue'
 import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
+import InlineApprovalCard from './components/InlineApprovalCard.vue'
 
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationProcess from './components/ConversationProcess.vue'
@@ -59,6 +63,7 @@ import {
   pathName,
   plainImages,
   queuedImageUrl,
+  queuedMessageAttachmentSummary,
   queuedMessagePreview,
   samePath,
   sessionScope,
@@ -74,6 +79,15 @@ import {
 } from './session-sync'
 import { createThreadActions } from './thread-actions'
 import { createDaemonEventHandler } from './daemon-event-handler'
+import type { ComposerCommandId } from './composer-triggers'
+import {
+  describeSessionApprovalRule,
+  enqueuePendingApproval,
+  matchesSessionApprovalRule,
+  removeFinishedApprovals,
+  removePendingApprovalById,
+  type PendingToolApproval
+} from './tool-approval'
 import { applySessionTitle } from './session-title'
 import { useSidebarVisibility } from './sidebar-expansion'
 import { createConversationScroller } from './conversation-scroll'
@@ -428,25 +442,62 @@ async function handleCreateProjectFromComposer(): Promise<void> {
   await refreshProjectSessions(project).catch(() => undefined)
 }
 
-const composerCaption = computed(() => {
+const activeBranch = ref('')
+let branchLookupSeq = 0
 
+const activeWorkspaceForBranch = computed(() =>
+  activeThread.value?.executionWorkspace || activeProject.value?.path || ''
+)
+
+watch(activeWorkspaceForBranch, async (workspacePath) => {
+  const seq = ++branchLookupSeq
+  if (!workspacePath || !window.seekclaw?.project?.gitOverview) {
+    activeBranch.value = ''
+    return
+  }
+  try {
+    const overview = await window.seekclaw.project.gitOverview(workspacePath)
+    if (seq !== branchLookupSeq) return
+    activeBranch.value = overview.isRepository && overview.branch ? overview.branch : ''
+  } catch {
+    if (seq === branchLookupSeq) activeBranch.value = ''
+  }
+}, { immediate: true })
+
+const composerCaption = computed(() => {
   if (conversationLoading.value) return '正在读取会话历史…'
   if (!activeThread.value) return '选择一个任务，或新建任务开始。'
   if (activeThread.value.archived) return '此任务已归档，恢复后可继续。'
   const stats = activeThread.value.stats
-  const number = (value?: number): string =>
-    typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '—'
+  const rounds = stats?.llmRounds ?? 0
+  const steps = stats?.executionSteps ?? 0
+  const inputTokens = stats?.inputTokens ?? 0
+  const outputTokens = stats?.outputTokens ?? 0
   const totalInputTokens = stats?.totalInputTokens ?? 0
   const cachedInputTokens = stats?.cachedInputTokens ?? 0
-  const cacheRate = totalInputTokens > 0
-    ? `${Math.min(100, Math.round(cachedInputTokens / totalInputTokens * 100))}%`
-    : '—'
-  const outputTokens = stats?.outputTokens ?? 0
   const outputElapsedMs = stats?.outputElapsedMs ?? 0
-  const speed = outputTokens > 0 && outputElapsedMs > 0
-    ? (outputTokens / (outputElapsedMs / 1000)).toFixed(1)
-    : '—'
-  return `${number(stats?.llmRounds)} 轮 · ${number(stats?.executionSteps)} 步 | 缓存命中 ${cacheRate} | ${speed} tok/s | 输入 ${number(stats?.inputTokens)} tok · 输出 ${number(stats?.outputTokens)} tok`
+
+  const parts: string[] = []
+  if (activeBranch.value) parts.push(`分支 ${activeBranch.value}`)
+
+  const hasUsage = rounds > 0 || inputTokens > 0 || outputTokens > 0
+  if (!hasUsage) {
+    parts.push('输入 @ 引用文件，/ 使用快捷命令')
+    return parts.join(' · ')
+  }
+
+  parts.push(steps > rounds ? `${rounds.toLocaleString()} 轮 · ${steps.toLocaleString()} 步` : `${rounds.toLocaleString()} 轮`)
+  if (totalInputTokens > 0) {
+    const cacheRate = Math.min(100, Math.round(cachedInputTokens / totalInputTokens * 100))
+    parts.push(`缓存命中 ${cacheRate}%`)
+  }
+  if (outputTokens > 0 && outputElapsedMs > 0) {
+    parts.push(`${(outputTokens / (outputElapsedMs / 1000)).toFixed(1)} tok/s`)
+  }
+  if (inputTokens > 0 || outputTokens > 0) {
+    parts.push(`输入 ${inputTokens.toLocaleString()} · 输出 ${outputTokens.toLocaleString()} tok`)
+  }
+  return parts.join(' | ')
 })
 const settingsThread = computed(() => threads.value.find((thread) => thread.id === taskSettingsThreadId.value))
 const settingsProject = computed(() => projects.value.find((project) => project.id === settingsThread.value?.projectId))
@@ -1465,26 +1516,35 @@ async function regenerateMessage(message: ChatMessage): Promise<void> {
   if (!thread || thread.running || thread.archived || !thread.sessionId) return
   const index = thread.messages.findIndex((item) => item.id === message.id)
   if (index < 0) return
-  // Re-run the turn from its user prompt: keep history through that prompt, then resend it.
+  // Locate the originating user prompt so retrying replaces only its response cleanly without duplicating the prompt.
   let promptIndex = -1
   for (let i = index; i >= 0; i--) {
-    if (thread.messages[i]?.role === 'user') { promptIndex = i; break }
+    const candidate = thread.messages[i]
+    if (candidate?.role === 'user' && !isInternalUserMessage(candidate)) {
+      promptIndex = i
+      break
+    }
   }
   if (promptIndex < 0) return
-  const prompt = thread.messages[promptIndex]?.content ?? ''
+  const promptMessage = thread.messages[promptIndex]!
+  let keepCount = promptIndex
+  const idMatch = /^.*:(\d+)$/.exec(promptMessage.id)
+  if (idMatch?.[1]) {
+    keepCount = parseInt(idMatch[1], 10)
+  }
   const project = projects.value.find((item) => item.id === thread.projectId)
   try {
     await window.seekclaw.daemon.request('session.truncate', {
       id: thread.sessionId,
       ...sessionScope(thread, project),
-      keepCount: promptIndex + 1
+      keepCount
     })
   } catch {
     return
   }
-  thread.messages = thread.messages.slice(0, promptIndex + 1)
+  thread.messages = thread.messages.slice(0, promptIndex)
   thread.phase = undefined
-  await sendMessage(prompt, [])
+  await sendMessage(promptMessage.content, promptMessage.images ?? [], promptMessage.files)
 }
 
 async function sendMessage(content: string, images: ImageAttachment[], files?: FileAttachment[]): Promise<void> {
@@ -1514,6 +1574,77 @@ function isFinishedRequest(thread: ThreadItem, requestId: number): boolean {
   return thread.finishedRequestIds?.includes(requestId) === true
 }
 
+const pendingApprovals = ref<PendingToolApproval[]>([])
+const sessionApprovalRules = new Map<string, Set<string>>()
+
+const activeThreadApprovals = computed(() =>
+  pendingApprovals.value.filter((item) => item.threadId === activeThreadId.value)
+)
+const activePendingApproval = computed(() => activeThreadApprovals.value[0] ?? null)
+const backgroundPendingApprovals = computed(() => {
+  const counts = new Map<string, { threadId: string; title: string; count: number }>()
+  for (const item of pendingApprovals.value) {
+    if (item.threadId === activeThreadId.value) continue
+    const owner = threads.value.find((t) => t.id === item.threadId)
+    const existing = counts.get(item.threadId)
+    if (existing) {
+      existing.count += 1
+    } else {
+      counts.set(item.threadId, {
+        threadId: item.threadId,
+        title: owner?.title || '未命名任务',
+        count: 1
+      })
+    }
+  }
+  return Array.from(counts.values())
+})
+
+async function submitApprovalDecision(
+  approvalId: string,
+  approved: boolean,
+  reason?: string
+): Promise<void> {
+  try {
+    await window.seekclaw.daemon.request('agent.approve', {
+      approvalId,
+      approved,
+      ...(reason ? { reason } : {})
+    })
+  } catch { /* The runtime rejects approvals that already timed out. */ }
+}
+
+async function resolveToolApproval(payload: {
+  approvalId: string
+  approved: boolean
+  rememberSession?: boolean
+  reason?: string
+}): Promise<void> {
+  const target = pendingApprovals.value.find((item) => item.approvalId === payload.approvalId)
+  pendingApprovals.value = removePendingApprovalById(pendingApprovals.value, payload.approvalId)
+
+  await submitApprovalDecision(payload.approvalId, payload.approved, payload.reason)
+
+  if (payload.approved && payload.rememberSession && target) {
+    let rules = sessionApprovalRules.get(target.threadId)
+    if (!rules) {
+      rules = new Set<string>()
+      sessionApprovalRules.set(target.threadId, rules)
+    }
+    const descriptor = describeSessionApprovalRule(target)
+    rules.add(descriptor.signature)
+
+    // Auto-approve any other queued approvals in the same thread matching the new rule.
+    const autoMatched = pendingApprovals.value.filter((item) =>
+      item.threadId === target.threadId && matchesSessionApprovalRule(rules, item)
+    )
+    for (const item of autoMatched) {
+      pendingApprovals.value = removePendingApprovalById(pendingApprovals.value, item.approvalId)
+      void submitApprovalDecision(item.approvalId, true)
+    }
+  }
+}
+
 async function handleApprovalRequest(event: DaemonMessage): Promise<void> {
   const approvalId = typeof event.details?.approvalId === 'string' ? event.details.approvalId : ''
   if (!approvalId) return
@@ -1525,28 +1656,45 @@ async function handleApprovalRequest(event: DaemonMessage): Promise<void> {
   if (thread && event.details?.background !== true && isFinishedRequest(thread, event.id)) {
     // The originating turn timed out or was cancelled while the approval was in
     // flight. Deny it immediately instead of leaving the runtime blocked.
-    try {
-      await window.seekclaw.daemon.request('agent.approve', { approvalId, approved: false })
-    } catch { /* The runtime may already have denied or expired it. */ }
+    await submitApprovalDecision(approvalId, false)
     return
   }
 
+  const targetThreadId = thread?.id || activeThreadId.value
   const toolName = typeof event.details?.toolName === 'string' ? event.details.toolName : event.data
   const summary = typeof event.details?.summary === 'string' ? event.details.summary : ''
   const rawArguments = typeof event.details?.arguments === 'string' ? event.details.arguments : ''
-  const description = [
+  const requestRecord: PendingToolApproval = {
+    approvalId,
+    callId: typeof event.details?.callId === 'string' ? event.details.callId : approvalId,
+    sessionId: event.sessionId || thread?.sessionId,
+    threadId: targetThreadId,
+    requestId: typeof event.details?.requestId === 'number' ? event.details.requestId : event.id,
+    toolName: toolName || 'unknown',
     summary,
-    rawArguments ? `参数：\n${rawArguments}` : ''
-  ].filter(Boolean).join('\n\n')
-  const approved = await confirmAction({
-    title: `批准工具调用：${toolName || 'unknown'}`,
-    message: description || '该工具调用需要你的批准。',
-    confirmLabel: '批准',
-    danger: true
-  })
-  try {
-    await window.seekclaw.daemon.request('agent.approve', { approvalId, approved })
-  } catch { /* The runtime rejects approvals that already timed out. */ }
+    argumentsText: rawArguments,
+    mode: typeof event.details?.mode === 'string' ? event.details.mode : undefined,
+    mutating: event.details?.mutating === true,
+    requiresNetwork: event.details?.requiresNetwork === true,
+    isMcp: event.details?.isMcp === true,
+    background: event.details?.background === true,
+    childSessionId: typeof event.details?.childSessionId === 'string' ? event.details.childSessionId : undefined,
+    createdAt: Date.now()
+  }
+
+  const rules = sessionApprovalRules.get(targetThreadId)
+  if (matchesSessionApprovalRule(rules, requestRecord)) {
+    await submitApprovalDecision(approvalId, true)
+    return
+  }
+
+  pendingApprovals.value = enqueuePendingApproval(pendingApprovals.value, requestRecord)
+
+  // Notify cleanly without modal hijack when a background task waits on approval.
+  if (targetThreadId && targetThreadId !== activeThreadId.value) {
+    const title = thread?.title || '后台任务'
+    void window.seekclaw?.notify?.(`任务「${title}」需要批准`, `工具 ${requestRecord.toolName} 等待你的确认。`)
+  }
 }
 
 function scheduleQueuedDrain(thread: ThreadItem): void {
@@ -1571,6 +1719,21 @@ async function drainQueuedMessages(thread: ThreadItem): Promise<void> {
 function removeQueuedMessage(thread: ThreadItem, id: string): void {
   if (!thread.queuedMessages) return
   thread.queuedMessages = thread.queuedMessages.filter((item) => item.id !== id)
+}
+
+function moveQueuedMessage(thread: ThreadItem, id: string, delta: -1 | 1): void {
+  const list = thread.queuedMessages
+  if (!list || list.length < 2) return
+  const idx = list.findIndex((item) => item.id === id)
+  const targetIdx = idx + delta
+  if (idx < 0 || targetIdx < 0 || targetIdx >= list.length) return
+  const [moved] = list.splice(idx, 1)
+  if (moved) list.splice(targetIdx, 0, moved)
+}
+
+function editQueuedMessage(thread: ThreadItem, queued: QueuedMessage): void {
+  removeQueuedMessage(thread, queued.id)
+  composer.value?.populate(queued.content, queued.images, queued.files)
 }
 
 async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Promise<void> {
@@ -1918,6 +2081,12 @@ function handleDaemonMessage(event: DaemonMessage): void {
     void handleApprovalRequest(event)
     return
   }
+  if (event.event === 'done' || event.event === 'cancelled' || event.event === 'error') {
+    pendingApprovals.value = removeFinishedApprovals(pendingApprovals.value, {
+      sessionId: event.sessionId,
+      requestId: event.id
+    })
+  }
   handleDaemonEvent(event)
 }
 
@@ -1968,7 +2137,7 @@ async function changeMode(nextMode: string): Promise<void> {
 
 async function changeReasoningLevel(level: ReasoningLevel): Promise<void> {
   const thread = activeThread.value
-  if (!thread || thread.running || thread.archived) return
+  if (!thread || thread.archived) return
   thread.reasoningLevel = level
   const project = projects.value.find((item) => item.id === thread.projectId)
   if (!thread.sessionId || !daemonState.value.connected || (thread.projectId && !project)) return
@@ -1979,6 +2148,37 @@ async function changeReasoningLevel(level: ReasoningLevel): Promise<void> {
       reasoningLevel: level
     })
   } catch { /* The selected level is still sent with the next turn. */ }
+}
+
+function handleComposerCommand(commandId: ComposerCommandId): void {
+  switch (commandId) {
+    case 'new':
+      newTask(selectedProjectId.value || undefined)
+      break
+    case 'diff':
+      openGitPanel('diff')
+      break
+    case 'history':
+      openGitPanel('history')
+      break
+    case 'fork':
+      if (activeThread.value) void forkTask(activeThread.value)
+      break
+    case 'settings':
+      openSettings('general')
+      break
+    case 'mode:manual':
+      void changeMode('manual')
+      break
+    case 'mode:guardrail':
+      void changeMode('guardrail')
+      break
+    case 'mode:full':
+      void changeMode('full')
+      break
+    default:
+      break
+  }
 }
 
 async function optimizePrompt(text: string): Promise<string> {
@@ -2165,7 +2365,7 @@ watch(theme, applyTheme)
                   :expanded="expandedProcesses.get(turnViewKey(turn.id)) ?? false"
                   @update:expanded="expandedProcesses.set(turnViewKey(turn.id), $event)"
                   @open-sub-agent="openSubAgent"
-                  @open-diff="openToolDiff" @branch="branchFromMessage" @edit="onEditUserMessage" />
+                  @open-diff="openToolDiff" @branch="branchFromMessage" @retry="regenerateMessage" @edit="onEditUserMessage" />
               </div>
               <div v-if="virtualWindow.active" class="virtual-pad" :style="{ height: `${virtualWindow.bottomPad}px` }" />
             </div>
@@ -2190,38 +2390,89 @@ watch(theme, applyTheme)
           </section>
 
           <footer class="composer-region">
-            <div v-if="activeThread?.queuedMessages?.length" class="pending-message-stack" aria-label="等待发送的消息">
-              <div v-for="queued in activeThread.queuedMessages" :key="queued.id" class="pending-message-card">
+            <InlineApprovalCard
+              :approval="activePendingApproval"
+              :queue-count="activeThreadApprovals.length"
+              :background-pending="backgroundPendingApprovals"
+              @decide="resolveToolApproval"
+              @switch-thread="selectThread"
+            />
+            <TransitionGroup
+              v-if="activeThread?.queuedMessages?.length"
+              name="queue-card"
+              tag="div"
+              class="pending-message-stack"
+              aria-label="等待发送的消息"
+            >
+              <div v-for="(queued, qIdx) in activeThread.queuedMessages" :key="queued.id" class="pending-message-card">
                 <div class="pending-message-main">
                   <CornerDownLeft :size="15" aria-hidden="true" />
                   <img v-if="queued.images.length" class="pending-message-image" :src="queuedImageUrl(queued.images[0])"
                     :alt="queued.images[0]?.name || '图片'">
-                  <span>{{ queuedMessagePreview(queued) }}</span>
+                  <span class="pending-message-text">{{ queuedMessagePreview(queued) }}</span>
+                  <span v-if="queuedMessageAttachmentSummary(queued)" class="pending-message-badge">
+                    {{ queuedMessageAttachmentSummary(queued) }}
+                  </span>
                 </div>
                 <div class="pending-message-actions">
+                  <button
+                    v-if="(activeThread.queuedMessages?.length ?? 0) > 1"
+                    type="button"
+                    class="pending-message-action icon-only"
+                    :disabled="qIdx === 0"
+                    title="上移队列顺序"
+                    aria-label="上移等待中的消息"
+                    @click="moveQueuedMessage(activeThread, queued.id, -1)"
+                  >
+                    <ArrowUp :size="13" />
+                  </button>
+                  <button
+                    v-if="(activeThread.queuedMessages?.length ?? 0) > 1"
+                    type="button"
+                    class="pending-message-action icon-only"
+                    :disabled="qIdx === (activeThread.queuedMessages?.length ?? 0) - 1"
+                    title="下移队列顺序"
+                    aria-label="下移等待中的消息"
+                    @click="moveQueuedMessage(activeThread, queued.id, 1)"
+                  >
+                    <ArrowDown :size="13" />
+                  </button>
+                  <button
+                    type="button"
+                    class="pending-message-action icon-only"
+                    title="放回输入框编辑"
+                    aria-label="编辑等待中的消息"
+                    @click="editQueuedMessage(activeThread, queued)"
+                  >
+                    <Pencil :size="13" />
+                  </button>
                   <button type="button" class="pending-message-action"
                     :disabled="!activeThread.running || !activeThread.sessionId || !daemonState.connected"
                     title="作为附加指导发送，不打断当前 AI 回合" @click="steerQueuedMessage(activeThread, queued)">
                     <CornerDownLeft :size="14" /> 引导
                   </button>
                   <button type="button" class="pending-message-action icon-only" title="删除等待中的消息"
-                    @click="removeQueuedMessage(activeThread, queued.id)">
+                    aria-label="删除等待中的消息" @click="removeQueuedMessage(activeThread, queued.id)">
                     <Trash2 :size="14" />
                   </button>
                 </div>
               </div>
-            </div>
+            </TransitionGroup>
 
             <TaskStepList :steps="activeThreadTurnSteps" :running="activeThread?.running"
               :phase="activeThread?.phase" />
             <Composer ref="composer" :busy="busy"
-              :disabled="!activeThread || activeThread.archived || conversationLoading" :model="activeModel"
+              :disabled="!activeThread || activeThread.archived || conversationLoading"
+              :disabled-placeholder="!activeThread ? '请选择或新建一个任务开始对话' : conversationLoading ? '正在加载会话…' : '恢复任务后可继续对话'"
+              :workspace-path="activeThread?.executionWorkspace || activeProject?.path"
+              :has-active-session="Boolean(activeThread?.sessionId)"
+              :model="activeModel"
               :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
               :reasoning-level="activeReasoningLevel" :max-reasoning-level="activeModelMaxReasoning"
               :supports-reasoning="activeModelSupportsReasoning" :network-enabled="activeThread?.networkEnabled ?? true"
               :optimize-prompt="optimizePrompt" @send="sendMessage" @stop="stopTurn" @change-model="changeModel"
               @change-mode="changeMode" @change-reasoning-level="changeReasoningLevel"
-              @change-network="changeNetwork">
+              @change-network="changeNetwork" @command="handleComposerCommand">
               <template v-if="showComposerProjectSelector" #context>
                 <ComposerProjectSelector
                   :projects="projects"
