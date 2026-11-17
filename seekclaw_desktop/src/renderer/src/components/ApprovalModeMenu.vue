@@ -63,6 +63,8 @@ const currentOption = computed<ModeOption>(() =>
   options.find((opt) => opt.id === normalizedMode.value) ?? defaultOption
 )
 
+const placedAbove = ref(true)
+
 function positionMenu(): void {
   if (!trigger.value || !open.value) return
   const rect = trigger.value.getBoundingClientRect()
@@ -71,6 +73,7 @@ function positionMenu(): void {
   const width = Math.min(290, window.innerWidth - edge * 2)
   const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge))
   const placeAbove = window.innerHeight - rect.bottom < 260
+  placedAbove.value = placeAbove
   menuStyle.value = placeAbove
     ? { width: `${width}px`, left: `${left}px`, bottom: `${window.innerHeight - rect.top + gap}px` }
     : { width: `${width}px`, left: `${left}px`, top: `${rect.bottom + gap}px` }
@@ -113,6 +116,30 @@ function handleKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     event.stopPropagation()
     hide(true)
+    return
+  }
+  if (!open.value) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      show()
+    }
+    return
+  }
+  const items = Array.from(menu.value?.querySelectorAll<HTMLButtonElement>('.approval-option-item') ?? [])
+  if (items.length === 0) return
+  const currentIndex = items.findIndex((el) => el === document.activeElement)
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    items[(currentIndex + 1 + items.length) % items.length]?.focus()
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    items[(currentIndex - 1 + items.length) % items.length]?.focus()
+  } else if (event.key === 'Home') {
+    event.preventDefault()
+    items[0]?.focus()
+  } else if (event.key === 'End') {
+    event.preventDefault()
+    items[items.length - 1]?.focus()
   }
 }
 
@@ -146,7 +173,7 @@ onBeforeUnmount(removeListeners)
 
     <Teleport to="body">
       <Transition name="select-popover">
-        <section v-if="open" ref="menu" class="approval-popover-card" role="dialog" aria-label="选择操作批准模式"
+        <section v-if="open" ref="menu" class="approval-popover-card" :data-placement="placedAbove ? 'above' : 'below'" role="dialog" aria-label="选择操作批准模式"
           :style="menuStyle" @keydown="handleKeydown">
           <header class="approval-popover-header">
             <span class="approval-header-title">应如何批准 SeekClaw 操作？</span>
