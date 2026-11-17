@@ -204,3 +204,48 @@ describe('loadStoredSidebarWidth', () => {
   })
 })
 
+describe('hydrated tool diff line counts and queued attachment summary', () => {
+  it('hydrates addedLines and removedLines from persisted toolDiff', () => {
+    const messages = hydrateMessages({
+      id: 'session-diff',
+      createdAt: '2026-11-17T00:00:00Z',
+      updatedAt: '2026-11-17T00:00:00Z',
+      messages: [
+        { role: 'assistant', text: 'Updated file' },
+        {
+          role: 'tool',
+          toolCallId: 'c1',
+          toolName: 'edit_file',
+          text: 'ok',
+          toolFilePath: 'src/a.ts',
+          toolDiff: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,2 +1,3 @@\n keep\n-old\n+new1\n+new2'
+        }
+      ]
+    })
+
+    const tool = messages[0]?.tools?.[0]
+    expect(tool).toMatchObject({
+      filePath: 'src/a.ts',
+      addedLines: 2,
+      removedLines: 1
+    })
+  })
+
+  it('builds queued attachment badge summary only when text coexists with attachments', async () => {
+    const { queuedMessageAttachmentSummary } = await import('./app-helpers')
+    expect(queuedMessageAttachmentSummary({
+      id: 'q1',
+      content: '看看这两个文件',
+      images: [{ id: 'i1', name: 'a.png', mediaType: 'image/png', data: '', sizeBytes: 10 }],
+      files: [{ id: 'f1', name: 'b.ts', path: '/b.ts', sizeBytes: 20, extension: 'ts' }],
+      createdAt: 1
+    })).toBe('1 图 · 1 文件')
+    expect(queuedMessageAttachmentSummary({
+      id: 'q2',
+      content: '',
+      images: [{ id: 'i1', name: 'a.png', mediaType: 'image/png', data: '', sizeBytes: 10 }],
+      createdAt: 1
+    })).toBe('')
+  })
+})
+

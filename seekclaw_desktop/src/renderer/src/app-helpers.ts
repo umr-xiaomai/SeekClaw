@@ -1,5 +1,6 @@
 import { ReasoningLevel } from './types'
 import { parseConversationWidgets } from './conversation-widgets'
+import { countDiffLines } from './diff-parser'
 import type {
   ChatMessage,
   FileAttachment,
@@ -259,7 +260,12 @@ export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] =
           hydrated.filePath = item.toolFilePath
           if (!hydrated.detail) hydrated.detail = item.toolFilePath
         }
-        if (item.toolDiff) hydrated.diff = item.toolDiff
+        if (item.toolDiff) {
+          hydrated.diff = item.toolDiff
+          const counts = countDiffLines(item.toolDiff)
+          hydrated.addedLines = counts.addedLines
+          hydrated.removedLines = counts.removedLines
+        }
         if (!hydrated.detail && item.text && !item.text.includes('\n')) {
           hydrated.detail = item.text
         }
@@ -348,6 +354,15 @@ export function queuedMessagePreview(message: QueuedMessage): string {
     return `发送 ${message.files.length} 个附件文件`
   }
   return message.images.length > 1 ? `发送 ${message.images.length} 张图片` : '发送图片'
+}
+
+export function queuedMessageAttachmentSummary(message: QueuedMessage): string {
+  const text = message.content.trim()
+  if (!text) return ''
+  const parts: string[] = []
+  if (message.images.length > 0) parts.push(`${message.images.length} 图`)
+  if (message.files?.length) parts.push(`${message.files.length} 文件`)
+  return parts.join(' · ')
 }
 
 export function queuedImageUrl(image?: ImageAttachment): string {

@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { getGitCommitDiff, normalizeDiffForGit, openProjectTerminal, parseGitLog, revertFileDiffs } from './project-tools.js'
+import { getGitCommitDiff, listWorkspaceFiles, normalizeDiffForGit, openProjectTerminal, parseGitLog, revertFileDiffs } from './project-tools.js'
 
 describe('parseGitLog', () => {
   it('parses record and unit separated git log output', () => {
@@ -89,5 +89,28 @@ describe('openProjectTerminal', () => {
 describe('getGitCommitDiff', () => {
   it('rejects when target directory does not exist', async () => {
     await expect(getGitCommitDiff(join(tmpdir(), 'non_existent_folder_xyz_12345'), 'HEAD')).rejects.toThrow()
+  })
+})
+
+describe('listWorkspaceFiles', () => {
+  it('lists workspace files while skipping ignored dirs and ranks query matches', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'seekclaw-test-files-'))
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true })
+      mkdirSync(join(dir, '.git'), { recursive: true })
+      mkdirSync(join(dir, 'node_modules', 'pkg'), { recursive: true })
+      writeFileSync(join(dir, 'src', 'App.vue'), '<template />')
+      writeFileSync(join(dir, 'README.md'), '# readme')
+      writeFileSync(join(dir, '.git', 'HEAD'), 'ref: refs/heads/main')
+      writeFileSync(join(dir, 'node_modules', 'pkg', 'index.js'), 'module.exports = {}')
+
+      const all = await listWorkspaceFiles(dir, '')
+      expect(all.map((f) => f.relativePath)).toEqual(['README.md', 'src/App.vue'])
+
+      const filtered = await listWorkspaceFiles(dir, 'app')
+      expect(filtered.map((f) => f.relativePath)).toEqual(['src/App.vue'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

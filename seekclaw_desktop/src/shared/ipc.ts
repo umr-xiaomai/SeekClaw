@@ -143,6 +143,13 @@ export interface RevertDiffsResult {
   failed: Array<{ filePath: string; reason: string }>
 }
 
+export interface WorkspaceFileItem {
+  name: string
+  relativePath: string
+  path: string
+  sizeBytes: number
+}
+
 export interface DesktopApi {
   browser: ConversationBrowserApi
   getAppInfo(): Promise<AppInfo>
@@ -169,6 +176,7 @@ export interface DesktopApi {
     createBranch(path: string, branch: string): Promise<CreateBranchResult>
     revertFileDiffs(workspace: string, patches: RevertDiffItem[]): Promise<RevertDiffsResult>
     gitCommitDiff(path: string, commitHash: string): Promise<string>
+    listFiles(path: string, query?: string): Promise<WorkspaceFileItem[]>
   }
   daemon: {
     connect(): Promise<DaemonState>

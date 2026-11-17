@@ -1,9 +1,9 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, realpathSync, statSync, unlinkSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { readdir, stat } from 'node:fs/promises'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
-import type { CheckoutBranchResult, CreateBranchResult, GitBranchInfo, GitCommit, GitHistory, GitOverview, RevertDiffItem, RevertDiffsResult } from '../shared/ipc.js'
+import type { CheckoutBranchResult, CreateBranchResult, GitBranchInfo, GitCommit, GitHistory, GitOverview, RevertDiffItem, RevertDiffsResult, WorkspaceFileItem } from '../shared/ipc.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -355,4 +355,101 @@ export async function createGitBranch(path: string, branch: string): Promise<Cre
   } catch (error) {
     return { success: false, error: friendlyGitError(error) }
   }
+}
+
+const IGNORED_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'out',
+  'build',
+  'bin',
+  'obj',
+  '.vs',
+  '.idea',
+  '.next',
+  '.nuxt',
+  'coverage',
+  '__pycache__',
+  '.venv',
+  'venv'
+])
+
+/** Lists non-ignored files under a workspace directory for composer @-mention autocomplete. */
+export async function listWorkspaceFiles(path: string, query = '', limit = 40): Promise<WorkspaceFileItem[]> {
+  if (!path?.trim()) return []
+  let directory: string
+  try {
+    directory = await workspaceDirectory(path)
+  } catch {
+    return []
+  }
+
+  const needle = query.trim().toLowerCase()
+  const maxScannedEntries = 3000
+  const maxCollected = 1500
+  const candidates: Array<{ item: WorkspaceFileItem; score: number }> = []
+  const queue: string[] = [directory]
+  let scanned = 0
+
+  while (queue.length > 0 && scanned < maxScannedEntries && candidates.length < maxCollected) {
+    const current = queue.shift()!
+    let entries
+    try {
+      entries = await readdir(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      if (scanned++ >= maxScannedEntries) break
+      if (entry.name.startsWith('.') && entry.name !== '.env' && entry.name !== '.gitignore') {
+        if (entry.isDirectory()) continue
+      }
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRS.has(entry.name)) {
+          queue.push(join(current, entry.name))
+        }
+        continue
+      }
+      if (!entry.isFile()) continue
+
+      const fullPath = join(current, entry.name)
+      const rel = relative(directory, fullPath).replace(/\\/g, '/')
+      const lowerRel = rel.toLowerCase()
+      const lowerName = entry.name.toLowerCase()
+
+      let score = 100
+      if (needle) {
+        if (lowerName === needle) score = 0
+        else if (lowerName.startsWith(needle)) score = 1
+        else if (lowerName.includes(needle)) score = 2
+        else if (lowerRel.includes(needle)) score = 3
+        else continue
+      } else {
+        score = rel.split('/').length
+      }
+
+      let sizeBytes = 0
+      try {
+        const info = await stat(fullPath)
+        sizeBytes = info.size
+      } catch {
+        // Ignore stat failures on transient files
+      }
+
+      candidates.push({
+        item: {
+          name: basename(fullPath),
+          relativePath: rel,
+          path: fullPath,
+          sizeBytes
+        },
+        score
+      })
+    }
+  }
+
+  candidates.sort((a, b) => a.score - b.score || a.item.relativePath.length - b.item.relativePath.length || a.item.relativePath.localeCompare(b.item.relativePath))
+  return candidates.slice(0, Math.max(1, limit)).map((entry) => entry.item)
 }

@@ -11,7 +11,7 @@ import { ConversationBrowser } from './conversation-browser.js'
 import type { BrowserCommand, BrowserPanelLayout } from '../shared/browser.js'
 import { DaemonClient } from './daemon-client.js'
 import { PendingApprovalCache } from './pending-approval-cache.js'
-import { checkoutGitBranch, createGitBranch, getGitBranches, getGitCommitDiff, getGitHistory, getGitOverview, openProjectTerminal, revertFileDiffs } from './project-tools.js'
+import { checkoutGitBranch, createGitBranch, getGitBranches, getGitCommitDiff, getGitHistory, getGitOverview, listWorkspaceFiles, openProjectTerminal, revertFileDiffs } from './project-tools.js'
 import {
   destroyComputerOverlay,
   hideComputerOverlay,
@@ -471,6 +471,9 @@ function registerIpc(): void {
   )
   ipcMain.handle('project:git-commit-diff', (_event, path: string, hash: string) =>
     getGitCommitDiff(path, hash)
+  )
+  ipcMain.handle('project:list-files', (_event, path: string, query?: string) =>
+    listWorkspaceFiles(path, query)
   )
 
   ipcMain.handle('browser:open', async (event, params: { sessionId: string; workspace?: string; global?: boolean }) => {

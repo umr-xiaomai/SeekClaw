@@ -118,6 +118,29 @@ function handleKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault()
     closeMenu(true)
+    return
+  }
+  const items = Array.from(menuRef.value?.querySelectorAll<HTMLButtonElement>('.project-menu-item') ?? [])
+  if (items.length === 0) return
+  const currentIndex = items.findIndex((el) => el === document.activeElement)
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    const nextIdx = currentIndex >= 0 ? (currentIndex + 1) % items.length : 0
+    items[nextIdx]?.focus()
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    if (currentIndex <= 0 && event.target !== searchInputRef.value) {
+      searchInputRef.value?.focus()
+    } else {
+      const prevIdx = currentIndex >= 0 ? (currentIndex - 1 + items.length) % items.length : items.length - 1
+      items[prevIdx]?.focus()
+    }
+  } else if (event.key === 'Home') {
+    event.preventDefault()
+    items[0]?.focus()
+  } else if (event.key === 'End') {
+    event.preventDefault()
+    items[items.length - 1]?.focus()
   }
 }
 
@@ -165,11 +188,12 @@ onBeforeUnmount(() => {
 
   <Teleport to="body">
     <Transition name="select-popover">
-      <div
-        v-if="isOpen"
-        ref="menuRef"
-        class="composer-project-popover"
-        :style="menuStyle"
+        <div
+          v-if="isOpen"
+          ref="menuRef"
+          class="composer-project-popover"
+          data-placement="above"
+          :style="menuStyle"
         role="dialog"
         aria-label="选择工作区项目"
         @keydown="handleKeydown"
@@ -464,16 +488,5 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--text-muted);
   text-align: center;
-}
-
-.select-popover-enter-active,
-.select-popover-leave-active {
-  transition: opacity 120ms ease, transform 120ms ease;
-}
-
-.select-popover-enter-from,
-.select-popover-leave-to {
-  opacity: 0;
-  transform: translateY(4px) scale(0.98);
 }
 </style>

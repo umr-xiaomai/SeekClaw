@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { ArrowUp, Image as ImageIcon, LoaderCircle, Paperclip, Plus, Sparkles, Square, X } from '@lucide/vue'
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { ArrowUp, FileText, Image as ImageIcon, LoaderCircle, Paperclip, Plus, Slash, Sparkles, Square, X } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { FileAttachment, ImageAttachment, ReasoningLevel } from '../types'
+import type { WorkspaceFileItem } from '../../../shared/ipc'
 import { confirmAction } from '../confirmation'
 import { fileBadgeText, fileExtClass, getFileExtension } from '../app-helpers'
 import { clearTaskDraft, getTaskDraft, saveTaskDraft, type ComposerDraft } from '../composer-drafts'
+import {
+  applyMentionReplacement,
+  detectComposerTrigger,
+  filterSlashCommands,
+  type ComposerCommandId,
+  type ComposerTriggerMatch,
+  type SlashCommandItem
+} from '../composer-triggers'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
 import ApprovalModeMenu from './ApprovalModeMenu.vue'
 import ModelReasoningMenu from './ModelReasoningMenu.vue'
@@ -12,7 +21,10 @@ import ModelReasoningMenu from './ModelReasoningMenu.vue'
 const props = defineProps<{
   busy: boolean
   disabled?: boolean
+  disabledPlaceholder?: string
   taskId?: string
+  workspacePath?: string
+  hasActiveSession?: boolean
   model: string
   models: string[]
   mode: string
@@ -31,6 +43,7 @@ const emit = defineEmits<{
   changeMode: [mode: string]
   changeReasoningLevel: [level: ReasoningLevel]
   changeNetwork: [enabled: boolean]
+  command: [commandId: ComposerCommandId]
 }>()
 
 const maxImageCount = 10
@@ -239,6 +252,7 @@ const plusMenuOpen = ref(false)
 const plusTrigger = ref<HTMLButtonElement | null>(null)
 const plusMenu = ref<HTMLElement | null>(null)
 const plusMenuStyle = ref<Record<string, string>>({})
+const plusPlacedAbove = ref(true)
 
 function positionPlusMenu(): void {
   if (!plusTrigger.value || !plusMenuOpen.value) return
@@ -248,6 +262,7 @@ function positionPlusMenu(): void {
   const width = 160
   const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge))
   const placeAbove = window.innerHeight - rect.bottom < 170
+  plusPlacedAbove.value = placeAbove
   plusMenuStyle.value = placeAbove
     ? { width: `${width}px`, left: `${left}px`, bottom: `${window.innerHeight - rect.top + gap}px` }
     : { width: `${width}px`, left: `${left}px`, top: `${rect.bottom + gap}px` }
@@ -258,7 +273,36 @@ function togglePlusMenu(): void {
     plusMenuOpen.value = false
   } else {
     plusMenuOpen.value = true
-    void nextTick(positionPlusMenu)
+    void nextTick(() => {
+      positionPlusMenu()
+      plusMenu.value?.querySelector<HTMLButtonElement>('.plus-popover-item:not(:disabled)')?.focus({ preventScroll: true })
+    })
+  }
+}
+
+function handlePlusMenuKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    plusMenuOpen.value = false
+    void nextTick(() => plusTrigger.value?.focus())
+    return
+  }
+  const items = Array.from(plusMenu.value?.querySelectorAll<HTMLButtonElement>('.plus-popover-item:not(:disabled)') ?? [])
+  if (items.length === 0) return
+  const currentIndex = items.findIndex((el) => el === document.activeElement)
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    items[(currentIndex + 1 + items.length) % items.length]?.focus()
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    items[(currentIndex - 1 + items.length) % items.length]?.focus()
+  } else if (event.key === 'Home') {
+    event.preventDefault()
+    items[0]?.focus()
+  } else if (event.key === 'End') {
+    event.preventDefault()
+    items[items.length - 1]?.focus()
   }
 }
 
@@ -332,7 +376,7 @@ async function handlePaste(event: ClipboardEvent): Promise<void> {
   }
 
   // 2. 提取剪贴板中的文件列表（如在文件管理器中复制的文件）
-  let handledFile = false
+  let pastedFileCount = 0
   for (const file of clipboardFiles) {
     const isImg = isImageFile(file.name, file.type)
 
@@ -355,20 +399,36 @@ async function handlePaste(event: ClipboardEvent): Promise<void> {
           }])
           handledImage = true
         } catch {
-          if (addFileByPath(nativePath, file.size)) handledFile = true
+          if (addFileByPath(nativePath, file.size)) pastedFileCount++
         }
       } else {
-        if (addFileByPath(nativePath, file.size)) handledFile = true
+        if (addFileByPath(nativePath, file.size)) pastedFileCount++
       }
     }
   }
 
-  if (handledImage || handledFile) {
+  if (handledImage || pastedFileCount > 0) {
     event.preventDefault()
+    const notices: string[] = []
+    if (handledImage && imageItemFiles.length > 0) notices.push(`已粘贴 ${imageItemFiles.length} 张图片`)
+    if (pastedFileCount > 0) notices.push(`已附加 ${pastedFileCount} 个文件`)
+    if (notices.length > 0) showDropNotice(notices.join('，'))
   }
 }
 
+const shellRef = ref<HTMLElement | null>(null)
 const dropNotice = ref('')
+let dropNoticeTimer: ReturnType<typeof setTimeout> | undefined
+
+function showDropNotice(text: string): void {
+  dropNotice.value = text
+  if (dropNoticeTimer) clearTimeout(dropNoticeTimer)
+  dropNoticeTimer = setTimeout(() => { dropNotice.value = '' }, 3000)
+}
+
+onBeforeUnmount(() => {
+  if (dropNoticeTimer) clearTimeout(dropNoticeTimer)
+})
 
 function handleDragEnter(event: DragEvent): void {
   if (props.disabled) return
@@ -432,8 +492,7 @@ async function handleDrop(event: DragEvent): Promise<void> {
   if (addedImageCount > 0) notices.push(`已添加 ${addedImageCount} 张图片`)
   if (addedFileCount > 0) notices.push(`已附加 ${addedFileCount} 个文件`)
   if (notices.length > 0) {
-    dropNotice.value = notices.join('，')
-    window.setTimeout(() => { dropNotice.value = '' }, 3000)
+    showDropNotice(notices.join('，'))
   }
 }
 
@@ -461,6 +520,8 @@ function submit(): void {
   }))
   const outgoingFiles = attachedFiles.value.map((file) => ({ ...file }))
   emit('send', message, outgoingImages, outgoingFiles)
+  triggerMatch.value = null
+  triggerDismissed.value = false
   if (props.taskId) clearTaskDraft(props.taskId)
   value.value = ''
   images.value = []
@@ -469,8 +530,201 @@ function submit(): void {
   void nextTick(resize)
 }
 
+// ---- @ mentions and / slash command palette ----
+const triggerMatch = ref<ComposerTriggerMatch | null>(null)
+const triggerDismissed = ref(false)
+const mentionFiles = ref<WorkspaceFileItem[]>([])
+const mentionLoading = ref(false)
+const triggerHighlighted = ref(0)
+const triggerMenu = ref<HTMLElement | null>(null)
+const triggerStyle = ref<Record<string, string>>({})
+let mentionSearchSeq = 0
+let mentionDebounceTimer: ReturnType<typeof setTimeout> | undefined
+
+const filteredCommands = computed<SlashCommandItem[]>(() => {
+  if (triggerMatch.value?.kind !== 'command') return []
+  return filterSlashCommands(triggerMatch.value.query, {
+    hasProject: Boolean(props.workspacePath),
+    hasActiveSession: Boolean(props.hasActiveSession)
+  })
+})
+
+const triggerItemsCount = computed(() => {
+  if (!triggerMatch.value || triggerDismissed.value) return 0
+  return triggerMatch.value.kind === 'command' ? filteredCommands.value.length : mentionFiles.value.length
+})
+
+const showTriggerPopover = computed(() => {
+  if (props.disabled || !triggerMatch.value || triggerDismissed.value) return false
+  return true
+})
+
+function positionTriggerPopover(): void {
+  if (!shellRef.value || !showTriggerPopover.value) return
+  const rect = shellRef.value.getBoundingClientRect()
+  const edge = 12
+  const gap = 8
+  const width = Math.min(520, Math.max(280, rect.width - 16), window.innerWidth - edge * 2)
+  const left = Math.max(edge, Math.min(rect.left + 8, window.innerWidth - width - edge))
+  triggerStyle.value = {
+    width: `${width}px`,
+    left: `${left}px`,
+    bottom: `${window.innerHeight - rect.top + gap}px`
+  }
+}
+
+async function fetchMentionFiles(query: string): Promise<void> {
+  const workspace = props.workspacePath
+  const seq = ++mentionSearchSeq
+  if (!workspace || !window.seekclaw?.project?.listFiles) {
+    mentionFiles.value = []
+    mentionLoading.value = false
+    return
+  }
+  mentionLoading.value = true
+  try {
+    const items = await window.seekclaw.project.listFiles(workspace, query)
+    if (seq !== mentionSearchSeq) return
+    mentionFiles.value = items
+    triggerHighlighted.value = 0
+  } catch {
+    if (seq !== mentionSearchSeq) return
+    mentionFiles.value = []
+  } finally {
+    if (seq === mentionSearchSeq) mentionLoading.value = false
+  }
+}
+
+function evaluateTriggers(resetDismiss = false): void {
+  if (resetDismiss) triggerDismissed.value = false
+  if (props.disabled) {
+    triggerMatch.value = null
+    return
+  }
+  const cursor = textarea.value?.selectionStart ?? value.value.length
+  const next = detectComposerTrigger(value.value, cursor)
+  const prev = triggerMatch.value
+  triggerMatch.value = next
+  if (!next) {
+    triggerDismissed.value = false
+    mentionFiles.value = []
+    if (mentionDebounceTimer) clearTimeout(mentionDebounceTimer)
+    return
+  }
+  if (!prev || prev.kind !== next.kind || prev.query !== next.query) {
+    triggerHighlighted.value = 0
+  }
+  if (next.kind === 'mention') {
+    if (mentionDebounceTimer) clearTimeout(mentionDebounceTimer)
+    mentionDebounceTimer = setTimeout(() => void fetchMentionFiles(next.query), 70)
+  }
+  void nextTick(positionTriggerPopover)
+}
+
+function selectMentionFile(item: WorkspaceFileItem): void {
+  if (!triggerMatch.value || triggerMatch.value.kind !== 'mention') return
+  const applied = applyMentionReplacement(value.value, triggerMatch.value, item.relativePath)
+  value.value = applied.nextText
+  addFileByPath(item.path, item.sizeBytes)
+  triggerMatch.value = null
+  triggerDismissed.value = false
+  void nextTick(() => {
+    resize()
+    if (textarea.value) {
+      textarea.value.focus()
+      textarea.value.setSelectionRange(applied.nextCursor, applied.nextCursor)
+    }
+  })
+}
+
+function selectSlashCommand(item: SlashCommandItem): void {
+  triggerMatch.value = null
+  triggerDismissed.value = false
+  if (item.id === 'clear') {
+    value.value = ''
+    images.value = []
+    attachedFiles.value = []
+    imageNotice.value = ''
+    triggerMatch.value = null
+  triggerDismissed.value = false
+  if (props.taskId) clearTaskDraft(props.taskId)
+    void nextTick(() => { resize(); focus() })
+    return
+  }
+  if (item.id === 'optimize') {
+    value.value = value.value.replace(/^\s*\/\S*\s*/, '').trim()
+    void nextTick(() => {
+      resize()
+      focus()
+      void optimizeCurrentPrompt()
+    })
+    return
+  }
+  value.value = ''
+  triggerMatch.value = null
+  triggerDismissed.value = false
+  if (props.taskId) clearTaskDraft(props.taskId)
+  void nextTick(resize)
+  emit('command', item.id)
+}
+
+function scrollTriggerHighlighted(): void {
+  void nextTick(() => {
+    triggerMenu.value?.querySelector<HTMLElement>(`[data-trigger-index="${triggerHighlighted.value}"]`)?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
+watch(showTriggerPopover, (open) => {
+  if (open) {
+    window.addEventListener('resize', positionTriggerPopover)
+    void nextTick(positionTriggerPopover)
+  } else {
+    window.removeEventListener('resize', positionTriggerPopover)
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', positionTriggerPopover)
+  if (mentionDebounceTimer) clearTimeout(mentionDebounceTimer)
+})
+
 function handleKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+  if (event.isComposing) return
+  if (showTriggerPopover.value) {
+    const count = triggerItemsCount.value
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      triggerDismissed.value = true
+      return
+    }
+    if (count > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        triggerHighlighted.value = (triggerHighlighted.value + 1) % count
+        scrollTriggerHighlighted()
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        triggerHighlighted.value = (triggerHighlighted.value - 1 + count) % count
+        scrollTriggerHighlighted()
+        return
+      }
+      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+        event.preventDefault()
+        if (triggerMatch.value?.kind === 'command') {
+          const cmd = filteredCommands.value[triggerHighlighted.value]
+          if (cmd) selectSlashCommand(cmd)
+        } else if (triggerMatch.value?.kind === 'mention') {
+          const file = mentionFiles.value[triggerHighlighted.value]
+          if (file) selectMentionFile(file)
+        }
+        return
+      }
+    }
+  }
+  if (event.key !== 'Enter' || event.shiftKey) return
   event.preventDefault()
   submit()
 }
@@ -498,6 +752,8 @@ function populate(nextValue: string, nextImages?: ImageAttachment[], nextFiles?:
   value.value = nextValue
   images.value = nextImages ? [...nextImages] : []
   attachedFiles.value = nextFiles ? [...nextFiles] : []
+  triggerMatch.value = null
+  triggerDismissed.value = false
   if (props.taskId) {
     saveTaskDraft(props.taskId, nextValue, images.value, attachedFiles.value)
   }
@@ -535,6 +791,8 @@ watch(() => props.taskId, (newTaskId, oldTaskId) => {
 
   imageNotice.value = ''
   previewImage.value = null
+  triggerMatch.value = null
+  triggerDismissed.value = false
   void nextTick(() => {
     resize()
     focus()
@@ -595,9 +853,9 @@ watch(() => props.supportsImages, async (supported) => {
     <div v-if="$slots.context" class="composer-context-strip">
       <slot name="context" />
     </div>
-    <div class="composer-shell" :class="{ 'drag-over': isDragOver }" @dragenter="handleDragEnter"
+    <div ref="shellRef" class="composer-shell" :class="{ 'drag-over': isDragOver }" @dragenter="handleDragEnter"
       @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop">
-      <!--  <p v-if="dropNotice" class="composer-image-notice">{{ dropNotice }}</p>-->
+      <p v-if="dropNotice" class="composer-image-notice" role="status">{{ dropNotice }}</p>
       <div v-if="attachedFiles.length" class="composer-files-strip" aria-label="待发送文件附件">
         <div v-for="file in attachedFiles" :key="file.id" class="composer-file-chip" :title="file.path">
           <span class="file-ext-badge" :class="fileExtClass(file.extension)">
@@ -621,8 +879,9 @@ watch(() => props.supportsImages, async (supported) => {
       </div>
       <p v-if="imageNotice" class="composer-image-notice" role="status">{{ imageNotice }}</p>
       <textarea ref="textarea" v-model="value" :disabled="disabled" rows="1"
-        :placeholder="disabled ? '恢复任务后可继续对话' : '随心输入'" aria-label="消息" @keydown="handleKeydown"
-        @paste="handlePaste" />
+        :placeholder="disabled ? (disabledPlaceholder || '恢复任务后可继续对话') : '随心输入（支持 @ 引用文件，/ 快捷命令）'"
+        aria-label="消息" @input="evaluateTriggers(true)" @click="evaluateTriggers(false)"
+        @keydown="handleKeydown" @paste="handlePaste" />
       <div class="composer-toolbar">
         <div class="composer-toolbar-left">
           <!-- + Action Button -->
@@ -636,6 +895,7 @@ watch(() => props.supportsImages, async (supported) => {
             :aria-expanded="plusMenuOpen"
             :disabled="disabled || selectingFiles"
             @click="togglePlusMenu"
+            @keydown="handlePlusMenuKeydown"
           >
             <Plus :size="18" />
           </button>
@@ -643,7 +903,7 @@ watch(() => props.supportsImages, async (supported) => {
           <!-- Approval Mode Selector -->
           <ApprovalModeMenu
             :model-value="mode"
-            :disabled="busy || disabled"
+            :disabled="disabled"
             @update:model-value="emit('changeMode', $event)"
           />
         </div>
@@ -656,7 +916,7 @@ watch(() => props.supportsImages, async (supported) => {
             :reasoning-level="reasoningLevel"
             :max-reasoning-level="maxReasoningLevel"
             :supports-reasoning="supportsReasoning"
-            :disabled="busy || disabled"
+            :disabled="disabled"
             @update:model="emit('changeModel', $event)"
             @update:reasoning-level="emit('changeReasoningLevel', $event)"
           />
@@ -696,9 +956,11 @@ watch(() => props.supportsImages, async (supported) => {
         v-if="plusMenuOpen"
         ref="plusMenu"
         class="composer-plus-popover"
+        :data-placement="plusPlacedAbove ? 'above' : 'below'"
         role="menu"
         aria-label="添加附件与操作"
         :style="plusMenuStyle"
+        @keydown="handlePlusMenuKeydown"
       >
         <button
           type="button"
@@ -730,6 +992,80 @@ watch(() => props.supportsImages, async (supported) => {
           <Sparkles v-else :size="15" />
           <span>优化提示词</span>
         </button>
+      </section>
+    </Transition>
+  </Teleport>
+
+  <Teleport to="body">
+    <Transition name="select-popover">
+      <section
+        v-if="showTriggerPopover"
+        ref="triggerMenu"
+        class="composer-trigger-popover"
+        data-placement="above"
+        role="listbox"
+        :aria-label="triggerMatch?.kind === 'command' ? '快捷斜杠命令' : '引用工作区文件'"
+        :style="triggerStyle"
+      >
+        <template v-if="triggerMatch?.kind === 'command'">
+          <header class="composer-trigger-header">
+            <Slash :size="13" aria-hidden="true" />
+            <span>快捷命令</span>
+            <small>↑↓ 选择 · Enter 执行</small>
+          </header>
+          <div v-if="filteredCommands.length === 0" class="composer-trigger-empty">
+            没有匹配的命令
+          </div>
+          <button
+            v-for="(cmd, idx) in filteredCommands"
+            :key="cmd.id"
+            type="button"
+            class="composer-trigger-item"
+            :class="{ highlighted: idx === triggerHighlighted }"
+            :data-trigger-index="idx"
+            role="option"
+            :aria-selected="idx === triggerHighlighted"
+            @mouseenter="triggerHighlighted = idx"
+            @mousedown.prevent="selectSlashCommand(cmd)"
+          >
+            <code class="composer-trigger-cmd">{{ cmd.command }}</code>
+            <span class="composer-trigger-title">{{ cmd.title }}</span>
+            <span class="composer-trigger-desc">{{ cmd.description }}</span>
+          </button>
+        </template>
+
+        <template v-else-if="triggerMatch?.kind === 'mention'">
+          <header class="composer-trigger-header">
+            <FileText :size="13" aria-hidden="true" />
+            <span>工作区文件</span>
+            <small v-if="workspacePath">↑↓ 选择 · Enter 引用并附加</small>
+          </header>
+          <div v-if="!workspacePath" class="composer-trigger-empty">
+            请先在左下角选择项目工作目录，以检索文件
+          </div>
+          <div v-else-if="mentionLoading && mentionFiles.length === 0" class="composer-trigger-empty">
+            正在索引工作区文件…
+          </div>
+          <div v-else-if="mentionFiles.length === 0" class="composer-trigger-empty">
+            未找到匹配的工作区文件
+          </div>
+          <button
+            v-for="(file, idx) in mentionFiles"
+            :key="file.path"
+            type="button"
+            class="composer-trigger-item"
+            :class="{ highlighted: idx === triggerHighlighted }"
+            :data-trigger-index="idx"
+            role="option"
+            :aria-selected="idx === triggerHighlighted"
+            :title="file.relativePath"
+            @mouseenter="triggerHighlighted = idx"
+            @mousedown.prevent="selectMentionFile(file)"
+          >
+            <span class="composer-trigger-title">{{ file.name }}</span>
+            <span class="composer-trigger-desc">{{ file.relativePath }}</span>
+          </button>
+        </template>
       </section>
     </Transition>
   </Teleport>
