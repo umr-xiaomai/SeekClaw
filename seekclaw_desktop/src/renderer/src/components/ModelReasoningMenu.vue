@@ -117,15 +117,10 @@ function formatModelName(name?: string): string {
 
 const displayModel = computed(() => formatModelName(props.model))
 
-const triggerLabel = computed(() => {
-  if (open.value && currentView.value === 'intensity') {
-    return '选择强度'
-  }
-  return displayModel.value
-})
+const triggerLabel = computed(() => displayModel.value)
 
 const showTriggerReasoning = computed(() =>
-  Boolean(props.model) && props.supportsReasoning && !(open.value && currentView.value === 'intensity')
+  Boolean(props.model) && props.supportsReasoning
 )
 
 const filteredModels = computed(() => {
@@ -133,6 +128,8 @@ const filteredModels = computed(() => {
   if (!query) return props.models
   return props.models.filter((m) => m.toLowerCase().includes(query))
 })
+
+const placedAbove = ref(true)
 
 function positionPopover(): void {
   if (!trigger.value || !open.value) return
@@ -143,6 +140,7 @@ function positionPopover(): void {
   const right = Math.min(window.innerWidth - edge, rect.right)
   const left = Math.max(edge, right - width)
   const placeAbove = window.innerHeight - rect.bottom < 260
+  placedAbove.value = placeAbove
   popoverStyle.value = placeAbove
     ? { width: `${width}px`, left: `${left}px`, bottom: `${window.innerHeight - rect.top + gap}px` }
     : { width: `${width}px`, left: `${left}px`, top: `${rect.bottom + gap}px` }
@@ -236,17 +234,54 @@ function handleKeydown(event: KeyboardEvent): void {
     hide(true)
     return
   }
-  if (open.value && currentView.value === 'intensity') {
-    if (event.key === 'ArrowLeft') {
+  if (!open.value) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      show()
+    }
+    return
+  }
+  if (currentView.value === 'intensity') {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
       event.preventDefault()
       const nextIdx = Math.max(0, currentStepIndex.value - 1)
       const step = steps.value[nextIdx]
       if (step) emit('update:reasoningLevel', step.value)
-    } else if (event.key === 'ArrowRight') {
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
       event.preventDefault()
       const nextIdx = Math.min(steps.value.length - 1, currentStepIndex.value + 1)
       const step = steps.value[nextIdx]
       if (step) emit('update:reasoningLevel', step.value)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      const step = steps.value[0]
+      if (step) emit('update:reasoningLevel', step.value)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      const step = steps.value[steps.value.length - 1]
+      if (step) emit('update:reasoningLevel', step.value)
+    }
+    return
+  }
+
+  if (currentView.value === 'model') {
+    const items = Array.from(popover.value?.querySelectorAll<HTMLButtonElement>('.model-option-row') ?? [])
+    if (items.length === 0) return
+    const currentIndex = items.findIndex((el) => el === document.activeElement)
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % items.length : 0
+      items[nextIndex]?.focus()
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      const prevIndex = currentIndex >= 0 ? (currentIndex - 1 + items.length) % items.length : items.length - 1
+      items[prevIndex]?.focus()
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      items[0]?.focus()
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      items[items.length - 1]?.focus()
     }
   }
 }
@@ -295,6 +330,7 @@ onBeforeUnmount(removeListeners)
           v-if="open"
           ref="popover"
           class="model-reasoning-popover"
+          :data-placement="placedAbove ? 'above' : 'below'"
           role="dialog"
           :aria-label="currentView === 'intensity' ? '选择思考强度' : '选择模型'"
           :style="popoverStyle"

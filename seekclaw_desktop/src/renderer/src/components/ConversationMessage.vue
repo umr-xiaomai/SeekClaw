@@ -8,6 +8,7 @@ import {
   Layers,
   LoaderCircle,
   Pencil,
+  RotateCcw,
   Split
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref } from 'vue'
@@ -48,6 +49,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
   branch: [message: ChatMessage]
+  retry: [message: ChatMessage]
   edit: [message: ChatMessage]
   openSubAgent: [activity: SubAgentActivity]
 }>()
@@ -375,6 +377,10 @@ const liveStatusLabel = computed(() => {
             @click="emit('branch', message)">
             <Split :size="13" class="action-icon" />
           </button>
+          <button type="button" class="action-btn" title="重新生成" aria-label="重新生成"
+            @click="emit('retry', message)">
+            <RotateCcw :size="13" class="action-icon" />
+          </button>
         </div>
         <span v-if="message.createdAt" class="message-time">
           {{ formatMessageTime(message.createdAt) }}
@@ -493,14 +499,25 @@ const liveStatusLabel = computed(() => {
 
 .assistant-footer,
 .user-footer {
+  position: absolute;
+  top: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 6px;
+  padding-top: 2px;
   user-select: none;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 160ms ease;
+  transform: translateY(-2px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.assistant-footer {
+  left: 0;
+}
+
+.user-footer {
+  right: 0;
 }
 
 .message:hover .assistant-footer,
@@ -513,6 +530,7 @@ const liveStatusLabel = computed(() => {
 .user-footer.active {
   opacity: 1;
   pointer-events: auto;
+  transform: translateY(0);
 }
 
 .assistant-actions,

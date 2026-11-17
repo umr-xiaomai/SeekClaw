@@ -19,7 +19,7 @@ import yaml from 'highlight.js/lib/languages/yaml'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import MarkdownIt from 'markdown-it'
-import { computed, nextTick, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { renderMarkdownBlocks } from './markdown-blocks'
 import { encodeMarkdownData, isClosedFence, transformOutsideFences } from './markdown-fences'
 import { useStreamingText } from '../use-streaming-text'
@@ -128,6 +128,26 @@ function formatLanguage(lang: string): string {
   return map[lower] || (lang ? lang.charAt(0).toUpperCase() + lang.slice(1) : 'Text')
 }
 
+const CODE_COLLAPSE_LINE_THRESHOLD = 24
+const wrappedBlockKeys = ref(new Set<string>())
+const expandedBlockKeys = ref(new Set<string>())
+
+function codeBlockKey(rawLang: string, content: string): string {
+  // Fast deterministic key scoped per block content + language
+  let hash = 2166136261
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `${rawLang}:${content.length}:${hash >>> 0}`
+}
+
+function countCodeLines(content: string): number {
+  const trimmedTrailing = content.endsWith('\n') ? content.slice(0, -1) : content
+  if (!trimmedTrailing) return 1
+  return trimmedTrailing.split('\n').length
+}
+
 md.renderer.rules.fence = (tokens, index) => {
   const token = tokens[index]!
   const rawLang = token.info.trim().split(/\s+/)[0] ?? ''
@@ -145,8 +165,25 @@ md.renderer.rules.fence = (tokens, index) => {
     : md.utils.escapeHtml(token.content)
   const encoded = encodeMarkdownData(token.content)
   const label = formatLanguage(rawLang)
+  const key = codeBlockKey(rawLang, token.content)
+  const lineCount = countCodeLines(token.content)
+  const isCollapsible = !props.streaming && lineCount > CODE_COLLAPSE_LINE_THRESHOLD
+  const isExpanded = expandedBlockKeys.value.has(key)
+  const isCollapsed = isCollapsible && !isExpanded
+  const isWrapped = wrappedBlockKeys.value.has(key)
 
-  return `<div class="code-block"><div class="code-header"><div class="code-lang-badge"><svg class="code-lang-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg><span>${md.utils.escapeHtml(label)}</span></div><button class="copy-code" type="button" data-code="${encoded}" title="复制代码" aria-label="复制代码"><svg class="copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><svg class="check-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span class="copy-text">复制</span></button></div><pre><code class="hljs language-${md.utils.escapeHtml(rawLang)}">${highlighted}</code></pre></div>`
+  const blockClasses = [
+    'code-block',
+    isWrapped ? 'is-wrapped' : '',
+    isCollapsible ? 'is-collapsible' : '',
+    isCollapsed ? 'is-collapsed' : ''
+  ].filter(Boolean).join(' ')
+
+  const foldBar = isCollapsible
+    ? `<div class="code-fold-bar"><button class="code-fold-toggle" type="button" data-code-key="${key}" data-lines="${lineCount}">${isCollapsed ? `展开全部 ${lineCount} 行` : '收起代码'}</button></div>`
+    : ''
+
+  return `<div class="${blockClasses}" data-code-key="${key}" data-lines="${lineCount}"><div class="code-header"><div class="code-lang-badge"><svg class="code-lang-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg><span>${md.utils.escapeHtml(label)}</span>${isCollapsible ? `<span class="code-line-count">${lineCount} 行</span>` : ''}</div><div class="code-header-actions"><button class="code-action-btn toggle-wrap${isWrapped ? ' active' : ''}" type="button" data-code-key="${key}" aria-pressed="${isWrapped ? 'true' : 'false'}" title="切换自动换行" aria-label="切换自动换行"><span>${isWrapped ? '取消换行' : '换行'}</span></button><button class="copy-code" type="button" data-code="${encoded}" title="复制代码" aria-label="复制代码"><svg class="copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><svg class="check-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span class="copy-text">复制</span></button></div></div><pre><code class="hljs language-${md.utils.escapeHtml(rawLang)}">${highlighted}</code></pre>${foldBar}</div>`
 }
 
 md.renderer.rules.table_open = (tokens, index, options, _env, self) => {
@@ -189,10 +226,54 @@ const renderedBlocks = computed(() => {
 
 const body = ref<HTMLElement | null>(null)
 let mermaidPromise: Promise<typeof import('mermaid')> | null = null
+let initializedMermaidTheme: 'dark' | 'default' | null = null
 let mermaidSequence = 0
 const mermaidPrefix = useId()
 const pendingMermaids = new WeakSet<HTMLElement>()
 const renderedMermaids = new WeakMap<HTMLElement, string>()
+
+function resolveMermaidTheme(): 'dark' | 'default' {
+  if (typeof document !== 'undefined') {
+    const explicit = document.documentElement?.dataset?.theme
+    if (explicit === 'dark') return 'dark'
+    if (explicit === 'light') return 'default'
+  }
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default'
+  }
+  return 'default'
+}
+
+const activeMermaidTheme = ref<'dark' | 'default'>(resolveMermaidTheme())
+
+function syncMermaidTheme(): void {
+  const next = resolveMermaidTheme()
+  if (next !== activeMermaidTheme.value) {
+    activeMermaidTheme.value = next
+    void nextTick(() => void renderMermaid())
+  }
+}
+
+let themeObserver: MutationObserver | null = null
+let darkMediaQuery: MediaQueryList | null = null
+
+onMounted(() => {
+  if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
+    themeObserver = new MutationObserver(syncMermaidTheme)
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+  }
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    darkMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    darkMediaQuery.addEventListener?.('change', syncMermaidTheme)
+  }
+})
+
+onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+  themeObserver = null
+  darkMediaQuery?.removeEventListener?.('change', syncMermaidTheme)
+  darkMediaQuery = null
+})
 
 function isCurrentMermaid(node: HTMLElement, encodedSource: string): boolean {
   return node.isConnected && body.value?.contains(node) === true && node.dataset.src === encodedSource
@@ -201,16 +282,21 @@ function isCurrentMermaid(node: HTMLElement, encodedSource: string): boolean {
 async function renderMermaid(): Promise<void> {
   const container = body.value
   if (!container) return
+  const theme = activeMermaidTheme.value
   const nodes = Array.from(container.querySelectorAll<HTMLElement>('.mermaid-render[data-src]'))
-    .filter((node) => !pendingMermaids.has(node) && renderedMermaids.get(node) !== node.dataset.src)
+    .filter((node) => {
+      const renderKey = `${theme}:${node.dataset.src ?? ''}`
+      return !pendingMermaids.has(node) && renderedMermaids.get(node) !== renderKey
+    })
   if (nodes.length === 0) return
   for (const node of nodes) pendingMermaids.add(node)
   try {
-    mermaidPromise ??= import('mermaid').then((mod) => {
-      mod.default.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' })
-      return mod
-    })
+    mermaidPromise ??= import('mermaid')
     const mermaid = (await mermaidPromise).default
+    if (initializedMermaidTheme !== theme) {
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme })
+      initializedMermaidTheme = theme
+    }
     for (const node of nodes) {
       const encodedSource = node.dataset.src ?? ''
       if (!isCurrentMermaid(node, encodedSource)) continue
@@ -222,12 +308,12 @@ async function renderMermaid(): Promise<void> {
         const { svg } = await mermaid.render(id, source)
         if (isCurrentMermaid(node, encodedSource)) {
           node.innerHTML = svg
-          renderedMermaids.set(node, encodedSource)
+          renderedMermaids.set(node, `${theme}:${encodedSource}`)
         }
       } catch {
         if (isCurrentMermaid(node, encodedSource)) {
           node.innerHTML = `<pre class="mermaid-error">${md.utils.escapeHtml(source)}</pre>`
-          renderedMermaids.set(node, encodedSource)
+          renderedMermaids.set(node, `${theme}:${encodedSource}`)
         }
       } finally {
         node.classList.remove('is-loading')
@@ -243,8 +329,44 @@ async function renderMermaid(): Promise<void> {
 watch(renderedBlocks, () => { void nextTick(() => void renderMermaid()) }, { immediate: true })
 
 async function handleClick(event: MouseEvent): Promise<void> {
-  // 1. Copy code block
-  const copyCodeBtn = (event.target as HTMLElement).closest<HTMLButtonElement>('.copy-code')
+  const target = event.target as HTMLElement
+
+  // 1. Toggle wrap on code block
+  const wrapBtn = target.closest<HTMLButtonElement>('.toggle-wrap')
+  if (wrapBtn?.dataset.codeKey) {
+    const key = wrapBtn.dataset.codeKey
+    const next = new Set(wrappedBlockKeys.value)
+    const nowWrapped = !next.has(key)
+    if (nowWrapped) next.add(key)
+    else next.delete(key)
+    wrappedBlockKeys.value = next
+    const block = wrapBtn.closest<HTMLElement>('.code-block')
+    block?.classList.toggle('is-wrapped', nowWrapped)
+    wrapBtn.classList.toggle('active', nowWrapped)
+    wrapBtn.setAttribute('aria-pressed', String(nowWrapped))
+    const labelSpan = wrapBtn.querySelector('span')
+    if (labelSpan) labelSpan.textContent = nowWrapped ? '取消换行' : '换行'
+    return
+  }
+
+  // 2. Fold/expand long code block
+  const foldBtn = target.closest<HTMLButtonElement>('.code-fold-toggle')
+  if (foldBtn?.dataset.codeKey) {
+    const key = foldBtn.dataset.codeKey
+    const totalLines = foldBtn.dataset.lines || ''
+    const next = new Set(expandedBlockKeys.value)
+    const nowExpanded = !next.has(key)
+    if (nowExpanded) next.add(key)
+    else next.delete(key)
+    expandedBlockKeys.value = next
+    const block = foldBtn.closest<HTMLElement>('.code-block')
+    block?.classList.toggle('is-collapsed', !nowExpanded)
+    foldBtn.textContent = nowExpanded ? '收起代码' : `展开全部 ${totalLines} 行`
+    return
+  }
+
+  // 3. Copy code block
+  const copyCodeBtn = target.closest<HTMLButtonElement>('.copy-code')
   if (copyCodeBtn?.dataset.code) {
     await navigator.clipboard.writeText(decodeURIComponent(copyCodeBtn.dataset.code))
     copyCodeBtn.classList.add('copied')
@@ -257,8 +379,8 @@ async function handleClick(event: MouseEvent): Promise<void> {
     return
   }
 
-  // 2. Copy table
-  const copyTableBtn = (event.target as HTMLElement).closest<HTMLButtonElement>('.copy-table')
+  // 4. Copy table
+  const copyTableBtn = target.closest<HTMLButtonElement>('.copy-table')
   if (copyTableBtn) {
     const container = copyTableBtn.closest('.table-container')
     const table = container?.querySelector('table')

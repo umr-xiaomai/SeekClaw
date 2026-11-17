@@ -89,4 +89,21 @@ describe('markdown message rendering', () => {
     expect(html).not.toContain('<script>')
     expect(html).toContain('&lt;script&gt;')
   })
+
+  it('adds wrap toggle and collapses long code blocks (>24 lines) by default when not streaming', async () => {
+    const shortHtml = await render('```ts\nconst a = 1\n```')
+    expect(shortHtml).toContain('class="code-action-btn toggle-wrap"')
+    expect(shortHtml).not.toContain('is-collapsed')
+    expect(shortHtml).not.toContain('code-fold-toggle')
+
+    const lines = Array.from({ length: 30 }, (_, i) => `const line${i + 1} = ${i + 1}`).join('\n')
+    const longFence = `\`\`\`ts\n${lines}\n\`\`\``
+    const longHtml = await render(longFence, false)
+    expect(longHtml).toContain('is-collapsed')
+    expect(longHtml).toContain('展开全部 30 行')
+    expect(longHtml).toContain('class="copy-code"')
+
+    const streamingLongHtml = await render(longFence, true)
+    expect(streamingLongHtml).not.toContain('is-collapsed')
+  })
 })

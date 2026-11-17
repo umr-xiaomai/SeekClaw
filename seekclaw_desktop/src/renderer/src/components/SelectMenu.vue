@@ -82,6 +82,8 @@ function moveHighlight(direction: 1 | -1): void {
   }
 }
 
+const placedAbove = ref(false)
+
 function positionMenu(): void {
   if (!trigger.value || !open.value) return
   const rect = trigger.value.getBoundingClientRect()
@@ -92,6 +94,7 @@ function positionMenu(): void {
   const below = window.innerHeight - rect.bottom - gap - edge
   const above = rect.top - gap - edge
   const placeAbove = below < Math.min(desiredHeight, 190) && above > below
+  placedAbove.value = placeAbove
   const maxHeight = Math.max(96, Math.min(320, placeAbove ? above : below))
   const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge))
 
@@ -273,7 +276,7 @@ onBeforeUnmount(() => {
 
     <Teleport to="body">
       <Transition name="select-popover">
-        <div v-if="open" :id="listboxId" ref="menu" class="custom-select-menu" role="listbox" :aria-label="label"
+        <div v-if="open" :id="listboxId" ref="menu" class="custom-select-menu" :data-placement="placedAbove ? 'above' : 'below'" role="listbox" :aria-label="label"
           :style="menuStyle" @keydown="handleKeydown">
           <div v-if="searchable" class="custom-select-search">
             <Search :size="14" />
@@ -516,24 +519,10 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.select-popover-enter-active,
-.select-popover-leave-active {
-  transition: opacity 120ms ease, transform 150ms cubic-bezier(.2, .8, .2, 1);
-  transform-origin: center top;
-}
-
-.select-popover-enter-from,
-.select-popover-leave-to {
-  opacity: 0;
-  transform: translateY(-4px) scale(.985);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .custom-select-trigger,
   .custom-select-chevron,
-  .custom-select-option,
-  .select-popover-enter-active,
-  .select-popover-leave-active {
+  .custom-select-option {
     transition: none;
   }
 }

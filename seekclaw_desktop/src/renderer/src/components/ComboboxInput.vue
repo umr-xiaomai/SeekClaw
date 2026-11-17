@@ -36,6 +36,8 @@ const selectedIndex = computed(() =>
   props.options.findIndex((opt) => opt.value === props.modelValue)
 )
 
+const placedAbove = ref(false)
+
 function positionMenu(): void {
   if (!wrapperRef.value || !open.value) return
   const rect = wrapperRef.value.getBoundingClientRect()
@@ -46,6 +48,7 @@ function positionMenu(): void {
   const below = window.innerHeight - rect.bottom - gap - edge
   const above = rect.top - gap - edge
   const placeAbove = below < Math.min(desiredHeight, 160) && above > below
+  placedAbove.value = placeAbove
   const maxHeight = Math.max(96, Math.min(280, placeAbove ? above : below))
   const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge))
 
@@ -203,6 +206,7 @@ onBeforeUnmount(() => {
           v-if="open"
           ref="menuRef"
           class="combobox-menu"
+          :data-placement="placedAbove ? 'above' : 'below'"
           role="listbox"
           :style="menuStyle"
         >
