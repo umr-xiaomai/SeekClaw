@@ -485,7 +485,11 @@ function registerIpc(): void {
   ipcMain.handle('browser:command', async (event, scope: string, command: BrowserCommand) => {
     const browser = browserFor(event)
     const state = browser.state(scope)
-    await browser.execute(scope, state.sessionId, command)
+    try {
+      await browser.execute(scope, state.sessionId, command)
+    } catch (error) {
+      browser.recordCommandError(scope, command, error)
+    }
     return browser.state(scope)
   })
   ipcMain.handle('browser:pause', (event, scope: string, paused: boolean) => browserFor(event).pause(scope, !!paused))

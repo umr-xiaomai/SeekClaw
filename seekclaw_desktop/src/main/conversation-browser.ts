@@ -4,8 +4,21 @@ import type { BrowserCommand, BrowserPanelLayout, ConversationBrowserState } fro
 import { browserBounds, browserUrl } from './browser-policy.js'
 import { browserPageScript } from './browser-page.js'
 
-interface Tab { id: string; view: WebContentsView; error?: string; ready: Promise<void> }
+interface Tab { id: string; view: WebContentsView; error?: string; targetUrl?: string; ready: Promise<void> }
 interface BrowserSession { scope: string; sessionId: string; tabs: Map<string, Tab>; activeTabId?: string; paused: boolean; busy: boolean; queue: Promise<unknown> }
+
+function isBlankOrErrorUrl(url?: string): boolean {
+  return !url || url === 'about:blank' || url.startsWith('chrome-error://')
+}
+
+function fallbackTitleForUrl(url: string): string {
+  if (isBlankOrErrorUrl(url)) return '无法访问页面'
+  try {
+    return new URL(url).hostname || url
+  } catch {
+    return url
+  }
+}
 
 /** Real Chromium views, with browser-local input. No OS input injection or window activation. */
 export class ConversationBrowser {
@@ -25,7 +38,15 @@ export class ConversationBrowser {
     return { scope, sessionId: owner.sessionId, paused: owner.paused, busy: owner.busy, activeTabId: owner.activeTabId,
       tabs: [...owner.tabs.values()].map(tab => {
         const page = tab.view.webContents
-        return { id: tab.id, title: page.getTitle() || '新标签页', url: page.getURL() || 'about:blank', loading: page.isLoading(),
+        const rawUrl = page.getURL()
+        const url = tab.error
+          ? (tab.targetUrl || (isBlankOrErrorUrl(rawUrl) ? 'about:blank' : rawUrl))
+          : (isBlankOrErrorUrl(rawUrl) ? (tab.targetUrl || 'about:blank') : rawUrl)
+        const rawTitle = page.getTitle()
+        const title = tab.error
+          ? fallbackTitleForUrl(url)
+          : (!rawTitle || rawTitle === 'about:blank' ? '新标签页' : rawTitle)
+        return { id: tab.id, title, url, loading: page.isLoading(),
           canGoBack: page.navigationHistory.canGoBack(), canGoForward: page.navigationHistory.canGoForward(), error: tab.error }
       }) }
   }
@@ -81,10 +102,23 @@ export class ConversationBrowser {
   setLayout(layout: BrowserPanelLayout | null): void { this.layout = layout; this.applyLayout() }
   setModalVisible(visible: boolean): void { this.modalVisible = visible; this.applyLayout() }
 
+  recordCommandError(scope: string, command: BrowserCommand, error: unknown): void {
+    const owner = this.sessions.get(scope)
+    if (!owner) return
+    const tab = owner.tabs.get(command.tab_id || owner.activeTabId || '')
+    if (!tab) return
+    if (typeof command.url === 'string' && command.url.trim()) {
+      tab.targetUrl = command.url.trim()
+    }
+    tab.error = error instanceof Error ? error.message : String(error)
+    this.applyLayout()
+    this.publish(owner)
+  }
+
   private applyLayout(): void {
     if (this.disposed || this.window.isDestroyed()) return
     for (const owner of this.sessions.values()) for (const tab of owner.tabs.values()) {
-      const show = this.layout?.visible && this.layout.bounds.width > 0 && this.layout.bounds.height > 0 && !this.modalVisible && this.layout.scope === owner.scope && owner.activeTabId === tab.id
+      const show = this.layout?.visible && this.layout.bounds.width > 0 && this.layout.bounds.height > 0 && !this.modalVisible && this.layout.scope === owner.scope && owner.activeTabId === tab.id && !tab.error
       if (show && this.layout) {
         tab.view.setBounds(browserBounds(this.layout.bounds, this.window.webContents.getZoomFactor(), this.window.getContentBounds()))
       }
@@ -136,10 +170,25 @@ export class ConversationBrowser {
     page.on('did-start-loading', () => this.publish(owner))
     page.on('did-stop-loading', () => this.publish(owner))
     page.on('page-title-updated', () => this.publish(owner))
-    page.on('did-navigate', () => this.publish(owner))
+    page.on('did-navigate', () => {
+      const currentUrl = page.getURL()
+      if (!isBlankOrErrorUrl(currentUrl)) {
+        tab.targetUrl = currentUrl
+        tab.error = undefined
+      }
+      this.applyLayout()
+      this.publish(owner)
+    })
     page.on('did-navigate-in-page', () => this.publish(owner))
-    page.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
-      if (isMainFrame && code !== -3) { tab.error = description; this.publish(owner) }
+    page.on('did-fail-load', (_event, code, description, validatedURL, isMainFrame) => {
+      if (isMainFrame && code !== -3) {
+        if (!isBlankOrErrorUrl(validatedURL)) {
+          tab.targetUrl = validatedURL
+        }
+        tab.error = `${description} (${code})`
+        this.applyLayout()
+        this.publish(owner)
+      }
     })
     page.on('render-process-gone', () => { tab.error = '页面进程已退出，请刷新重试'; this.publish(owner) })
     page.on('will-prevent-unload', event => event.preventDefault())
@@ -159,10 +208,11 @@ export class ConversationBrowser {
     if (command.action === 'tabs') return { ...this.state(owner.scope) }
     let tab: Tab | undefined
     if (command.action === 'open') {
-      const url = browserUrl(command.url || 'about:blank')
       tab = this.newTab(owner)
       await tab.ready
-      await this.navigate(tab, url, signal)
+      if (command.url) tab.targetUrl = String(command.url)
+      const url = browserUrl(command.url || 'about:blank')
+      await this.navigate(owner, tab, url, signal)
     } else {
       tab = owner.tabs.get(command.tab_id || owner.activeTabId || '')
       if (!tab) throw new Error('标签页不存在，请先 open 或 tabs')
@@ -175,10 +225,27 @@ export class ConversationBrowser {
       this.closeTab(owner, tab)
       return { ...this.state(owner.scope) }
     }
-    if (command.action === 'navigate') await this.navigate(tab, browserUrl(command.url), signal)
-    if (command.action === 'back' && page.navigationHistory.canGoBack()) page.navigationHistory.goBack()
-    if (command.action === 'forward' && page.navigationHistory.canGoForward()) page.navigationHistory.goForward()
-    if (command.action === 'reload') { tab.error = undefined; page.reload() }
+    if (command.action === 'navigate') {
+      tab.targetUrl = String(command.url ?? '')
+      await this.navigate(owner, tab, browserUrl(command.url), signal)
+    }
+    if (command.action === 'back' && page.navigationHistory.canGoBack()) {
+      tab.error = undefined
+      page.navigationHistory.goBack()
+    }
+    if (command.action === 'forward' && page.navigationHistory.canGoForward()) {
+      tab.error = undefined
+      page.navigationHistory.goForward()
+    }
+    if (command.action === 'reload') {
+      tab.error = undefined
+      const currentUrl = page.getURL()
+      if (isBlankOrErrorUrl(currentUrl) && tab.targetUrl && tab.targetUrl !== 'about:blank') {
+        await this.navigate(owner, tab, browserUrl(tab.targetUrl), signal)
+      } else {
+        page.reload()
+      }
+    }
     this.applyLayout(); this.publish(owner)
     this.check(owner, signal, agent)
     if (command.action === 'screenshot') {
@@ -232,13 +299,20 @@ export class ConversationBrowser {
     }
   }
 
-  private async navigate(tab: Tab, url: string, signal: AbortSignal): Promise<void> {
+  private async navigate(owner: BrowserSession, tab: Tab, url: string, signal: AbortSignal): Promise<void> {
     tab.error = undefined
+    tab.targetUrl = url
+    this.applyLayout()
     const stop = () => tab.view.webContents.stop()
     signal.addEventListener('abort', stop, { once: true })
     const timer = setTimeout(stop, 30000)
     try { await tab.view.webContents.loadURL(url) }
-    catch (error) { tab.error = signal.aborted ? '导航已取消' : error instanceof Error ? error.message : String(error); throw new Error(tab.error) }
+    catch (error) {
+      tab.error = signal.aborted ? '导航已取消' : error instanceof Error ? error.message : String(error)
+      this.applyLayout()
+      this.publish(owner)
+      throw new Error(tab.error)
+    }
     finally { clearTimeout(timer); signal.removeEventListener('abort', stop) }
   }
 

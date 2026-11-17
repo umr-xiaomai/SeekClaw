@@ -1,32 +1,189 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Globe2, LoaderCircle, Pause, Play, Plus, RotateCw, X } from '@lucide/vue'
+import { ArrowLeft, ArrowRight, CircleAlert, Globe2, LoaderCircle, Plus, RotateCw, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { BrowserCommand, ConversationBrowserState } from '../../../shared/browser'
 
-const props = defineProps<{ state: ConversationBrowserState }>()
-const emit = defineEmits<{ close: []; changed: [state: ConversationBrowserState] }>()
+const props = withDefaults(defineProps<{
+  state: ConversationBrowserState
+  width?: number
+}>(), {
+  width: 520
+})
+const emit = defineEmits<{
+  close: []
+  changed: [state: ConversationBrowserState]
+  resize: [width: number]
+}>()
+
+const MIN_PANEL_WIDTH = 320
+const MAX_PANEL_WIDTH = 1400
+const DEFAULT_PANEL_WIDTH = 520
+
+const panelRef = ref<HTMLElement | null>(null)
 const viewport = ref<HTMLElement | null>(null)
 const address = ref('')
 const error = ref('')
+const resizing = ref(false)
 const tab = computed(() => props.state.tabs.find(tab => tab.id === props.state.activeTabId))
+const activeError = computed(() => tab.value?.error || error.value || '')
+const panelStyle = computed(() => ({
+  '--browser-panel-width': `${props.width}px`
+}))
+const parsedError = computed(() => {
+  const raw = activeError.value
+  const stripped = raw
+    .replace(/^Error invoking remote method '[^']+':\s*/i, '')
+    .replace(/^Error:\s*/i, '')
+    .trim()
+  const codeMatch = stripped.match(/\b(ERR_[A-Z0-9_]+)\b/)
+  const code = codeMatch?.[1]
+
+  if (code === 'ERR_NAME_NOT_RESOLVED') {
+    return {
+      title: '无法访问此网站',
+      description: '找不到服务器 IP 地址，请检查域名拼写是否正确或网络连接是否正常。',
+      code
+    }
+  }
+  if (code === 'ERR_CONNECTION_REFUSED') {
+    return {
+      title: '连接被拒绝',
+      description: '目标服务器拒绝了连接请求，请确认对应服务已启动并监听端口。',
+      code
+    }
+  }
+  if (code === 'ERR_CONNECTION_TIMED_OUT' || code === 'ERR_TIMED_OUT') {
+    return {
+      title: '连接超时',
+      description: '服务器响应时间过长，请检查网络状况或稍后重试。',
+      code
+    }
+  }
+  if (code === 'ERR_INTERNET_DISCONNECTED' || code === 'ERR_NAME_RESOLUTION_FAILED') {
+    return {
+      title: '未连接到网络',
+      description: '当前设备似乎已断开网络连接，请检查网络后重试。',
+      code
+    }
+  }
+  if (code === 'ERR_ADDRESS_UNREACHABLE' || code === 'ERR_CONNECTION_RESET' || code === 'ERR_CONNECTION_CLOSED') {
+    return {
+      title: '无法连接到服务器',
+      description: '目标地址当前不可达或连接被中断，请稍后重试。',
+      code
+    }
+  }
+  if (code?.startsWith('ERR_CERT_') || code === 'ERR_SSL_PROTOCOL_ERROR') {
+    return {
+      title: '安全连接失败',
+      description: '该站点的 SSL/TLS 证书无效或握手失败，出于安全原因未能建立连接。',
+      code
+    }
+  }
+  if (stripped.includes('HTTP(S)') || stripped.includes('Invalid URL')) {
+    return {
+      title: '网址格式无效',
+      description: '请输入有效的 HTTP(S) 网址或本地开发地址（例如 localhost:3000）。',
+      code
+    }
+  }
+  return {
+    title: '页面加载失败',
+    description: stripped || '加载目标页面时发生未知错误，请检查网址后重试。',
+    code
+  }
+})
+
 let resizeObserver: ResizeObserver | undefined
 let mutationObserver: MutationObserver | undefined
 let frame = 0
 let disposed = false
 let overlayVisible = false
+let resizeStartX = 0
+let resizeStartWidth = 0
+let resizeRafId: number | null = null
+let pendingWidth = props.width
 
-async function command(command: BrowserCommand): Promise<void> {
+async function command(cmd: BrowserCommand): Promise<void> {
   error.value = ''
-  try { emit('changed', await window.seekclaw.browser.command(props.state.scope, command)) }
-  catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason) }
+  try {
+    const nextState = await window.seekclaw.browser.command(props.state.scope, cmd)
+    emit('changed', nextState)
+    if (cmd.action === 'close' && nextState.tabs.length === 0) {
+      emit('close')
+    }
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : String(reason)
+  }
 }
 function navigate(): void {
   const url = address.value.trim()
   if (url) void command({ action: tab.value ? 'navigate' : 'open', url: /^https?:\/\//i.test(url) ? url : `https://${url}` })
 }
-async function togglePause(): Promise<void> {
-  try { emit('changed', await window.seekclaw.browser.pause(props.state.scope, !props.state.paused)) }
-  catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason) }
+function retryCurrentPage(): void {
+  error.value = ''
+  if (address.value.trim()) {
+    navigate()
+  } else {
+    void command({ action: 'reload' })
+  }
+}
+function stopResize(): void {
+  if (!resizing.value) return
+  resizing.value = false
+  if (resizeRafId !== null) {
+    cancelAnimationFrame(resizeRafId)
+    resizeRafId = null
+  }
+  emit('resize', pendingWidth)
+  window.removeEventListener('pointermove', handleResize)
+  window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('pointercancel', stopResize)
+  document.body.classList.remove('is-resizing-git-panel')
+  void nextTick(updateLayout)
+}
+function handleResize(event: PointerEvent): void {
+  if (!resizing.value) return
+  const viewportWidth = window.innerWidth
+  const maxWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, Math.floor(viewportWidth * 0.85)))
+  const nextWidth = Math.round(resizeStartWidth + resizeStartX - event.clientX)
+  if (nextWidth <= MIN_PANEL_WIDTH - 40) {
+    stopResize()
+    emit('close')
+    return
+  }
+  const clampedWidth = Math.min(maxWidth, Math.max(MIN_PANEL_WIDTH, nextWidth))
+  pendingWidth = clampedWidth
+  if (panelRef.value) {
+    panelRef.value.style.setProperty('--browser-panel-width', `${clampedWidth}px`)
+  }
+  updateLayout()
+  if (resizeRafId === null) {
+    resizeRafId = requestAnimationFrame(() => {
+      resizeRafId = null
+      emit('resize', pendingWidth)
+    })
+  }
+}
+function startResize(event: PointerEvent): void {
+  if (event.button !== 0) return
+  event.preventDefault()
+  resizing.value = true
+  resizeStartX = event.clientX
+  resizeStartWidth = panelRef.value?.getBoundingClientRect().width || props.width
+  pendingWidth = resizeStartWidth
+  document.body.classList.add('is-resizing-git-panel')
+  window.addEventListener('pointermove', handleResize)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
+}
+function resetPanelWidth(): void {
+  pendingWidth = DEFAULT_PANEL_WIDTH
+  if (panelRef.value) {
+    panelRef.value.style.setProperty('--browser-panel-width', `${DEFAULT_PANEL_WIDTH}px`)
+  }
+  emit('resize', DEFAULT_PANEL_WIDTH)
+  void nextTick(updateLayout)
 }
 function updateLayout(): void {
   if (disposed || frame) return
@@ -42,11 +199,20 @@ function updateLayout(): void {
     }
     void window.seekclaw.browser.layout(rect ? { scope: props.state.scope,
       bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      visible: !!tab.value && tab.value.url !== 'about:blank' && rect.width > 0 && rect.height > 0 && !overlay } : null).catch(() => undefined)
+      visible: !!tab.value && tab.value.url !== 'about:blank' && !activeError.value && rect.width > 0 && rect.height > 0 && !overlay } : null).catch(() => undefined)
   })
 }
+const hadTabs = ref(props.state.tabs.length > 0)
+watch(() => [props.state.tabs.length, props.state.busy] as const, ([len, busy]) => {
+  if (len > 0) {
+    hadTabs.value = true
+  } else if (hadTabs.value && !busy) {
+    hadTabs.value = false
+    emit('close')
+  }
+})
 watch(() => tab.value?.url, url => { address.value = url === 'about:blank' ? '' : url || '' }, { immediate: true })
-watch(() => [props.state.scope, props.state.activeTabId, tab.value?.url, error.value], () => void nextTick(updateLayout))
+watch(() => [props.state.scope, props.state.activeTabId, tab.value?.url, activeError.value], () => void nextTick(updateLayout))
 onMounted(() => {
   resizeObserver = new ResizeObserver(updateLayout)
   if (viewport.value) resizeObserver.observe(viewport.value)
@@ -57,6 +223,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   disposed = true
+  stopResize()
   cancelAnimationFrame(frame)
   resizeObserver?.disconnect()
   mutationObserver?.disconnect()
@@ -67,10 +234,18 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside class="conversation-browser-panel" aria-label="会话浏览器">
+  <aside ref="panelRef" class="conversation-browser-panel" :class="{ 'is-resizing': resizing }" :style="panelStyle" aria-label="会话浏览器">
+    <div
+      class="browser-panel-resize-handle"
+      role="separator"
+      aria-label="调整浏览器面板宽度"
+      aria-orientation="vertical"
+      @pointerdown="startResize"
+      @dblclick="resetPanelWidth"
+    />
     <header class="browser-panel-header">
       <Globe2 :size="16" /><strong>浏览器</strong>
-      <span class="browser-agent-state" role="status"><LoaderCircle v-if="state.busy" :size="12" class="spin" />{{ state.paused ? '已暂停 Agent' : state.busy ? 'Agent 正在操作' : '当前会话' }}</span>
+      <span class="browser-agent-state" role="status"><LoaderCircle v-if="state.busy" :size="12" class="spin" />{{ state.busy ? 'Agent 正在操作' : '当前会话' }}</span>
       <button class="icon-button" title="关闭浏览器面板" aria-label="关闭浏览器面板" @click="emit('close')"><X :size="16" /></button>
     </header>
     <div class="browser-tab-strip" role="tablist" aria-label="浏览器标签页">
@@ -81,24 +256,31 @@ onBeforeUnmount(() => {
       <button class="icon-button" title="新标签页" aria-label="新标签页" :disabled="state.tabs.length >= 6" @click="command({ action: 'open' })"><Plus :size="15" /></button>
     </div>
     <form class="browser-navigation" @submit.prevent="navigate">
-      <button type="button" class="icon-button" title="后退" aria-label="后退" :disabled="!tab?.canGoBack || state.busy" @click="command({ action: 'back' })"><ArrowLeft :size="15" /></button>
-      <button type="button" class="icon-button" title="前进" aria-label="前进" :disabled="!tab?.canGoForward || state.busy" @click="command({ action: 'forward' })"><ArrowRight :size="15" /></button>
-      <button type="button" class="icon-button" title="刷新" aria-label="刷新页面" :disabled="!tab || state.busy" @click="command({ action: 'reload' })"><RotateCw :size="14" :class="{ spin: tab?.loading }" /></button>
+      <button type="button" class="icon-button" title="后退" aria-label="后退" :disabled="!tab?.canGoBack" @click="command({ action: 'back' })"><ArrowLeft :size="15" /></button>
+      <button type="button" class="icon-button" title="前进" aria-label="前进" :disabled="!tab?.canGoForward" @click="command({ action: 'forward' })"><ArrowRight :size="15" /></button>
+      <button type="button" class="icon-button" title="刷新" aria-label="刷新页面" :disabled="!tab" @click="command({ action: 'reload' })"><RotateCw :size="14" :class="{ spin: tab?.loading }" /></button>
       <input v-model="address" aria-label="浏览器地址" placeholder="输入网址或 localhost 地址" spellcheck="false" autocomplete="off">
     </form>
-    <div class="browser-takeover-bar">
-      <span>{{ state.paused ? '你可以操作页面，恢复后 Agent 可继续。' : 'Agent 在此浏览，不占用系统鼠标。' }}</span>
-      <button type="button" @click="togglePause"><Play v-if="state.paused" :size="13" /><Pause v-else :size="13" />{{ state.paused ? '恢复 Agent' : '接管' }}</button>
-    </div>
-    <p v-if="error || tab?.error" class="browser-error" role="alert">{{ error || tab?.error }}</p>
     <div ref="viewport" class="browser-viewport">
-      <div v-if="!tab || tab.url === 'about:blank'" class="browser-empty"><Globe2 :size="30" /><strong>会话专属浏览器</strong><span>输入网址，或让 Agent 打开页面</span></div>
+      <div v-if="activeError" class="browser-error-page" role="alert">
+        <div class="browser-error-icon"><CircleAlert :size="28" /></div>
+        <strong>{{ parsedError.title }}</strong>
+        <p>{{ parsedError.description }}</p>
+        <code v-if="tab?.url && tab.url !== 'about:blank'" class="browser-error-url">{{ tab.url }}</code>
+        <span v-if="parsedError.code" class="browser-error-code">{{ parsedError.code }}</span>
+        <button type="button" class="browser-retry-btn" @click="retryCurrentPage"><RotateCw :size="13" /><span>重新加载</span></button>
+      </div>
+      <div v-else-if="!tab || tab.url === 'about:blank'" class="browser-empty"><Globe2 :size="30" /><strong>会话专属浏览器</strong><span>输入网址，或让 Agent 打开页面</span></div>
     </div>
   </aside>
 </template>
 
 <style scoped>
-.conversation-browser-panel { display: flex; flex: 0 0 clamp(360px, 44vw, 680px); min-width: 0; height: 100%; flex-direction: column; border-left: 1px solid var(--border); background: var(--surface); container-type: inline-size; }
+.conversation-browser-panel { position: relative; z-index: 6; display: flex; flex: 0 0 auto; width: min(var(--browser-panel-width, 520px), 100%); min-width: 0; height: 100%; flex-direction: column; border-left: 1px solid var(--border); background: var(--surface); container-type: inline-size; }
+.conversation-browser-panel.is-resizing, .conversation-browser-panel.is-resizing * { user-select: none; transition: none !important; }
+.browser-panel-resize-handle { position: absolute; z-index: 10; top: 0; bottom: 0; left: 0; width: 8px; cursor: col-resize; }
+.browser-panel-resize-handle::after { position: absolute; top: 50%; left: 2px; width: 2px; height: 34px; content: ''; background: var(--border-strong); border-radius: 2px; opacity: 0; transform: translateY(-50%); transition: opacity 140ms ease, background-color 140ms ease; }
+.browser-panel-resize-handle:hover::after, .conversation-browser-panel.is-resizing .browser-panel-resize-handle::after { background: var(--accent); opacity: 1; }
 .browser-panel-header { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px 0 16px; flex: none; font-size: 13px; }
 .browser-panel-header > svg { flex-shrink: 0; color: var(--text-secondary); }
 .browser-panel-header strong { font-weight: 550; }
@@ -112,24 +294,23 @@ onBeforeUnmount(() => {
 .browser-tab button:first-child { flex: 1; text-align: left; }
 .browser-tab .browser-tab-close { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; flex: none; border-radius: 5px; }
 .browser-tab-close:hover { background: var(--surface-active); }
-.browser-navigation { display: flex; align-items: center; gap: 3px; padding: 10px; flex: none; }
+.browser-navigation { display: flex; align-items: center; gap: 3px; padding: 10px; flex: none; border-bottom: 1px solid var(--border); }
 .browser-navigation input { flex: 1; min-width: 0; height: 32px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; font: 12px var(--font-sans); color: var(--text); }
 .browser-navigation input::placeholder { color: var(--text-muted); }
-.browser-takeover-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 12px 10px 16px; flex: none; color: var(--text-muted); font-size: 11px; line-height: 1.5; border-bottom: 1px solid var(--border); }
-.browser-takeover-bar button { display: flex; align-items: center; gap: 5px; min-height: 28px; padding: 5px 8px; color: var(--text); background: transparent; border: 1px solid var(--border); border-radius: 7px; white-space: nowrap; cursor: pointer; }
-.browser-takeover-bar button:hover { background: var(--surface-hover); }
-.browser-error { padding: 10px 16px; margin: 0; font-size: 12px; line-height: 1.6; color: var(--danger); overflow-wrap: anywhere; }
 .browser-viewport { position: relative; flex: 1; min-height: 0; background: white; }
-.browser-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; font-size: 12px; line-height: 1.6; text-align: center; color: var(--text-muted); background: var(--surface); }
-.browser-empty > strong { margin-top: 2px; color: var(--text-secondary); font-size: 14px; font-weight: 500; }
+.browser-empty, .browser-error-page { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; font-size: 12px; line-height: 1.65; text-align: center; color: var(--text-muted); background: var(--surface); }
+.browser-empty > strong, .browser-error-page > strong { margin-top: 2px; color: var(--text); font-size: 15px; font-weight: 600; }
+.browser-error-page > p { margin: 0; max-width: 340px; color: var(--text-secondary); font-size: 12.5px; overflow-wrap: anywhere; }
+.browser-error-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.browser-error-url { max-width: min(100%, 360px); padding: 4px 10px; border-radius: 6px; background: var(--surface-subtle); border: 1px solid var(--border); color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-error-code { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); letter-spacing: 0.02em; }
+.browser-retry-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; min-height: 32px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
+.browser-retry-btn:hover { background: var(--surface-hover); border-color: var(--border-strong); }
 .conversation-browser-panel .icon-button { width: 30px; height: 30px; flex-shrink: 0; border-radius: 7px; }
 .conversation-browser-panel :is(button, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .conversation-browser-panel button:disabled { opacity: .4; cursor: default; }
 @container (max-width: 360px) {
   .browser-panel-header { padding-left: 12px; }
   .browser-agent-state { font-size: 10px; }
-  .browser-takeover-bar { align-items: flex-start; padding-left: 12px; }
-  .browser-takeover-bar > span { max-width: 180px; }
 }
-@media (max-width: 1000px) { .conversation-browser-panel { flex-basis: 48%; } }
 </style>

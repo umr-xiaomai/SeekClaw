@@ -111,4 +111,28 @@ describe('conversation browser lifecycle', () => {
     expect(page.capturePage).toHaveBeenCalledOnce()
     browser.dispose()
   })
+  it('records failed navigation errors with targetUrl, hides the native view, and handles recordCommandError safely', async () => {
+    const browser = host()
+    await browser.execute(a, 'first', { action: 'open', url: 'https://example.com' })
+    browser.setLayout({ scope: a, visible: true, bounds: { x: 0, y: 48, width: 1000, height: 700 } })
+    const view = mocks.views[0], page = view.webContents
+    expect(view.visible).toBe(true)
+
+    page.loadURL.mockRejectedValueOnce(new Error("ERR_NAME_NOT_RESOLVED (-105) loading 'https://xn--gzro94e9ms/'"))
+    await expect(browser.execute(a, 'first', { action: 'navigate', url: 'https://xn--gzro94e9ms/' })).rejects.toThrow('ERR_NAME_NOT_RESOLVED')
+    expect(view.visible).toBe(false)
+    let state = browser.state(a)
+    expect(state.tabs[0]?.url).toBe('https://xn--gzro94e9ms/')
+    expect(state.tabs[0]?.error).toContain('ERR_NAME_NOT_RESOLVED')
+
+    browser.recordCommandError(a, { action: 'navigate', url: 'https://broken.invalid/' }, new Error('ERR_CONNECTION_REFUSED (-102)'))
+    state = browser.state(a)
+    expect(state.tabs[0]?.url).toBe('https://broken.invalid/')
+    expect(state.tabs[0]?.error).toContain('ERR_CONNECTION_REFUSED')
+    expect(view.visible).toBe(false)
+
+    // Unknown scope should be a no-op without throwing
+    expect(() => browser.recordCommandError('c'.repeat(64), { action: 'navigate', url: 'https://example.com' }, new Error('ignored'))).not.toThrow()
+    browser.dispose()
+  })
 })
