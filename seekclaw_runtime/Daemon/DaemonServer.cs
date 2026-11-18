@@ -287,7 +287,9 @@ public sealed class DaemonServer : IAsyncDisposable
         public SemaphoreSlim WriterGate { get; } = writerGate;
         public CancellationToken ConnectionCt { get; } = connectionCt;
         public ConcurrentDictionary<long, ActiveTurn> ActiveTurns { get; } = new();
+        public ConcurrentDictionary<long, Task> ActiveDispatches { get; } = new();
         public ConcurrentDictionary<string, PendingApproval> PendingApprovals { get; } = new(StringComparer.Ordinal);
+        public Lock LegacyGate { get; } = new();
         public AgentSession? LegacySession;
         public DesktopBrowserBridge Browser { get; } = new((name, details) =>
             WriteAsync(writer, writerGate, 0, name, "", connectionCt, details: details));
@@ -295,6 +297,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
     internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct)
     {
+        using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), bufferSize: 64 * 1024, leaveOpen: true)
         {
@@ -302,7 +305,8 @@ public sealed class DaemonServer : IAsyncDisposable
         };
         using var writerGate = new SemaphoreSlim(1, 1);
         var clientId = RegisterClient(writer, writerGate);
-        var context = new ConnectionContext(writer, writerGate, ct);
+        var context = new ConnectionContext(writer, writerGate, connectionCts.Token);
+        long nextDispatchId = 0;
 
         try
         {
@@ -339,30 +343,46 @@ public sealed class DaemonServer : IAsyncDisposable
                     if (turn.Task?.IsCompleted == true)
                     {
                         if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
-                        turn.Cancellation.Dispose();
-                        context.ActiveTurns.TryRemove(turnId, out _);
+                        if (context.ActiveTurns.TryRemove(turnId, out var removed))
+                            removed.Cancellation.Dispose();
                     }
                 }
 
                 // Non-blocking concurrent dispatch: reader immediately loops back to read the next line!
-                _ = Task.Run(async () =>
+                var dispatchId = Interlocked.Increment(ref nextDispatchId);
+                context.ActiveDispatches[dispatchId] = Task.Run(async () =>
                 {
                     try
                     {
                         await DispatchMethodAsync(request, id, method, context).ConfigureAwait(false);
                     }
+                    catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException
+                                               && context.ConnectionCt.IsCancellationRequested)
+                    {
+                    }
                     catch (Exception ex)
                     {
-                        await WriteAsync(context.Writer, context.WriterGate, id, "error", $"Server error: {ex.Message}", context.ConnectionCt).ConfigureAwait(false);
+                        try
+                        {
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", $"Server error: {ex.Message}", context.ConnectionCt).ConfigureAwait(false);
+                        }
+                        catch (Exception writeEx) when (writeEx is OperationCanceledException or IOException or ObjectDisposedException)
+                        {
+                        }
+                    }
+                    finally
+                    {
+                        context.ActiveDispatches.TryRemove(dispatchId, out _);
                     }
                 }, ct);
             }
         }
         finally
         {
+            connectionCts.Cancel();
             context.Browser.Dispose();
             UnregisterClient(clientId);
-            foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Cancel();
+            foreach (var turn in context.ActiveTurns.Values) turn.TryCancel();
             foreach (var turn in context.ActiveTurns.Values)
                 if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
             foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Dispose();
@@ -370,6 +390,9 @@ public sealed class DaemonServer : IAsyncDisposable
             foreach (var pending in context.PendingApprovals.Values)
                 pending.Completion.TrySetResult(ToolApprovalDecision.Deny("The approval client disconnected."));
             context.PendingApprovals.Clear();
+            foreach (var dispatch in context.ActiveDispatches.Values.ToArray())
+                await ObserveAsync(dispatch).ConfigureAwait(false);
+            context.ActiveDispatches.Clear();
         }
     }
 
@@ -417,7 +440,7 @@ public sealed class DaemonServer : IAsyncDisposable
 
                     case "factory.reset":
                     {
-                        foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Cancel();
+                        foreach (var turn in context.ActiveTurns.Values) turn.TryCancel();
                         foreach (var turn in context.ActiveTurns.Values)
                             if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
                         await RunAdminAsync(context.Writer, context.WriterGate, id, true,
@@ -430,8 +453,8 @@ public sealed class DaemonServer : IAsyncDisposable
                     case "agent/runTurn":
                     {
                         var parameters = Params(request);
-                        var message = parameters["message"]?.GetValue<string>()
-                                      ?? parameters["prompt"]?.GetValue<string>()
+                        var message = TryGetString(parameters, "message")
+                                      ?? TryGetString(parameters, "prompt")
                                       ?? "";
                         IReadOnlyList<ChatImageAttachment> images;
                         try { images = ParseImages(parameters["images"]); }
@@ -447,11 +470,14 @@ public sealed class DaemonServer : IAsyncDisposable
                         }
                         WorkspaceInfo workspace;
                         AgentSession turnSession;
-                        var requestedSessionId = parameters["sessionId"]?.GetValue<string>();
+                        var requestedSessionId = TryGetString(parameters, "sessionId");
                         try
                         {
                             workspace = ResolveWorkspace(parameters);
-                            turnSession = LoadTurnSession(workspace, requestedSessionId, ref context.LegacySession);
+                            lock (context.LegacyGate)
+                            {
+                                turnSession = LoadTurnSession(workspace, requestedSessionId, ref context.LegacySession);
+                            }
                         }
                         catch (DaemonRequestException ex)
                         {
@@ -477,6 +503,8 @@ public sealed class DaemonServer : IAsyncDisposable
                         }
                         var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.ConnectionCt);
                         var turn = new ActiveTurn(turnSession, workspace, turnCancellation);
+                        if (context.ActiveTurns.TryGetValue(id, out var existingTurn))
+                            existingTurn.TryCancel();
                         context.ActiveTurns[id] = turn;
                         turn.Task = RunTurnAsync(
                             turnSession, workspace, message, images, reasoningLevel, id, context.Writer, context.WriterGate,
@@ -530,8 +558,8 @@ public sealed class DaemonServer : IAsyncDisposable
                     case "agent.approval":
                     {
                         var parameters = Params(request);
-                        var approvalId = parameters["approvalId"]?.GetValue<string>();
-                        var callId = parameters["callId"]?.GetValue<string>();
+                        var approvalId = TryGetString(parameters, "approvalId");
+                        var callId = TryGetString(parameters, "callId");
                         bool? approved;
                         try { approved = parameters["approved"]?.GetValue<bool?>(); }
                         catch (InvalidOperationException)
@@ -540,7 +568,7 @@ public sealed class DaemonServer : IAsyncDisposable
                                 "params.approved must be a boolean", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
-                        if (approved is null && parameters["decision"]?.GetValue<string>() is { } decision)
+                        if (approved is null && TryGetString(parameters, "decision") is { } decision)
                         {
                             approved = decision.Trim().ToLowerInvariant() switch
                             {
@@ -571,7 +599,7 @@ public sealed class DaemonServer : IAsyncDisposable
                             break;
                         }
 
-                        var reason = parameters["reason"]?.GetValue<string>();
+                        var reason = TryGetString(parameters, "reason");
                         pending.Completion.TrySetResult(new ToolApprovalDecision(approved.Value, reason));
                         await WriteAsync(context.Writer, context.WriterGate, id, "result",
                             approved.Value ? "approved" : "denied", context.ConnectionCt,
@@ -600,7 +628,7 @@ public sealed class DaemonServer : IAsyncDisposable
                             await WriteAsync(context.Writer, context.WriterGate, id, "result", "no active turn", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
-                        foreach (var target in targets) target.Cancellation.Cancel();
+                        foreach (var target in targets) target.TryCancel();
                         var detail = requestedId is { } one
                             ? $"cancellation requested for {one}"
                             : $"cancellation requested for session {requestedSessionId}";
@@ -1051,7 +1079,7 @@ public sealed class DaemonServer : IAsyncDisposable
                     }
 
                     case "shutdown":
-                        foreach (var turn in context.ActiveTurns.Values) turn.Cancellation.Cancel();
+                        foreach (var turn in context.ActiveTurns.Values) turn.TryCancel();
                         foreach (var turn in context.ActiveTurns.Values)
                             if (turn.Task is not null) await ObserveAsync(turn.Task).ConfigureAwait(false);
                         await WriteAsync(context.Writer, context.WriterGate, id, "bye", "", context.ConnectionCt).ConfigureAwait(false);
@@ -1131,18 +1159,22 @@ public sealed class DaemonServer : IAsyncDisposable
     {
         List<ClientSink> clients;
         lock (_clientsGate) clients = _clients.Values.ToList();
-        foreach (var client in clients)
+        if (clients.Count == 0) return;
+
+        await Task.WhenAll(clients.Select(async client =>
         {
+            using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            sendCts.CancelAfter(TimeSpan.FromSeconds(2));
             try
             {
-                await WriteAsync(client.Writer, client.WriterGate, id, eventName, data, ct, details: details)
+                await WriteAsync(client.Writer, client.WriterGate, id, eventName, data, sendCts.Token, details: details)
                     .ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException or TimeoutException)
             {
-                // The client disconnected while the broadcast was in flight.
+                // The client disconnected or stalled while the broadcast was in flight.
             }
-        }
+        })).ConfigureAwait(false);
     }
 
     private long RegisterClient(StreamWriter writer, SemaphoreSlim writerGate)
@@ -1175,125 +1207,139 @@ public sealed class DaemonServer : IAsyncDisposable
         // Unique per-turn identity for file write-lock ownership; released when the
         // turn ends even if a tool was interrupted before its own finally ran.
         var owner = $"{session.Header.Id}/{Guid.NewGuid().ToString("N")[..8]}";
-        await using var turnRuntime = _useIsolatedTurnRuntime
-            ? SeekClawRuntime.CreateIsolated(workspace, _fileLocks, owner, services =>
-              {
-                  // Register the process-wide instances AFTER the default type
-                  // registrations so DI resolves these for every turn.
-                  services.AddSingleton<ILlmHttpFactory>(_sharedHttp);
-                  services.AddSingleton(_sharedBreaker);
-                  _runtime.ShareTaskServices(services);
-                  if (browser.Enabled) services.AddSingleton<IBrowserBridge>(browser);
-              })
-            : null;
-        var runtime = turnRuntime ?? _runtime;
-        var titleTask = _runTurn is null && session.Header.ParentSessionId is null
-            && session.Header.TitleSource is "pending" or "input"
-            ? GenerateSessionTitleAsync(session, workspace, message, connectionCt)
-            : Task.CompletedTask;
-        using var subscription = runtime.Events.Subscribe();
+        SeekClawRuntime? turnRuntime = null;
+        IEventSubscription? subscription = null;
         var sessionUsage = new SessionUsageAccumulator();
-        var forwarder = ForwardEventsAsync(
-            subscription, writer, writerGate, id, session.Header.Id, connectionCt, sessionUsage,
-            _useIsolatedTurnRuntime ? _runtime.Events : null);
+        var forwarder = Task.CompletedTask;
+        var titleTask = Task.CompletedTask;
         AgentTurnResult? result = null;
         Exception? failure = null;
 
         try
         {
-            runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
-            runtime.Skills.Attach(workspace);
-            if (_useIsolatedTurnRuntime && runtime.Mcp.LoadServerConfigs(workspace).Count > 0)
-                await runtime.Mcp.ConnectAllAsync(workspace, turnCt).ConfigureAwait(false);
-
-            if (_runTurn is null)
+            try
             {
-                runtime.Approvals.SetHandler((request, approvalCt) => RequestToolApprovalAsync(
-                    request, id, session.Header.Id, writer, writerGate, pendingApprovals, connectionCt, approvalCt));
+                turnRuntime = _useIsolatedTurnRuntime
+                    ? SeekClawRuntime.CreateIsolated(workspace, _fileLocks, owner, services =>
+                      {
+                          // Register the process-wide instances AFTER the default type
+                          // registrations so DI resolves these for every turn.
+                          services.AddSingleton<ILlmHttpFactory>(_sharedHttp);
+                          services.AddSingleton(_sharedBreaker);
+                          _runtime.ShareTaskServices(services);
+                          if (browser.Enabled) services.AddSingleton<IBrowserBridge>(browser);
+                      })
+                    : null;
+                var runtime = turnRuntime ?? _runtime;
+                titleTask = _runTurn is null && session.Header.ParentSessionId is null
+                    && session.Header.TitleSource is "pending" or "input"
+                    ? GenerateSessionTitleAsync(session, workspace, message, connectionCt)
+                    : Task.CompletedTask;
+                subscription = runtime.Events.Subscribe();
+                forwarder = ForwardEventsAsync(
+                    subscription, writer, writerGate, id, session.Header.Id, connectionCt, sessionUsage,
+                    _useIsolatedTurnRuntime ? _runtime.Events : null);
+
+                runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
+                runtime.Skills.Attach(workspace);
+                if (_useIsolatedTurnRuntime && runtime.Mcp.LoadServerConfigs(workspace).Count > 0)
+                    await runtime.Mcp.ConnectAllAsync(workspace, turnCt).ConfigureAwait(false);
+
+                if (_runTurn is null)
+                {
+                    runtime.Approvals.SetHandler((request, approvalCt) => RequestToolApprovalAsync(
+                        request, id, session.Header.Id, writer, writerGate, pendingApprovals, connectionCt, approvalCt));
+                }
+
+                result = _runTurn is null
+                    ? await runtime.Agent.RunTurnAsync(
+                        session, workspace, message, turnCt, reasoningLevel, images, steering,
+                        turnRequestId: id.ToString()).ConfigureAwait(false)
+                    : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
+            {
+                result = new AgentTurnResult("", true, null);
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+            finally
+            {
+                CancelPendingApprovals(pendingApprovals, id);
+                subscription?.Dispose();
+                try { await forwarder.ConfigureAwait(false); }
+                catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
+                if (sessionUsage.HasActivity)
+                {
+                    try
+                    {
+                        var persisted = _runtime.Sessions.RecordUsage(workspace, session.Header.Id, sessionUsage.ToUsage());
+                        session.Header.LlmRounds = persisted.LlmRounds;
+                        session.Header.ExecutionSteps = persisted.ExecutionSteps;
+                        session.Header.InputTokens = persisted.InputTokens;
+                        session.Header.TotalInputTokens = persisted.TotalInputTokens;
+                        session.Header.CachedInputTokens = persisted.CachedInputTokens;
+                        session.Header.OutputTokens = persisted.OutputTokens;
+                        session.Header.OutputElapsedMs = persisted.OutputElapsedMs;
+                        session.Header.UpdatedAt = persisted.UpdatedAt;
+                    }
+                    catch
+                    {
+                        // Usage persistence must not fail the turn.
+                    }
+                }
+                _fileLocks.ReleaseAll(owner);
             }
 
-            result = _runTurn is null
-                ? await runtime.Agent.RunTurnAsync(
-                    session, workspace, message, turnCt, reasoningLevel, images, steering,
-                    turnRequestId: id.ToString()).ConfigureAwait(false)
-                : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
-        {
-            result = new AgentTurnResult("", true, null);
-        }
-        catch (Exception ex)
-        {
-            failure = ex;
-        }
-        finally
-        {
-            CancelPendingApprovals(pendingApprovals, id);
-            subscription.Dispose();
-            try { await forwarder.ConfigureAwait(false); }
-            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException) { }
-            if (sessionUsage.HasActivity)
+            try
+            {
+                if (failure is not null)
+                    await WriteAsync(writer, writerGate, id, "error", failure.Message, connectionCt, session.Header.Id).ConfigureAwait(false);
+                else if (result!.Cancelled)
+                    await WriteAsync(writer, writerGate, id, "cancelled", result.Text, connectionCt, session.Header.Id).ConfigureAwait(false);
+                else
+                    await WriteAsync(writer, writerGate, id,
+                        result.Error is null ? "done" : "error",
+                        result.Error ?? result.Text, connectionCt, session.Header.Id).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+            {
+                // The client disconnected while the turn was ending.
+            }
+
+            // Naming runs beside the turn, and never delays its terminal response.
+            await titleTask.ConfigureAwait(false);
+
+            // Post-turn maintenance (cross-session memory extraction) is an extra model round
+            // trip. The terminal response above already released the client, so draining it here
+            // keeps the memory write ordered before the next turn without adding latency.
+            if (result?.Maintenance is { } maintenance)
             {
                 try
                 {
-                    var persisted = _runtime.Sessions.RecordUsage(workspace, session.Header.Id, sessionUsage.ToUsage());
-                    session.Header.LlmRounds = persisted.LlmRounds;
-                    session.Header.ExecutionSteps = persisted.ExecutionSteps;
-                    session.Header.InputTokens = persisted.InputTokens;
-                    session.Header.TotalInputTokens = persisted.TotalInputTokens;
-                    session.Header.CachedInputTokens = persisted.CachedInputTokens;
-                    session.Header.OutputTokens = persisted.OutputTokens;
-                    session.Header.OutputElapsedMs = persisted.OutputElapsedMs;
-                    session.Header.UpdatedAt = persisted.UpdatedAt;
+                    await maintenance.ConfigureAwait(false);
                 }
-                catch
+                catch (Exception)
                 {
-                    // Usage persistence must not fail the turn.
+                    // Best-effort: maintenance failures never change the finished turn's outcome.
                 }
             }
-            _fileLocks.ReleaseAll(owner);
         }
-
-        try
+        finally
         {
-            if (failure is not null)
-                await WriteAsync(writer, writerGate, id, "error", failure.Message, connectionCt, session.Header.Id).ConfigureAwait(false);
-            else if (result!.Cancelled)
-                await WriteAsync(writer, writerGate, id, "cancelled", result.Text, connectionCt, session.Header.Id).ConfigureAwait(false);
-            else
-                await WriteAsync(writer, writerGate, id,
-                    result.Error is null ? "done" : "error",
-                    result.Error ?? result.Text, connectionCt, session.Header.Id).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
-        {
-            // The client disconnected while the turn was ending.
-        }
-
-        // Naming runs beside the turn, and never delays its terminal response.
-        await titleTask.ConfigureAwait(false);
-
-        // Post-turn maintenance (cross-session memory extraction) is an extra model round
-        // trip. The terminal response above already released the client, so draining it here
-        // keeps the memory write ordered before the next turn without adding latency.
-        if (result?.Maintenance is { } maintenance)
-        {
-            try
-            {
-                await maintenance.ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                // Best-effort: maintenance failures never change the finished turn's outcome.
-            }
+            if (turnRuntime is not null)
+                await turnRuntime.DisposeAsync().ConfigureAwait(false);
         }
     }
 
     private async Task GenerateSessionTitleAsync(AgentSession session, WorkspaceInfo workspace, string prompt, CancellationToken ct)
     {
+        var firstPrompt = prompt;
+        if (string.IsNullOrWhiteSpace(firstPrompt)) return;
         var key = session.Scope + ":" + session.Header.Id;
         if (!_titlesInFlight.TryAdd(key, 0)) return;
-        var firstPrompt = session.Messages.FirstOrDefault(item => item.Role == ChatRole.User)?.Text ?? prompt;
         var details = new JsonObject { ["sessionId"] = session.Header.Id, ["generating"] = true };
         try
         {
@@ -1332,7 +1378,8 @@ public sealed class DaemonServer : IAsyncDisposable
         CancellationToken connectionCt,
         CancellationToken approvalCt)
     {
-        var background = request.SessionId != sessionId;
+        var background = request.SessionId != sessionId
+            && !string.Equals(request.TurnRequestId, turnId.ToString(), StringComparison.Ordinal);
         var approvalId = background ? $"background:{request.SessionId}:{request.CallId}" : $"{turnId}:{request.CallId}";
         var completion = new TaskCompletionSource<ToolApprovalDecision>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1370,6 +1417,12 @@ public sealed class DaemonServer : IAsyncDisposable
             try
             {
                 return await completion.Task.WaitAsync(timeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (connectionCt.IsCancellationRequested && !approvalCt.IsCancellationRequested)
+            {
+                if (pendingApprovals.TryRemove(approvalId, out _))
+                    return ToolApprovalDecision.Deny("The approval client disconnected.");
+                return await completion.Task.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!approvalCt.IsCancellationRequested && !connectionCt.IsCancellationRequested)
             {
@@ -1706,6 +1759,12 @@ public sealed class DaemonServer : IAsyncDisposable
         public CancellationTokenSource Cancellation { get; } = cancellation;
         public AgentSteeringQueue Steering { get; } = new();
         public Task? Task { get; set; }
+
+        public void TryCancel()
+        {
+            try { Cancellation.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
     }
 
     private sealed class PendingApproval(
@@ -1843,6 +1902,9 @@ public sealed class DaemonServer : IAsyncDisposable
             if (exclusive) _adminGate.Release();
         }
     }
+
+    private static string? TryGetString(JsonObject obj, string key) =>
+        obj[key] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
     private static JsonObject Params(JsonObject request) =>
         request["params"] as JsonObject ?? new JsonObject();

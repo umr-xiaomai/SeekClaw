@@ -91,7 +91,7 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
                     p["description"]?.GetValue<string>()))
                 .ToList();
         }
-        catch (McpException)
+        catch (Exception ex) when (ex is McpException or HttpRequestException or IOException)
         {
             return []; // server does not support prompts
         }
@@ -109,7 +109,7 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
                     text.AppendLine(content["text"]?.GetValue<string>() ?? "");
             return text.Length == 0 ? null : text.ToString().TrimEnd();
         }
-        catch (McpException)
+        catch (Exception ex) when (ex is McpException or HttpRequestException or IOException)
         {
             return null;
         }
@@ -128,7 +128,7 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
                     r["description"]?.GetValue<string>()))
                 .ToList();
         }
-        catch (McpException)
+        catch (Exception ex) when (ex is McpException or HttpRequestException or IOException)
         {
             return [];
         }

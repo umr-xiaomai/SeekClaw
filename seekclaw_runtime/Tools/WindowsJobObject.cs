@@ -27,6 +27,9 @@ public sealed class ProcessJobScope : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateJobObject(IntPtr hJob, uint uExitCode);
+
     [DllImport("libc", SetLastError = true)]
     private static extern int kill(int pid, int signal);
 
@@ -105,6 +108,10 @@ public sealed class ProcessJobScope : IDisposable
     {
         if (OperatingSystem.IsWindows())
         {
+            if (!_disposed && _handle != IntPtr.Zero)
+            {
+                try { TerminateJobObject(_handle, 1); } catch { }
+            }
             try
             {
                 if (process is { HasExited: false }) process.Kill(entireProcessTree: true);

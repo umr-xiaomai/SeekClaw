@@ -103,7 +103,7 @@ public sealed class HeadTailBuffer
         lock (_lock)
         {
             var headStr = encoding.GetString(_head.ToArray());
-            if (_omittedBytes == 0) return headStr;
+            if (_tailBytes == 0) return headStr;
 
             var tailBytesArray = new byte[_tailBytes];
             var offset = 0;
@@ -113,6 +113,8 @@ public sealed class HeadTailBuffer
                 offset += chunk.Length;
             }
             var tailStr = encoding.GetString(tailBytesArray);
+
+            if (_omittedBytes == 0) return headStr + tailStr;
 
             return $"{headStr}\n\n[... {_omittedBytes:N0} bytes omitted ...]\n\n{tailStr}";
         }

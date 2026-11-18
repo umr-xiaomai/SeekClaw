@@ -88,6 +88,20 @@ public sealed class ConfigStore : IConfigStore
         SaveState();
     }
 
+    internal (SeekClawConfig Config, RuntimeState State) CloneSnapshot()
+    {
+        lock (_gate)
+        {
+            var config = JsonSerializer.Deserialize(
+                JsonSerializer.Serialize(Config, SeekClawJsonContext.Default.SeekClawConfig),
+                SeekClawJsonContext.Default.SeekClawConfig)!;
+            var state = JsonSerializer.Deserialize(
+                JsonSerializer.Serialize(State, SeekClawJsonContext.Default.RuntimeState),
+                SeekClawJsonContext.Default.RuntimeState)!;
+            return (config, state);
+        }
+    }
+
     private SeekClawConfig LoadConfig()
     {
         if (File.Exists(_configFile))

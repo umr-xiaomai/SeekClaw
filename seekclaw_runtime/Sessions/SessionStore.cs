@@ -190,31 +190,37 @@ public sealed class SessionStore : ISessionStore
         ValidateSessionId(sessionId);
         EnsureLegacyImported(workspace);
         var scope = SeekClawDatabase.ScopeKey(workspace);
-        using var connection = _database.OpenConnection();
-        var header = ReadHeader(connection, scope, sessionId);
-        if (header is null) return null;
-
-        var session = NewSession(header, scope);
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT payload_json FROM messages
-            WHERE scope = $scope AND session_id = $sessionId
-            ORDER BY id;
-            """;
-        command.Parameters.AddWithValue("$scope", scope);
-        command.Parameters.AddWithValue("$sessionId", sessionId);
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
+        using (var gate = GateFor(scope, sessionId))
+        lock (gate.Lock)
         {
-            try
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            var header = ReadHeader(connection, scope, sessionId, transaction);
+            if (header is null) return null;
+
+            var session = NewSession(header, scope);
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT payload_json FROM messages
+                WHERE scope = $scope AND session_id = $sessionId
+                ORDER BY id;
+                """;
+            command.Parameters.AddWithValue("$scope", scope);
+            command.Parameters.AddWithValue("$sessionId", sessionId);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
             {
-                var record = JsonSerializer.Deserialize(
-                    reader.GetString(0), SeekClawJsonContext.Compact.SessionMessage);
-                if (record is not null) session.Messages.Add(ToMessage(record));
+                try
+                {
+                    var record = JsonSerializer.Deserialize(
+                        reader.GetString(0), SeekClawJsonContext.Compact.SessionMessage);
+                    if (record is not null) session.Messages.Add(ToMessage(record));
+                }
+                catch (JsonException) { }
             }
-            catch (JsonException) { }
+            return session;
         }
-        return session;
     }
 
     public AgentSession? LoadLatest(WorkspaceInfo workspace)
@@ -322,45 +328,66 @@ public sealed class SessionStore : ISessionStore
     public void Truncate(WorkspaceInfo workspace, string sessionId, int keepMessageCount)
     {
         ValidateSessionId(sessionId);
+        EnsureLegacyImported(workspace);
         var scope = SeekClawDatabase.ScopeKey(workspace);
         using (var gate = GateFor(scope, sessionId))
         lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(deferred: false);
             if (keepMessageCount <= 0)
             {
-                using var deleteAll = connection.CreateCommand();
-                deleteAll.CommandText = "DELETE FROM messages WHERE scope = $scope AND session_id = $sessionId;";
-                deleteAll.Parameters.AddWithValue("$scope", scope);
-                deleteAll.Parameters.AddWithValue("$sessionId", sessionId);
-                deleteAll.ExecuteNonQuery();
-                return;
+                using (var deleteAll = connection.CreateCommand())
+                {
+                    deleteAll.Transaction = transaction;
+                    deleteAll.CommandText = "DELETE FROM messages WHERE scope = $scope AND session_id = $sessionId;";
+                    deleteAll.Parameters.AddWithValue("$scope", scope);
+                    deleteAll.Parameters.AddWithValue("$sessionId", sessionId);
+                    deleteAll.ExecuteNonQuery();
+                }
             }
-
-            object? keepId;
-            using (var select = connection.CreateCommand())
+            else
             {
-                select.CommandText = """
-                    SELECT id FROM messages
-                    WHERE scope = $scope AND session_id = $sessionId
-                    ORDER BY id LIMIT 1 OFFSET $offset;
-                    """;
-                select.Parameters.AddWithValue("$scope", scope);
-                select.Parameters.AddWithValue("$sessionId", sessionId);
-                select.Parameters.AddWithValue("$offset", keepMessageCount - 1);
-                keepId = select.ExecuteScalar();
-            }
-            if (keepId is null) return; // keep count beyond the history → no-op
+                object? keepId;
+                using (var select = connection.CreateCommand())
+                {
+                    select.Transaction = transaction;
+                    select.CommandText = """
+                        SELECT id FROM messages
+                        WHERE scope = $scope AND session_id = $sessionId
+                        ORDER BY id LIMIT 1 OFFSET $offset;
+                        """;
+                    select.Parameters.AddWithValue("$scope", scope);
+                    select.Parameters.AddWithValue("$sessionId", sessionId);
+                    select.Parameters.AddWithValue("$offset", keepMessageCount - 1);
+                    keepId = select.ExecuteScalar();
+                }
+                if (keepId is null) return; // keep count beyond the history → no-op
 
-            using var delete = connection.CreateCommand();
-            delete.CommandText = """
-                DELETE FROM messages
-                WHERE scope = $scope AND session_id = $sessionId AND id > $keepId;
-                """;
-            delete.Parameters.AddWithValue("$scope", scope);
-            delete.Parameters.AddWithValue("$sessionId", sessionId);
-            delete.Parameters.AddWithValue("$keepId", Convert.ToInt64(keepId));
-            delete.ExecuteNonQuery();
+                using (var delete = connection.CreateCommand())
+                {
+                    delete.Transaction = transaction;
+                    delete.CommandText = """
+                        DELETE FROM messages
+                        WHERE scope = $scope AND session_id = $sessionId AND id > $keepId;
+                        """;
+                    delete.Parameters.AddWithValue("$scope", scope);
+                    delete.Parameters.AddWithValue("$sessionId", sessionId);
+                    delete.Parameters.AddWithValue("$keepId", Convert.ToInt64(keepId));
+                    delete.ExecuteNonQuery();
+                }
+            }
+
+            using (var touch = connection.CreateCommand())
+            {
+                touch.Transaction = transaction;
+                touch.CommandText = "UPDATE sessions SET updated_at = $updatedAt WHERE scope = $scope AND id = $sessionId;";
+                touch.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+                touch.Parameters.AddWithValue("$scope", scope);
+                touch.Parameters.AddWithValue("$sessionId", sessionId);
+                touch.ExecuteNonQuery();
+            }
+            transaction.Commit();
         }
     }
 
@@ -459,7 +486,8 @@ public sealed class SessionStore : ISessionStore
             command.Parameters.AddWithValue("$sessionId", sessionId);
             if (command.ExecuteNonQuery() == 0)
                 throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
-            return ReadHeader(connection, scope, sessionId)!;
+            return ReadHeader(connection, scope, sessionId)
+                ?? throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
         }
     }
 
@@ -520,7 +548,8 @@ public sealed class SessionStore : ISessionStore
             command.Parameters.AddWithValue("$sessionId", sessionId);
             if (command.ExecuteNonQuery() == 0)
                 throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
-            return ReadHeader(connection, scope, sessionId)!;
+            return ReadHeader(connection, scope, sessionId)
+                ?? throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
         }
     }
 
@@ -533,12 +562,32 @@ public sealed class SessionStore : ISessionStore
         lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM sessions WHERE scope = $scope AND id = $sessionId;";
-            command.Parameters.AddWithValue("$scope", scope);
-            command.Parameters.AddWithValue("$sessionId", sessionId);
-            if (command.ExecuteNonQuery() == 0)
-                throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
+            using var transaction = connection.BeginTransaction(deferred: false);
+            using (var deleteRecords = connection.CreateCommand())
+            {
+                deleteRecords.Transaction = transaction;
+                deleteRecords.CommandText = "DELETE FROM execution_records WHERE kind = 'subagent' AND owner = $sessionId;";
+                deleteRecords.Parameters.AddWithValue("$sessionId", sessionId);
+                deleteRecords.ExecuteNonQuery();
+            }
+            using (var deleteChildren = connection.CreateCommand())
+            {
+                deleteChildren.Transaction = transaction;
+                deleteChildren.CommandText = "DELETE FROM sessions WHERE scope = $scope AND parent_session_id = $sessionId;";
+                deleteChildren.Parameters.AddWithValue("$scope", scope);
+                deleteChildren.Parameters.AddWithValue("$sessionId", sessionId);
+                deleteChildren.ExecuteNonQuery();
+            }
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = "DELETE FROM sessions WHERE scope = $scope AND id = $sessionId;";
+                command.Parameters.AddWithValue("$scope", scope);
+                command.Parameters.AddWithValue("$sessionId", sessionId);
+                if (command.ExecuteNonQuery() == 0)
+                    throw new FileNotFoundException($"Session not found: {sessionId}", _database.FilePath);
+            }
+            transaction.Commit();
             DeleteLegacyFile(workspace, sessionId);
         }
     }
@@ -702,9 +751,10 @@ public sealed class SessionStore : ISessionStore
         return command.ExecuteNonQuery() > 0;
     }
 
-    private static SessionHeader? ReadHeader(SqliteConnection connection, string scope, string sessionId)
+    private static SessionHeader? ReadHeader(SqliteConnection connection, string scope, string sessionId, SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT id, title, workspace, archived, reasoning_level, network_enabled,
                    llm_rounds, execution_steps, input_tokens, total_input_tokens,

@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using SeekClaw.Runtime;
+using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
@@ -314,7 +315,7 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
-    public void OpenAiBody_DeepSeekOptimization_PreservesReasoningContentAcrossTurns()
+    public void OpenAiBody_DeepSeekOptimization_DropsTextOnlyReasoningContentAndKeepsToolCallReasoning()
     {
         var request = new LlmRequest
         {
@@ -324,12 +325,21 @@ public sealed class ProviderTests : IDisposable
             Messages =
             [
                 ChatMessage.User("go"),
+                new ChatMessage
+                {
+                    Role = ChatRole.Assistant,
+                    Text = "",
+                    Thinking = "tool thinking",
+                    ToolCalls = [new ToolCallRequest("c1", "bash", """{"cmd":"ls"}""")],
+                },
+                ChatMessage.ToolResult("c1", "bash", "ok", true),
                 new ChatMessage { Role = ChatRole.Assistant, Text = "done", Thinking = "previous thinking" },
             ],
         };
 
         var body = OpenAiCompatibleClient.BuildBody(request);
-        Assert.Equal("previous thinking", body["messages"]![1]!["reasoning_content"]!.GetValue<string>());
+        Assert.Equal("tool thinking", body["messages"]![1]!["reasoning_content"]!.GetValue<string>());
+        Assert.Null(body["messages"]![3]!["reasoning_content"]);
     }
 
     [Fact]
@@ -656,7 +666,8 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal("检查图像主体", completion.Thinking);
         Assert.Equal("end_turn", completion.FinishReason);
         Assert.Equal("lookup", Assert.Single(completion.ToolCalls).Name);
-        Assert.Equal(120, completion.Usage.TotalInputTokens);
+        Assert.Equal(120, completion.Usage.InputTokens);
+        Assert.Equal(140, completion.Usage.TotalInputTokens);
         Assert.Equal(20, completion.Usage.CachedInputTokens);
         Assert.Equal(18, completion.Usage.OutputTokens);
     }
@@ -1147,6 +1158,23 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal("HTTP 401: bad key", ex.Message);
     }
 
+    [Fact]
+    public void BuildCandidates_FailoverDisabled_DoesNotSwitchWhenActiveCircuitIsOpen()
+    {
+        _store.Config.Provider = "alpha";
+        _store.Config.Model = "big";
+        _store.Config.Routing.Fallback = ["beta/tiny"];
+        _store.Config.Routing.FailoverEnabled = false;
+
+        var breaker = new CircuitBreaker(new RetryConfig { CircuitBreakThreshold = 1, CircuitCooldownSeconds = 60 });
+        breaker.RecordFailure("alpha/big");
+
+        var candidates = NewManager(breaker: breaker).BuildCandidates();
+
+        var single = Assert.Single(candidates);
+        Assert.Equal("alpha/big", single.Ref);
+    }
+
     private static ProviderManager NewManagerWithClients(
         ConfigStore store,
         ModelRegistry registry,
@@ -1397,6 +1425,255 @@ public sealed class ProviderTests : IDisposable
         for (var i = 0; i < 40; i++) normal.Append($"| Column {i} | Value {i} |\n");
         normal.Append(new string('-', 400));
         Assert.False(OpenAiCompatibleClient.Accumulator.HasDegenerateRepetition(normal, out _));
+    }
+
+    [Fact]
+    public void AnthropicBody_DeepSeekOptimization_EmitsThinkingEffortAndFullTurnCoT()
+    {
+        var provider = new ProviderConfig
+        {
+            Id = "deepseek-anthropic",
+            Kind = "anthropic",
+            BaseUrl = "https://api.deepseek.com/anthropic",
+        };
+        var model = new ModelConfig { Id = "deepseek-v4" };
+
+        var request = new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            OptimizeDeepSeek = true,
+            EnableThinking = true,
+            ReasoningLevel = ReasoningLevel.High,
+            Temperature = 0.2,
+            Messages =
+            [
+                ChatMessage.User("start"),
+                new ChatMessage
+                {
+                    Role = ChatRole.Assistant,
+                    Text = "turn 1",
+                    Thinking = "step 1",
+                    ThinkingSignature = null,
+                    ModelRef = "deepseek-anthropic/deepseek-v4",
+                },
+                ChatMessage.User("next"),
+                new ChatMessage
+                {
+                    Role = ChatRole.Assistant,
+                    Text = "turn 2",
+                    Thinking = "step 2",
+                    ThinkingSignature = "sig_old",
+                    ModelRef = "deepseek-anthropic/deepseek-v4-flash",
+                },
+                ChatMessage.User("again"),
+                new ChatMessage
+                {
+                    Role = ChatRole.Assistant,
+                    Text = "turn 3",
+                    Thinking = "step 3",
+                    ThinkingSignature = "sig_ok",
+                    ModelRef = "deepseek-anthropic/deepseek-v4",
+                },
+                ChatMessage.User("finish"),
+            ],
+        };
+
+        var body = AnthropicClient.BuildBody(request);
+        Assert.Equal("enabled", body["thinking"]!["type"]!.GetValue<string>());
+        Assert.Equal("high", body["output_config"]!["effort"]!.GetValue<string>());
+        Assert.Equal(0.2, body["temperature"]!.GetValue<double>(), 3);
+
+        var messages = body["messages"]!.AsArray();
+        // Turn 1: thinking replayed even without signature.
+        var turn1Thinking = messages[1]!["content"]![0]!.AsObject();
+        Assert.Equal("thinking", turn1Thinking["type"]!.GetValue<string>());
+        Assert.Equal("step 1", turn1Thinking["thinking"]!.GetValue<string>());
+        Assert.Null(turn1Thinking["signature"]);
+
+        // Turn 2: cross-model signature stripped, thinking preserved.
+        var turn2Thinking = messages[3]!["content"]![0]!.AsObject();
+        Assert.Equal("thinking", turn2Thinking["type"]!.GetValue<string>());
+        Assert.Equal("step 2", turn2Thinking["thinking"]!.GetValue<string>());
+        Assert.Null(turn2Thinking["signature"]);
+
+        // Turn 3: matching model signature preserved.
+        var turn3Thinking = messages[5]!["content"]![0]!.AsObject();
+        Assert.Equal("thinking", turn3Thinking["type"]!.GetValue<string>());
+        Assert.Equal("step 3", turn3Thinking["thinking"]!.GetValue<string>());
+        Assert.Equal("sig_ok", turn3Thinking["signature"]!.GetValue<string>());
+
+        // Effort mapping and disabled thinking wire check.
+        var maxBody = AnthropicClient.BuildBody(new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            OptimizeDeepSeek = true,
+            EnableThinking = true,
+            ReasoningLevel = ReasoningLevel.XHigh,
+            Messages = [ChatMessage.User("hi")],
+        });
+        Assert.Equal("max", maxBody["output_config"]!["effort"]!.GetValue<string>());
+
+        var lowBody = AnthropicClient.BuildBody(new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            OptimizeDeepSeek = true,
+            EnableThinking = true,
+            ReasoningLevel = ReasoningLevel.Low,
+            Messages = [ChatMessage.User("hi")],
+        });
+        Assert.Equal("low", lowBody["output_config"]!["effort"]!.GetValue<string>());
+
+        var disabledBody = AnthropicClient.BuildBody(new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            OptimizeDeepSeek = true,
+            EnableThinking = false,
+            ReasoningLevel = ReasoningLevel.High,
+            Messages = [ChatMessage.User("hi")],
+        });
+        Assert.Equal("disabled", disabledBody["thinking"]!["type"]!.GetValue<string>());
+        Assert.Null(disabledBody["output_config"]);
+    }
+
+    [Fact]
+    public void AnthropicBody_DeepSeekOptimization_MergesAdjacentUserAndEmptyToolResults()
+    {
+        var request = new LlmRequest
+        {
+            Provider = new ProviderConfig
+            {
+                Id = "deepseek-anthropic",
+                Kind = "anthropic",
+                BaseUrl = "https://api.deepseek.com/anthropic",
+            },
+            Model = new ModelConfig { Id = "deepseek-v4" },
+            OptimizeDeepSeek = true,
+            Messages =
+            [
+                ChatMessage.User("run tools"),
+                new ChatMessage
+                {
+                    Role = ChatRole.Assistant,
+                    ToolCalls =
+                    [
+                        new ToolCallRequest("call_1", "bash", "{}"),
+                        new ToolCallRequest("call_2", "bash", "{}"),
+                    ],
+                },
+                ChatMessage.ToolResult("call_1", "bash", "", true),
+                ChatMessage.ToolResult("call_2", "bash", "ok", true),
+                ChatMessage.User("follow up"),
+            ],
+        };
+
+        var body = AnthropicClient.BuildBody(request);
+        var messages = body["messages"]!.AsArray();
+        Assert.Equal(3, messages.Count);
+        var mergedUser = messages[2]!.AsObject();
+        Assert.Equal("user", mergedUser["role"]!.GetValue<string>());
+        var blocks = mergedUser["content"]!.AsArray();
+        Assert.Equal(3, blocks.Count);
+        Assert.Equal("tool_result", blocks[0]!["type"]!.GetValue<string>());
+        Assert.Equal("call_1", blocks[0]!["tool_use_id"]!.GetValue<string>());
+        var emptyContent = Assert.IsType<JsonArray>(blocks[0]!["content"]);
+        Assert.Empty(emptyContent);
+        Assert.Equal("tool_result", blocks[1]!["type"]!.GetValue<string>());
+        Assert.Equal("call_2", blocks[1]!["tool_use_id"]!.GetValue<string>());
+        Assert.Equal("text", blocks[2]!["type"]!.GetValue<string>());
+        Assert.Equal("follow up", blocks[2]!["text"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void DeepSeekOptimization_ApplyHeaders_SetsCompactionHeaderOnlyForCompactionPurpose()
+    {
+        var provider = new ProviderConfig { Id = "deepseek", Kind = "anthropic", BaseUrl = "https://api.deepseek.com/anthropic" };
+        var model = new ModelConfig { Id = "deepseek-v4" };
+
+        using var compactReq = new HttpRequestMessage(HttpMethod.Post, "https://api.deepseek.com/anthropic/v1/messages");
+        DeepSeekOptimizationPolicy.ApplyHeaders(compactReq, new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            OptimizeDeepSeek = true,
+            Purpose = "compaction",
+            Messages = [ChatMessage.User("compact")],
+        });
+        Assert.True(compactReq.Headers.TryGetValues("x-deepseek-harness-compact", out var compactVals));
+        Assert.Equal(["1"], compactVals.ToArray());
+
+        using var normalReq = new HttpRequestMessage(HttpMethod.Post, "https://api.deepseek.com/anthropic/v1/messages");
+        DeepSeekOptimizationPolicy.ApplyHeaders(normalReq, new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            OptimizeDeepSeek = true,
+            Purpose = null,
+            Messages = [ChatMessage.User("normal")],
+        });
+        Assert.False(normalReq.Headers.Contains("x-deepseek-harness-compact"));
+
+        using var optOutReq = new HttpRequestMessage(HttpMethod.Post, "https://api.deepseek.com/anthropic/v1/messages");
+        DeepSeekOptimizationPolicy.ApplyHeaders(optOutReq, new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            OptimizeDeepSeek = false,
+            Purpose = "compaction",
+            Messages = [ChatMessage.User("compact")],
+        });
+        Assert.False(optOutReq.Headers.Contains("x-deepseek-harness-compact"));
+    }
+
+    [Fact]
+    public void ContextPlanner_PruneToolResults_TrimsOversizedToolOutputsSafely()
+    {
+        var toolText = new string('a', 49) + "\uD83D\uDE00" + new string('m', 100) + "\uD83D\uDE00" + new string('z', 19);
+        var untouchedAfterEnd = ChatMessage.ToolResult("c2", "bash", new string('x', 200), true);
+        var untouchedUser = ChatMessage.User(new string('u', 200));
+        var messages = new List<ChatMessage>
+        {
+            untouchedUser,
+            ChatMessage.ToolResult("c1", "bash", toolText, true),
+            untouchedAfterEnd,
+        };
+
+        var prunedFirst = ContextPlanner.PruneToolResults(messages, endExclusive: 2, thresholdChars: 120, headChars: 50, tailChars: 20);
+        Assert.Equal(1, prunedFirst);
+        Assert.Equal(untouchedUser.Text, messages[0].Text);
+        Assert.Contains(ContextPlanner.PrunedToolResultMarker, messages[1].Text, StringComparison.Ordinal);
+        Assert.StartsWith(new string('a', 49), messages[1].Text);
+        Assert.EndsWith(new string('z', 19), messages[1].Text);
+        Assert.False(char.IsSurrogate(messages[1].Text[48]));
+        Assert.True(messages[1].Text.Length < toolText.Length);
+        foreach (var ch in messages[1].Text) Assert.False(char.IsSurrogate(ch));
+        Assert.Equal(200, messages[2].Text.Length);
+
+        // Idempotent when already pruned.
+        var prunedSecond = ContextPlanner.PruneToolResults(messages, endExclusive: 2, thresholdChars: 120, headChars: 50, tailChars: 20);
+        Assert.Equal(0, prunedSecond);
+    }
+
+    [Fact]
+    public void DeepSeekOptimization_RepeatToolReminder_CanonicalizesArgsAndTriggersOnThresholds()
+    {
+        var left = DeepSeekOptimizationPolicy.CanonicalizeArgumentsJson("""{"b":2,"a":{"y":1,"x":0}}""");
+        var right = DeepSeekOptimizationPolicy.CanonicalizeArgumentsJson("""{"a":{"x":0,"y":1},"b":2}""");
+        Assert.Equal(left, right);
+
+        foreach (var count in new[] { 1, 2, 4, 6, 7 })
+            Assert.Null(DeepSeekOptimizationPolicy.FormatRepeatToolReminder("read_file", left, count));
+
+        foreach (var count in new[] { 3, 5, 8, 9 })
+        {
+            var reminder = DeepSeekOptimizationPolicy.FormatRepeatToolReminder("read_file", left, count);
+            Assert.NotNull(reminder);
+            Assert.Contains("<system-reminder>", reminder, StringComparison.Ordinal);
+            Assert.Contains("read_file", reminder, StringComparison.Ordinal);
+        }
     }
 
     private sealed class StubHttpFactory(string body, string? mediaType = null) : ILlmHttpFactory

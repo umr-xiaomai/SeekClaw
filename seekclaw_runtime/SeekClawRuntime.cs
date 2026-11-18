@@ -359,7 +359,7 @@ public static class RuntimeServiceCollectionExtensions
         // Central file write-lock coordinator shared by all concurrent turns in the
         // daemon; single-turn (CLI) runtimes fall back to the no-op implementation.
         services.AddSingleton<IFileLockCoordinator>(coordinator ?? new NoopFileLockCoordinator());
-        services.AddSingleton(new FileLockScope(turnOwner ?? ""));
+        services.AddSingleton(new FileLockScope(string.IsNullOrWhiteSpace(turnOwner) ? Guid.NewGuid().ToString("N")[..8] : turnOwner));
         services.AddSingleton(subAgentScope ?? new SubAgentScope(0));
         services.AddSingleton<ISubAgentRegistry, SubAgentRegistry>();
         services.AddSingleton<SubAgentRunner>();

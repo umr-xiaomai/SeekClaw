@@ -3,15 +3,31 @@ using System.Text.Json;
 namespace SeekClaw.Runtime.Configuration;
 
 /// <summary>A task inherits the launching runtime's configuration without persisting its local overrides.</summary>
-internal sealed class TaskConfigStore(IConfigStore source) : IConfigStore
+internal sealed class TaskConfigStore : IConfigStore
 {
-    public SeekClawConfig Config { get; } = JsonSerializer.Deserialize(
-        JsonSerializer.Serialize(source.Config, SeekClawJsonContext.Default.SeekClawConfig), SeekClawJsonContext.Default.SeekClawConfig)!;
-    public RuntimeState State { get; } = JsonSerializer.Deserialize(
-        JsonSerializer.Serialize(source.State, SeekClawJsonContext.Default.RuntimeState), SeekClawJsonContext.Default.RuntimeState)!;
-    public bool HasAnomaly => source.HasAnomaly;
-    public string? AnomalyDetail => source.AnomalyDetail;
-    public string? BackupConfigFile => source.BackupConfigFile;
+    private readonly IConfigStore _source;
+
+    public TaskConfigStore(IConfigStore source)
+    {
+        _source = source;
+        if (source is ConfigStore cs)
+        {
+            (Config, State) = cs.CloneSnapshot();
+        }
+        else
+        {
+            Config = JsonSerializer.Deserialize(
+                JsonSerializer.Serialize(source.Config, SeekClawJsonContext.Default.SeekClawConfig), SeekClawJsonContext.Default.SeekClawConfig)!;
+            State = JsonSerializer.Deserialize(
+                JsonSerializer.Serialize(source.State, SeekClawJsonContext.Default.RuntimeState), SeekClawJsonContext.Default.RuntimeState)!;
+        }
+    }
+
+    public SeekClawConfig Config { get; }
+    public RuntimeState State { get; }
+    public bool HasAnomaly => _source.HasAnomaly;
+    public string? AnomalyDetail => _source.AnomalyDetail;
+    public string? BackupConfigFile => _source.BackupConfigFile;
     public void Save() { }
     public void SaveState() { }
     public void Reload() { }

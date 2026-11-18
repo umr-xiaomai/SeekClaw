@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
+using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
@@ -28,26 +29,40 @@ public sealed class SubAgentRunner(
     {
         if (taskServices is not null)
         {
-            var task = await StartAsync(request, context, ct).ConfigureAwait(false);
+            var stopwatch = Stopwatch.StartNew();
+            var task = await StartCoreAsync(request, context, synchronous: true, ct).ConfigureAwait(false);
             var id = task["id"]!.GetValue<string>();
-            while (task["status"]?.GetValue<string>() == "running")
+            try
             {
-                if (ct.IsCancellationRequested)
+                while (task["status"]?.GetValue<string>() == "running")
                 {
-                    await taskServices.SubAgents.CancelAsync(Parent(context), id, CancellationToken.None).ConfigureAwait(false);
-                    ct.ThrowIfCancellationRequested();
+                    if (ct.IsCancellationRequested)
+                    {
+                        await taskServices.SubAgents.CancelAsync(Parent(context), id, CancellationToken.None).ConfigureAwait(false);
+                        ct.ThrowIfCancellationRequested();
+                    }
+                    task = await taskServices.SubAgents.WaitAsync(Parent(context), id, 1000, ct).ConfigureAwait(false);
                 }
-                task = await taskServices.SubAgents.WaitAsync(Parent(context), id, 1000, CancellationToken.None).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                await taskServices.SubAgents.CancelAsync(Parent(context), id, CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
+            stopwatch.Stop();
             return new SubAgentTaskResult(task["status"]?.GetValue<string>() == "completed",
-                task["output"]?.GetValue<string>() ?? "", task["error"]?.GetValue<string>());
+                task["output"]?.GetValue<string>() ?? "", task["error"]?.GetValue<string>(), stopwatch.Elapsed);
         }
-        return await RunSessionAsync(request, context, null, null, ct).ConfigureAwait(false);
+        return await RunSessionAsync(request, context, null, null, synchronous: true, ct).ConfigureAwait(false);
     }
 
     public static string Parent(ToolContext context) => string.IsNullOrWhiteSpace(context.SessionId) ? context.Owner : context.SessionId;
 
-    public async Task<System.Text.Json.Nodes.JsonObject> StartAsync(SubAgentTaskRequest request, ToolContext context, CancellationToken ct)
+    public Task<System.Text.Json.Nodes.JsonObject> StartAsync(SubAgentTaskRequest request, ToolContext context, CancellationToken ct) =>
+        StartCoreAsync(request, context, synchronous: false, ct);
+
+    private async Task<System.Text.Json.Nodes.JsonObject> StartCoreAsync(
+        SubAgentTaskRequest request, ToolContext context, bool synchronous, CancellationToken ct)
     {
         if (taskServices is null) throw new InvalidOperationException("Persistent sub-agent services are unavailable.");
         if (context.SubAgentDepth >= 1) throw new InvalidOperationException("Sub-agents cannot delegate further tasks.");
@@ -57,21 +72,29 @@ public sealed class SubAgentRunner(
         var session = sessions.Create(context.Workspace, networkEnabled: context.NetworkEnabled && context.Agent.NetworkEnabled,
             parentSessionId: Parent(context));
         var id = Guid.NewGuid().ToString("N");
-        if (request.Isolated)
-            await taskServices.Worktrees.CreateAsync(context.Workspace.Root, session.Header.Id, ct: ct).ConfigureAwait(false);
-        var record = new System.Text.Json.Nodes.JsonObject
+        try
         {
-            ["id"] = id, ["sessionId"] = session.Header.Id, ["workspace"] = context.Workspace.Root,
-            ["role"] = request.Role, ["name"] = request.Name, ["model"] = request.ModelOverride,
-            ["mode"] = context.Workspace.Config?.Mode ?? context.Agent.Mode,
-            ["networkEnabled"] = context.NetworkEnabled && context.Agent.NetworkEnabled,
-        };
-        // Capture the small immutable permission/configuration context; no child depends on its parent's DI lifetime.
-        return await taskServices.SubAgents.StartAsync(Parent(context), record, async token =>
+            if (request.Isolated)
+                await taskServices.Worktrees.CreateAsync(context.Workspace.Root, session.Header.Id, ct: ct).ConfigureAwait(false);
+            var record = new System.Text.Json.Nodes.JsonObject
+            {
+                ["id"] = id, ["sessionId"] = session.Header.Id, ["workspace"] = context.Workspace.Root,
+                ["role"] = request.Role, ["name"] = request.Name, ["model"] = request.ModelOverride,
+                ["mode"] = context.Workspace.Config?.Mode ?? context.Agent.Mode,
+                ["networkEnabled"] = context.NetworkEnabled && context.Agent.NetworkEnabled,
+            };
+            // Capture the small immutable permission/configuration context; no child depends on its parent's DI lifetime.
+            return await taskServices.SubAgents.StartAsync(Parent(context), record, async token =>
+            {
+                var result = await RunSessionAsync(request, context, session, id, synchronous, token).ConfigureAwait(false);
+                return new AgentTurnResult(result.Output, token.IsCancellationRequested, result.Error);
+            }, ct).ConfigureAwait(false);
+        }
+        catch
         {
-            var result = await RunSessionAsync(request, context, session, id, token).ConfigureAwait(false);
-            return new AgentTurnResult(result.Output, token.IsCancellationRequested, result.Error);
-        }, ct).ConfigureAwait(false);
+            try { sessions.Delete(context.Workspace, session.Header.Id); } catch { }
+            throw;
+        }
     }
 
     public async Task<System.Text.Json.Nodes.JsonObject> SendAsync(string id, string instruction, ToolContext context, CancellationToken ct)
@@ -80,7 +103,10 @@ public sealed class SubAgentRunner(
         if (context.SubAgentDepth >= 1) throw new InvalidOperationException("Sub-agents cannot control sibling tasks.");
         ArgumentException.ThrowIfNullOrWhiteSpace(instruction);
         var record = taskServices.SubAgents.Get(Parent(context), id);
-        if (record["workspace"]!.GetValue<string>() != context.Workspace.Root)
+        if (!string.Equals(
+                SeekClawDatabase.PathKey(record["workspace"]!.GetValue<string>()),
+                SeekClawDatabase.PathKey(context.Workspace.Root),
+                StringComparison.Ordinal))
             throw new InvalidOperationException("Sub-agent workspace changed; return to the original workspace before resuming.");
         var session = new SessionStore(taskServices.Database).Load(context.Workspace, record["sessionId"]!.GetValue<string>())
             ?? throw new InvalidOperationException("Sub-agent session is missing.");
@@ -94,7 +120,8 @@ public sealed class SubAgentRunner(
         var current = AgentModeExtensions.Parse(context.Workspace.Config?.Mode ?? context.Agent.Mode);
         var limitedMode = mode.IsReadOnly() ? mode : current.IsReadOnly() ? current
             : mode == AgentMode.Manual || current == AgentMode.Manual ? AgentMode.Manual
-            : mode == AgentMode.Guardrail || current == AgentMode.Guardrail ? AgentMode.Guardrail : current;
+            : mode == AgentMode.Guardrail || current == AgentMode.Guardrail ? AgentMode.Guardrail
+            : mode == AgentMode.Edit || current == AgentMode.Edit ? AgentMode.Edit : current;
         var config = CloneConfig(context.Workspace.Config);
         config.Mode = limitedMode.ToModeString();
         var workspace = new WorkspaceInfo { Root = context.Workspace.Root, ProjectKinds = context.Workspace.ProjectKinds, Config = config,
@@ -106,13 +133,13 @@ public sealed class SubAgentRunner(
         session.Header.NetworkEnabled &= record["networkEnabled"]?.GetValue<bool>() ?? false;
         return await taskServices.SubAgents.StartAsync(Parent(context), record, async token =>
         {
-            var result = await RunSessionAsync(request, limitedContext, session, id, token).ConfigureAwait(false);
+            var result = await RunSessionAsync(request, limitedContext, session, id, synchronous: false, token).ConfigureAwait(false);
             return new AgentTurnResult(result.Output, token.IsCancellationRequested, result.Error);
         }, ct).ConfigureAwait(false);
     }
 
     private async Task<SubAgentTaskResult> RunSessionAsync(SubAgentTaskRequest request, ToolContext context,
-        AgentSession? savedSession, string? persistentId, CancellationToken ct)
+        AgentSession? savedSession, string? persistentId, bool synchronous, CancellationToken ct)
     {
         if (context.SubAgentDepth >= 1)
         {
@@ -281,7 +308,8 @@ public sealed class SubAgentRunner(
                     session,
                     childWorkspace,
                     request.Task,
-                    ct).ConfigureAwait(false);
+                    ct,
+                    turnRequestId: synchronous ? context.TurnRequestId : null).ConfigureAwait(false);
                 if (turnResult.Maintenance is { } maintenance) await maintenance.ConfigureAwait(false);
             }
             finally

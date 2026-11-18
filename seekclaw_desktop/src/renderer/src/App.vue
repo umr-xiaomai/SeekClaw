@@ -36,7 +36,6 @@ import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
 import ConversationTimeline from './components/ConversationTimeline.vue'
 import { extractConversationTurns, type ConversationTurn } from './components/conversation-turns'
 
-import OfficialSkillsDialog from './components/OfficialSkillsDialog.vue'
 import ProjectPropertiesDialog from './components/ProjectPropertiesDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import Sidebar from './components/Sidebar.vue'
@@ -45,8 +44,8 @@ import TaskStepList from './components/TaskStepList.vue'
 import { computeTurnTaskSteps, type TaskStep } from './task-planner'
 import { confirmAction } from './confirmation'
 import { finalizeAssistantBubbles } from './conversation-state'
-import { widgetsAtTurnTails } from './conversation-widgets'
 import { isHiddenSystemUserMessage, isInternalUserMessage } from './internal-messages'
+import { collectThreadSubAgents, type ThreadSubAgentEntry } from './subagent-activity'
 import { isForbiddenProjectPath } from './project-paths'
 import { retryRuntimeConnection, RUNTIME_RECONNECT_ATTEMPTS } from './runtime-reconnect'
 import { ReasoningLevel } from './types'
@@ -91,7 +90,11 @@ import {
 import { applySessionTitle } from './session-title'
 import { useSidebarVisibility } from './sidebar-expansion'
 import { createConversationScroller } from './conversation-scroll'
-import { projectConversationTurns } from './conversation-process'
+import {
+  collectMessageImageSources,
+  projectConversationItems,
+  projectConversationTurns
+} from './conversation-process'
 import { computeConversationVirtualWindow, correctConversationMeasurement } from './conversation-virtual'
 
 const PROJECTS_STORAGE_KEY = 'seekclaw-projects-v2'
@@ -116,7 +119,7 @@ const appInfo = ref<AppInfo>({
   documentsPath: '',
   userProfilePath: ''
 })
-type AppPage = 'main' | 'settings' | 'customization' | 'extensions' | 'archived' | 'scheduled' | 'official-skills'
+type AppPage = 'main' | 'settings' | 'customization' | 'extensions' | 'archived' | 'scheduled'
 
 const sidebarOpen = useSidebarVisibility()
 const activePage = ref<AppPage>('main')
@@ -125,9 +128,8 @@ const currentActivityItem = computed<'chat' | 'archived' | 'scheduled' | 'custom
   switch (activePage.value) {
     case 'archived': return 'archived'
     case 'scheduled': return 'scheduled'
-    case 'customization': return 'customization'
+    case 'customization':
     case 'extensions':
-    case 'official-skills':
       return 'customization'
     case 'settings': return 'settings'
     case 'main':
@@ -343,6 +345,40 @@ const activeSubAgent = computed(() => {
   return activeThread.value.messages.flatMap((message) => message.subAgents ?? [])
     .findLast((agent) => agent.id === selected.agent.id) ?? selected.agent
 })
+const activeThreadSubAgents = computed<ThreadSubAgentEntry[]>(() => {
+  return collectThreadSubAgents(activeThread.value?.messages ?? [])
+})
+
+const DEFAULT_SUBAGENT_PANEL_WIDTH = 520
+const MIN_SUBAGENT_PANEL_WIDTH = 320
+const MAX_SUBAGENT_PANEL_WIDTH = 1400
+const SUBAGENT_PANEL_WIDTH_STORAGE_KEY = 'seekclaw-subagent-panel-width-v1'
+
+function loadStoredSubagentPanelWidth(): number {
+  try {
+    const raw = localStorage.getItem(SUBAGENT_PANEL_WIDTH_STORAGE_KEY)
+    if (!raw) return DEFAULT_SUBAGENT_PANEL_WIDTH
+    const val = Number(raw)
+    if (Number.isFinite(val) && val >= MIN_SUBAGENT_PANEL_WIDTH && val <= MAX_SUBAGENT_PANEL_WIDTH) {
+      return val
+    }
+    return DEFAULT_SUBAGENT_PANEL_WIDTH
+  } catch {
+    return DEFAULT_SUBAGENT_PANEL_WIDTH
+  }
+}
+
+const subagentPanelWidth = ref(loadStoredSubagentPanelWidth())
+
+function resizeSubagentPanel(width: number): void {
+  if (!Number.isFinite(width)) return
+  const maxWidth = Math.min(MAX_SUBAGENT_PANEL_WIDTH, Math.max(MIN_SUBAGENT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.85)))
+  const nextWidth = Math.min(maxWidth, Math.max(MIN_SUBAGENT_PANEL_WIDTH, Math.round(width)))
+  if (nextWidth === subagentPanelWidth.value) return
+  subagentPanelWidth.value = nextWidth
+  localStorage.setItem(SUBAGENT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
+}
+
 watch(activeThreadId, () => { selectedSubAgent.value = null })
 
 function openSubAgent(agent: SubAgentActivity): void {
@@ -381,16 +417,27 @@ const activeModelSupportsReasoning = computed<boolean>(() => {
   if (cap.thinking === false && cap.reasoning === false && !cap.maxReasoningLevel) return false
   return true
 })
-const activeImageSources = computed<Record<string, string>>(() => {
-  const sources: Record<string, string> = {}
-  for (const message of activeThread.value?.messages ?? [])
-    for (const image of message.images ?? [])
-      sources[image.id] = `data:${image.mediaType};base64,${image.data}`
-  return sources
-})
+const activeImageSources = computed<Record<string, string>>(() =>
+  collectMessageImageSources(activeThread.value?.messages ?? [])
+)
 const activeProject = computed(() => {
   const projectId = activeThread.value ? activeThread.value.projectId : selectedProjectId.value
   return projects.value.find((project) => project.id === projectId)
+})
+let cachedGitPanelProject: { source?: ProjectItem; workspace?: string; resolved?: ProjectItem } = {}
+const gitPanelProject = computed<ProjectItem | undefined>(() => {
+  const project = activeProject.value
+  const workspace = activeThread.value?.executionWorkspace || ''
+  if (!project || !workspace || project.path === workspace) {
+    cachedGitPanelProject = {}
+    return project
+  }
+  if (cachedGitPanelProject.source === project && cachedGitPanelProject.workspace === workspace && cachedGitPanelProject.resolved) {
+    return cachedGitPanelProject.resolved
+  }
+  const resolved = { ...project, path: workspace }
+  cachedGitPanelProject = { source: project, workspace, resolved }
+  return resolved
 })
 const globalTaskActive = computed(() => activeThread.value ? !activeThread.value.projectId : !selectedProjectId.value)
 const currentWorkspacePath = computed(() => activeProject.value?.path || runtimeWorkspacePath.value || '')
@@ -639,6 +686,7 @@ function resizeGitPanel(width: number): void {
   if (!Number.isFinite(width)) return
   const maxWidth = Math.min(MAX_GIT_PANEL_WIDTH, Math.max(MIN_GIT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.9)))
   const nextWidth = Math.min(maxWidth, Math.max(MIN_GIT_PANEL_WIDTH, Math.round(width)))
+  if (nextWidth === gitPanelWidth.value) return
   gitPanelWidth.value = nextWidth
   localStorage.setItem(GIT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
 }
@@ -714,6 +762,8 @@ function isNearConversationBottom(element: HTMLElement, threshold = 48): boolean
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold
 }
 
+let viewportMeasureRafId: number | null = null
+
 function measureConversationViewport(): void {
   if (scrollArea.value) conversationViewportHeight.value = scrollArea.value.clientHeight
   if (scrollArea.value && conversationContent.value) {
@@ -721,6 +771,14 @@ function measureConversationViewport(): void {
       - scrollArea.value.getBoundingClientRect().top + scrollArea.value.scrollTop
       + (parseFloat(getComputedStyle(conversationContent.value).paddingTop) || 0)
   }
+}
+
+function scheduleConversationViewportMeasure(): void {
+  if (viewportMeasureRafId !== null) return
+  viewportMeasureRafId = requestAnimationFrame(() => {
+    viewportMeasureRafId = null
+    measureConversationViewport()
+  })
 }
 
 const userTurns = computed<ConversationTurn[]>(() => {
@@ -824,8 +882,8 @@ const scrollToBottom = conversationScroller.scrollToBottom
 watch([scrollArea, conversationContent], () => {
   conversationResizeObserver?.disconnect()
   conversationResizeObserver = new ResizeObserver(() => {
-    measureConversationViewport()
-    void scrollToBottom()
+    scheduleConversationViewportMeasure()
+    if (autoFollowConversation.value) void scrollToBottom()
   })
   if (scrollArea.value) conversationResizeObserver.observe(scrollArea.value)
   if (conversationContent.value) conversationResizeObserver.observe(conversationContent.value)
@@ -1057,10 +1115,6 @@ function openScheduledTasks(): void {
   activePropertiesProject.value = null
   taskSettingsThreadId.value = ''
   activePage.value = 'scheduled'
-}
-
-function openOfficialSkills(): void {
-  openCustomization('skills')
 }
 
 function closePage(): void {
@@ -1384,47 +1438,11 @@ async function selectThread(id: string): Promise<void> {
   await scrollToBottom(false, true)
 }
 
-interface ConversationItem {
-  message: ChatMessage
-  widgets: ConversationWidget[]
-  showFooter: boolean
-  isIntermediate?: boolean
-}
-
-const conversationItems = computed<ConversationItem[]>(() => {
+const conversationItems = computed(() => {
   const thread = activeThread.value
-  const messages = (thread?.messages ?? []).filter(
-    (message) => !isHiddenSystemUserMessage(message)
-  )
-  const isThreadRunning = thread?.running === true
-  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user' && !isInternalUserMessage(m))
-  const turnWidgets = widgetsAtTurnTails(messages, {
-    running: isThreadRunning,
-    startMessageId: thread?.activeTurnStartId
-  })
-
-  return messages.map((message, index) => {
-    let showFooter = false
-    let isIntermediate = false
-    if (message.role === 'assistant') {
-      const inActiveRunningTurn = isThreadRunning && (lastUserIndex < 0 || index >= lastUserIndex)
-      let hasLaterAssistant = false
-      for (let j = index + 1; j < messages.length; j++) {
-        const next = messages[j]
-        if (!next || next.role === 'user') break
-        if (next.role === 'assistant') {
-          hasLaterAssistant = true
-          break
-        }
-      }
-      if (hasLaterAssistant) {
-        isIntermediate = true
-      }
-      if (!inActiveRunningTurn && (Boolean(message.content?.trim()) || Boolean(message.errorMessage?.trim()))) {
-        showFooter = !hasLaterAssistant
-      }
-    }
-    return { message, showFooter, isIntermediate, widgets: turnWidgets.get(message.id) ?? [] }
+  return projectConversationItems(thread?.messages ?? [], {
+    running: thread?.running === true,
+    activeTurnStartId: thread?.activeTurnStartId
   })
 })
 
@@ -1471,10 +1489,11 @@ const virtualWindow = computed(() => computeConversationVirtualWindow({
 }))
 
 const vMeasure = {
-  mounted(el: HTMLElement, binding: { value: string }): void {
+  mounted(el: HTMLElement & { __heightObserver?: ResizeObserver; __heightFrame?: number }, binding: { value: string }): void {
     const report = (): void => {
       const height = el.getBoundingClientRect().height
-      if (height <= 0 || turnHeights.get(binding.value) === height) return
+      const prev = turnHeights.get(binding.value)
+      if (height <= 0 || (prev !== undefined && Math.abs(prev - height) < 0.5)) return
       const container = scrollArea.value
       if (container && virtualWindow.value.active) {
         const top = correctConversationMeasurement({
@@ -1496,11 +1515,22 @@ const vMeasure = {
       turnHeights.set(binding.value, height)
     }
     report()
-    const observer = new ResizeObserver(report)
-      ; (el as HTMLElement & { __heightObserver?: ResizeObserver }).__heightObserver = observer
+    const scheduleReport = (): void => {
+      if (el.__heightFrame !== undefined) return
+      el.__heightFrame = requestAnimationFrame(() => {
+        el.__heightFrame = undefined
+        report()
+      })
+    }
+    const observer = new ResizeObserver(scheduleReport)
+    el.__heightObserver = observer
     observer.observe(el)
   },
-  unmounted(el: HTMLElement & { __heightObserver?: ResizeObserver }): void {
+  unmounted(el: HTMLElement & { __heightObserver?: ResizeObserver; __heightFrame?: number }): void {
+    if (el.__heightFrame !== undefined) {
+      cancelAnimationFrame(el.__heightFrame)
+      el.__heightFrame = undefined
+    }
     el.__heightObserver?.disconnect()
   }
 }
@@ -2217,16 +2247,20 @@ onMounted(async () => {
   appReadyForRecovery = true
   await runReconnectCycle()
   measureConversationViewport()
-  window.addEventListener('resize', measureConversationViewport)
+  window.addEventListener('resize', scheduleConversationViewportMeasure)
   if (!daemonState.value.connected) projects.value.forEach((project) => { project.loaded = true })
   if (activeThread.value) composer.value?.focus()
 })
 
 onBeforeUnmount(() => {
   appReadyForRecovery = false
+  if (viewportMeasureRafId !== null) {
+    cancelAnimationFrame(viewportMeasureRafId)
+    viewportMeasureRafId = null
+  }
   conversationScroller.dispose()
   conversationResizeObserver?.disconnect()
-  window.removeEventListener('resize', measureConversationViewport)
+  window.removeEventListener('resize', scheduleConversationViewportMeasure)
   window.removeEventListener('seekclaw:artifact-preview-open', handleArtifactPreviewOpen)
   unsubscribeBrowser?.()
   unsubscribeEvent?.()
@@ -2489,16 +2523,25 @@ watch(theme, applyTheme)
           </footer>
         </main>
 
-        <div v-if="activePage === 'main' && activeSubAgent && activeThread?.sessionId" class="subagent-panel-host">
-          <div class="subagent-panel-tab"><span>子智能体</span></div>
-          <SubAgentConversationPanel :agent="activeSubAgent" :session-id="activeThread.sessionId" :workspace="activeProject?.path"
-            @close="selectedSubAgent = null" @open-diff="openToolDiff" />
-        </div>
+        <Transition name="side-panel">
+          <SubAgentConversationPanel
+            v-if="activePage === 'main' && activeSubAgent && activeThread?.sessionId"
+            :agent="activeSubAgent"
+            :agents="activeThreadSubAgents"
+            :session-id="activeThread.sessionId"
+            :workspace="activeProject?.path"
+            :width="subagentPanelWidth"
+            @resize="resizeSubagentPanel"
+            @select-agent="selectedSubAgent = { agent: $event, threadId: activeThread!.id }"
+            @close="selectedSubAgent = null"
+            @open-diff="openToolDiff"
+          />
+        </Transition>
         <Transition name="side-panel">
           <ConversationBrowserPanel v-if="activePage === 'main' && browserPanelOpen && browserState && browserState.sessionId === activeThread?.sessionId"
             :state="browserState" :width="browserPanelWidth" @changed="handleBrowserState" @resize="resizeBrowserPanel" @close="browserPanelOpen = false" />
         </Transition>
-        <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="activeProject && activeThread?.executionWorkspace ? { ...activeProject, path: activeThread.executionWorkspace } : activeProject"
+        <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="gitPanelProject"
           :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="gitPanelWidth" @close="closeGitPanel"
           @resize="resizeGitPanel" @open-terminal="openProjectTerminal" />
       </div>
@@ -2530,9 +2573,7 @@ watch(theme, applyTheme)
       @change-mono-font-family="applyMonoFontFamily"
       @change-zoom-factor="applyZoomFactor"
        @open-workspace="openWorkspace"
-      @open-official-skills="openOfficialSkills" @runtime-changed="refreshRuntimeState" />
-
-    <OfficialSkillsDialog :open="activePage === 'official-skills'" @close="closePage" />
+      @runtime-changed="refreshRuntimeState" />
 
     <ScheduledTasksDialog :open="activePage === 'scheduled'" :projects="projects" :threads="threads" @close="closePage" />
 

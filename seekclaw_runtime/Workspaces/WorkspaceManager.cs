@@ -20,7 +20,7 @@ public sealed class WorkspaceInfo
 
     public string SeekClawDir => IsGlobal ? Root : Path.Combine(Root, ".seekclaw");
     public string PromptsDir => ConfigurationDirectory("prompts", conventional: false);
-    public string MemoryDir => Path.Combine(SeekClawDir, "memory");
+    public string MemoryDir => ConfigurationDirectory("memory", conventional: false);
     public string MemoryFile => Path.Combine(MemoryDir, "MEMORY.md");
     public string CacheDir => Path.Combine(SeekClawDir, "cache");
     public string SessionsDir => IsGlobal
@@ -129,7 +129,7 @@ public sealed class WorkspaceManager : IWorkspaceManager
         var kinds = new List<string>();
         void AddIf(bool condition, string kind) { if (condition) kinds.Add(kind); }
 
-        AddIf(Directory.Exists(Path.Combine(root, ".git")), "git");
+        AddIf(Directory.Exists(Path.Combine(root, ".git")) || File.Exists(Path.Combine(root, ".git")), "git");
         AddIf(HasFiles(root, "*.sln")
               || HasFiles(root, "*.slnx")
               || HasFiles(root, "*.csproj")

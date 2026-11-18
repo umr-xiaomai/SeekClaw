@@ -36,6 +36,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { GitBranchInfo, GitCommit, GitHistory, GitOverview } from '../../../shared/ipc'
 import type { ProjectItem } from '../types'
 import { parseUnifiedDiff, type ParsedFileDiff as FileDiff } from '../diff-parser'
+import { formatCommitDate, formatGitHistoryCommits, type FormattedGitCommit } from '../git-commit-format'
 
 type PanelTab = 'diff' | 'history'
 
@@ -104,7 +105,6 @@ const fileTreeWidth = ref(loadStoredTreeWidth())
 const treeResizing = ref(false)
 let treeResizeStartX = 0
 let treeResizeStartWidth = 0
-let treeRafId: number | null = null
 let pendingTreeWidth = fileTreeWidth.value
 
 const GIT_FILE_TREE_STORAGE_KEY = 'seekclaw-git-file-tree-open-v2'
@@ -176,89 +176,9 @@ function closeCommitDiff(): void {
   commitDiffError.value = ''
 }
 
-interface ParsedCommitSubject {
-  badge?: {
-    type: string
-    label: string
-    colorClass: string
-  }
-  scope?: string
-  cleanSubject: string
-}
-
-function parseCommitSubject(rawSubject: string): ParsedCommitSubject {
-  if (!rawSubject) return { cleanSubject: '' }
-  const s = rawSubject.trim()
-
-  if (/^merge\b/i.test(s) || s.startsWith('合并')) {
-    return {
-      badge: { type: 'merge', label: 'merge', colorClass: 'commit-tag-merge' },
-      cleanSubject: s
-    }
-  }
-
-  const match = s.match(
-    /^(?:([a-zA-Z]+)(?:\(([^)]+)\))?\s*[:：]|\[([a-zA-Z0-9_\-\u4e00-\u9fa5]+)\]\s*|【([a-zA-Z0-9_\-\u4e00-\u9fa5]+)】\s*|([\u4e00-\u9fa5]{2,4})\s*[:：])\s*(.*)$/
-  )
-
-  if (match) {
-    const rawType = (match[1] || match[3] || match[4] || match[5] || '').toLowerCase()
-    const scope = match[2]?.trim()
-    const rest = (match[6] || '').trim() || s
-
-    let type = ''
-    let label = rawType
-    let colorClass = 'commit-tag-other'
-
-    if (/^(feat|feature|add|新增|特性)$/i.test(rawType)) {
-      type = 'feat'
-      label = 'feat'
-      colorClass = 'commit-tag-feat'
-    } else if (/^(fix|bug|hotfix|patch|修复)$/i.test(rawType)) {
-      type = 'fix'
-      label = 'fix'
-      colorClass = 'commit-tag-fix'
-    } else if (/^(refactor|重构)$/i.test(rawType)) {
-      type = 'refactor'
-      label = 'refactor'
-      colorClass = 'commit-tag-refactor'
-    } else if (/^(perf|opt|optimize|优化|性能)$/i.test(rawType)) {
-      type = 'perf'
-      label = 'perf'
-      colorClass = 'commit-tag-perf'
-    } else if (/^(docs?|文档)$/i.test(rawType)) {
-      type = 'docs'
-      label = 'docs'
-      colorClass = 'commit-tag-docs'
-    } else if (/^(test|tests|测试)$/i.test(rawType)) {
-      type = 'test'
-      label = 'test'
-      colorClass = 'commit-tag-test'
-    } else if (/^(style|样式)$/i.test(rawType)) {
-      type = 'style'
-      label = 'style'
-      colorClass = 'commit-tag-style'
-    } else if (/^(chore|build|ci|deps|杂项)$/i.test(rawType)) {
-      type = 'chore'
-      label = 'chore'
-      colorClass = 'commit-tag-chore'
-    } else if (/^(revert|回滚)$/i.test(rawType)) {
-      type = 'revert'
-      label = 'revert'
-      colorClass = 'commit-tag-revert'
-    }
-
-    if (type) {
-      return {
-        badge: { type, label, colorClass },
-        scope: scope || undefined,
-        cleanSubject: rest
-      }
-    }
-  }
-
-  return { cleanSubject: s }
-}
+const formattedHistoryCommits = computed<FormattedGitCommit[]>(() =>
+  formatGitHistoryCommits(history.value?.commits ?? [])
+)
 
 const displayedDiff = computed(() => {
   if (tab.value === 'history' && commitDiff.value !== null) {
@@ -528,13 +448,6 @@ async function handleCreateBranch(): Promise<void> {
   }
 }
 
-function formatDate(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('zh-CN', {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-  }).format(date)
-}
-
 async function refresh(): Promise<void> {
   if (!props.open || !props.project || props.diffOverride) return
   const currentRequest = ++requestId.value
@@ -562,16 +475,11 @@ function selectTab(value: PanelTab): void {
   }
 }
 
-let mainRafId: number | null = null
 let pendingMainWidth = props.width
 
 function stopResize(): void {
   if (!resizing.value) return
   resizing.value = false
-  if (mainRafId !== null) {
-    cancelAnimationFrame(mainRafId)
-    mainRafId = null
-  }
   emit('resize', pendingMainWidth)
   window.removeEventListener('pointermove', handleResize)
   window.removeEventListener('pointerup', stopResize)
@@ -594,12 +502,6 @@ function handleResize(event: PointerEvent): void {
   if (panelRef.value) {
     panelRef.value.style.setProperty('--git-panel-width', `${clampedWidth}px`)
   }
-  if (mainRafId === null) {
-    mainRafId = requestAnimationFrame(() => {
-      mainRafId = null
-      emit('resize', pendingMainWidth)
-    })
-  }
 }
 
 function startResize(event: PointerEvent): void {
@@ -607,8 +509,8 @@ function startResize(event: PointerEvent): void {
   event.preventDefault()
   resizing.value = true
   resizeStartX = event.clientX
-  resizeStartWidth = props.width
-  pendingMainWidth = props.width
+  resizeStartWidth = panelRef.value?.getBoundingClientRect().width || props.width
+  pendingMainWidth = resizeStartWidth
   document.body.classList.add('is-resizing-git-panel')
   window.addEventListener('pointermove', handleResize)
   window.addEventListener('pointerup', stopResize)
@@ -616,6 +518,10 @@ function startResize(event: PointerEvent): void {
 }
 
 function resetPanelWidth(): void {
+  pendingMainWidth = DEFAULT_PANEL_WIDTH
+  if (panelRef.value) {
+    panelRef.value.style.setProperty('--git-panel-width', `${DEFAULT_PANEL_WIDTH}px`)
+  }
   emit('resize', DEFAULT_PANEL_WIDTH)
 }
 
@@ -627,21 +533,11 @@ function handleTreeResize(event: PointerEvent): void {
   if (panelRef.value) {
     panelRef.value.style.setProperty('--git-tree-width', `${nextWidth}px`)
   }
-  if (treeRafId === null) {
-    treeRafId = requestAnimationFrame(() => {
-      treeRafId = null
-      fileTreeWidth.value = pendingTreeWidth
-    })
-  }
 }
 
 function stopTreeResize(): void {
   if (!treeResizing.value) return
   treeResizing.value = false
-  if (treeRafId !== null) {
-    cancelAnimationFrame(treeRafId)
-    treeRafId = null
-  }
   fileTreeWidth.value = pendingTreeWidth
   localStorage.setItem(FILE_TREE_WIDTH_STORAGE_KEY, String(pendingTreeWidth))
   window.removeEventListener('pointermove', handleTreeResize)
@@ -671,15 +567,18 @@ function resetTreeWidth(): void {
   }
 }
 
-watch(() => [props.open, props.project?.id, props.initialTab, props.diffOverride?.path] as const, ([open, projectId], oldValues) => {
+watch(() => [props.open, props.project?.path, props.initialTab, props.diffOverride?.path] as const, ([open, projectPath], oldValues) => {
   if (!open) {
     requestId.value++
     return
   }
   tab.value = props.initialTab
-  if (oldValues && oldValues[1] !== projectId) {
+  if (oldValues && oldValues[1] !== projectPath) {
     collapsedFileIds.value = new Set()
     collapsedFolderPaths.value = new Set()
+    overview.value = null
+    history.value = null
+    closeCommitDiff()
   }
   void refresh()
 }, { immediate: true })
@@ -1110,7 +1009,7 @@ onBeforeUnmount(() => {
           </div>
         </template>
 
-        <div v-else-if="loading" class="git-panel-state">
+        <div v-else-if="loading && (tab === 'diff' ? !overview : !history)" class="git-panel-state">
           <RefreshCw :size="18" class="spin" />
           <span>正在读取 Git 数据…</span>
         </div>
@@ -1394,7 +1293,7 @@ onBeforeUnmount(() => {
                 <span>·</span>
                 <span class="commit-submeta-item">
                   <Clock :size="12" />
-                  <time :datetime="selectedCommit.authoredAt">{{ formatDate(selectedCommit.authoredAt) }}</time>
+                  <time :datetime="selectedCommit.authoredAt">{{ formatCommitDate(selectedCommit.authoredAt) }}</time>
                 </span>
                 <span>·</span>
                 <span class="commit-submeta-item files-count">{{ parsedFiles.length }} 个文件修改</span>
@@ -1482,48 +1381,48 @@ onBeforeUnmount(() => {
               <RefreshCw :size="18" class="spin" />
               <span>正在获取提交差异…</span>
             </div>
-            <ol v-else-if="history?.commits.length" class="git-timeline-stream">
+            <ol v-else-if="formattedHistoryCommits.length" class="git-timeline-stream">
               <li
-                v-for="(commit, cIdx) in history.commits"
-                :key="commit.hash"
+                v-for="entry in formattedHistoryCommits"
+                :key="entry.commit.hash"
                 class="git-timeline-row"
                 :class="{
-                  'is-head': cIdx === 0,
-                  'is-selected': selectedCommit?.hash === commit.hash
+                  'is-head': entry.index === 0,
+                  'is-selected': selectedCommit?.hash === entry.commit.hash
                 }"
                 title="双击查看提交具体变更"
-                @click="selectedCommit = commit"
-                @dblclick="openCommitDiff(commit)"
+                @click="selectedCommit = entry.commit"
+                @dblclick="openCommitDiff(entry.commit)"
               >
                 <div class="git-timeline-track">
-                  <span class="git-timeline-node" :class="{ 'is-head-node': cIdx === 0 }" />
+                  <span class="git-timeline-node" :class="{ 'is-head-node': entry.index === 0 }" />
                 </div>
                 <div class="git-timeline-content">
                   <div class="git-timeline-header">
                     <div class="git-timeline-title">
                       <span
-                        v-if="parseCommitSubject(commit.subject).badge"
+                        v-if="entry.parsed.badge"
                         class="commit-type-badge"
-                        :class="parseCommitSubject(commit.subject).badge?.colorClass"
+                        :class="entry.parsed.badge.colorClass"
                       >
-                        {{ parseCommitSubject(commit.subject).badge?.label }}
+                        {{ entry.parsed.badge.label }}
                       </span>
                       <span
-                        v-if="parseCommitSubject(commit.subject).scope"
+                        v-if="entry.parsed.scope"
                         class="commit-scope-badge"
-                        :title="parseCommitSubject(commit.subject).scope"
+                        :title="entry.parsed.scope"
                       >
-                        {{ parseCommitSubject(commit.subject).scope }}
+                        {{ entry.parsed.scope }}
                       </span>
-                      <span class="git-timeline-subject" :title="commit.subject">
-                        {{ parseCommitSubject(commit.subject).cleanSubject }}
+                      <span class="git-timeline-subject" :title="entry.commit.subject">
+                        {{ entry.parsed.cleanSubject }}
                       </span>
                     </div>
                     <button
                       type="button"
                       class="git-timeline-view-btn"
                       title="查看此提交代码差异"
-                      @click.stop="openCommitDiff(commit)"
+                      @click.stop="openCommitDiff(entry.commit)"
                     >
                       <Eye :size="12" />
                       <span>差异</span>
@@ -1532,13 +1431,13 @@ onBeforeUnmount(() => {
                   <div class="git-timeline-meta">
                     <span
                       class="git-timeline-hash"
-                      :title="'点击复制完整哈希: ' + commit.hash"
-                      @click.stop="copyToClipboard(commit.hash, '已复制提交哈希')"
+                      :title="'点击复制完整哈希: ' + entry.commit.hash"
+                      @click.stop="copyToClipboard(entry.commit.hash, '已复制提交哈希')"
                     >
-                      <code>{{ commit.shortHash }}</code>
+                      <code>{{ entry.commit.shortHash }}</code>
                     </span>
-                    <span class="git-timeline-author" :title="commit.author">{{ commit.author }}</span>
-                    <time class="git-timeline-time" :datetime="commit.authoredAt">{{ formatDate(commit.authoredAt) }}</time>
+                    <span class="git-timeline-author" :title="entry.commit.author">{{ entry.commit.author }}</span>
+                    <time class="git-timeline-time" :datetime="entry.commit.authoredAt">{{ entry.formattedDate }}</time>
                   </div>
                 </div>
               </li>

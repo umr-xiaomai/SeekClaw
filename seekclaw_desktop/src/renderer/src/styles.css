@@ -3176,8 +3176,6 @@ body.is-resizing-sidebar .app-body {
 .modal-fade-leave-to .provider-editor-dialog,
 .modal-fade-enter-from .about-dialog,
 .modal-fade-leave-to .about-dialog,
-.modal-fade-enter-from .official-skills-dialog,
-.modal-fade-leave-to .official-skills-dialog,
 .modal-fade-enter-from .project-properties-dialog,
 .modal-fade-leave-to .project-properties-dialog,
 .modal-fade-enter-from .model-editor-dialog,
@@ -3549,6 +3547,7 @@ body.is-resizing-sidebar .app-body {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0 0 24px;
+  contain: layout style;
 }
 
 .git-timeline-stream {
@@ -3558,6 +3557,7 @@ body.is-resizing-sidebar .app-body {
   display: flex;
   flex-direction: column;
   width: 100%;
+  contain: layout style;
 }
 
 .git-timeline-row {
@@ -3959,7 +3959,9 @@ body.is-resizing-sidebar .app-body {
 body.is-resizing-git-panel .git-panel,
 body.is-resizing-git-panel .git-panel *,
 body.is-resizing-git-panel .git-files-tree-panel,
-body.is-resizing-git-panel .diff-file-card {
+body.is-resizing-git-panel .diff-file-card,
+body.is-resizing-git-panel .subagent-conversation-panel,
+body.is-resizing-git-panel .subagent-conversation-panel * {
   transition: none !important;
 }
 
@@ -4371,7 +4373,7 @@ body.is-resizing-git-panel .diff-file-card {
 .provider-editor-dialog {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(820px, 100%);
+  width: min(680px, 100%);
   max-height: min(850px, calc(100vh - 40px));
   overflow: hidden;
   background: var(--modal-surface);
@@ -4382,10 +4384,11 @@ body.is-resizing-git-panel .diff-file-card {
 
 .provider-editor-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 23px 25px 20px;
+  padding: 18px 24px 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .provider-editor-header h2,
@@ -4394,8 +4397,7 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .provider-editor-header h2 {
-  margin-top: 4px;
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 650;
   letter-spacing: -.01em;
 }
@@ -4415,18 +4417,20 @@ body.is-resizing-git-panel .diff-file-card {
 
 .provider-editor-body {
   min-height: 0;
-  padding: 21px 25px 24px;
+  padding: 20px 24px;
   overflow-y: auto;
 }
 
 .provider-form-section {
-  padding-bottom: 21px;
-  margin-bottom: 21px;
+  padding-bottom: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 
 .provider-form-section:last-of-type {
   padding-bottom: 0;
   margin-bottom: 0;
+  border-bottom: none;
 }
 
 .provider-section-heading {
@@ -4471,7 +4475,8 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .provider-form-grid input,
-.provider-form-grid textarea {
+.provider-form-grid textarea,
+.provider-models-block input {
   width: 100%;
   min-height: 38px;
   padding: 8px 10px;
@@ -4489,12 +4494,14 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .provider-form-grid input:hover,
-.provider-form-grid textarea:hover {
+.provider-form-grid textarea:hover,
+.provider-models-block input:hover {
   border-color: color-mix(in srgb, var(--text-muted) 58%, var(--border));
 }
 
 .provider-form-grid input:focus,
-.provider-form-grid textarea:focus {
+.provider-form-grid textarea:focus,
+.provider-models-block input:focus {
   border-color: color-mix(in srgb, var(--accent) 66%, var(--border));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
@@ -4609,7 +4616,9 @@ body.is-resizing-git-panel .diff-file-card {
 }
 
 .provider-advanced-section {
-  margin-top: 4px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 
 .provider-advanced-check {
@@ -4688,7 +4697,8 @@ body.is-resizing-git-panel .diff-file-card {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 25px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
   background: transparent;
 }
 
@@ -6379,10 +6389,10 @@ body.is-resizing-git-panel .diff-file-card {
    ========================================================================== */
 
 .provider-models-block {
-  margin-top: 8px;
+  margin-top: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .provider-models-header {
@@ -6390,19 +6400,38 @@ body.is-resizing-git-panel .diff-file-card {
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
+  gap: 10px;
+}
+
+.provider-models-title {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .models-count-badge {
   font-size: 11px;
   color: var(--text-muted);
   background: var(--surface-hover);
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 10px;
+}
+
+.fetch-models-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .model-add-bar {
   display: flex;
+  align-items: stretch;
   min-width: 0;
   gap: 8px;
 }
@@ -6417,6 +6446,10 @@ body.is-resizing-git-panel .diff-file-card {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-weight: 500;
 }
 
 .models-empty-tip {
@@ -6436,9 +6469,9 @@ body.is-resizing-git-panel .diff-file-card {
   max-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--surface);
-  padding: 4px;
+  padding: 6px;
 }
 
 .model-table-row {
@@ -6446,9 +6479,9 @@ body.is-resizing-git-panel .diff-file-card {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 7px 10px;
   background: var(--surface-raised);
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid transparent;
   transition: all 120ms ease;
 }
@@ -8642,37 +8675,6 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
 }
 @keyframes task-title-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .task-title-skeleton { animation: none; } }
-
-.subagent-panel-host {
-  display: flex;
-  flex: 0 0 clamp(340px, 40%, 600px);
-  flex-direction: column;
-  min-width: 0;
-  max-width: 55%;
-  overflow: hidden;
-  border-left: 1px solid var(--border);
-  background: var(--surface);
-}
-.subagent-panel-tab {
-  display: flex;
-  flex: none;
-  align-items: center;
-  min-height: 43px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-.subagent-panel-tab > span {
-  padding: 6px 12px;
-  min-width: 160px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.subagent-panel-host > .subagent-conversation-panel { flex: 1; min-height: 0; }
-@media (max-width: 760px) {
-  .subagent-panel-host { position: absolute; inset: 0 0 0 auto; width: min(100%, 480px); max-width: 100%; z-index: 35; box-shadow: -12px 0 30px #00000014; }
-}
 
 /* Global Popover & Queue Card Transitions (shared across Composer, SelectMenu, ProjectSelector, Combobox) */
 .select-popover-enter-active,

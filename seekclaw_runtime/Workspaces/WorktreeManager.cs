@@ -33,8 +33,11 @@ public sealed class WorktreeManager(ExecutionRecordStore records, IWorkspaceMana
         using var lease = await _operations.AcquireAsync(id, ct).ConfigureAwait(false);
         if (records.Get("worktree", id) is { } existing)
         {
-            if (existing["status"]?.GetValue<string>() == "active" && Directory.Exists(existing["path"]!.GetValue<string>())) return existing;
-            throw new InvalidOperationException("This task already has a worktree; restore it or repair its registration first.");
+            var status = existing["status"]?.GetValue<string>();
+            var existingPath = existing["path"]?.GetValue<string>();
+            if (status == "active" && existingPath is not null && Directory.Exists(existingPath)) return existing;
+            if (!(status == "error" && (existingPath is null || !Directory.Exists(existingPath))))
+                throw new InvalidOperationException("This task already has a worktree; restore it or repair its registration first.");
         }
         var repository = (await GitAsync(source, ["rev-parse", "--show-toplevel"], ct).ConfigureAwait(false)).Trim();
         var commit = (await GitAsync(repository, ["rev-parse", "--verify", "--end-of-options", revision + "^{commit}"], ct).ConfigureAwait(false)).Trim();

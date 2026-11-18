@@ -105,6 +105,8 @@ public sealed record LlmRequest
     public ReasoningLevel ReasoningLevel { get; init; } = ReasoningLevel.Medium;
     /// <summary>Enables the opt-in DeepSeek optimization policy for this request.</summary>
     public bool OptimizeDeepSeek { get; init; }
+    /// <summary>Optional transport-level intent tag (e.g. "compaction" or "session-title").</summary>
+    public string? Purpose { get; init; }
 }
 
 // ---------------------------------------------------------------- stream events
@@ -155,4 +157,6 @@ public sealed class LlmException(string message, int? statusCode = null, bool re
 {
     public int? StatusCode { get; } = statusCode;
     public bool Retryable { get; } = retryable;
+    public TimeSpan? RetryAfter { get; init; }
+    public string? ErrorCode { get; init; }
 }

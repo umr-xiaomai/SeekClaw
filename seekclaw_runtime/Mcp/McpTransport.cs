@@ -22,6 +22,7 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
 {
     private readonly Channel<JsonObject> _incoming = Channel.CreateUnbounded<JsonObject>();
     private readonly ProcessJobScope _jobScope = new();
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
     private Process? _process;
     private Task? _readLoop;
 
@@ -36,8 +37,8 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardInputEncoding = Encoding.UTF8,
+            StandardOutputEncoding = new UTF8Encoding(false),
+            StandardInputEncoding = new UTF8Encoding(false),
             CreateNoWindow = true,
         };
         foreach (var arg in args ?? []) startInfo.ArgumentList.Add(arg);
@@ -71,7 +72,7 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
                 var buffer = new char[4096];
                 while (await _process.StandardError.ReadAsync(buffer).ConfigureAwait(false) > 0) { }
             }
-            catch (IOException) { }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) { }
         }, CancellationToken.None);
 
         _readLoop = Task.Run(async () =>
@@ -90,7 +91,7 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
                     catch (System.Text.Json.JsonException) { }
                 }
             }
-            catch (IOException) { }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) { }
             finally { _incoming.Writer.TryComplete(); }
         }, CancellationToken.None);
 
@@ -100,8 +101,17 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
     public async Task SendAsync(JsonObject message, CancellationToken ct)
     {
         if (_process is null) throw new InvalidOperationException("Transport not started.");
-        await _process.StandardInput.WriteLineAsync(message.ToJsonString().AsMemory(), ct).ConfigureAwait(false);
-        await _process.StandardInput.FlushAsync(ct).ConfigureAwait(false);
+        var payload = message.ToJsonString();
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await _process.StandardInput.WriteLineAsync(payload.AsMemory(), ct).ConfigureAwait(false);
+            await _process.StandardInput.FlushAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -124,8 +134,9 @@ public sealed class StdioMcpTransport(string command, IReadOnlyList<string>? arg
         _jobScope.Dispose();
         if (_readLoop is not null)
         {
-            try { await _readLoop.ConfigureAwait(false); } catch { }
+            try { await _readLoop.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch { }
         }
+        _writeLock.Dispose();
     }
 }
 

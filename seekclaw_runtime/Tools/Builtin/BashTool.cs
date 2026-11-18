@@ -119,7 +119,12 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
 
             // Wait for the process to exit or cancellation/timeout
             await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
-            await Task.WhenAll(readStdoutTask, readStderrTask).ConfigureAwait(false);
+            try
+            {
+                await Task.WhenAll(readStdoutTask, readStderrTask)
+                    .WaitAsync(TimeSpan.FromSeconds(2), cts.Token).ConfigureAwait(false);
+            }
+            catch (TimeoutException) { }
 
             var outputText = buffer.GetFormattedText(Encoding.UTF8);
             if (string.IsNullOrWhiteSpace(outputText))
@@ -207,12 +212,17 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (string.IsNullOrWhiteSpace(command)) return false;
 
         var trimmed = Regex.Replace(command.Trim(), @"(?<=\s|^)[12]>&[12](?=\s|$|[|;&])", "");
-        // File redirection, file-setting cmdlets, or script/subexpression blocks mean not guaranteed read-only
+        // File redirection, backgrounding/command substitution, file-setting cmdlets, or script blocks mean not guaranteed read-only
         if (trimmed.Contains('>') ||
             trimmed.Contains('{') ||
             trimmed.Contains('}') ||
+            trimmed.Contains('`') ||
+            trimmed.Contains('\n') ||
+            trimmed.Contains('\r') ||
+            trimmed.Contains("<(", StringComparison.Ordinal) ||
             trimmed.Contains("$(", StringComparison.Ordinal) ||
             trimmed.Contains("::", StringComparison.Ordinal) ||
+            Regex.IsMatch(trimmed, @"(?<![&])&(?![&])") ||
             trimmed.Contains("Out-File", StringComparison.OrdinalIgnoreCase) ||
             trimmed.Contains("Set-Content", StringComparison.OrdinalIgnoreCase) ||
             trimmed.Contains("Add-Content", StringComparison.OrdinalIgnoreCase))
@@ -268,11 +278,18 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         {
             if (tokens.Length <= index + 1) return true;
             var subCmd = tokens[index + 1].Trim('"', '\'').ToLowerInvariant();
-            if (subCmd.StartsWith('-')) return true;
+            if (subCmd.StartsWith('-')) return false;
 
-            return subCmd is "status" or "log" or "show" or "diff" or "branch"
-                or "tag" or "rev-parse" or "ls-files" or "remote" or "describe"
-                or "blame" or "whatchanged" or "shortlog" or "config";
+            if (subCmd == "branch")
+                return tokens.Skip(index + 2).All(t => t.Trim('"', '\'') is "-a" or "-r" or "-v" or "-vv" or "--list" or "--show-current" or "--all" or "--remotes");
+            if (subCmd == "tag")
+                return tokens.Length == index + 2 || tokens.Skip(index + 2).All(t => t.Trim('"', '\'') is "-l" or "--list" or "-n");
+            if (subCmd == "remote")
+                return tokens.Length == index + 2 || tokens.Skip(index + 2).All(t => t.Trim('"', '\'') is "-v" or "--verbose" or "show" or "get-url");
+
+            return subCmd is "status" or "log" or "show" or "diff"
+                or "rev-parse" or "ls-files" or "describe"
+                or "blame" or "whatchanged" or "shortlog";
         }
 
         // Directory listing & navigation
@@ -288,7 +305,12 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (cmd is "rg" or "grep" or "findstr" or "fd" or "select-string")
             return true;
 
-        if (cmd == "find" && !segment.Contains("-delete", StringComparison.OrdinalIgnoreCase) && !segment.Contains("-exec", StringComparison.OrdinalIgnoreCase))
+        if (cmd == "find"
+            && !segment.Contains("-delete", StringComparison.OrdinalIgnoreCase)
+            && !segment.Contains("-exec", StringComparison.OrdinalIgnoreCase)
+            && !segment.Contains("-ok", StringComparison.OrdinalIgnoreCase)
+            && !segment.Contains("-fprint", StringComparison.OrdinalIgnoreCase)
+            && !segment.Contains("-fls", StringComparison.OrdinalIgnoreCase))
             return true;
 
         // System / process / utility info
@@ -305,8 +327,9 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (inPowerShell && cmd is "get-help")
             return true;
 
-        // Version/help flags
-        if (tokens.Any(t => t.Trim('"', '\'') is "--version" or "-v" or "--help" or "-h" or "--info" or "--list-sdks" or "--list-runtimes"))
+        // Version/help flags (must be the sole flag on the command, not a verbosity flag like `rm -v`)
+        if (tokens.Length == index + 2
+            && tokens[index + 1].Trim('"', '\'') is "--version" or "-v" or "--help" or "-h" or "--info" or "--list-sdks" or "--list-runtimes")
             return true;
 
         return false;

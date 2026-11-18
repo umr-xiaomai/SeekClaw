@@ -1472,21 +1472,21 @@ public sealed class DaemonServerTests : IAsyncDisposable
     }
 
     [Fact]
-    public void DaemonAdminApi_GetDownloadedFileName_ResolvesMarketSlugsAndSanitizes()
+    public void DaemonAdminApi_GetDownloadedFileName_ResolvesUrlSlugsAndSanitizes()
     {
         // 1. Download endpoint URL with /download
         using var resp1 = new HttpResponseMessage();
         resp1.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
-        var fn1 = DaemonAdminApi.GetDownloadedFileName(resp1, "https://seekclaw.hoilai.com/api/skills/dotnet-dev/download");
+        var fn1 = DaemonAdminApi.GetDownloadedFileName(resp1, "https://example.com/skills/dotnet-dev/download");
         Assert.Equal("dotnet-dev.zip", fn1);
 
         // 2. Download endpoint URL with query string
         using var resp2 = new HttpResponseMessage();
         resp2.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
-        var fn2 = DaemonAdminApi.GetDownloadedFileName(resp2, "https://seekclaw.hoilai.com/api/skills/dotnet-dev/download?version=1.2.0");
+        var fn2 = DaemonAdminApi.GetDownloadedFileName(resp2, "https://example.com/skills/dotnet-dev/download?version=1.2.0");
         Assert.Equal("dotnet-dev.zip", fn2);
 
-        // 3. Fallback when given just a slug
+        // 3. Fallback when given a bare filename/slug
         using var resp3 = new HttpResponseMessage();
         resp3.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
         var fn3 = DaemonAdminApi.GetDownloadedFileName(resp3, "git-flow");
@@ -1498,7 +1498,7 @@ public sealed class DaemonServerTests : IAsyncDisposable
         {
             FileName = "\"custom-skill-v2.zip\""
         };
-        var fn4 = DaemonAdminApi.GetDownloadedFileName(resp4, "https://seekclaw.hoilai.com/api/skills/custom/download");
+        var fn4 = DaemonAdminApi.GetDownloadedFileName(resp4, "https://example.com/skills/custom/download");
         Assert.Equal("custom-skill-v2.zip", fn4);
 
         // 5. Content-Disposition with invalid Windows path characters is sanitized

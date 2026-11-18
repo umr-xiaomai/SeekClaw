@@ -176,7 +176,8 @@ internal sealed partial class DaemonAdminApi(
             candidate => string.Equals(candidate.Ref, selectedModel.Ref, StringComparison.OrdinalIgnoreCase))
             .ConfigureAwait(false))
         {
-            if (streamEvent is LlmTextDelta delta) optimized.Append(delta.Text);
+            if (streamEvent is LlmStreamReset) optimized.Clear();
+            else if (streamEvent is LlmTextDelta delta) optimized.Append(delta.Text);
         }
 
         var result = optimized.ToString().Trim();
@@ -799,27 +800,6 @@ internal sealed partial class DaemonAdminApi(
                 response.Content.CopyTo(fs, null, CancellationToken.None);
                 fullPath = tempFile;
             }
-            else if (!File.Exists(path) && !path.Contains('/') && !path.Contains('\\'))
-            {
-                var officialUrl = $"https://seekclaw.hoilai.com/api/skills/{Uri.EscapeDataString(path)}/download";
-                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-                var response = httpClient.GetAsync(officialUrl).GetAwaiter().GetResult();
-                if (response.IsSuccessStatusCode)
-                {
-                    var fileName = GetDownloadedFileName(response, path);
-                    var tempDir = Path.Combine(Path.GetTempPath(), $"seekclaw-import-{Guid.NewGuid():N}");
-                    Directory.CreateDirectory(tempDir);
-                    tempFile = Path.Combine(tempDir, fileName);
-
-                    using var fs = File.Create(tempFile);
-                    response.Content.CopyTo(fs, null, CancellationToken.None);
-                    fullPath = tempFile;
-                }
-                else
-                {
-                    fullPath = Path.GetFullPath(path);
-                }
-            }
             else
             {
                 fullPath = Path.GetFullPath(path);
@@ -1277,7 +1257,7 @@ internal sealed partial class DaemonAdminApi(
 
     private void EnsureTaskCanBeDeleted(WorkspaceInfo workspace, string id)
     {
-        if (runtime.Worktrees.Get(workspace.Root, id) is { } worktree && worktree["status"]?.GetValue<string>() != "archived")
+        if (runtime.Worktrees.Get(workspace.Root, id) is { } worktree && worktree["status"]?.GetValue<string>() is not ("archived" or "error"))
             throw new DaemonRequestException("Archive this task's worktree before deleting the conversation so its files remain recoverable.");
         if (runtime.Commands.List(id).OfType<JsonObject>().Any(x => x["status"]?.GetValue<string>() == "running")
             || runtime.SubAgentTasks.List(id).OfType<JsonObject>().Any(x => x["status"]?.GetValue<string>() == "running"))

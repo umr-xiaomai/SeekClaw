@@ -6,7 +6,6 @@ import {
   Bug,
   Check,
   Database,
-  ExternalLink,
   Folder,
   FolderOpen,
   GitBranch,
@@ -45,7 +44,6 @@ import {
   type McpTransport
 } from '../mcp-form'
 import McpEditorDialog from './McpEditorDialog.vue'
-import OfficialSkillsDialog from './OfficialSkillsDialog.vue'
 import TwoPaneLayout from './TwoPaneLayout.vue'
 
 const props = withDefaults(defineProps<{
@@ -62,8 +60,6 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const MARKET_BASE_URL = (import.meta.env.VITE_MARKET_URL as string | undefined)?.replace(/\/+$/, '') || 'https://seekclaw.hoilai.com'
-
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -79,29 +75,11 @@ export interface LocalSkillInfo {
   scope: 'workspace' | 'global'
 }
 
-export interface RemoteSkill {
-  id: number
-  name: string
-  slug: string
-  summary: string
-  author: string
-  version: string
-  isOfficial: boolean
-  authorUserId: number | null
-  authorUsername: string | null
-  enabled: boolean
-  hasPackage: boolean
-  updatedAt: number
-  homepage?: string | null
-}
-
 export type CustomizationTab = 'plugins' | 'skills'
 export type PluginSubTab = 'public' | 'personal'
-export type SkillSubTab = 'installed' | 'market'
 
 const activeTab = ref<CustomizationTab>(props.initialTab)
 const pluginSubTab = ref<PluginSubTab>('public')
-const skillSubTab = ref<SkillSubTab>('installed')
 const pluginSearchQuery = ref('')
 const skillSearchQuery = ref('')
 
@@ -110,19 +88,13 @@ const authenticatingServer = ref('')
 const authLifetime = new AbortController()
 onBeforeUnmount(() => authLifetime.abort())
 const localSkills = ref<LocalSkillInfo[]>([])
-const remoteSkills = ref<RemoteSkill[]>([])
 
 const reloadingMcp = ref(false)
 const reloadingSkills = ref(false)
-const loadingMarket = ref(false)
-const marketError = ref('')
-const marketCategory = ref<'all' | 'official' | 'community'>('all')
-const installingSlug = ref<string | null>(null)
 const savingMcp = ref(false)
 const mcpEditorOpen = ref(false)
 const editingMcpServer = ref<McpServerSummary | null>(null)
 const mcpDialogError = ref('')
-const officialMarketOpen = ref(false)
 
 const selectedSkillDetail = ref<{
   name: string
@@ -602,87 +574,6 @@ function renderMarkdown(content?: string): string {
   return md.render(content)
 }
 
-async function handleOfficialSkillsClose(): Promise<void> {
-  officialMarketOpen.value = false
-  await loadLocalSkills()
-}
-
-async function loadRemoteCatalog(): Promise<void> {
-  loadingMarket.value = true
-  marketError.value = ''
-  try {
-    const res = await fetch(`${MARKET_BASE_URL}/api/skills`)
-    if (!res.ok) {
-      throw new Error(`技能市场响应异常 (${res.status})`)
-    }
-    const data = (await res.json()) as RemoteSkill[]
-    remoteSkills.value = Array.isArray(data) ? data : []
-  } catch (err) {
-    marketError.value = err instanceof Error ? err.message : '无法连接到官方技能市场，请检查网络连接'
-  } finally {
-    loadingMarket.value = false
-  }
-}
-
-function switchToMarketTab(): void {
-  skillSubTab.value = 'market'
-  if (remoteSkills.value.length === 0 && !loadingMarket.value) {
-    void loadRemoteCatalog()
-  }
-}
-
-function isRemoteSkillInstalled(skill: RemoteSkill): boolean {
-  const slugLower = skill.slug.toLowerCase()
-  const nameLower = skill.name.toLowerCase()
-  return localSkills.value.some((local) => {
-    const localLower = local.name.toLowerCase()
-    const dirLower = local.directory ? local.directory.replace(/\\/g, '/').split('/').pop()?.toLowerCase() : ''
-    return localLower === slugLower || localLower === nameLower || localLower.includes(slugLower) || dirLower === slugLower || dirLower === nameLower
-  })
-}
-
-async function installRemoteSkill(skill: RemoteSkill): Promise<void> {
-  installingSlug.value = skill.slug
-  try {
-    const downloadUrl = `${MARKET_BASE_URL}/api/skills/${encodeURIComponent(skill.slug)}/download`
-    const updated = await requestDaemon<LocalSkillInfo[]>('skill.import', {
-      path: downloadUrl,
-      overwrite: true
-    })
-    localSkills.value = Array.isArray(updated) ? updated : localSkills.value
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    alert(`安装技能失败: ${message}`)
-  } finally {
-    installingSlug.value = null
-  }
-}
-
-async function openRemoteSkillDetail(skill: RemoteSkill): Promise<void> {
-  selectedSkillDetail.value = {
-    name: skill.name,
-    role: skill.isOfficial ? '官方精选技能' : '社区生态技能',
-    scope: `作者: ${skill.author || skill.authorUsername || 'SeekClaw 社区'}`,
-    version: skill.version,
-    description: skill.summary,
-    icon: Sparkles,
-    iconColor: '#0284c7',
-    bg: '#0284c718',
-    sopDetails: `正在从服务器加载详细规范文档…`
-  }
-  try {
-    const res = await fetch(`${MARKET_BASE_URL}/api/skills/${encodeURIComponent(skill.slug)}`)
-    if (res.ok) {
-      const detail = (await res.json()) as { readmeMarkdown?: string; summary?: string }
-      if (selectedSkillDetail.value && selectedSkillDetail.value.name === skill.name) {
-        selectedSkillDetail.value.sopDetails = detail.readmeMarkdown || detail.summary || '暂无详细介绍'
-      }
-    }
-  } catch (err) {
-    console.error('Failed to load remote skill detail:', err)
-  }
-}
-
 // Filtered Lists
 const filteredPublicCategories = computed(() => {
   const q = pluginSearchQuery.value.trim().toLowerCase()
@@ -736,25 +627,6 @@ const filteredSystemSkills = computed(() => {
   )
 })
 
-const filteredRemoteSkills = computed(() => {
-  let list = remoteSkills.value
-  if (marketCategory.value === 'official') {
-    list = list.filter((s) => s.isOfficial)
-  } else if (marketCategory.value === 'community') {
-    list = list.filter((s) => !s.isOfficial)
-  }
-
-  const q = skillSearchQuery.value.trim().toLowerCase()
-  if (!q) return list
-
-  return list.filter((s) =>
-    s.name.toLowerCase().includes(q) ||
-    s.slug.toLowerCase().includes(q) ||
-    s.summary.toLowerCase().includes(q) ||
-    s.author.toLowerCase().includes(q)
-  )
-})
-
 function getServerStatusClass(server: McpServerSummary): string {
   if (server.connected) return 'status-online'
   if (server.connecting) return 'status-connecting'
@@ -798,11 +670,6 @@ function handleKeydown(event: KeyboardEvent): void {
     }
     if (mcpEditorOpen.value) {
       mcpEditorOpen.value = false
-      event.stopPropagation()
-      return
-    }
-    if (officialMarketOpen.value) {
-      officialMarketOpen.value = false
       event.stopPropagation()
       return
     }
@@ -1028,7 +895,7 @@ onBeforeUnmount(() => {
                 <Search :size="15" />
                 <input
                   v-model="skillSearchQuery"
-                  :placeholder="skillSubTab === 'market' ? '搜索官方与社区技能...' : '搜索已安装或系统技能...'"
+                  placeholder="搜索已安装或系统技能..."
                   aria-label="搜索技能"
                 />
                 <button
@@ -1044,30 +911,11 @@ onBeforeUnmount(() => {
               <div class="header-action-group">
                 <button
                   class="icon-button"
-                  :title="skillSubTab === 'market' ? '刷新市场' : '刷新技能'"
-                  :disabled="reloadingSkills || loadingMarket"
-                  @click="skillSubTab === 'market' ? loadRemoteCatalog() : loadLocalSkills()"
+                  title="刷新技能"
+                  :disabled="reloadingSkills"
+                  @click="loadLocalSkills()"
                 >
-                  <RefreshCw :size="16" :class="{ spin: reloadingSkills || loadingMarket }" />
-                </button>
-
-                <button
-                  v-if="skillSubTab === 'installed'"
-                  class="secondary-button"
-                  title="浏览官方精选技能市场"
-                  @click="switchToMarketTab"
-                >
-                  <Sparkles :size="15" />
-                  <span>官方市场</span>
-                </button>
-                <button
-                  v-else
-                  class="secondary-button"
-                  title="查看已安装技能"
-                  @click="skillSubTab = 'installed'"
-                >
-                  <Check :size="15" />
-                  <span>已安装</span>
+                  <RefreshCw :size="16" :class="{ spin: reloadingSkills }" />
                 </button>
 
                 <button class="primary-button add-btn" title="导入本地技能文件 (.md, .zip)" @click="importSkills">
@@ -1076,30 +924,10 @@ onBeforeUnmount(() => {
                 </button>
               </div>
             </div>
-
-            <!-- Segmented Switch: 已安装 / 官方市场 -->
-            <div class="segmented-control-bar">
-              <button
-                class="segmented-btn"
-                :class="{ active: skillSubTab === 'installed' }"
-                @click="skillSubTab = 'installed'"
-              >
-                已安装
-                <span class="badge-count">{{ localSkills.length + filteredSystemSkills.length }}</span>
-              </button>
-              <button
-                class="segmented-btn"
-                :class="{ active: skillSubTab === 'market' }"
-                @click="switchToMarketTab"
-              >
-                官方市场
-                <span v-if="remoteSkills.length > 0" class="badge-count">{{ remoteSkills.length }}</span>
-              </button>
-            </div>
           </header>
 
           <!-- VIEW: INSTALLED SKILLS -->
-          <div v-if="skillSubTab === 'installed'" class="view-scroll-body">
+          <div class="view-scroll-body">
             <!-- SECTION 1: 已安装技能 -->
             <div class="category-group">
               <div class="section-heading-row">
@@ -1112,10 +940,7 @@ onBeforeUnmount(() => {
                 <div v-else class="empty-box">
                   <Wrench :size="24" class="empty-icon-sm" />
                   <div>
-                    <p>尚未安装自定义技能。你可以点击右上角「导入」本地 .md / .zip 文件，或在「官方市场」一键安装。</p>
-                    <button class="secondary-button compact mt-2" @click="switchToMarketTab">
-                      <Sparkles :size="13" /> 前往官方市场
-                    </button>
+                    <p>尚未安装自定义技能。你可以点击右上角「导入」本地 .md 或 .zip 文件。</p>
                   </div>
                 </div>
               </div>
@@ -1206,119 +1031,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-
-          <!-- VIEW: OFFICIAL REMOTE MARKETPLACE -->
-          <div v-else class="view-scroll-body">
-            <!-- Market Category Chips -->
-            <div class="market-chips-bar">
-              <button
-                class="category-chip"
-                :class="{ active: marketCategory === 'all' }"
-                @click="marketCategory = 'all'"
-              >
-                全部技能
-                <span v-if="remoteSkills.length > 0" class="chip-count">{{ remoteSkills.length }}</span>
-              </button>
-              <button
-                class="category-chip"
-                :class="{ active: marketCategory === 'official' }"
-                @click="marketCategory = 'official'"
-              >
-                官方精选
-                <span v-if="remoteSkills.length > 0" class="chip-count">{{ remoteSkills.filter((s) => s.isOfficial).length }}</span>
-              </button>
-              <button
-                class="category-chip"
-                :class="{ active: marketCategory === 'community' }"
-                @click="marketCategory = 'community'"
-              >
-                社区生态
-                <span v-if="remoteSkills.length > 0" class="chip-count">{{ remoteSkills.filter((s) => !s.isOfficial).length }}</span>
-              </button>
-
-              <button
-                class="full-market-link"
-                title="以完整双栏视图浏览技能市场"
-                @click="officialMarketOpen = true"
-              >
-                <ExternalLink :size="13" />
-                <span>完整市场视图</span>
-              </button>
-            </div>
-
-            <!-- Loading State -->
-            <div v-if="loadingMarket && remoteSkills.length === 0" class="market-loading-box">
-              <LoaderCircle class="spin" :size="30" />
-              <p>正在连接官方技能市场…</p>
-            </div>
-
-            <!-- Error State -->
-            <div v-else-if="marketError && remoteSkills.length === 0" class="empty-state error">
-              <Search :size="30" class="empty-icon" />
-              <p>{{ marketError }}</p>
-              <button class="secondary-button" @click="loadRemoteCatalog">重试连接</button>
-            </div>
-
-            <!-- Empty Search State -->
-            <div v-else-if="filteredRemoteSkills.length === 0" class="empty-state">
-              <Search :size="28" class="empty-icon" />
-              <p>未找到匹配 “{{ skillSearchQuery }}” 的技能</p>
-            </div>
-
-            <!-- Remote Skills Cards Grid -->
-            <div v-else class="cards-grid">
-              <article
-                v-for="skill in filteredRemoteSkills"
-                :key="skill.id"
-                class="card skill-card clickable"
-                @click="openRemoteSkillDetail(skill)"
-              >
-                <div class="card-top">
-                  <div
-                    class="card-icon-container"
-                    :style="{ backgroundColor: skill.isOfficial ? '#0284c718' : '#8b5cf618' }"
-                  >
-                    <ShieldCheck v-if="skill.isOfficial" :size="20" style="color: #0284c7;" />
-                    <Sparkles v-else :size="20" style="color: #8b5cf6;" />
-                  </div>
-
-                  <div class="card-action">
-                    <span v-if="isRemoteSkillInstalled(skill)" class="configured-badge" title="该技能已安装">
-                      <Check :size="13" /> 已安装
-                    </span>
-                    <button
-                      v-else
-                      class="card-install-btn"
-                      :disabled="installingSlug === skill.slug"
-                      title="下载并安装此技能"
-                      @click.stop="installRemoteSkill(skill)"
-                    >
-                      <LoaderCircle v-if="installingSlug === skill.slug" class="spin" :size="13" />
-                      <Plus v-else :size="14" />
-                      <span>安装</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div class="card-middle">
-                  <div class="title-with-tags">
-                    <h4 class="card-name">{{ skill.name }}</h4>
-                    <span v-if="skill.version" class="version-tag">v{{ skill.version }}</span>
-                    <span v-if="skill.isOfficial" class="role-pill">官方精选</span>
-                  </div>
-                  <p class="card-desc">{{ skill.summary }}</p>
-                </div>
-
-                <div class="card-bottom">
-                  <span class="author-label">作者: {{ skill.author || skill.authorUsername || 'SeekClaw' }}</span>
-                  <button class="dir-link-btn" title="查看技能说明文档" @click.stop="openRemoteSkillDetail(skill)">
-                    <ExternalLink :size="12" />
-                    <span>查看介绍</span>
-                  </button>
-                </div>
-              </article>
-            </div>
-          </div>
         </section>
       </div>
     </TwoPaneLayout>
@@ -1376,11 +1088,6 @@ onBeforeUnmount(() => {
     <McpEditorDialog :open="mcpEditorOpen" :server="editingMcpServer" :saving="savingMcp" :error="mcpDialogError"
       :workspace-path="workspacePath"
       @close="closeMcpEditor" @save="saveMcpServer" />
-
-    <!-- Official Remote Skills Market Dialog Overlay -->
-    <div v-if="officialMarketOpen" class="official-market-modal-overlay">
-      <OfficialSkillsDialog :open="officialMarketOpen" @close="handleOfficialSkillsClose" />
-    </div>
   </div>
 </template>
 
@@ -2315,134 +2022,5 @@ onBeforeUnmount(() => {
   to {
     transform: rotate(360deg);
   }
-}
-
-/* Market Category Chips Bar */
-.market-chips-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-
-.category-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-secondary);
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 140ms ease;
-}
-
-.category-chip:hover {
-  border-color: var(--accent);
-  color: var(--text);
-  background: var(--surface-hover);
-}
-
-.category-chip.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.chip-count {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-  color: var(--text-secondary);
-}
-
-.category-chip.active .chip-count {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  color: var(--accent);
-}
-
-.full-market-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
-  padding: 4px 10px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: all 140ms ease;
-}
-
-.full-market-link:hover {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-
-.market-loading-box {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-muted);
-  gap: 12px;
-}
-
-.card-install-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 140ms ease;
-}
-
-.card-install-btn:hover:not(:disabled) {
-  background: var(--accent);
-  color: #ffffff;
-}
-
-.card-install-btn:disabled {
-  opacity: 0.65;
-  cursor: wait;
-}
-
-.author-label {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.mt-2 {
-  margin-top: 8px;
-}
-
-/* Fullscreen Overlay for OfficialSkillsDialog */
-.official-market-modal-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 50;
-  background: var(--sidebar);
-  display: flex;
-  flex-direction: column;
-}
-
-:root[data-material="mica"] .official-market-modal-overlay {
-  background: color-mix(in srgb, var(--sidebar) 75%, transparent);
 }
 </style>

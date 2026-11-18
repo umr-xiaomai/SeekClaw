@@ -24,7 +24,7 @@ public sealed class LlmHttpFactory : ILlmHttpFactory, IDisposable
         {
             var handler = new SocketsHttpHandler
             {
-                ConnectTimeout = TimeSpan.FromSeconds(Math.Min(provider.TimeoutSeconds, 30)),
+                ConnectTimeout = TimeSpan.FromSeconds(Math.Clamp(provider.TimeoutSeconds, 1, 30)),
                 PooledConnectionLifetime = TimeSpan.FromMinutes(10),
                 AutomaticDecompression = DecompressionMethods.All,
             };

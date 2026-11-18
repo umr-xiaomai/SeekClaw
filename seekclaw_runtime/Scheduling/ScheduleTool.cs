@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Presentation;
 using SeekClaw.Runtime.Prompts;
@@ -31,7 +32,7 @@ public sealed class ScheduleTool(IPromptProvider prompts, IScheduleStore schedul
         var workspace = context.SessionWorkspace ?? context.Workspace;
         var source = workspace.IsGlobal ? null : workspace.Root;
         var existing = id is null ? null : schedules.Get(id) ?? throw new KeyNotFoundException("Schedule not found.");
-        if (existing is not null && (existing.Workspace != source || existing.SessionId is not null && existing.SessionId != context.SessionId))
+        if (existing is not null && (!SameWorkspace(existing.Workspace, source) || existing.SessionId is not null && existing.SessionId != context.SessionId))
             return Task.FromResult(ToolResult.Fail("This schedule belongs to another workspace or conversation; manage it from the scheduled tasks interface."));
         var action = GetString(args, "action");
         string output;
@@ -39,17 +40,18 @@ public sealed class ScheduleTool(IPromptProvider prompts, IScheduleStore schedul
         switch (action)
         {
             case "upsert":
-                var continuation = args["continue_context"]?.GetValue<bool>() ?? (existing is null || existing.SessionId is not null);
+                var continuation = args["continue_context"] is JsonValue cVal && cVal.TryGetValue<bool>(out var cont) ? cont : (existing is null || existing.SessionId is not null);
                 if (continuation && string.IsNullOrWhiteSpace(context.SessionId)) throw new InvalidOperationException("A conversation is required for context continuation.");
+                var worktree = args["worktree"] is JsonValue wVal ? (wVal.TryGetValue<bool>(out var wt) && wt) : (existing?.RunInWorktree ?? false);
                 var task = schedules.Upsert(id, GetString(args, "name") ?? existing?.Name ?? "Follow-up",
                     source,
                     GetString(args, "prompt") ?? existing?.Prompt ?? "", GetString(args, "cron") ?? existing?.Cron ?? "*/10 * * * *", true,
-                    continuation ? context.SessionId : null, args["worktree"]?.GetValue<bool>() ?? existing?.RunInWorktree ?? false,
+                    continuation ? context.SessionId : null, worktree,
                     GetString(args, "notification") ?? existing?.NotificationPolicy ?? "changes");
                 presented = task;
                 output = JsonSerializer.Serialize(task, SeekClawJsonContext.Default.ScheduledTask); break;
             case "list":
-                output = JsonSerializer.Serialize(schedules.List().Where(x => x.Workspace == source && (x.SessionId is null || x.SessionId == context.SessionId)).ToList(),
+                output = JsonSerializer.Serialize(schedules.List().Where(x => SameWorkspace(x.Workspace, source) && (x.SessionId is null || x.SessionId == context.SessionId)).ToList(),
                     SeekClawJsonContext.Default.ListScheduledTask); break;
             case "pause": case "complete": case "resume":
                 if (id is null) throw new ArgumentException("Schedule ID is required.");
@@ -65,5 +67,12 @@ public sealed class ScheduleTool(IPromptProvider prompts, IScheduleStore schedul
         {
             Widgets = presented is null ? null : [new ScheduleWidget("schedule:" + presented.Id, presented.Name, presented, action == "delete")],
         });
+    }
+
+    private static bool SameWorkspace(string? a, string? b)
+    {
+        if (string.IsNullOrWhiteSpace(a) && string.IsNullOrWhiteSpace(b)) return true;
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
+        return string.Equals(SeekClawDatabase.PathKey(a), SeekClawDatabase.PathKey(b), StringComparison.Ordinal);
     }
 }

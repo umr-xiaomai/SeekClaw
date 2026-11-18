@@ -100,6 +100,8 @@ public sealed class ToolSafetyTests : IDisposable
     [InlineData("echo hello > out.txt", false)]
     [InlineData("dotnet build", false)]
     [InlineData("npm install", false)]
+    [InlineData("rm -v temp.txt", false)]
+    [InlineData("git -C repo commit -m x", false)]
     public void BashTool_IsReadOnlyCommand_DetectsReadActionsAccurately(string command, bool expectedReadOnly)
     {
         Assert.Equal(expectedReadOnly, BashTool.IsReadOnlyCommand(command));

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Search } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { formatModelName } from '../app-helpers'
 import { ReasoningLevel } from '../types'
 
 const props = withDefaults(defineProps<{
@@ -104,16 +105,6 @@ const fillPercentNumber = computed(() => {
 })
 
 const fillPercent = computed(() => `${fillPercentNumber.value}%`)
-
-function formatModelName(name?: string): string {
-  if (!name) return '未配置模型'
-  const trimmed = name.trim()
-  if (!trimmed) return '未配置模型'
-  // Model references are providerId/modelId; the model id itself may contain '/'.
-  const separator = trimmed.indexOf('/')
-  if (separator > 0 && separator < trimmed.length - 1) return trimmed.slice(separator + 1)
-  return trimmed
-}
 
 const displayModel = computed(() => formatModelName(props.model))
 

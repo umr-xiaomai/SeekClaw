@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -275,11 +277,14 @@ public sealed class WebSearchTool(IPromptProvider prompts) : BuiltinTool(prompts
 /// <summary>Fetches web page content, strips HTML markup, and returns readable markdown-like text.</summary>
 public sealed class WebFetchTool(IPromptProvider prompts) : BuiltinTool(prompts)
 {
+    private const int MaxResponseBytes = 2 * 1024 * 1024;
+    private const int MaxRedirects = 5;
+
     public override bool RequiresWorkspace => false;
     public override bool RequiresNetwork => true;
     private static readonly HttpClient HttpClient = new(new HttpClientHandler
     {
-        AllowAutoRedirect = true,
+        AllowAutoRedirect = false,
         AutomaticDecompression = System.Net.DecompressionMethods.All,
     })
     {
@@ -307,23 +312,59 @@ public sealed class WebFetchTool(IPromptProvider prompts) : BuiltinTool(prompts)
 
         var maxChars = Math.Clamp(GetInt(arguments, "max_chars") ?? 10_000, 500, 50_000);
 
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var currentUri)
+            || (currentUri.Scheme != Uri.UriSchemeHttp && currentUri.Scheme != Uri.UriSchemeHttps))
+        {
+            return ToolResult.Fail($"Invalid HTTP/HTTPS URL: {url}");
+        }
+
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SeekClaw/1.0");
+            HttpResponseMessage? response = null;
+            for (var redirects = 0; redirects <= MaxRedirects; redirects++)
+            {
+                if (!await IsSafePublicUriAsync(currentUri, ct).ConfigureAwait(false))
+                    return ToolResult.Fail($"Blocked access to restricted host: {currentUri.Host}");
 
-            using var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-                return ToolResult.Fail($"HTTP request to {url} failed with status code {(int)response.StatusCode} ({response.ReasonPhrase}).");
+                using var request = new HttpRequestMessage(HttpMethod.Get, currentUri);
+                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SeekClaw/1.0");
 
-            var rawContent = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            var extractedText = ExtractMainText(rawContent);
+                response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                var status = (int)response.StatusCode;
+                if (status is >= 300 and < 400 && response.Headers.Location is { } location)
+                {
+                    var nextUri = location.IsAbsoluteUri ? location : new Uri(currentUri, location);
+                    response.Dispose();
+                    response = null;
+                    if (nextUri.Scheme != Uri.UriSchemeHttp && nextUri.Scheme != Uri.UriSchemeHttps)
+                        return ToolResult.Fail($"Blocked redirect to unsupported scheme: {nextUri.Scheme}");
+                    currentUri = nextUri;
+                    continue;
+                }
+                break;
+            }
 
-            if (extractedText.Length > maxChars)
-                extractedText = extractedText[..maxChars] + $"\n… [Truncated remaining {extractedText.Length - maxChars} chars]";
+            if (response is null)
+                return ToolResult.Fail($"Too many redirects fetching {url}.");
 
-            var summary = $"Fetched {extractedText.Length} characters from {url}";
-            return ToolResult.Ok(extractedText, summary);
+            using (response)
+            {
+                if (!response.IsSuccessStatusCode)
+                    return ToolResult.Fail($"HTTP request to {currentUri} failed with status code {(int)response.StatusCode} ({response.ReasonPhrase}).");
+
+                var rawContent = await ReadLimitedStringAsync(response.Content, MaxResponseBytes, ct).ConfigureAwait(false);
+                var extractedText = ExtractMainText(rawContent);
+
+                if (extractedText.Length > maxChars)
+                    extractedText = extractedText[..maxChars] + $"\n… [Truncated remaining {extractedText.Length - maxChars} chars]";
+
+                var summary = $"Fetched {extractedText.Length} characters from {currentUri}";
+                return ToolResult.Ok(extractedText, summary);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (HttpRequestException ex)
         {
@@ -337,6 +378,62 @@ public sealed class WebFetchTool(IPromptProvider prompts) : BuiltinTool(prompts)
         {
             return ToolResult.Fail($"Failed to fetch {url}: {ex.Message}");
         }
+    }
+
+    private static async Task<bool> IsSafePublicUriAsync(Uri uri, CancellationToken ct)
+    {
+        var host = uri.DnsSafeHost.Trim().TrimEnd('.').ToLowerInvariant();
+        if (string.IsNullOrEmpty(host) || uri.IsLoopback
+            || host is "localhost" or "169.254.169.254" or "metadata.google.internal")
+            return false;
+
+        if (IPAddress.TryParse(host, out var literal))
+            return !IsRestrictedAddress(literal);
+
+        try
+        {
+            var addresses = await Dns.GetHostAddressesAsync(host, ct).ConfigureAwait(false);
+            return addresses.All(addr => !IsRestrictedAddress(addr));
+        }
+        catch (SocketException)
+        {
+            return true; // Let HttpClient produce its normal DNS failure error.
+        }
+    }
+
+    private static bool IsRestrictedAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (IPAddress.IsLoopback(address) || IPAddress.Any.Equals(address) || IPAddress.IPv6Any.Equals(address))
+            return true;
+
+        var bytes = address.GetAddressBytes();
+        if (address.AddressFamily == AddressFamily.InterNetwork && bytes.Length == 4)
+            return bytes[0] == 127 || (bytes[0] == 169 && bytes[1] == 254);
+
+        return address.IsIPv6LinkLocal;
+    }
+
+    private static async Task<string> ReadLimitedStringAsync(HttpContent content, int maxBytes, CancellationToken ct)
+    {
+        await using var stream = await content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var ms = new MemoryStream();
+        var buffer = new byte[8192];
+        var remaining = maxBytes;
+        while (remaining > 0)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), ct).ConfigureAwait(false);
+            if (read == 0) break;
+            ms.Write(buffer, 0, read);
+            remaining -= read;
+        }
+        var encoding = Encoding.UTF8;
+        if (!string.IsNullOrWhiteSpace(content.Headers.ContentType?.CharSet))
+        {
+            try { encoding = Encoding.GetEncoding(content.Headers.ContentType.CharSet.Trim('"')); }
+            catch (ArgumentException) { }
+        }
+        return encoding.GetString(ms.GetBuffer(), 0, (int)ms.Length);
     }
 
     internal static string ExtractMainText(string html)

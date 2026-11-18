@@ -26,7 +26,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         {
             Content = new StringContent(BuildBody(request).ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        ApplyHeaders(message, request.Provider);
+        ApplyHeaders(message, request);
 
         using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         headerCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds)));
@@ -201,13 +201,28 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         var calls = new List<ToolCallRequest>();
         if (message["tool_calls"] is JsonArray toolCalls)
         {
+            var usedIds = new HashSet<string>(
+                toolCalls.OfType<JsonObject>()
+                    .Select(c => c["id"]?.GetValue<string>())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))!,
+                StringComparer.Ordinal);
             foreach (var item in toolCalls)
             {
                 if (item is not JsonObject call) continue;
                 var function = call["function"] as JsonObject;
                 var name = function?["name"]?.GetValue<string>() ?? "";
-                if (name.Length == 0) continue;
-                var id = call["id"]?.GetValue<string>() ?? $"call_{calls.Count}";
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var rawId = call["id"]?.GetValue<string>();
+                string id;
+                if (!string.IsNullOrWhiteSpace(rawId))
+                {
+                    id = rawId;
+                }
+                else
+                {
+                    var n = calls.Count;
+                    do { id = $"call_{n++}"; } while (!usedIds.Add(id));
+                }
                 var rawArgs = function?["arguments"]?.GetValue<string>() ?? "{}";
                 calls.AddRange(ExpandToolCalls(id, name, rawArgs));
             }
@@ -248,8 +263,9 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             .Select(part => part["text"]?.GetValue<string>() ?? ""));
     }
 
-    private static void ApplyHeaders(HttpRequestMessage message, Configuration.ProviderConfig provider)
+    private static void ApplyHeaders(HttpRequestMessage message, LlmRequest request)
     {
+        var provider = request.Provider;
         var key = provider.ResolveApiKey();
         if (!string.IsNullOrWhiteSpace(key))
             message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
@@ -258,6 +274,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         if (provider.Headers is not null)
             foreach (var (name, value) in provider.Headers)
                 message.Headers.TryAddWithoutValidation(name, value);
+        DeepSeekOptimizationPolicy.ApplyHeaders(message, request);
     }
 
     internal static JsonObject BuildBody(LlmRequest request)
@@ -280,7 +297,7 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                     // previous reasoning_content is passed back; the opt-in policy drops it for
                     // pure text turns to avoid paying for ignored tokens.
                     if (msg.FinishReason is not ("error" or "cancelled")
-                        && DeepSeekOptimizationPolicy.ShouldPassBackReasoning(request, msg))
+                        && DeepSeekOptimizationPolicy.ShouldPassBackOpenAiReasoning(request, msg))
                         assistant["reasoning_content"] = msg.Thinking;
                     if (msg.ToolCalls is { Count: > 0 })
                     {
@@ -415,7 +432,11 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
 
         var detail = ExtractErrorMessage(body);
         var retryable = status is 408 or 409 or 429 or >= 500;
-        return new LlmException($"{providerId} returned HTTP {status}: {detail}", status, retryable);
+        return new LlmException($"{providerId} returned HTTP {status}: {detail}", status, retryable)
+        {
+            RetryAfter = DeepSeekOptimizationPolicy.ExtractRetryAfter(response),
+            ErrorCode = DeepSeekOptimizationPolicy.ClassifyErrorCode(status, detail),
+        };
     }
 
     internal static string ExtractErrorMessage(string body)
@@ -484,6 +505,10 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
             // Non-object SSE payloads (arrays, scalars, blank lines) are not valid
             // chat.completion.chunk frames; skip them instead of throwing.
             if (chunk is not JsonObject frame) yield break;
+            if (frame["error"] is JsonNode errNode)
+                throw new LlmException(
+                    $"Stream error: {ExtractErrorMessage(errNode.ToJsonString())}",
+                    retryable: true);
             if (frame["usage"] is JsonObject usage)
             {
                 _inputTokens = usage["prompt_tokens"]?.GetValue<long>() ?? _inputTokens;
@@ -550,7 +575,8 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                         var nameConflict = !string.IsNullOrEmpty(name)
                             && !string.IsNullOrEmpty(entry.Name)
                             && entry.Args.Length > 0
-                            && ToolArguments.StartsCompleteJsonObject(entry.Args.ToString());
+                            && ToolArguments.StartsCompleteJsonObject(entry.Args.ToString())
+                            && (!string.Equals(name, entry.Name, StringComparison.Ordinal) || !string.IsNullOrEmpty(args));
                         if (idConflict || nameConflict)
                         {
                             slot = AllocateNextSlot(slot);
@@ -652,17 +678,34 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
                 ? DeepSeekOptimizationPolicy.DisjointInputTokens(_inputTokens, _cachedInputTokens, request)
                 : _inputTokens;
 
+            var usedIds = new HashSet<string>(
+                _toolCalls.Values.Select(v => v.Id).Where(s => !string.IsNullOrWhiteSpace(s)),
+                StringComparer.Ordinal);
+            var toolCallList = new List<ToolCallRequest>();
+            foreach (var kv in _toolCalls.OrderBy(kv => kv.Key))
+            {
+                if (string.IsNullOrWhiteSpace(kv.Value.Name)) continue;
+                string id;
+                if (!string.IsNullOrWhiteSpace(kv.Value.Id))
+                {
+                    id = kv.Value.Id;
+                }
+                else
+                {
+                    var n = kv.Key;
+                    do { id = $"call_{n++}"; } while (!usedIds.Add(id));
+                }
+                toolCallList.AddRange(ExpandToolCalls(
+                    id,
+                    kv.Value.Name,
+                    kv.Value.Args.Length == 0 ? "{}" : kv.Value.Args.ToString()));
+            }
+
             return new LlmCompletion
             {
                 Text = _text.ToString(),
                 Thinking = _thinking.ToString(),
-                ToolCalls = _toolCalls
-                    .OrderBy(kv => kv.Key)
-                    .SelectMany(kv => ExpandToolCalls(
-                        string.IsNullOrEmpty(kv.Value.Id) ? $"call_{kv.Key}" : kv.Value.Id,
-                        kv.Value.Name,
-                        kv.Value.Args.Length == 0 ? "{}" : kv.Value.Args.ToString()))
-                    .ToList(),
+                ToolCalls = toolCallList,
                 Usage = new TokenUsage(disjointInputTokens, _outputTokens)
                 {
                     // OpenAI-compatible usage.prompt_tokens already includes cached tokens.

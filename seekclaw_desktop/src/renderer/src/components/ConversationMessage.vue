@@ -2,6 +2,7 @@
 import {
   Check,
   ChevronDown,
+  ChevronRight,
   CircleAlert,
   Copy,
   Image as ImageIcon,
@@ -44,7 +45,20 @@ const props = withDefaults(defineProps<{
   hideSubAgents?: boolean
   /** Control whether a fallback sub-agent summary row renders when events are absent. */
   showSubAgentSummary?: boolean
-}>(), { imageSources: () => ({}), widgets: () => [], showFooter: false, isIntermediate: false, smoothOutput: true, showSubAgentSummary: true })
+  /** Read-only panels (e.g. sub-agent detail) omit edit, branch, retry, and timestamps. */
+  readOnly?: boolean
+  /** Render user message as a compact collapsible task prompt disclosure instead of a bubble. */
+  compactTaskPrompt?: boolean
+}>(), {
+  imageSources: () => ({}),
+  widgets: () => [],
+  showFooter: false,
+  isIntermediate: false,
+  smoothOutput: true,
+  showSubAgentSummary: true,
+  readOnly: false,
+  compactTaskPrompt: false
+})
 
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
@@ -268,7 +282,7 @@ const liveStatusLabel = computed(() => {
 
 <template>
   <article v-if="isVisible" :id="'message-' + message.id" class="message"
-    :class="[systemKind ? 'message-system' : `message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate, 'is-tools-only': isToolsOnly }]">
+    :class="[systemKind ? 'message-system' : `message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate, 'is-tools-only': isToolsOnly, 'is-compact-prompt': compactTaskPrompt && message.role === 'user' && !systemKind }]">
     <!-- user: either a real message or a system-injected card -->
     <template v-if="message.role === 'user'">
       <div v-if="systemKind" class="system-card" :class="`system-${systemKind}`">
@@ -286,6 +300,31 @@ const liveStatusLabel = computed(() => {
           <pre class="system-card-text">{{ systemBody }}</pre>
         </div>
       </div>
+      <details v-else-if="compactTaskPrompt" class="task-prompt-disclosure">
+        <summary>
+          <ChevronRight :size="14" class="task-prompt-chevron" aria-hidden="true" />
+          <span>任务指令</span>
+        </summary>
+        <div class="task-prompt-body">
+          <div v-if="message.files?.length" class="user-files-grid">
+            <button v-for="file in message.files" :key="file.id" type="button" class="user-file-chip"
+              :title="`在文件夹中显示: ${file.path}`" @click="openFileLocation(file.path)">
+              <span class="file-ext-badge" :class="fileExtClass(file.extension)">
+                {{ fileBadgeText(file.extension) }}
+              </span>
+              <span class="file-chip-name">{{ file.name }}</span>
+            </button>
+          </div>
+          <div v-if="message.images?.length" class="user-image-grid" :class="{ single: message.images.length === 1 }">
+            <button v-for="image in message.images" :key="image.id" type="button" class="user-image-button"
+              :title="`预览 ${image.name}`" @click="previewImage(image.id, image.name)">
+              <img :src="imageUrl(image.id)" :alt="image.name">
+              <span>{{ image.name }}</span>
+            </button>
+          </div>
+          <div v-if="message.content" class="task-prompt-text">{{ message.content }}</div>
+        </div>
+      </details>
       <div v-else class="user-message-stack">
         <div v-if="message.files?.length" class="user-files-grid">
           <button v-for="file in message.files" :key="file.id" type="button" class="user-file-chip"
@@ -304,7 +343,7 @@ const liveStatusLabel = computed(() => {
           </button>
         </div>
         <div v-if="message.content" class="user-bubble">{{ message.content }}</div>
-        <footer v-if="!streaming" class="user-footer" :class="{ active: isCopied }">
+        <footer v-if="!streaming && !readOnly" class="user-footer" :class="{ active: isCopied }">
           <span v-if="message.createdAt" class="message-time">
             {{ formatMessageTime(message.createdAt) }}
           </span>
@@ -366,23 +405,23 @@ const liveStatusLabel = computed(() => {
         <span>{{ liveStatusLabel }}</span>
       </div>
 
-      <footer v-if="showFooter && !streaming && (displayContent || activeError)" class="assistant-footer" :class="{ active: isCopied }">
+      <footer v-if="showFooter && !streaming && (displayContent || activeError)" class="assistant-footer" :class="{ active: isCopied, 'is-readonly': readOnly }">
         <div class="assistant-actions">
           <button type="button" class="action-btn" :class="{ success: isCopied }" :title="isCopied ? '已复制' : '复制回答'"
             aria-label="复制回答" @click="copyContent">
             <Check v-if="isCopied" :size="13" class="action-icon success-icon" />
             <Copy v-else :size="13" class="action-icon" />
           </button>
-          <button type="button" class="action-btn" title="在此分叉新任务" aria-label="在此分叉新任务"
+          <button v-if="!readOnly" type="button" class="action-btn" title="在此分叉新任务" aria-label="在此分叉新任务"
             @click="emit('branch', message)">
             <Split :size="13" class="action-icon" />
           </button>
-          <button type="button" class="action-btn" title="重新生成" aria-label="重新生成"
+          <button v-if="!readOnly" type="button" class="action-btn" title="重新生成" aria-label="重新生成"
             @click="emit('retry', message)">
             <RotateCcw :size="13" class="action-icon" />
           </button>
         </div>
-        <span v-if="message.createdAt" class="message-time">
+        <span v-if="!readOnly && message.createdAt" class="message-time">
           {{ formatMessageTime(message.createdAt) }}
         </span>
       </footer>
@@ -531,6 +570,74 @@ const liveStatusLabel = computed(() => {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+}
+
+.assistant-footer.is-readonly {
+  position: static;
+  margin-top: 6px;
+  opacity: 0.78;
+  pointer-events: auto;
+  transform: none;
+}
+
+.assistant-footer.is-readonly:hover,
+.assistant-footer.is-readonly.active {
+  opacity: 1;
+}
+
+.task-prompt-disclosure {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-muted);
+}
+
+.task-prompt-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  list-style: none;
+  cursor: pointer;
+}
+
+.task-prompt-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.task-prompt-disclosure > summary:hover,
+.task-prompt-disclosure[open] > summary {
+  color: var(--text-secondary);
+}
+
+.task-prompt-chevron {
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.task-prompt-disclosure[open] .task-prompt-chevron {
+  transform: rotate(90deg);
+}
+
+.task-prompt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 8px 6px;
+  padding: 6px 0 6px 14px;
+  border-left: 1px solid var(--border);
+}
+
+.task-prompt-text {
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .assistant-actions,

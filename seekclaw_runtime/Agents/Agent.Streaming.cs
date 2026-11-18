@@ -47,7 +47,10 @@ public sealed partial class Agent
             Tools = definitions,
             Temperature = temperature,
             MaxTokens = model.Model.EffectiveMaxOutput,
-            EnableThinking = reasoningLevel != ReasoningLevel.None && model.Model.Capabilities.Thinking,
+            EnableThinking = reasoningLevel != ReasoningLevel.None
+                && (model.Model.Capabilities.Thinking
+                    || model.Model.Capabilities.Reasoning
+                    || ReasoningLevelAdapter.IsDeepSeek(model.Provider, model.Model)),
             ThinkingBudgetTokens = config.Agent.ThinkingBudgetTokens,
             ReasoningLevel = reasoningLevel,
             OptimizeDeepSeek = configStore.Config.Routing.DeepSeekOptimizationEnabled,

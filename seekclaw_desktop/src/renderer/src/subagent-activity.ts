@@ -252,3 +252,65 @@ export function subAgentSummary(agents: SubAgentActivity[]): string {
   if (agents.every((agent) => ['completed', 'cancelled'].includes(agent.status))) return `${subject}已结束工作`
   return `${subject}的子任务`
 }
+
+export interface ThreadSubAgentEntry {
+  agent: SubAgentActivity
+  startedAt?: number
+  updatedAt?: number
+  active: boolean
+}
+
+function isSettledSubAgentStatus(status: SubAgentActivity['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'interrupted'
+}
+
+/** Collect every unique sub-agent mentioned across a thread's messages with latest status & timestamps. */
+export function collectThreadSubAgents(messages: readonly ChatMessage[]): ThreadSubAgentEntry[] {
+  const latest = new Map<string, ThreadSubAgentEntry>()
+
+  const merge = (agent: SubAgentActivity, timestamp?: number): void => {
+    const existing = latest.get(agent.id)
+    if (existing && isSettledSubAgentStatus(existing.agent.status)
+      && !agent.live && (agent.status === 'running' || agent.status === 'starting')) {
+      return
+    }
+    const active = agent.status === 'starting' || agent.status === 'running'
+    latest.set(agent.id, {
+      agent,
+      startedAt: existing?.startedAt ?? timestamp,
+      updatedAt: timestamp ?? existing?.updatedAt,
+      active
+    })
+  }
+
+  for (const message of messages) {
+    for (const agent of messageSubAgents(message)) merge(agent, message.createdAt)
+  }
+  for (const message of messages) {
+    const eventTimeById = new Map<string, number>()
+    for (const ev of message.subAgentEvents ?? []) {
+      const prev = eventTimeById.get(ev.agentId)
+      if (!prev || ev.createdAt > prev) eventTimeById.set(ev.agentId, ev.createdAt)
+    }
+    for (const agent of message.subAgents ?? []) {
+      merge(agent, eventTimeById.get(agent.id) ?? message.createdAt)
+    }
+  }
+
+  const representedTools = new Set(
+    [...latest.values()]
+      .filter((entry) => !entry.agent.id.startsWith('tool:'))
+      .map((entry) => entry.agent.sourceToolId)
+      .filter(Boolean)
+  )
+  for (const [id, entry] of latest) {
+    if (id.startsWith('tool:') && entry.agent.sourceToolId && representedTools.has(entry.agent.sourceToolId)) {
+      latest.delete(id)
+    }
+  }
+
+  return [...latest.values()].sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1
+    return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+  })
+}

@@ -19,7 +19,7 @@ public sealed class SeekClawDatabase
         {
             DataSource = FilePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
+            Cache = SqliteCacheMode.Default,
             Pooling = true,
             ForeignKeys = true,
             DefaultTimeout = 10,
@@ -50,8 +50,10 @@ public sealed class SeekClawDatabase
         {
             using var connection = new SqliteConnection(_connectionString);
             connection.Open();
+            SqliteConnection.ClearPool(connection);
             DropSchema(connection);
             InitializeSchema(connection);
+            SqliteConnection.ClearPool(connection);
             InitializedFiles.Add(FilePath);
         }
     }

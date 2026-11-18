@@ -231,8 +231,8 @@ public static class SkillCommands
             return 0;
         });
 
-        var installArg = new Argument<string>("source") { Description = "Path, URL or official skill name/slug" };
-        var install = new Command("install", "Install a skill from local file, URL, or official marketplace");
+        var installArg = new Argument<string>("source") { Description = "Path or URL to a skill file (.md or .zip)" };
+        var install = new Command("install", "Install a skill from local file or URL");
         install.Add(installArg);
         install.SetAction(parse =>
         {
@@ -250,22 +250,6 @@ public static class SkillCommands
                     using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
                     var response = httpClient.GetAsync(source).GetAwaiter().GetResult();
                     response.EnsureSuccessStatusCode();
-                    using var fs = File.Create(tempFile);
-                    response.Content.CopyTo(fs, null, CancellationToken.None);
-                    fullPath = tempFile;
-                }
-                else if (!File.Exists(source) && !source.Contains('/') && !source.Contains('\\'))
-                {
-                    var officialUrl = $"https://seekclaw.hoilai.com/api/skills/{Uri.EscapeDataString(source)}/download";
-                    AnsiConsole.MarkupLine($"[dim]Fetching skill '{Markup.Escape(source)}' from official marketplace...[/]");
-                    tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
-                    using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-                    var response = httpClient.GetAsync(officialUrl).GetAwaiter().GetResult();
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        AnsiConsole.MarkupLine($"[red]Skill '{Markup.Escape(source)}' not found locally or on official marketplace ({response.StatusCode}).[/]");
-                        return 1;
-                    }
                     using var fs = File.Create(tempFile);
                     response.Content.CopyTo(fs, null, CancellationToken.None);
                     fullPath = tempFile;

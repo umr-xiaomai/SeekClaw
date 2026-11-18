@@ -67,6 +67,30 @@ public sealed class ComputerUseTests : IAsyncDisposable
         Assert.NotNull(runtime.Tools.Resolve("computer_inspect"));
     }
 
+    [Fact]
+    public async Task ExtensionManager_CanDisableAndReEnableComputerUseAtRuntime()
+    {
+        var configPath = Path.Combine(_tempDir, "config_toggle.json");
+        var statePath = Path.Combine(_tempDir, "state_toggle.json");
+        var store = new ConfigStore(configPath, statePath);
+        store.Config.ComputerUse.Enabled = true;
+        store.Config.ComputerUse.Driver = "vision";
+
+        using var runtime = SeekClawRuntime.Create(_tempDir, store);
+        Assert.NotNull(runtime.Tools.Resolve("computer"));
+        Assert.NotNull(runtime.Tools.Resolve("computer_inspect"));
+
+        store.Config.ComputerUse.Enabled = false;
+        await runtime.Extensions.DisposeAsync();
+        Assert.Null(runtime.Tools.Resolve("computer"));
+        Assert.Null(runtime.Tools.Resolve("computer_inspect"));
+
+        store.Config.ComputerUse.Enabled = true;
+        runtime.Extensions.InitializeAll(runtime);
+        Assert.NotNull(runtime.Tools.Resolve("computer"));
+        Assert.NotNull(runtime.Tools.Resolve("computer_inspect"));
+    }
+
 
     [Fact]
     public void ComputerDriverFactory_ResolvesRequestedDriverOrFallback()

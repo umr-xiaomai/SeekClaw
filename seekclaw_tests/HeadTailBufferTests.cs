@@ -63,4 +63,19 @@ public sealed class HeadTailBufferTests
         Assert.Contains("omitted", output);
         Assert.Equal(28, buffer.OmittedBytes);
     }
+
+    [Fact]
+    public void BetweenHalfAndFullCapacity_PreservesAllTailBytesWithoutOmission()
+    {
+        var buffer = new HeadTailBuffer(maxBytes: 100); // 50 head, 50 tail
+        var head = new string('H', 50);
+        var tail = new string('T', 30); // total 80 bytes: >50 head, <=100 total (_omittedBytes == 0)
+        var input = Encoding.UTF8.GetBytes(head + tail);
+        buffer.PushChunk(input, 0, input.Length);
+
+        var output = buffer.GetFormattedText(Encoding.UTF8);
+
+        Assert.Equal(0, buffer.OmittedBytes);
+        Assert.Equal(head + tail, output);
+    }
 }

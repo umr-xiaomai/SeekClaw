@@ -14,20 +14,41 @@ using System.Threading.Tasks;
 public sealed class ExtensionManager : IAsyncDisposable
 {
     private readonly List<IRuntimeExtension> _extensions = [];
+    private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public IReadOnlyList<IRuntimeExtension> Extensions => _extensions;
+    public IReadOnlyList<IRuntimeExtension> Extensions
+    {
+        get
+        {
+            _gate.Wait();
+            try { return _extensions.ToList(); }
+            finally { _gate.Release(); }
+        }
+    }
 
     public void Register(IRuntimeExtension extension)
     {
         ArgumentNullException.ThrowIfNull(extension);
-        if (_extensions.All(e => e.Id != extension.Id))
+        _gate.Wait();
+        try
         {
-            _extensions.Add(extension);
+            if (_extensions.All(e => e.Id != extension.Id))
+            {
+                _extensions.Add(extension);
+            }
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 
-    public IRuntimeExtension? Get(string id) =>
-        _extensions.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase));
+    public IRuntimeExtension? Get(string id)
+    {
+        _gate.Wait();
+        try { return _extensions.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)); }
+        finally { _gate.Release(); }
+    }
 
     public bool TryGet(string id, out IRuntimeExtension? extension)
     {
@@ -79,36 +100,51 @@ public sealed class ExtensionManager : IAsyncDisposable
 
     public void InitializeAll(SeekClawRuntime runtime)
     {
-        foreach (var ext in _extensions)
+        _gate.Wait();
+        try
         {
-            try
+            foreach (var ext in _extensions)
             {
-                if (ext.IsEnabled(runtime))
+                try
                 {
-                    ext.Initialize(runtime);
-                    ext.RegisterTools(runtime.Tools, runtime);
+                    if (ext.IsEnabled(runtime))
+                    {
+                        ext.Initialize(runtime);
+                        ext.RegisterTools(runtime.Tools, runtime);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[ExtensionManager] Failed to initialize extension '{ext.Id}': {ex.Message}");
                 }
             }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[ExtensionManager] Failed to initialize extension '{ext.Id}': {ex.Message}");
-            }
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var ext in _extensions)
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            try
+            foreach (var ext in _extensions)
             {
-                await ext.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[ExtensionManager] Failed to dispose extension '{ext.Id}': {ex.Message}");
+                try
+                {
+                    await ext.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[ExtensionManager] Failed to dispose extension '{ext.Id}': {ex.Message}");
+                }
             }
         }
-        _extensions.Clear();
+        finally
+        {
+            _gate.Release();
+        }
     }
 }

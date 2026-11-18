@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { projectConversationTurns, summarizeConversationProcess, type ConversationProcessItem } from './conversation-process'
+import {
+  buildConversationProjection,
+  collectMessageImageSources,
+  projectConversationTurns,
+  summarizeConversationProcess,
+  type ConversationProcessItem
+} from './conversation-process'
 import type { ChatMessage, ConversationWidget, ToolActivity } from './types'
 
 function item(id: string, role: ChatMessage['role'], content = '', extra: Partial<ChatMessage> = {}): ConversationProcessItem {
@@ -100,5 +106,33 @@ describe('conversation process projection', () => {
     expect(turns[0]?.user).toBe(user)
     expect(turns[0]?.process).toEqual([draft])
     expect(turns[0]?.response).toBe(afterVerify)
+  })
+
+  it('builds identical unified projection and image sources for main and child threads', () => {
+    const messages = [
+      {
+        id: 'u1', role: 'user' as const, content: 'Inspect image and repo', createdAt: 10,
+        images: [{ id: 'img-1', name: 'chart.png', mediaType: 'image/png', data: 'AQID', sizeBytes: 3 }]
+      },
+      {
+        id: 'a1', role: 'assistant' as const, content: 'Checking workspace...', createdAt: 11,
+        tools: [{ id: 't1', name: 'read_file', filePath: 'README.md', state: 'done' as const }]
+      },
+      {
+        id: 'a2', role: 'assistant' as const, content: 'Everything checks out.', createdAt: 12, state: 'done' as const
+      }
+    ]
+    expect(collectMessageImageSources(messages)).toEqual({
+      'img-1': 'data:image/png;base64,AQID'
+    })
+    const projection = buildConversationProjection(messages, { running: false })
+    expect(projection.items.map((entry) => [entry.message.id, entry.isIntermediate, entry.showFooter])).toEqual([
+      ['u1', false, false],
+      ['a1', true, false],
+      ['a2', false, true]
+    ])
+    expect(projection.turns).toHaveLength(1)
+    expect(projection.turns[0]?.process.map((p) => p.message.id)).toEqual(['a1'])
+    expect(projection.turns[0]?.response?.message.id).toBe('a2')
   })
 })

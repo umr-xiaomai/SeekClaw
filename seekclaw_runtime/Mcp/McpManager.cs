@@ -176,8 +176,12 @@ public sealed class McpManager(
                 var baseName = McpToolAdapter.BuildName(name, tool.Name);
                 var uniqueName = baseName;
                 var suffix = 2;
-                while (!usedNames.Add(uniqueName))
-                    uniqueName = $"{baseName}_{suffix++}";
+                while (!usedNames.Add(uniqueName) || toolRegistry.Resolve(uniqueName) is not null)
+                {
+                    var suffixText = $"_{suffix++}";
+                    var prefixLen = Math.Max(1, 64 - suffixText.Length);
+                    uniqueName = (baseName.Length > prefixLen ? baseName[..prefixLen] : baseName) + suffixText;
+                }
                 _registrations.Add(toolRegistry.Register(new McpToolAdapter(client, tool, uniqueName)));
             }
 

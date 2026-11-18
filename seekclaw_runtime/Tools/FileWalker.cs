@@ -46,6 +46,11 @@ public static class FileWalker
             {
                 var name = Path.GetFileName(subdir);
                 if (IgnoredDirectories.Contains(name)) continue;
+                try
+                {
+                    if ((File.GetAttributes(subdir) & FileAttributes.ReparsePoint) != 0) continue;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
                 if (ignoreMatcher.IsIgnored(subdir, isDir: true)) continue;
                 stack.Push(subdir);
             }

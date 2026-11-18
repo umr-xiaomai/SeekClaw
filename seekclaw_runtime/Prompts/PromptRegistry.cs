@@ -77,7 +77,7 @@ public sealed class PromptComposer(IPromptProvider prompts, IPromptRegistry regi
             {
                 text = await contribution.Resolver(context, ct).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is IOException or FileNotFoundException)
+            catch (Exception ex) when (ex is IOException or FileNotFoundException or System.Net.Http.HttpRequestException or SeekClaw.Runtime.Mcp.McpException)
             {
                 continue; // a missing optional prompt never breaks the turn
             }

@@ -107,7 +107,7 @@ public sealed class HealthChecker(ILlmHttpFactory httpFactory, Configuration.ICo
         }
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(TimeSpan.FromSeconds(Math.Min(provider.TimeoutSeconds, 15)));
+        cts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(provider.TimeoutSeconds, 1, 15)));
 
         var stopwatch = Stopwatch.StartNew();
         try

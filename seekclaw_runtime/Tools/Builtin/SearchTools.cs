@@ -43,12 +43,17 @@ public sealed class ListDirTool(IPromptProvider prompts) : BuiltinTool(prompts)
             subdirs = Directory.EnumerateDirectories(dir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase);
             files = Directory.EnumerateFiles(dir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
         }
-        catch (UnauthorizedAccessException) { return; }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or DirectoryNotFoundException or IOException) { return; }
 
         foreach (var subdir in subdirs)
         {
             var name = Path.GetFileName(subdir);
             if (FileWalker.IgnoredDirectories.Contains(name)) continue;
+            try
+            {
+                if ((File.GetAttributes(subdir) & FileAttributes.ReparsePoint) != 0) continue;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
             if (++entries > 500) return;
             sb.Append(indent).Append(name).AppendLine("/");
             AppendTree(subdir, indent + "  ", depth - 1, sb, ref entries, context);

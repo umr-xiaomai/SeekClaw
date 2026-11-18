@@ -23,7 +23,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         {
             Content = new StringContent(BuildBody(request).ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        ApplyHeaders(message, request.Provider);
+        ApplyHeaders(message, request);
 
         using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         headerCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds)));
@@ -53,10 +53,15 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 var status = (int)response.StatusCode;
                 var body = "";
                 try { body = await response.Content.ReadAsStringAsync(headerCts.Token).ConfigureAwait(false); } catch { }
+                var detail = OpenAiCompatibleClient.ExtractErrorMessage(body);
                 throw new LlmException(
-                    $"{request.Provider.Id} returned HTTP {status}: {OpenAiCompatibleClient.ExtractErrorMessage(body)}",
+                    $"{request.Provider.Id} returned HTTP {status}: {detail}",
                     status,
-                    retryable: status is 408 or 409 or 429 or 529 or >= 500);
+                    retryable: status is 408 or 409 or 429 or 529 or >= 500)
+                {
+                    RetryAfter = DeepSeekOptimizationPolicy.ExtractRetryAfter(response),
+                    ErrorCode = DeepSeekOptimizationPolicy.ClassifyErrorCode(status, detail),
+                };
             }
 
             // Compatible gateways do not always honour stream=false. If one answers with
@@ -87,7 +92,8 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     throw new LlmException($"{request.Provider.Id} returned an invalid non-streaming response.", inner: ex);
                 }
 
-                var completion = ParseCompletion(node, request.Provider.Id);
+                var completion = DeepSeekOptimizationPolicy.ValidateCompletion(
+                    ParseCompletion(node, request.Provider.Id), request);
                 if (completion.Thinking.Length > 0) yield return new LlmThinkingDelta(completion.Thinking);
                 foreach (var call in completion.ToolCalls)
                     yield return new LlmToolCallStarted(call.Id, call.Name);
@@ -96,7 +102,9 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 yield break;
             }
 
-            var idleTimeout = TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds));
+            var idleTimeout = DeepSeekOptimizationPolicy.Applies(request)
+                ? DeepSeekOptimizationPolicy.GetStreamIdleTimeout(request.Provider)
+                : TimeSpan.FromSeconds(Math.Max(1, request.Provider.TimeoutSeconds));
             var acc = new Accumulator();
             var sawMessageStop = false;
             Stream stream;
@@ -173,7 +181,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     retryable: true);
             }
 
-            yield return new LlmCompleted(acc.Build());
+            yield return new LlmCompleted(DeepSeekOptimizationPolicy.ValidateCompletion(acc.Build(), request));
         }
     }
 
@@ -192,6 +200,11 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         var text = new StringBuilder();
         var thinking = new StringBuilder();
         var thinkingSignature = new StringBuilder();
+        var usedIds = new HashSet<string>(
+            content.OfType<JsonObject>()
+                .Select(c => c["id"]?.GetValue<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s))!,
+            StringComparer.Ordinal);
         var calls = new List<ToolCallRequest>();
         foreach (var item in content.OfType<JsonObject>())
         {
@@ -206,11 +219,24 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     break;
                 case "tool_use":
                     var name = item["name"]?.GetValue<string>() ?? "";
-                    if (name.Length > 0)
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        var rawId = item["id"]?.GetValue<string>();
+                        string id;
+                        if (!string.IsNullOrWhiteSpace(rawId))
+                        {
+                            id = rawId;
+                        }
+                        else
+                        {
+                            var n = calls.Count;
+                            do { id = $"toolu_{n++}"; } while (!usedIds.Add(id));
+                        }
                         calls.Add(new ToolCallRequest(
-                            item["id"]?.GetValue<string>() ?? $"toolu_{calls.Count}",
+                            id,
                             name,
                             item["input"]?.ToJsonString() ?? "{}"));
+                    }
                     break;
             }
         }
@@ -218,6 +244,8 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         var usage = obj["usage"] as JsonObject;
         var inputTokens = usage?["input_tokens"]?.GetValue<long>() ?? 0;
         var outputTokens = usage?["output_tokens"]?.GetValue<long>() ?? 0;
+        var cachedTokens = usage?["cache_read_input_tokens"]?.GetValue<long>() ?? 0;
+        var cacheCreationTokens = usage?["cache_creation_input_tokens"]?.GetValue<long>() ?? 0;
         return new LlmCompletion
         {
             Text = text.ToString(),
@@ -227,15 +255,16 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             FinishReason = obj["stop_reason"]?.GetValue<string>() ?? "",
             Usage = new TokenUsage(inputTokens, outputTokens)
             {
-                TotalInputTokens = inputTokens,
-                CachedInputTokens = usage?["cache_read_input_tokens"]?.GetValue<long>() ?? 0,
-                CacheCreationInputTokens = usage?["cache_creation_input_tokens"]?.GetValue<long>() ?? 0,
+                TotalInputTokens = inputTokens + cachedTokens + cacheCreationTokens,
+                CachedInputTokens = cachedTokens,
+                CacheCreationInputTokens = cacheCreationTokens,
             },
         };
     }
 
-    private static void ApplyHeaders(HttpRequestMessage message, Configuration.ProviderConfig provider)
+    private static void ApplyHeaders(HttpRequestMessage message, LlmRequest request)
     {
+        var provider = request.Provider;
         var key = provider.ResolveApiKey();
         if (!string.IsNullOrWhiteSpace(key))
             message.Headers.TryAddWithoutValidation("x-api-key", key);
@@ -243,11 +272,13 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         if (provider.Headers is not null)
             foreach (var (name, value) in provider.Headers)
                 message.Headers.TryAddWithoutValidation(name, value);
+        DeepSeekOptimizationPolicy.ApplyHeaders(message, request);
     }
 
     internal static JsonObject BuildBody(LlmRequest request)
     {
         var messages = new JsonArray();
+        var optimizeDeepSeek = DeepSeekOptimizationPolicy.Applies(request);
 
         for (var index = 0; index < request.Messages.Count; index++)
         {
@@ -255,21 +286,30 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             switch (msg.Role)
             {
                 case ChatRole.User:
-                    messages.Add((JsonNode)new JsonObject { ["role"] = "user", ["content"] = UserContent(msg) });
+                    if (optimizeDeepSeek)
+                    {
+                        var blocks = UserBlocks(msg);
+                        if (blocks.Count > 0)
+                            AddOrMergeUserMessage(messages, blocks);
+                    }
+                    else
+                    {
+                        messages.Add((JsonNode)new JsonObject { ["role"] = "user", ["content"] = UserContent(msg) });
+                    }
                     break;
 
                 case ChatRole.Assistant:
                     var content = new JsonArray();
-                    if (msg.FinishReason is not ("error" or "cancelled")
-                        && !string.IsNullOrEmpty(msg.Thinking)
-                        && !string.IsNullOrEmpty(msg.ThinkingSignature))
+                    if (DeepSeekOptimizationPolicy.ShouldPassBackAnthropicThinking(request, msg))
                     {
-                        content.Add((JsonNode)new JsonObject
+                        var thinkingBlock = new JsonObject
                         {
                             ["type"] = "thinking",
                             ["thinking"] = msg.Thinking,
-                            ["signature"] = msg.ThinkingSignature,
-                        });
+                        };
+                        if (DeepSeekOptimizationPolicy.ShouldKeepThinkingSignature(request, msg))
+                            thinkingBlock["signature"] = msg.ThinkingSignature;
+                        content.Add((JsonNode)thinkingBlock);
                     }
                     var historyText = msg.AssistantHistoryText();
                     if (!string.IsNullOrEmpty(historyText))
@@ -298,10 +338,9 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                         JsonNode contentNode;
                         if (result.Images is { Count: > 0 })
                         {
-                            var contentBlocks = new JsonArray
-                            {
-                                (JsonNode)new JsonObject { ["type"] = "text", ["text"] = result.Text }
-                            };
+                            var contentBlocks = new JsonArray();
+                            if (!optimizeDeepSeek || !string.IsNullOrEmpty(result.Text))
+                                contentBlocks.Add((JsonNode)new JsonObject { ["type"] = "text", ["text"] = result.Text });
                             foreach (var image in result.Images)
                             {
                                 contentBlocks.Add((JsonNode)new JsonObject
@@ -316,6 +355,10 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                                 });
                             }
                             contentNode = contentBlocks;
+                        }
+                        else if (optimizeDeepSeek && string.IsNullOrEmpty(result.Text))
+                        {
+                            contentNode = new JsonArray();
                         }
                         else
                         {
@@ -332,11 +375,18 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                         index++;
                     }
                     index--;
-                    messages.Add((JsonNode)new JsonObject
+                    if (optimizeDeepSeek)
                     {
-                        ["role"] = "user",
-                        ["content"] = toolResults,
-                    });
+                        AddOrMergeUserMessage(messages, toolResults);
+                    }
+                    else
+                    {
+                        messages.Add((JsonNode)new JsonObject
+                        {
+                            ["role"] = "user",
+                            ["content"] = toolResults,
+                        });
+                    }
                     break;
             }
         }
@@ -371,17 +421,29 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                 : request.System;
         }
 
-        var thinkingBudget = request.EnableThinking && request.Model.Capabilities.Thinking
-            ? ReasoningLevelAdapter.AnthropicBudget(request)
-            : 0;
-        if (thinkingBudget > 0)
-            body["thinking"] = new JsonObject
-            {
-                ["type"] = "enabled",
-                ["budget_tokens"] = thinkingBudget,
-            };
-        else if (request.Temperature is { } temperature)
-            body["temperature"] = temperature; // temperature must stay default when thinking is on
+        if (optimizeDeepSeek)
+        {
+            if (DeepSeekOptimizationPolicy.ThinkingWire(request) is { } thinkingWire)
+                body["thinking"] = thinkingWire;
+            if (DeepSeekOptimizationPolicy.AnthropicOutputConfigWire(request) is { } outputConfig)
+                body["output_config"] = outputConfig;
+            if (request.Temperature is { } temp)
+                body["temperature"] = temp;
+        }
+        else
+        {
+            var thinkingBudget = request.EnableThinking && request.Model.Capabilities.Thinking
+                ? ReasoningLevelAdapter.AnthropicBudget(request)
+                : 0;
+            if (thinkingBudget > 0)
+                body["thinking"] = new JsonObject
+                {
+                    ["type"] = "enabled",
+                    ["budget_tokens"] = thinkingBudget,
+                };
+            else if (request.Temperature is { } temperature)
+                body["temperature"] = temperature; // temperature must stay default when thinking is on
+        }
 
         if (request.Model.Capabilities.ToolCalling && request.Tools.Count > 0)
         {
@@ -427,6 +489,77 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         }
     }
 
+    private static JsonArray UserBlocks(ChatMessage message)
+    {
+        var content = new JsonArray();
+        if (message.Images is { Count: > 0 })
+        {
+            foreach (var image in message.Images)
+                content.Add((JsonNode)new JsonObject
+                {
+                    ["type"] = "image",
+                    ["source"] = new JsonObject
+                    {
+                        ["type"] = "base64",
+                        ["media_type"] = image.MediaType,
+                        ["data"] = image.Data,
+                    },
+                });
+        }
+        if (!string.IsNullOrEmpty(message.Text))
+            content.Add((JsonNode)new JsonObject { ["type"] = "text", ["text"] = message.Text });
+        return content;
+    }
+
+    private static void AddOrMergeUserMessage(JsonArray messages, JsonArray newBlocks)
+    {
+        if (newBlocks.Count == 0) return;
+
+        if (messages.Count > 0
+            && messages[^1] is JsonObject prev
+            && string.Equals(prev["role"]?.GetValue<string>(), "user", StringComparison.Ordinal))
+        {
+            var combined = new List<JsonNode>();
+            if (prev["content"] is JsonValue prevVal && prevVal.TryGetValue<string>(out var prevText))
+            {
+                if (!string.IsNullOrEmpty(prevText))
+                    combined.Add(new JsonObject { ["type"] = "text", ["text"] = prevText });
+            }
+            else if (prev["content"] is JsonArray prevArr)
+            {
+                foreach (var node in prevArr)
+                {
+                    if (node is not null) combined.Add(node.DeepClone());
+                }
+            }
+
+            foreach (var node in newBlocks)
+            {
+                if (node is not null) combined.Add(node.DeepClone());
+            }
+
+            var ordered = new JsonArray();
+            foreach (var node in combined.Where(n => n["type"]?.GetValue<string>() == "tool_result"))
+                ordered.Add(node);
+            foreach (var node in combined.Where(n => n["type"]?.GetValue<string>() != "tool_result"))
+                ordered.Add(node);
+            prev["content"] = ordered;
+            return;
+        }
+
+        if (newBlocks.Count == 1
+            && newBlocks[0] is JsonObject single
+            && single["type"]?.GetValue<string>() == "text"
+            && single["text"] is JsonValue textVal
+            && textVal.TryGetValue<string>(out var singleText))
+        {
+            messages.Add((JsonNode)new JsonObject { ["role"] = "user", ["content"] = singleText });
+            return;
+        }
+
+        messages.Add((JsonNode)new JsonObject { ["role"] = "user", ["content"] = newBlocks });
+    }
+
     private static JsonNode UserContent(ChatMessage message)
     {
         if (message.Images is not { Count: > 0 }) return JsonValue.Create(message.Text)!;
@@ -450,7 +583,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
 
     private static JsonNode ParseOrEmpty(string json)
     {
-        try { return JsonNode.Parse(json) ?? new JsonObject(); }
+        try { return JsonNode.Parse(json) is JsonObject obj ? obj : new JsonObject(); }
         catch (JsonException) { return new JsonObject(); }
     }
 
@@ -462,11 +595,20 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
         private readonly StringBuilder _thinking = new();
         private readonly StringBuilder _thinkingSignature = new();
         private readonly Dictionary<int, (string Id, string Name, StringBuilder Args)> _toolBlocks = [];
+        private readonly HashSet<string> _usedToolIds = new(StringComparer.Ordinal);
         private long _inputTokens;
         private long _cachedInputTokens;
         private long _cacheCreationInputTokens;
         private long _outputTokens;
         private string _finishReason = "";
+
+        private string AllocateToolId(int startIndex)
+        {
+            var n = startIndex;
+            string candidate;
+            do { candidate = $"toolu_{n++}"; } while (!_usedToolIds.Add(candidate));
+            return candidate;
+        }
 
         public IEnumerable<LlmStreamEvent> Consume(string type, JsonNode? node)
         {
@@ -492,10 +634,13 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
                     }
                     else if (blockType == "tool_use")
                     {
-                        var id = block["id"]?.GetValue<string>() ?? $"toolu_{index}";
-                        var name = block["name"]?.GetValue<string>() ?? "";
+                        var rawId = block?["id"]?.GetValue<string>();
+                        var id = !string.IsNullOrWhiteSpace(rawId) ? rawId : AllocateToolId(index);
+                        _usedToolIds.Add(id);
+                        var name = block?["name"]?.GetValue<string>() ?? "";
                         _toolBlocks[index] = (id, name, new StringBuilder());
-                        yield return new LlmToolCallStarted(id, name);
+                        if (!string.IsNullOrWhiteSpace(name))
+                            yield return new LlmToolCallStarted(id, name);
                     }
                     break;
                 }
@@ -544,6 +689,7 @@ public sealed class AnthropicClient(ILlmHttpFactory httpFactory) : ILlmClient
             ThinkingSignature = _thinkingSignature.Length == 0 ? null : _thinkingSignature.ToString(),
             ToolCalls = _toolBlocks
                 .OrderBy(kv => kv.Key)
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Value.Name))
                 .Select(kv => new ToolCallRequest(
                     kv.Value.Id,
                     kv.Value.Name,

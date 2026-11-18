@@ -62,14 +62,31 @@ public abstract class BuiltinTool(IPromptProvider prompts) : ITool
 
     public abstract Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct);
 
-    protected static string? GetString(JsonObject args, string name) =>
-        args[name] is { } node ? node.GetValue<string>() : null;
+    protected static string? GetString(JsonObject args, string name)
+    {
+        if (args[name] is not JsonValue val) return null;
+        if (val.TryGetValue<string>(out var s)) return s;
+        if (val.TryGetValue<bool>(out var b)) return b ? "true" : "false";
+        if (val.TryGetValue<decimal>(out var d)) return d.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return null;
+    }
 
-    protected static int? GetInt(JsonObject args, string name) =>
-        args[name] is { } node ? (int)node.GetValue<double>() : null;
+    protected static int? GetInt(JsonObject args, string name)
+    {
+        if (args[name] is not JsonValue val) return null;
+        if (val.TryGetValue<int>(out var i)) return i;
+        if (val.TryGetValue<double>(out var d) && double.IsFinite(d)) return (int)Math.Clamp(d, int.MinValue, int.MaxValue);
+        if (val.TryGetValue<string>(out var s) && int.TryParse(s, out var parsed)) return parsed;
+        return null;
+    }
 
-    protected static bool GetBool(JsonObject args, string name) =>
-        args[name] is { } node && node.GetValue<bool>();
+    protected static bool GetBool(JsonObject args, string name)
+    {
+        if (args[name] is not JsonValue val) return false;
+        if (val.TryGetValue<bool>(out var b)) return b;
+        if (val.TryGetValue<string>(out var s) && bool.TryParse(s, out var parsed)) return parsed;
+        return false;
+    }
 }
 
 public sealed class ReadFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
@@ -140,6 +157,8 @@ public sealed class WriteFileTool(IPromptProvider prompts) : BuiltinTool(prompts
     public override Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
         var path = context.ResolvePath(GetString(arguments, "path") ?? "");
+        if (Directory.Exists(path))
+            return Task.FromResult(ToolResult.Fail($"Cannot write to '{path}' because it is a directory."));
         var content = GetString(arguments, "content") ?? "";
         return WithFileWriteLockAsync(context, path, _ => WriteCoreAsync(path, content, context, ct), ct);
     }
@@ -190,9 +209,6 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
     public override Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
         var path = context.ResolvePath(GetString(arguments, "path") ?? "");
-        if (!File.Exists(path))
-            return Task.FromResult(ToolResult.Fail($"File not found: {path}"));
-
         var oldString = GetString(arguments, "old_string") ?? "";
         var newString = GetString(arguments, "new_string") ?? "";
         if (oldString.Length == 0)
@@ -207,6 +223,9 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
     private static async Task<ToolResult> EditCoreAsync(
         string path, string oldString, string newString, bool replaceAll, ToolContext context, CancellationToken ct)
     {
+        if (!File.Exists(path))
+            return ToolResult.Fail($"File not found: {path}");
+
         var file = await TextFileIO.ReadAsync(path, ct).ConfigureAwait(false);
         var text = file.Text;
         var newline = TextFileIO.DetectDominantNewline(text);

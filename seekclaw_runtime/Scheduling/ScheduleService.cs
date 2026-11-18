@@ -104,6 +104,7 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
     internal async Task TickAsync(CancellationToken ct)
     {
         var now = _clock.GetUtcNow();
+        var dueTasks = new List<Task>();
         foreach (var task in _store.List())
         {
             if (!task.Enabled || _running.ContainsKey(task.Id)) continue;
@@ -113,8 +114,10 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
                 PublishUpcomingNoticeIfNeeded(task, now, next);
                 continue;
             }
-            await RunTaskAsync(task, ct).ConfigureAwait(false);
+            dueTasks.Add(RunTaskAsync(task, ct));
         }
+        if (dueTasks.Count > 0)
+            await Task.WhenAll(dueTasks).ConfigureAwait(false);
     }
 
     private void PublishUpcomingNoticeIfNeeded(ScheduledTask task, DateTimeOffset now, DateTimeOffset runAt)
@@ -185,11 +188,14 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
                 + "If there is no meaningful change to report, respond exactly [NO_CHANGE].]";
             var result = await _turnRunner(workspace, session, prompt, runCt).ConfigureAwait(false);
             if (result.Maintenance is { } maintenance) await maintenance.ConfigureAwait(false);
+            var errorMessage = result.Cancelled && runCt.IsCancellationRequested && !ct.IsCancellationRequested && string.IsNullOrWhiteSpace(result.Error)
+                ? $"任务执行超过 {timeoutSeconds} 秒，已中止"
+                : result.Error;
             RecordRun(
                 task.Id,
                 sessionId,
                 result.Cancelled ? ScheduleRunStatus.Cancelled : result.Error is null ? ScheduleRunStatus.Success : ScheduleRunStatus.Error,
-                result.Error,
+                errorMessage,
                 result.Text);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

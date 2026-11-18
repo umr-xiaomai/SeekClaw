@@ -244,7 +244,7 @@ onBeforeUnmount(() => { fetchSequence++ })
           <div class="provider-editor-body">
             <section class="provider-form-section">
               <div class="provider-section-heading">
-                <strong>基本信息</strong>
+                <strong>连接与鉴权</strong>
               </div>
               <div class="provider-form-grid">
                 <label>
@@ -264,19 +264,7 @@ onBeforeUnmount(() => { fetchSequence++ })
                   <FieldLabel en="Base URL" zh="API 地址" help="模型服务的 API 根地址。OpenAI 兼容服务通常以 /v1 结尾。" required />
                   <input v-model="form.baseUrl" placeholder="https://api.openai.com/v1" spellcheck="false" />
                 </label>
-                <label class="span-2">
-                  <FieldLabel en="Model List URL" zh="模型列表 URL" help="获取模型目录的地址；留空时自动使用 API 地址下的 /models 接口。" />
-                  <input v-model="form.modelListUrl" placeholder="留空自动推断 /models" spellcheck="false" />
-                </label>
-              </div>
-            </section>
-
-            <section class="provider-form-section">
-              <div class="provider-section-heading">
-                <strong>鉴权与模型</strong>
-              </div>
-              <div class="provider-form-grid">
-                <label class="span-2">
+                <label>
                   <FieldLabel en="API Key" zh="API 密钥" help="直接查看和修改此模型提供商保存的访问密钥；清空后保存会删除密钥。" />
                   <span class="password-control">
                     <input v-model="form.apiKey" :type="revealKey ? 'text' : 'password'" placeholder="sk-…"
@@ -289,52 +277,61 @@ onBeforeUnmount(() => { fetchSequence++ })
                     </button>
                   </span>
                 </label>
-                <div class="span-2 provider-models-block">
-                  <div class="provider-models-header">
+                <label>
+                  <FieldLabel en="Model List URL" zh="模型列表 URL" help="获取模型目录的地址；留空时自动使用 API 地址下的 /models 接口。" />
+                  <input v-model="form.modelListUrl" placeholder="留空自动推断 /models" spellcheck="false" />
+                </label>
+              </div>
+            </section>
+
+            <section class="provider-form-section">
+              <div class="provider-models-block">
+                <div class="provider-models-header">
+                  <div class="provider-models-title">
                     <FieldLabel en="Models" zh="模型列表" help="此模型提供商可用的模型。可点击每行右侧设置按钮配置上下文长度与最大输出参数。" required />
-                    <button type="button" class="secondary-button compact-button" :disabled="fetching || !form.baseUrl.trim()" @click="fetchModels">
-                      <RefreshCw :size="13" :class="{ spin: fetching }" /> {{ fetching ? '正在获取…' : '获取模型' }}
-                    </button>
                     <small class="models-count-badge">{{ modelList.length }} 个模型</small>
                   </div>
+                  <button type="button" class="secondary-button compact-button fetch-models-btn" :disabled="fetching || !form.baseUrl.trim()" @click="fetchModels">
+                    <RefreshCw :size="13" :class="{ spin: fetching }" /> {{ fetching ? '正在获取…' : '获取模型' }}
+                  </button>
+                </div>
 
-                  <p v-if="fetchError" class="inline-error" role="alert">{{ fetchError }}</p>
-                  <p v-if="fetchNotice" class="fetch-notice" role="status">{{ fetchNotice }}</p>
-                  <div class="model-add-bar">
-                    <input v-model="newModelInput" class="model-add-input" placeholder="输入模型 ID，如 gpt-5，支持逗号或换行粘贴批量输入"
-                      @keydown.enter.prevent="addModel" />
-                    <button type="button" class="secondary-button compact-button add-model-btn"
-                      :disabled="!newModelInput.trim()" @click="addModel">
-                      <Plus :size="14" /> 添加模型
-                    </button>
-                  </div>
+                <p v-if="fetchError" class="inline-error" role="alert">{{ fetchError }}</p>
+                <p v-if="fetchNotice" class="fetch-notice" role="status">{{ fetchNotice }}</p>
+                <div class="model-add-bar">
+                  <input v-model="newModelInput" class="model-add-input" placeholder="输入模型 ID，如 gpt-5，支持逗号或换行粘贴批量输入"
+                    @keydown.enter.prevent="addModel" />
+                  <button type="button" class="secondary-button compact-button add-model-btn"
+                    :disabled="!newModelInput.trim()" @click="addModel">
+                    <Plus :size="14" /> 添加模型
+                  </button>
+                </div>
 
-                  <div v-if="modelList.length === 0" class="models-empty-tip">
-                    填写连接信息后点击「获取模型」，也可以手动添加模型 ID
-                  </div>
+                <div v-if="modelList.length === 0" class="models-empty-tip">
+                  填写连接信息后点击「获取模型」，也可以手动添加模型 ID
+                </div>
 
-                  <div v-else class="provider-models-table">
-                    <div v-for="(model, idx) in modelList" :key="model.id" class="model-table-row">
-                      <div class="model-row-left">
-                        <span class="model-row-id">{{ model.id }}</span>
-                        <span v-if="model.alias" class="model-badge alias-badge" :title="`别名: ${model.alias}`">
-                          {{ model.alias }}
-                        </span>
-                        <span class="model-badge context-badge"
-                          :title="`上下文窗口: ${(model.contextWindowAuto ? model.detectedContextWindow || 1000000 : model.contextWindow || 1000000).toLocaleString()} Tokens`">
-                          {{ model.contextWindowAuto ? '自动 · ' : '' }}{{ formatTokenCount(model.contextWindowAuto ? model.detectedContextWindow || 1000000 : model.contextWindow) }}
-                        </span>
-                      </div>
-                      <div class="model-row-actions">
-                        <button type="button" class="icon-button compact" title="配置模型参数"
-                          @click="openModelConfig(model)">
-                          <Settings2 :size="15" />
-                        </button>
-                        <button type="button" class="icon-button compact danger-icon" title="删除模型"
-                          @click="removeModel(idx)">
-                          <Trash2 :size="15" />
-                        </button>
-                      </div>
+                <div v-else class="provider-models-table">
+                  <div v-for="(model, idx) in modelList" :key="model.id" class="model-table-row">
+                    <div class="model-row-left">
+                      <span class="model-row-id">{{ model.id }}</span>
+                      <span v-if="model.alias" class="model-badge alias-badge" :title="`别名: ${model.alias}`">
+                        {{ model.alias }}
+                      </span>
+                      <span class="model-badge context-badge"
+                        :title="`上下文窗口: ${(model.contextWindowAuto ? model.detectedContextWindow || 1000000 : model.contextWindow || 1000000).toLocaleString()} Tokens`">
+                        {{ model.contextWindowAuto ? '自动 · ' : '' }}{{ formatTokenCount(model.contextWindowAuto ? model.detectedContextWindow || 1000000 : model.contextWindow) }}
+                      </span>
+                    </div>
+                    <div class="model-row-actions">
+                      <button type="button" class="icon-button compact" title="配置模型参数"
+                        @click="openModelConfig(model)">
+                        <Settings2 :size="15" />
+                      </button>
+                      <button type="button" class="icon-button compact danger-icon" title="删除模型"
+                        @click="removeModel(idx)">
+                        <Trash2 :size="15" />
+                      </button>
                     </div>
                   </div>
                 </div>

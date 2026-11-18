@@ -24,13 +24,23 @@ public sealed partial class Agent
         string? turnRequestId,
         CancellationToken ct)
     {
+        var parsedArguments = ToolArguments.Parse(call.ArgumentsJson);
+        var effectiveArgumentsJson = parsedArguments.Obj is not null ? parsedArguments.Json : call.ArgumentsJson;
         var tool = toolRegistry.Resolve(call.Name);
-        var argsSummary = SummarizeArguments(call.ArgumentsJson);
-        events.Publish(new ToolCallStartedEvent(call.Id, call.Name, argsSummary) { ArgumentsJson = call.ArgumentsJson });
+        var argsSummary = SummarizeArguments(effectiveArgumentsJson);
+        events.Publish(new ToolCallStartedEvent(call.Id, call.Name, argsSummary) { ArgumentsJson = effectiveArgumentsJson });
 
         if (tool is null)
         {
             var message = $"Unknown tool: {call.Name}";
+            events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
+            return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
+        }
+
+        if (workspace.Config?.DisabledTools is { Count: > 0 } disabled
+            && disabled.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var message = $"Tool execution denied: '{tool.Name}' is disabled in this workspace.";
             events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
             return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
         }
@@ -56,7 +66,6 @@ public sealed partial class Agent
         // Best-effort repair of truncated / trailing-garbage arguments, then execute with
         // the recovered object. Unrecoverable arguments become an explicit tool error so the
         // model regenerates the call instead of the provider rejecting the whole request.
-        var parsedArguments = ToolArguments.Parse(call.ArgumentsJson);
         if (parsedArguments.Obj is null)
         {
             var message = "Invalid tool arguments: the model produced arguments that are not valid JSON. Regenerate the tool call with valid JSON arguments.";
@@ -75,7 +84,7 @@ public sealed partial class Agent
                     turnRequestId,
                     call.Id,
                     tool.Name,
-                    call.ArgumentsJson,
+                    effectiveArgumentsJson,
                     argsSummary,
                     mode,
                     tool.Mutating,
@@ -107,6 +116,7 @@ public sealed partial class Agent
             MaxOutputChars = ContextPlanner.ToolOutputBudget(model.Model, configStore.Config.Agent),
             CallId = call.Id,
             SessionId = sessionId,
+            TurnRequestId = turnRequestId,
             SessionWorkspace = sessionWorkspace,
             NetworkEnabled = networkEnabled,
             Coordinator = fileLocks,
@@ -170,7 +180,8 @@ public sealed partial class Agent
         return tool.Name.Equals("invoke_subagent", StringComparison.OrdinalIgnoreCase)
                || tool.Name.Equals("subagent", StringComparison.OrdinalIgnoreCase)
                || (mode == AgentMode.Manual
-                   && tool.Name.Equals("capture_screen", StringComparison.OrdinalIgnoreCase));
+                   && (tool.Name.Equals("capture_screen", StringComparison.OrdinalIgnoreCase)
+                       || tool.Name.Equals("computer_inspect", StringComparison.OrdinalIgnoreCase)));
     }
 
     // ---------------------------------------------------------------- misc
@@ -179,7 +190,7 @@ public sealed partial class Agent
     {
         try
         {
-            if (JsonNode.Parse(argumentsJson) is JsonObject obj)
+            if (ToolArguments.Parse(argumentsJson).Obj is { } obj)
             {
                 if (obj.TryGetPropertyValue("command", out var cmd) && cmd is not null)
                     return cmd.ToString().Trim().ReplaceLineEndings(" ");

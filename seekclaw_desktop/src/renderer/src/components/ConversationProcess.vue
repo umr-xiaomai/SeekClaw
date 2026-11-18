@@ -21,7 +21,11 @@ const props = withDefaults(defineProps<{
   query?: string
   /** Optional controlled state, retained by the virtualized conversation view. */
   expanded?: boolean
-}>(), { phase: '', imageSources: () => ({}), query: '', expanded: undefined })
+  /** Read-only rendering (e.g. sub-agent view) keeps copy actions while hiding mutations. */
+  readOnly?: boolean
+  /** Render the user turn prompt as a compact collapsible disclosure. */
+  compactTaskPrompt?: boolean
+}>(), { phase: '', imageSources: () => ({}), query: '', expanded: undefined, readOnly: false, compactTaskPrompt: false })
 
 const emit = defineEmits<{
   openDiff: [filePath: string, diff: string]
@@ -380,7 +384,8 @@ function onToggle(event: Event): void {
   <div class="conversation-turn" :data-turn-id="turn.id">
     <ConversationMessage v-if="turn.user" :message="turn.user.message" :image-sources="imageSources"
       :widgets="turn.user.widgets" :session-id="sessionId" :workspace="workspace"
-      :show-footer="turn.user.showFooter" :is-intermediate="turn.user.isIntermediate" :dimmed="isDimmed(turn.user.message)"
+      :show-footer="turn.user.showFooter" :is-intermediate="turn.user.isIntermediate"
+      :read-only="readOnly" :compact-task-prompt="compactTaskPrompt" :dimmed="isDimmed(turn.user.message)"
       @open-diff="(path, diff) => emit('openDiff', path, diff)" @branch="emit('branch', $event)" @edit="emit('edit', $event)" />
 
     <template v-if="turn.process.length">
@@ -397,7 +402,7 @@ function onToggle(event: Event): void {
       <div v-else-if="isPureLiveOpening && latestProcessItem" ref="openingStepRef" class="process-thinking-step">
         <ConversationMessage :message="latestProcessItem.message" :image-sources="imageSources" :widgets="latestProcessItem.widgets"
           :session-id="sessionId" :workspace="workspace" :phase="phase" :streaming="isStreaming(latestProcessItem.message)"
-          :smooth-output="!query.trim()" :show-footer="false" :is-intermediate="false" :hide-sub-agents="true"
+          :smooth-output="!query.trim()" :show-footer="false" :is-intermediate="false" :hide-sub-agents="true" :read-only="readOnly"
           :dimmed="isDimmed(latestProcessItem.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
           @branch="emit('branch', $event)" @edit="emit('edit', $event)" @open-sub-agent="emit('openSubAgent', $event)" />
       </div>
@@ -417,7 +422,7 @@ function onToggle(event: Event): void {
               :session-id="sessionId" :workspace="workspace" :phase="phase" :streaming="isStreaming(item.message)"
               :smooth-output="!query.trim()"
               :show-footer="item.showFooter" :is-intermediate="item.isIntermediate"
-              :hide-sub-agents="allEvents.length === 0" :show-sub-agent-summary="false"
+              :hide-sub-agents="allEvents.length === 0" :show-sub-agent-summary="false" :read-only="readOnly"
               :dimmed="isDimmed(item.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
               @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)" @open-sub-agent="emit('openSubAgent', $event)" />
           </div>
@@ -443,7 +448,7 @@ function onToggle(event: Event): void {
       <ConversationMessage :message="turn.response.message" :image-sources="imageSources"
         :widgets="turn.response.widgets" :session-id="sessionId" :workspace="workspace" :phase="phase"
         :streaming="isStreaming(turn.response.message)" :show-footer="turn.response.showFooter"
-        :smooth-output="!query.trim()"
+        :smooth-output="!query.trim()" :read-only="readOnly"
         :is-intermediate="turn.response.isIntermediate" :hide-sub-agents="true" :dimmed="isDimmed(turn.response.message)"
         @open-diff="(path, diff) => emit('openDiff', path, diff)" @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)"
         @open-sub-agent="emit('openSubAgent', $event)" />

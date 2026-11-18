@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using CliWrap;
 using CliWrap.Buffered;
 using SeekClaw.Runtime.Workspaces;
@@ -37,11 +39,13 @@ public sealed class BuildVerifier : IVerifier
                     var packageJson = Path.Combine(workspace.Root, "package.json");
                     try
                     {
-                        if (File.Exists(packageJson) &&
-                            File.ReadAllText(packageJson).Contains("\"build\"", StringComparison.Ordinal))
+                        if (File.Exists(packageJson)
+                            && JsonNode.Parse(File.ReadAllText(packageJson)) is JsonObject pkg
+                            && pkg["scripts"] is JsonObject scripts
+                            && scripts["build"] is not null)
                             return "npm run build";
                     }
-                    catch (IOException) { }
+                    catch (Exception ex) when (ex is IOException or JsonException) { }
                     break;
             }
         }
@@ -85,11 +89,11 @@ public sealed class BuildVerifier : IVerifier
         if (!OperatingSystem.IsWindows())
             return ("/bin/bash", ["-c", command]);
 
-        var bash = FindOnPath("bash.exe");
-        if (bash is not null) return (bash, ["-c", command]);
-
         var pwsh = FindOnPath("pwsh.exe") ?? FindOnPath("powershell.exe");
         if (pwsh is not null) return (pwsh, ["-NoProfile", "-NonInteractive", "-Command", command]);
+
+        var bash = FindOnPath("bash.exe");
+        if (bash is not null) return (bash, ["-c", command]);
 
         return ("cmd.exe", ["/d", "/s", "/c", command]);
     }

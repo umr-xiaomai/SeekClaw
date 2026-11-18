@@ -86,6 +86,9 @@ public static class ReasoningLevelAdapter
 
     public static string? OpenAiEffort(LlmRequest request)
     {
+        if (request.OptimizeDeepSeek && !request.EnableThinking && IsDeepSeek(request.Provider, request.Model))
+            return null;
+
         var effective = Normalize(request.Provider, request.Model, request.ReasoningLevel);
         if (effective == ReasoningLevel.None &&
             !request.Model.Capabilities.Thinking && !request.Model.Capabilities.Reasoning)

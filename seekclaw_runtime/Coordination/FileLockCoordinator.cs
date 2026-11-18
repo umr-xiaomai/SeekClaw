@@ -186,7 +186,9 @@ public sealed class FileLockCoordinator : IFileLockCoordinator
     }
 
     private static string Key(string workspaceRoot, string filePath) =>
-        PathKey(workspaceRoot) + "|" + PathKey(filePath);
+        PathKey(Path.IsPathRooted(filePath)
+            ? Path.GetFullPath(filePath)
+            : Path.GetFullPath(Path.Combine(workspaceRoot, filePath)));
 
     private static string PathKey(string path)
     {

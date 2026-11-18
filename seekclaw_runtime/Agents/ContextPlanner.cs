@@ -27,6 +27,7 @@ public static class ContextPlanner
 
     public static int EstimateTokens(ChatMessage message) =>
         EstimateTokens(message.Text)
+        + EstimateTokens(message.Thinking ?? "")
         + (message.ToolCalls?.Sum(c => EstimateTokens(c.ArgumentsJson) + EstimateTokens(c.Name)) ?? 0)
         + (message.Images?.Count * 1_200 ?? 0)
         + PerMessageOverheadTokens;
@@ -64,11 +65,14 @@ public static class ContextPlanner
     /// <summary>Token budget available for conversation history inside the active model window.</summary>
     public static int WindowBudget(ModelConfig model, string systemPrompt)
     {
-        var budget = model.EffectiveContextWindow
-                     - model.EffectiveMaxOutput
-                     - EstimateTokens(systemPrompt)
-                     - 1_500; // safety reserve for wire format overhead
-        return budget > 0 ? budget : model.EffectiveContextWindow / 2;
+        var available = model.EffectiveContextWindow
+                        - model.EffectiveMaxOutput
+                        - EstimateTokens(systemPrompt);
+        var budget = available - 1_500; // safety reserve for wire format overhead
+        if (budget > 0) return budget;
+        return available > 0
+            ? Math.Max(256, Math.Min(available, model.EffectiveContextWindow / 2))
+            : Math.Max(256, model.EffectiveContextWindow / 2);
     }
 
     /// <summary>
@@ -126,16 +130,14 @@ public static class ContextPlanner
         var result = new List<ChatMessage>(messages);
         while (total > budget && result.Count > 6)
         {
-            var victim = result[0];
-            total -= EstimateTokens(victim);
-            result.RemoveAt(0);
+            var dropCount = 1;
+            while (dropCount < result.Count && result[dropCount].Role == ChatRole.Tool)
+                dropCount++;
+            if (result.Count - dropCount < 2) break;
 
-            // Never leave an orphan tool result at the head.
-            while (result.Count > 0 && result[0].Role == ChatRole.Tool)
-            {
-                total -= EstimateTokens(result[0]);
-                result.RemoveAt(0);
-            }
+            for (var i = 0; i < dropCount; i++)
+                total -= EstimateTokens(result[i]);
+            result.RemoveRange(0, dropCount);
         }
 
         if (result.Count < messages.Count)
@@ -200,4 +202,76 @@ public static class ContextPlanner
 
         return changed ? result : messages;
     }
+
+    public const string PrunedToolResultMarker = "[... pruned by SeekClaw: ";
+
+    /// <summary>
+    /// Compacts oversized <see cref="ChatRole.Tool"/> results prior to <paramref name="endExclusive"/>
+    /// by preserving leading and trailing context while removing middle output, saving context
+    /// without invoking a model call.
+    /// </summary>
+    public static int PruneToolResults(
+        IList<ChatMessage> messages,
+        int endExclusive,
+        int thresholdChars = 8_192,
+        int headChars = 4_096,
+        int tailChars = 1_024)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+        var limit = Math.Min(endExclusive, messages.Count);
+        var pruned = 0;
+
+        for (var i = 0; i < limit; i++)
+        {
+            var message = messages[i];
+            if (message.Role != ChatRole.Tool) continue;
+            var text = message.Text;
+            if (string.IsNullOrEmpty(text) || text.Length <= thresholdChars) continue;
+            if (text.Contains(PrunedToolResultMarker, StringComparison.Ordinal)) continue;
+
+            var headEnd = Math.Clamp(headChars, 0, text.Length);
+            if (headEnd > 0 && headEnd < text.Length && char.IsHighSurrogate(text[headEnd - 1]))
+                headEnd--;
+
+            var tailStart = Math.Clamp(text.Length - Math.Max(0, tailChars), headEnd, text.Length);
+            if (tailStart < text.Length && tailStart > headEnd && char.IsLowSurrogate(text[tailStart]))
+                tailStart++;
+
+            var omittedChars = tailStart - headEnd;
+            if (omittedChars <= 0) continue;
+
+            var marker = $"\n\n{PrunedToolResultMarker}omitted {omittedChars} chars to fit context ...]\n\n";
+            var shortened = string.Concat(text.AsSpan(0, headEnd), marker, text.AsSpan(tailStart));
+            if (shortened.Length >= text.Length) continue;
+
+            messages[i] = CloneWithText(message, shortened);
+            pruned++;
+        }
+
+        return pruned;
+    }
+
+    private static ChatMessage CloneWithText(ChatMessage message, string text) => new()
+    {
+        Role = message.Role,
+        Text = text,
+        Images = message.Images,
+        Thinking = message.Thinking,
+        ThinkingSignature = message.ThinkingSignature,
+        ModelRef = message.ModelRef,
+        FinishReason = message.FinishReason,
+        ErrorMessage = message.ErrorMessage,
+        ViewedImages = message.ViewedImages,
+        ToolCalls = message.ToolCalls,
+        ToolCallId = message.ToolCallId,
+        ToolName = message.ToolName,
+        ToolSuccess = message.ToolSuccess,
+        ToolDiff = message.ToolDiff,
+        ToolFilePath = message.ToolFilePath,
+        ToolContent = message.ToolContent,
+        ToolStructuredContent = message.ToolStructuredContent,
+        ToolMetadata = message.ToolMetadata,
+        ToolWidgets = message.ToolWidgets,
+        Timestamp = message.Timestamp,
+    };
 }

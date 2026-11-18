@@ -1,5 +1,6 @@
 import type { ChatMessage, ConversationWidget, ToolActivity } from './types'
-import { isHiddenSystemUserMessage } from './internal-messages'
+import { isHiddenSystemUserMessage, isInternalUserMessage } from './internal-messages'
+import { widgetsAtTurnTails } from './conversation-widgets'
 
 /** Presentation metadata already produced by the conversation view. */
 export interface ConversationProcessItem {
@@ -97,4 +98,82 @@ export function summarizeConversationProcess(items: readonly ConversationProcess
     }
   }
   return { stepCount: items.length, toolCount, errorCount, activeTool, latestMessage: items.at(-1)?.message }
+}
+
+/** Collect base64 image data URIs referenced across a conversation's messages. */
+export function collectMessageImageSources(messages: readonly ChatMessage[]): Record<string, string> {
+  const sources: Record<string, string> = {}
+  for (const message of messages) {
+    for (const image of message.images ?? []) {
+      sources[image.id] = `data:${image.mediaType};base64,${image.data}`
+    }
+  }
+  return sources
+}
+
+/**
+ * Shared projection converting raw chat messages into intermediate/tail items with widgets.
+ * Used identically by both the main conversation view and sub-agent side panel.
+ */
+export function projectConversationItems(
+  rawMessages: readonly ChatMessage[],
+  options: { running?: boolean; activeTurnStartId?: string } = {}
+): ConversationProcessItem[] {
+  const messages = rawMessages.filter((message) => !isHiddenSystemUserMessage(message))
+  const isRunning = options.running === true
+  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user' && !isInternalUserMessage(m))
+  const turnWidgets = widgetsAtTurnTails(messages, {
+    running: isRunning,
+    startMessageId: options.activeTurnStartId
+  })
+
+  return messages.map((message, index) => {
+    let showFooter = false
+    let isIntermediate = false
+    if (message.role === 'assistant') {
+      const inActiveRunningTurn = isRunning && (lastUserIndex < 0 || index >= lastUserIndex)
+      let hasLaterAssistant = false
+      for (let j = index + 1; j < messages.length; j++) {
+        const next = messages[j]
+        if (!next || next.role === 'user') break
+        if (next.role === 'assistant') {
+          hasLaterAssistant = true
+          break
+        }
+      }
+      if (hasLaterAssistant) {
+        isIntermediate = true
+      }
+      if (!inActiveRunningTurn && (Boolean(message.content?.trim()) || Boolean(message.errorMessage?.trim()))) {
+        showFooter = !hasLaterAssistant
+      }
+    }
+    return { message, showFooter, isIntermediate, widgets: turnWidgets.get(message.id) ?? [] }
+  })
+}
+
+export interface ConversationProjection {
+  items: ConversationProcessItem[]
+  turns: ConversationTurnProjection[]
+  imageSources: Record<string, string>
+}
+
+/**
+ * Unified turn projection for both the main chat window and sub-agent side panel,
+ * ensuring intermediate work collapsing, widgets, and image sources stay identical.
+ */
+export function buildConversationProjection(
+  messages: readonly ChatMessage[],
+  options: { running?: boolean; assistantId?: string; activeTurnStartId?: string } = {}
+): ConversationProjection {
+  const items = projectConversationItems(messages, options)
+  const turns = projectConversationTurns(items, {
+    running: options.running,
+    assistantId: options.assistantId
+  })
+  return {
+    items,
+    turns,
+    imageSources: collectMessageImageSources(messages)
+  }
 }

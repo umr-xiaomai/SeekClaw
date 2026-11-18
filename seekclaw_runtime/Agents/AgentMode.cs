@@ -35,7 +35,7 @@ public static class AgentModeExtensions
         return text.Trim().ToLowerInvariant() switch
         {
             "plan" or "planning" => AgentMode.Plan,
-            "readonly" or "read-only" or "ro" => AgentMode.ReadOnly,
+            "readonly" or "read-only" or "read_only" or "ro" => AgentMode.ReadOnly,
             "auto" or "autonomous" => AgentMode.Auto,
             "manual" or "ask" => AgentMode.Manual,
             "guardrail" => AgentMode.Guardrail,

@@ -2,7 +2,7 @@ import { createSSRApp, h } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, SubAgentLifecycleEvent, ToolActivity } from './types'
-import { applySubAgentEvent, messageSubAgents, subAgentsFromTool } from './subagent-activity'
+import { applySubAgentEvent, collectThreadSubAgents, messageSubAgents, subAgentsFromTool } from './subagent-activity'
 import SubAgentActivityList from './components/SubAgentActivityList.vue'
 import ToolCallRow from './components/ToolCallRow.vue'
 import { hydrateMessages, mergeSubAgentActivities } from './app-helpers'
@@ -223,5 +223,29 @@ describe('sub-agent conversation activity', () => {
     expect(html.match(/data-subagent-event-id=/g)).toHaveLength(3)
     expect(html).toContain('打开子智能体会话')
     expect(html).not.toContain('已完成工作')
+  })
+
+  it('collects deduplicated active and settled thread sub-agents sorted with live ones first', () => {
+    const doneAgent = { id: 'a-done', name: 'Demo explainer', role: 'researcher', status: 'completed' as const, sourceToolId: 'call-1' }
+    const runningAgent = { id: 'a-live', name: 'Demo scenario', role: 'coder', status: 'running' as const, live: true, sourceToolId: 'call-2' }
+    const messages: ChatMessage[] = [
+      {
+        id: 'm1', role: 'assistant', content: '', createdAt: 1000,
+        tools: [{ id: 'call-1', name: 'subagent', input: '{}', state: 'done', output: '{"id":"a-done","status":"running"}' }],
+        subAgents: [doneAgent],
+        subAgentEvents: [{ id: 'ev-1', agentId: 'a-done', kind: 'completed', agent: doneAgent, createdAt: 1500, contentOffset: 0 }]
+      },
+      {
+        id: 'm2', role: 'assistant', content: '', createdAt: 2000,
+        subAgents: [runningAgent],
+        subAgentEvents: [{ id: 'ev-2', agentId: 'a-live', kind: 'started', agent: runningAgent, createdAt: 2000, contentOffset: 0 }]
+      }
+    ]
+
+    const list = collectThreadSubAgents(messages)
+    expect(list.map((entry) => [entry.agent.id, entry.active, entry.updatedAt])).toEqual([
+      ['a-live', true, 2000],
+      ['a-done', false, 1500]
+    ])
   })
 })

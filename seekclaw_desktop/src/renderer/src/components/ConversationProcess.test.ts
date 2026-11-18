@@ -291,4 +291,30 @@ describe('conversation process presentation', () => {
     expect(turnHtml.match(/class="process-step"/g)).toHaveLength(1)
     expect(turnHtml).toContain('agent-lifecycle-group')
   })
+
+  it('supports shared read-only sub-agent mode with compact task disclosure and copy-only footer', async () => {
+    const source = items()
+    source[2]!.message.state = 'done'
+    source[2]!.message.createdAt = 1_700_000_000_000
+    const turn = projectConversationTurns(source)[0]!
+    const html = await renderToString(createSSRApp({
+      render: () => h(ConversationProcess, {
+        turn,
+        readOnly: true,
+        compactTaskPrompt: true
+      })
+    }))
+
+    expect(html).toContain('task-prompt-disclosure')
+    expect(html).toContain('任务指令')
+    expect(html).not.toContain('user-bubble')
+    expect(html).not.toContain('编辑此消息')
+    expect(html).toContain('已完成工作')
+    expect(html).toContain('is-readonly')
+    expect(html).toContain('assistant-footer')
+    expect(html).toContain('复制回答')
+    expect(html).not.toContain('在此分叉新任务')
+    expect(html).not.toContain('重新生成')
+    expect(html).not.toContain('message-time')
+  })
 })

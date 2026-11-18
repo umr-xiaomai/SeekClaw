@@ -86,6 +86,9 @@ public sealed class ProviderManager(
         if (chain.Count == 0)
             chain = registry.All().ToList();
 
+        if (!configStore.Config.Routing.FailoverEnabled && chain.Count > 0)
+            return [chain[0]];
+
         // Skip open circuits, but never filter down to nothing.
         var healthy = chain.Where(m => !Breaker.IsOpen(m.Ref)).ToList();
         return healthy.Count > 0 ? healthy : chain;
@@ -124,80 +127,112 @@ public sealed class ProviderManager(
                 eventBus.Publish(new ProviderSwitchedEvent(
                     candidates[candidateIndex - 1].Ref, model.Ref, lastError?.Message ?? "failover"));
 
-            for (var attempt = 1; attempt <= Math.Max(1, Retry.MaxAttempts); attempt++)
+            var probeAcquired = Breaker.TryBeginHalfOpenProbe(model.Ref);
+            try
             {
-                ct.ThrowIfCancellationRequested();
-
-                var stopwatch = Stopwatch.StartNew();
-                var hasOutput = false;
-                LlmCompletion? completion = null;
-                LlmException? failure = null;
-                IAsyncEnumerator<LlmStreamEvent>? stream = null;
-
-                // The finally below disposes the provider stream on every exit path,
-                // including when the consumer abandons the iterator mid-stream (for
-                // example Ctrl+C while a turn is still in "thinking"). Without it the
-                // response body/connection would stay open until the provider times out.
-                try
+                for (var attempt = 1; attempt <= Math.Max(1, Retry.MaxAttempts); attempt++)
                 {
-                    stream = TryOpenStream(model, requestFactory, ct);
+                    ct.ThrowIfCancellationRequested();
 
-                    while (true)
+                    var stopwatch = Stopwatch.StartNew();
+                    var hasOutput = false;
+                    LlmCompletion? completion = null;
+                    LlmException? failure = null;
+                    IAsyncEnumerator<LlmStreamEvent>? stream = null;
+
+                    // The finally below disposes the provider stream on every exit path,
+                    // including when the consumer abandons the iterator mid-stream (for
+                    // example Ctrl+C while a turn is still in "thinking"). Without it the
+                    // response body/connection would stay open until the provider times out.
+                    try
                     {
-                        LlmStreamEvent? evt;
                         try
                         {
-                            if (!await stream.MoveNextAsync().ConfigureAwait(false)) break;
-                            evt = stream.Current;
+                            stream = TryOpenStream(model, requestFactory, ct);
                         }
                         catch (LlmException ex)
                         {
                             failure = ex;
-                            break;
                         }
 
-                        hasOutput = true;
-                        if (evt is LlmCompleted done) completion = done.Completion;
-                        yield return evt;
-                        // Completion is authoritative. Never read/retry past this boundary:
-                        // the caller may now execute the completed tool calls.
-                        if (completion is not null) break;
+                        while (failure is null)
+                        {
+                            LlmStreamEvent? evt;
+                            try
+                            {
+                                if (!await stream!.MoveNextAsync().ConfigureAwait(false)) break;
+                                evt = stream.Current;
+                            }
+                            catch (LlmException ex)
+                            {
+                                failure = ex;
+                                break;
+                            }
+
+                            hasOutput = true;
+                            if (evt is LlmCompleted done) completion = done.Completion;
+                            yield return evt;
+                            // Completion is authoritative. Never read/retry past this boundary:
+                            // the caller may now execute the completed tool calls.
+                            if (completion is not null) break;
+                        }
                     }
-                }
-                finally
-                {
-                    if (stream is not null)
-                        await stream.DisposeAsync().ConfigureAwait(false);
-                }
+                    finally
+                    {
+                        if (stream is not null)
+                            await stream.DisposeAsync().ConfigureAwait(false);
+                    }
 
-                ct.ThrowIfCancellationRequested();
-                if (failure is null && completion is not null)
-                {
-                    Breaker.RecordSuccess(model.Ref);
-                    RecordUsage(model, completion, stopwatch, success: true);
-                    yield break;
+                    ct.ThrowIfCancellationRequested();
+                    if (failure is null && completion is not null)
+                    {
+                        Breaker.RecordSuccess(model.Ref);
+                        RecordUsage(model, completion, stopwatch, success: true);
+                        yield break;
+                    }
+
+                    failure ??= new LlmException($"{model.Provider.Id} stream ended without a completed response.");
+                    lastError = failure;
+                    if (failure.Retryable)
+                        Breaker.RecordFailure(model.Ref);
+                    RecordUsage(model, null, stopwatch, success: false);
+
+                    // Only repeat this model invocation, whose tool calls have not been
+                    // committed. Earlier tool executions remain in request history.
+                    if (failure.Retryable && attempt < Retry.MaxAttempts)
+                    {
+                        TimeSpan delay;
+                        if (failure.RetryAfter is { } retryAfter && retryAfter > TimeSpan.Zero)
+                        {
+                            var maxDelay = TimeSpan.FromSeconds(Math.Max(1, Retry.MaxDelaySeconds));
+                            if (retryAfter > maxDelay)
+                            {
+                                if (hasOutput || candidateIndex == 0 && !configStore.Config.Routing.FailoverEnabled)
+                                    throw failure;
+                                break;
+                            }
+                            delay = retryAfter;
+                        }
+                        else
+                        {
+                            delay = BackoffDelay(attempt, model);
+                        }
+                        eventBus.Publish(new ProviderRetryEvent(model.Ref, attempt, failure.Message, delay));
+                        await Task.Delay(delay, ct).ConfigureAwait(false);
+                        if (hasOutput) yield return new LlmStreamReset(model.Ref);
+                        continue;
+                    }
+
+                    // Do not splice another provider into a partially displayed answer.
+                    // Non-retryable errors of the selected provider also remain explicit.
+                    if (hasOutput || (candidateIndex == 0 && !failure.Retryable)) throw failure;
+                    break;
                 }
-
-                failure ??= new LlmException($"{model.Provider.Id} stream ended without a completed response.");
-                lastError = failure;
-                Breaker.RecordFailure(model.Ref);
-                RecordUsage(model, null, stopwatch, success: false);
-
-                // Only repeat this model invocation, whose tool calls have not been
-                // committed. Earlier tool executions remain in request history.
-                if (failure.Retryable && attempt < Retry.MaxAttempts)
-                {
-                    var delay = BackoffDelay(attempt);
-                    eventBus.Publish(new ProviderRetryEvent(model.Ref, attempt, failure.Message, delay));
-                    await Task.Delay(delay, ct).ConfigureAwait(false);
-                    if (hasOutput) yield return new LlmStreamReset(model.Ref);
-                    continue;
-                }
-
-                // Do not splice another provider into a partially displayed answer.
-                // Non-retryable errors of the selected provider also remain explicit.
-                if (hasOutput || (candidateIndex == 0 && !failure.Retryable)) throw failure;
-                break;
+            }
+            finally
+            {
+                if (probeAcquired)
+                    Breaker.EndProbe(model.Ref);
             }
 
             // All retries for this candidate were exhausted; remember the failure too.
@@ -408,7 +443,7 @@ public sealed class ProviderManager(
             CachedInputTokens = usage.CachedInputTokens,
             CacheCreationInputTokens = usage.CacheCreationInputTokens,
             OutputTokens = usage.OutputTokens,
-            Cost = 0,
+            Cost = completion is not null ? ComputeCost(model.Model, usage) : 0,
             ElapsedMs = stopwatch.Elapsed.TotalMilliseconds,
             Success = success,
         });
@@ -417,8 +452,16 @@ public sealed class ProviderManager(
     public static decimal ComputeCost(ModelConfig model, TokenUsage usage) =>
         (model.InputPricePerMTok * usage.InputTokens + model.OutputPricePerMTok * usage.OutputTokens) / 1_000_000m;
 
-    private TimeSpan BackoffDelay(int attempt)
+    private TimeSpan BackoffDelay(int attempt, ModelInfo model)
     {
+        if (configStore.Config.Routing.DeepSeekOptimizationEnabled
+            && DeepSeekOptimizationPolicy.IsDeepSeek(model.Provider, model.Model))
+        {
+            var baseSeconds = Math.Min(0.5 * Math.Pow(2, attempt - 1), Math.Max(0.5, Retry.MaxDelaySeconds));
+            var symmetricJitter = Random.Shared.NextDouble() * 0.2 + 0.9; // 0.9x - 1.1x (jitterRatio = 0.1)
+            return TimeSpan.FromSeconds(Math.Min(baseSeconds * symmetricJitter, Math.Max(0.5, Retry.MaxDelaySeconds)));
+        }
+
         var baseDelay = Retry.BaseDelaySeconds * Math.Pow(2, attempt - 1);
         var jitter = Random.Shared.NextDouble() * 0.5 + 0.75; // 0.75x – 1.25x
         return TimeSpan.FromSeconds(Math.Min(baseDelay * jitter, Retry.MaxDelaySeconds));

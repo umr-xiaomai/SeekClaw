@@ -26,7 +26,6 @@ import {
   Search,
   Settings2,
   SlidersHorizontal,
-  Sparkles,
   Sun,
   Trash2,
   Upload,
@@ -174,7 +173,6 @@ const emit = defineEmits<{
   changeMonoFontFamily: [font: string]
   changeZoomFactor: [factor: number]
   openWorkspace: []
-  openOfficialSkills: []
   runtimeChanged: []
 }>()
 
@@ -1591,9 +1589,6 @@ onBeforeUnmount(() => {
               <p>{{skills.filter((skill) => skill.enabled).length}} 已启用</p>
             </div>
             <div class="row-actions">
-              <button class="secondary-button" title="浏览官方精选技能市场" @click="emit('openOfficialSkills')">
-                <Sparkles :size="15" /><span>官方技能市场</span>
-              </button>
               <button class="icon-button" title="刷新" @click="loadCurrentSection">
                 <RefreshCw :size="17" />
               </button>
@@ -2005,7 +2000,7 @@ onBeforeUnmount(() => {
             <label class="provider-enabled-row">
               <span>
                 <strong>优化 DeepSeek 模型</strong>
-                <small>针对 DeepSeek 启用思维链选择性回传、空响应重试与空工具结果兜底；策略集中管理，可随模型变化调整</small>
+                <small>面向 DeepSeek 协议的专项优化（Anthropic Messages 思考链与跨模型签名清理、OpenAI tool_calls 思维链选择性回传、两阶段压缩与重复调用护栏）</small>
               </span>
               <input v-model="deepSeekOptimizationEnabled" class="sr-only" type="checkbox"
                 :disabled="action === 'routing.set:deepseek'" @change="toggleDeepSeekOptimization" />

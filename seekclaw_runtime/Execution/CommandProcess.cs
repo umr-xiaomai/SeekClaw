@@ -44,7 +44,8 @@ internal sealed class CommandProcess(Process process, Stream input, Stream outpu
     public void ClosePseudoConsole() => Interlocked.Exchange(ref _console, null)?.Dispose();
     public void Dispose()
     {
+        Input.Dispose(); Output.Dispose(); Error?.Dispose();
         ClosePseudoConsole();
-        Input.Dispose(); Output.Dispose(); Error?.Dispose(); Process.Dispose();
+        Process.Dispose();
     }
 }

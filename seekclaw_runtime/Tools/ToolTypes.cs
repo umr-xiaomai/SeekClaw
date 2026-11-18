@@ -17,6 +17,7 @@ public sealed class ToolContext
     public int MaxOutputChars { get; init; } = 30_000;
     public string CallId { get; init; } = "";
     public string SessionId { get; init; } = "";
+    public string? TurnRequestId { get; init; }
     /// <summary>Conversation storage scope, which may differ from its worktree execution directory.</summary>
     public WorkspaceInfo? SessionWorkspace { get; init; }
     /// <summary>Effective network permission, including the conversation's ceiling.</summary>
@@ -54,6 +55,15 @@ internal static class WorkspacePathGuard
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("path is required.", nameof(path));
+        if (OperatingSystem.IsWindows()
+            && path.Length >= 2
+            && char.IsAsciiLetter(path[0])
+            && path[1] == ':'
+            && (path.Length == 2 || (path[2] != '\\' && path[2] != '/')))
+        {
+            throw new UnauthorizedAccessException(
+                $"Path '{path}' uses a drive-relative reference outside the workspace root '{workspaceRoot}'.");
+        }
 
         var root = Path.GetFullPath(workspaceRoot);
         var target = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
@@ -87,6 +97,18 @@ internal static class WorkspacePathGuard
             FileSystemInfo? info = Directory.Exists(current)
                 ? new DirectoryInfo(current)
                 : File.Exists(current) ? new FileInfo(current) : null;
+            if (info is null)
+            {
+                try
+                {
+                    var attrs = File.GetAttributes(current);
+                    if ((attrs & FileAttributes.ReparsePoint) != 0)
+                        info = (attrs & FileAttributes.Directory) != 0
+                            ? new DirectoryInfo(current)
+                            : new FileInfo(current);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
             if (info is null) continue;
 
             var resolved = info.ResolveLinkTarget(returnFinalTarget: true);

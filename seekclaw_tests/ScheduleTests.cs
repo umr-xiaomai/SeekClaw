@@ -262,6 +262,41 @@ public sealed class ScheduleTests : IDisposable
         await service.DisposeAsync();
     }
 
+    [Fact]
+    public async Task ScheduleTool_WindowsPathCasingMismatch_MatchesWorkspace()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var store = NewStore();
+        var lowerRoot = _dir.ToLowerInvariant();
+        var upperRoot = _dir.ToUpperInvariant();
+        var task = store.Upsert(null, "检查任务", lowerRoot, "check", "0 9 * * *", true, "sess-1");
+
+        var tool = new ScheduleTool(new SeekClaw.Runtime.Prompts.FilePromptProvider(), store);
+        var context = new SeekClaw.Runtime.Tools.ToolContext
+        {
+            Workspace = new WorkspaceInfo { Root = upperRoot, ProjectKinds = [] },
+            Events = new EventBus(),
+            Agent = new AgentConfig(),
+            SessionId = "sess-1",
+        };
+
+        var listed = await tool.ExecuteAsync(new System.Text.Json.Nodes.JsonObject
+        {
+            ["action"] = "list",
+        }, context, CancellationToken.None);
+        Assert.True(listed.Success, listed.Output);
+        Assert.Contains(task.Id, listed.Output);
+
+        var completed = await tool.ExecuteAsync(new System.Text.Json.Nodes.JsonObject
+        {
+            ["action"] = "complete",
+            ["id"] = task.Id,
+        }, context, CancellationToken.None);
+        Assert.True(completed.Success, completed.Output);
+        Assert.False(store.Get(task.Id)!.Enabled);
+    }
+
     private static Task<AgentTurnResult> StubRunner(
         WorkspaceInfo workspace, AgentSession session, string prompt, CancellationToken ct) =>
         Task.FromResult(new AgentTurnResult("完成", false, null));

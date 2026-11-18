@@ -56,7 +56,7 @@ public sealed class SubAgentTaskManager(ExecutionRecordStore records, IEventBus?
             record["instance"] = _instance; record["processId"] = Environment.ProcessId;
             using (var process = System.Diagnostics.Process.GetCurrentProcess())
                 record["processStartedAt"] = process.StartTime.ToUniversalTime().ToString("O");
-            record["updatedAt"] = DateTimeOffset.UtcNow.ToString("O"); record.Remove("error");
+            record["updatedAt"] = DateTimeOffset.UtcNow.ToString("O"); record.Remove("error"); record.Remove("output");
             try { records.Put("subagent", id, parent, record); }
             catch { _slots.Release(); throw; }
             var snapshot = (JsonObject)record.DeepClone();
@@ -73,7 +73,7 @@ public sealed class SubAgentTaskManager(ExecutionRecordStore records, IEventBus?
                     record["output"] = result.Text; record["error"] = result.Error;
                     if (result.Maintenance is { } maintenance) await maintenance.ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) { record["status"] = "cancelled"; }
+                catch (OperationCanceledException) { record["status"] = "cancelled"; record.Remove("output"); }
                 catch (Exception ex) { record["status"] = "failed"; record["error"] = ex.Message; }
                 finally
                 {
@@ -82,6 +82,11 @@ public sealed class SubAgentTaskManager(ExecutionRecordStore records, IEventBus?
                     finally
                     {
                         _slots.Release();
+                        lock (_state)
+                        {
+                            if (_running.TryRemove(KeyValuePair.Create(id, running)))
+                                cancellation.Dispose();
+                        }
                         events?.Publish(new SubAgentTaskChangedEvent(parent, id, record["status"]!.GetValue<string>()));
                     }
                 }
