@@ -859,6 +859,172 @@ public sealed class ProviderTests : IDisposable
     }
 
     [Fact]
+    public void CapabilityResolver_InfersFamilyLevels_AndIsConservativeForUnknownModels()
+    {
+        var gateway = new ProviderConfig { Id = "gw", Kind = "openai", BaseUrl = "https://gw.test/v1" };
+        var anthropic = new ProviderConfig { Id = "anthropic", Kind = "anthropic", BaseUrl = "https://api.anthropic.com" };
+        var deepseek = new ProviderConfig { Id = "deepseek", Kind = "openai", BaseUrl = "https://api.deepseek.com" };
+
+        var gpt5 = new ModelConfig { Id = "gpt-5.1" };
+        ModelCapabilityResolver.Apply(gateway, gpt5);
+        Assert.True(gpt5.Capabilities.Reasoning);
+        Assert.True(gpt5.Capabilities.Thinking);
+        Assert.Equal(ReasoningLevel.High, gpt5.Capabilities.MaxReasoningLevel);
+
+        var o3 = new ModelConfig { Id = "o3-mini" };
+        ModelCapabilityResolver.Apply(gateway, o3);
+        Assert.Equal(ReasoningLevel.High, o3.Capabilities.MaxReasoningLevel);
+
+        var claude = new ModelConfig { Id = "claude-sonnet-4-5" };
+        ModelCapabilityResolver.Apply(anthropic, claude);
+        Assert.True(claude.Capabilities.Thinking);
+        Assert.Equal(ReasoningLevel.Max, claude.Capabilities.MaxReasoningLevel);
+
+        var ds = new ModelConfig { Id = "deepseek-v3.2" };
+        ModelCapabilityResolver.Apply(deepseek, ds);
+        Assert.Equal(ReasoningLevel.Max, ds.Capabilities.MaxReasoningLevel);
+
+        var gemini = new ModelConfig { Id = "gemini-2.5-pro" };
+        ModelCapabilityResolver.Apply(gateway, gemini);
+        Assert.Equal(ReasoningLevel.High, gemini.Capabilities.MaxReasoningLevel);
+
+        var unknown = new ModelConfig { Id = "mystery-model" };
+        ModelCapabilityResolver.Apply(gateway, unknown);
+        Assert.False(unknown.Capabilities.Thinking);
+        Assert.False(unknown.Capabilities.Reasoning);
+        Assert.Equal(ReasoningLevel.None, unknown.Capabilities.MaxReasoningLevel);
+    }
+
+    [Fact]
+    public void CapabilityResolver_PreservesManualDeclaration()
+    {
+        var gateway = new ProviderConfig { Id = "gw", Kind = "openai", BaseUrl = "https://gw.test/v1" };
+        var model = new ModelConfig
+        {
+            Id = "mystery-model",
+            Capabilities = new ModelCapabilities
+            {
+                Reasoning = true,
+                MaxReasoningLevel = ReasoningLevel.Ultra,
+            },
+        };
+
+        ModelCapabilityResolver.Apply(gateway, model);
+
+        Assert.True(model.Capabilities.Reasoning);
+        Assert.Equal(ReasoningLevel.Ultra, model.Capabilities.MaxReasoningLevel);
+    }
+
+    [Fact]
+    public void CapabilityResolver_UsesMetadataHintsAndHonoursExplicitDenial()
+    {
+        var gateway = new ProviderConfig { Id = "gw", Kind = "openai", BaseUrl = "https://gw.test/v1" };
+
+        var vendor = new ModelConfig { Id = "vendor-model" };
+        ModelCapabilityResolver.Apply(gateway, vendor, metadataSupportsReasoning: true);
+        Assert.True(vendor.Capabilities.Reasoning);
+        Assert.Equal(ReasoningLevel.High, vendor.Capabilities.MaxReasoningLevel);
+
+        var denied = new ModelConfig { Id = "gpt-5.1" };
+        ModelCapabilityResolver.Apply(gateway, denied, metadataSupportsReasoning: false);
+        Assert.False(denied.Capabilities.Reasoning);
+        Assert.Equal(ReasoningLevel.None, denied.Capabilities.MaxReasoningLevel);
+    }
+
+    [Fact]
+    public async Task FetchModelDetails_InfersReasoningCapabilitiesFromCatalogMetadata()
+    {
+        var models = await NewManager(new StubHttpFactory(
+                """{"data":[{"id":"gpt-5.2"},{"id":"vendor-model","supported_parameters":["tools","reasoning"]},{"id":"plain-model"}]}"""))
+            .FetchModelDetailsAsync(_store.Config.Providers[0]);
+
+        var gpt = models.Single(model => model.Id == "gpt-5.2");
+        Assert.True(gpt.Capabilities.Reasoning);
+        Assert.Equal(ReasoningLevel.High, gpt.Capabilities.MaxReasoningLevel);
+
+        var vendor = models.Single(model => model.Id == "vendor-model");
+        Assert.True(vendor.Capabilities.Reasoning);
+        Assert.Equal(ReasoningLevel.High, vendor.Capabilities.MaxReasoningLevel);
+
+        var plain = models.Single(model => model.Id == "plain-model");
+        Assert.False(plain.Capabilities.Reasoning);
+        Assert.Equal(ReasoningLevel.None, plain.Capabilities.MaxReasoningLevel);
+    }
+
+    [Fact]
+    public void OpenAiBody_ClampsFamilyLevelsAndOmitsEffortForUnknownModels()
+    {
+        var provider = new ProviderConfig { Id = "gw", Kind = "openai", BaseUrl = "https://gw.test/v1" };
+
+        var gpt = new ModelConfig { Id = "gpt-5.1" };
+        ModelCapabilityResolver.Apply(provider, gpt);
+        var reasoningBody = OpenAiCompatibleClient.BuildBody(new LlmRequest
+        {
+            Provider = provider,
+            Model = gpt,
+            Messages = [ChatMessage.User("hi")],
+            ReasoningLevel = ReasoningLevel.Ultra,
+        });
+        Assert.Equal("high", reasoningBody["reasoning_effort"]!.GetValue<string>());
+
+        var unknown = new ModelConfig { Id = "mystery-model" };
+        ModelCapabilityResolver.Apply(provider, unknown);
+        var plainBody = OpenAiCompatibleClient.BuildBody(new LlmRequest
+        {
+            Provider = provider,
+            Model = unknown,
+            Messages = [ChatMessage.User("hi")],
+            ReasoningLevel = ReasoningLevel.High,
+        });
+        Assert.Null(plainBody["reasoning_effort"]);
+    }
+
+    [Fact]
+    public void OpenAiBody_XaiGrok_UsesBinaryEffortLadder()
+    {
+        var provider = new ProviderConfig { Id = "xai", Kind = "openai", BaseUrl = "https://api.x.ai/v1" };
+        var model = new ModelConfig { Id = "grok-4" };
+        ModelCapabilityResolver.Apply(provider, model);
+        Assert.Equal(ReasoningLevel.High, model.Capabilities.MaxReasoningLevel);
+        Assert.True(ModelCapabilityResolver.TryWireEffort(provider, model, ReasoningLevel.Medium, out var wire));
+        Assert.Equal("high", wire);
+
+        var body = OpenAiCompatibleClient.BuildBody(new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            Messages = [ChatMessage.User("hi")],
+            ReasoningLevel = ReasoningLevel.Medium,
+        });
+
+        Assert.Equal("high", body["reasoning_effort"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void OpenAiBody_ExplicitProviderMap_OptsInUnknownModels()
+    {
+        var provider = new ProviderConfig
+        {
+            Id = "gw",
+            Kind = "openai",
+            BaseUrl = "https://gw.test/v1",
+            ReasoningEffortMap = new Dictionary<string, string> { ["high"] = "high" },
+        };
+        var model = new ModelConfig { Id = "mystery-model" };
+        ModelCapabilityResolver.Apply(provider, model);
+        Assert.Equal(ReasoningLevel.None, model.Capabilities.MaxReasoningLevel);
+
+        var body = OpenAiCompatibleClient.BuildBody(new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            Messages = [ChatMessage.User("hi")],
+            ReasoningLevel = ReasoningLevel.High,
+        });
+        Assert.Equal("high", body["reasoning_effort"]!.GetValue<string>());
+    }
+
+    [Fact]
     public void AnthropicReasoning_LongThinkingUsesNearlyTheWholeOutputWindow()
     {
         var request = new LlmRequest
@@ -1015,6 +1181,46 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal(150, aggregate.OutputTokens);
         Assert.Equal(0.03m, aggregate.Cost);
         Assert.Equal(0.5, aggregate.SuccessRate);
+    }
+
+    [Fact]
+    public async Task StreamAsync_ReasoningParameterRejection_DisablesCapabilityAndRetries()
+    {
+        var store = _store;
+        store.Config.Routing.Retry.MaxAttempts = 1;
+        store.Config.Provider = "alpha";
+        store.Config.Model = "big";
+        var model = store.Config.Providers[0].Models[0];
+        model.Capabilities = new ModelCapabilities
+        {
+            Thinking = true,
+            Reasoning = true,
+            MaxReasoningLevel = ReasoningLevel.High,
+        };
+
+        var client = new RejectReasoningOnceClient();
+        var manager = NewManagerWithClients(store, _registry, Path.Combine(_dir, "usage-reasoning.jsonl"), client);
+        var request = new LlmRequest
+        {
+            Provider = store.Config.Providers[0],
+            Model = model,
+            Messages = [ChatMessage.User("hi")],
+            ReasoningLevel = ReasoningLevel.High,
+        };
+
+        var text = "";
+        var ex = await Record.ExceptionAsync(async () =>
+        {
+            await foreach (var evt in manager.StreamAsync(_ => request, null, CancellationToken.None))
+                if (evt is LlmCompleted done) text = done.Completion.Text;
+        });
+
+        Assert.Null(ex);
+        Assert.Equal("ok", text);
+        Assert.Equal(2, client.Calls);
+        Assert.False(model.Capabilities.Reasoning);
+        Assert.False(model.Capabilities.Thinking);
+        Assert.Equal(ReasoningLevel.None, model.Capabilities.MaxReasoningLevel);
     }
 
     [Fact]
@@ -1201,6 +1407,28 @@ public sealed class ProviderTests : IDisposable
             ct.ThrowIfCancellationRequested();
             if (error is not null) throw error;
             foreach (var evt in events) yield return evt;
+        }
+    }
+
+    /// <summary>Rejects the first request with a reasoning 400, then verifies the retry dropped it.</summary>
+    private sealed class RejectReasoningOnceClient : ILlmClient
+    {
+        public int Calls { get; private set; }
+
+        public string Kind => "openai";
+
+        public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
+            LlmRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            Calls++;
+            await Task.Yield();
+            ct.ThrowIfCancellationRequested();
+            if (Calls == 1)
+                throw new LlmException(
+                    "alpha returned HTTP 400: Unsupported parameter: reasoning_effort", 400, retryable: false);
+
+            Assert.False(request.Model.Capabilities.Reasoning);
+            yield return new LlmCompleted(new LlmCompletion { Text = "ok" });
         }
     }
 

@@ -376,7 +376,8 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         // max_completion_tokens parameter covers it (max_tokens is rejected by OpenAI
         // reasoning endpoints). DeepSeek and other compatible gateways keep max_tokens.
         var useMaxCompletionTokens = request.Model.Capabilities.Reasoning
-            && !ReasoningLevelAdapter.IsDeepSeek(request.Provider, request.Model);
+            && !ReasoningLevelAdapter.IsDeepSeek(request.Provider, request.Model)
+            && ModelCapabilityResolver.PrefersMaxCompletionTokens(request.Provider, request.Model);
         if (request.MaxTokens is { } maxTokens)
             body[useMaxCompletionTokens ? "max_completion_tokens" : "max_tokens"] = maxTokens;
         if (request.Temperature is { } temperature) body["temperature"] = temperature;

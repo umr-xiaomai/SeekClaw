@@ -289,6 +289,7 @@ public sealed class DaemonServer : IAsyncDisposable
         public ConcurrentDictionary<long, ActiveTurn> ActiveTurns { get; } = new();
         public ConcurrentDictionary<long, Task> ActiveDispatches { get; } = new();
         public ConcurrentDictionary<string, PendingApproval> PendingApprovals { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, TaskCompletionSource<string>> PendingQuestions { get; } = new(StringComparer.Ordinal);
         public Lock LegacyGate { get; } = new();
         public AgentSession? LegacySession;
         public DesktopBrowserBridge Browser { get; } = new((name, details) =>
@@ -508,7 +509,10 @@ public sealed class DaemonServer : IAsyncDisposable
                         context.ActiveTurns[id] = turn;
                         turn.Task = RunTurnAsync(
                             turnSession, workspace, message, images, reasoningLevel, id, context.Writer, context.WriterGate,
-                            turnCancellation.Token, context.ConnectionCt, turn.Steering, context.PendingApprovals, context.Browser);
+                            turnCancellation.Token, context.ConnectionCt, turn.Steering, context.PendingApprovals, context.Browser,
+                            parameters["supportsUserQuestions"] is JsonValue support && support.TryGetValue<bool>(out var enabled) && enabled
+                                ? (question, options, ct) => RequestUserAnswerAsync(context, id, turnSession.Header.Id, question, options, ct)
+                                : null);
                         break;
                     }
 
@@ -551,6 +555,23 @@ public sealed class DaemonServer : IAsyncDisposable
                             break;
                         }
                         await WriteAsync(context.Writer, context.WriterGate, id, "result", "guidance queued", context.ConnectionCt, target.Session.Header.Id).ConfigureAwait(false);
+                        break;
+                    }
+
+                    case "agent.answer":
+                    {
+                        var parameters = Params(request);
+                        var questionId = TryGetString(parameters, "questionId");
+                        var answer = TryGetString(parameters, "answer")?.Trim();
+                        if (questionId is null || answer is null || answer.Length is 0 or > 4000)
+                        {
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error", "A question ID and an answer of 1–4000 characters are required.", context.ConnectionCt).ConfigureAwait(false);
+                            break;
+                        }
+                        var answerAccepted = context.PendingQuestions.TryRemove(questionId, out var pendingQuestion)
+                            && pendingQuestion.TrySetResult(answer);
+                        await WriteAsync(context.Writer, context.WriterGate, id, answerAccepted ? "result" : "error",
+                            answerAccepted ? "Answer accepted" : "This question is no longer pending.", context.ConnectionCt).ConfigureAwait(false);
                         break;
                     }
 
@@ -1011,10 +1032,12 @@ public sealed class DaemonServer : IAsyncDisposable
                             break;
                         }
                         ReasoningLevel reasoningLevel;
+                        string? modelRef;
                         try
                         {
                             reasoningLevel = ParseReasoningLevel(
                                 Params(request)["reasoningLevel"], _runtime.ConfigStore.Config.Agent.ReasoningLevel);
+                            modelRef = _admin.ParseSessionModelRef(Params(request)["modelRef"]);
                         }
                         catch (DaemonRequestException ex)
                         {
@@ -1023,7 +1046,7 @@ public sealed class DaemonServer : IAsyncDisposable
                         }
                         var networkEnabled = Params(request)["networkEnabled"]?.GetValue<bool?>()
                             ?? _runtime.ConfigStore.Config.Agent.NetworkEnabled;
-                        context.LegacySession = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled);
+                        context.LegacySession = _runtime.Sessions.Create(workspace, reasoningLevel, networkEnabled, modelRef: modelRef);
                         if (Params(request)["worktree"]?.GetValue<bool>() == true)
                             await _runtime.Worktrees.CreateAsync(workspace.Root, context.LegacySession.Header.Id,
                                 Params(request)["baseRef"]?.GetValue<string>() ?? "HEAD", context.ConnectionCt).ConfigureAwait(false);
@@ -1189,6 +1212,40 @@ public sealed class DaemonServer : IAsyncDisposable
         lock (_clientsGate) _clients.Remove(clientId);
     }
 
+    private static async Task<string> RequestUserAnswerAsync(
+        ConnectionContext context, long turnId, string sessionId, string question,
+        IReadOnlyList<string> options, CancellationToken ct)
+    {
+        var questionId = Guid.NewGuid().ToString("N");
+        var pending = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        context.PendingQuestions[questionId] = pending;
+        try
+        {
+            var payload = new JsonObject
+            {
+                ["questionId"] = questionId,
+                ["question"] = question,
+                ["options"] = new JsonArray(options.Select(option => (JsonNode?)JsonValue.Create(option)).ToArray()),
+            };
+            await WriteAsync(context.Writer, context.WriterGate, turnId, "question_request",
+                payload.ToJsonString(), ct, sessionId).ConfigureAwait(false);
+            return await pending.Task.WaitAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            context.PendingQuestions.TryRemove(questionId, out _);
+            if (!context.ConnectionCt.IsCancellationRequested)
+            {
+                try
+                {
+                    await WriteAsync(context.Writer, context.WriterGate, turnId, "question_resolved",
+                        new JsonObject { ["questionId"] = questionId }.ToJsonString(), context.ConnectionCt, sessionId).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException) { }
+            }
+        }
+    }
+
     private async Task RunTurnAsync(
         AgentSession session,
         WorkspaceInfo workspace,
@@ -1202,7 +1259,8 @@ public sealed class DaemonServer : IAsyncDisposable
         CancellationToken connectionCt,
         AgentSteeringQueue steering,
         ConcurrentDictionary<string, PendingApproval> pendingApprovals,
-        DesktopBrowserBridge browser)
+        DesktopBrowserBridge browser,
+        Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? askUser)
     {
         // Unique per-turn identity for file write-lock ownership; released when the
         // turn ends even if a tool was interrupted before its own finally ran.
@@ -1231,10 +1289,6 @@ public sealed class DaemonServer : IAsyncDisposable
                       })
                     : null;
                 var runtime = turnRuntime ?? _runtime;
-                titleTask = _runTurn is null && session.Header.ParentSessionId is null
-                    && session.Header.TitleSource is "pending" or "input"
-                    ? GenerateSessionTitleAsync(session, workspace, message, connectionCt)
-                    : Task.CompletedTask;
                 subscription = runtime.Events.Subscribe();
                 forwarder = ForwardEventsAsync(
                     subscription, writer, writerGate, id, session.Header.Id, connectionCt, sessionUsage,
@@ -1254,7 +1308,12 @@ public sealed class DaemonServer : IAsyncDisposable
                 result = _runTurn is null
                     ? await runtime.Agent.RunTurnAsync(
                         session, workspace, message, turnCt, reasoningLevel, images, steering,
-                        turnRequestId: id.ToString()).ConfigureAwait(false)
+                        turnRequestId: id.ToString(), pinSessionModel: true,
+                        onModelRouteReady: pinnedModel =>
+                        {
+                            if (session.Header.ParentSessionId is null && session.Header.TitleSource is "pending" or "input")
+                                titleTask = GenerateSessionTitleAsync(session, workspace, message, connectionCt, pinnedModel);
+                        }, askUser: askUser).ConfigureAwait(false)
                     : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -1334,7 +1393,8 @@ public sealed class DaemonServer : IAsyncDisposable
         }
     }
 
-    private async Task GenerateSessionTitleAsync(AgentSession session, WorkspaceInfo workspace, string prompt, CancellationToken ct)
+    private async Task GenerateSessionTitleAsync(
+        AgentSession session, WorkspaceInfo workspace, string prompt, CancellationToken ct, ModelInfo? pinnedModel)
     {
         var firstPrompt = prompt;
         if (string.IsNullOrWhiteSpace(firstPrompt)) return;
@@ -1346,7 +1406,8 @@ public sealed class DaemonServer : IAsyncDisposable
             await BroadcastAsync(0, "session.title", "", ct, details).ConfigureAwait(false);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdown.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(45));
-            var title = await SessionTitleGenerator.GenerateAsync(_runtime.Providers, workspace, firstPrompt, timeout.Token).ConfigureAwait(false);
+            var title = await SessionTitleGenerator.GenerateAsync(
+                _runtime.Providers, workspace, firstPrompt, timeout.Token, pinnedModel).ConfigureAwait(false);
             if (title is not null && _runtime.Sessions.TrySetGeneratedTitle(workspace, session.Header.Id, title) is { } saved)
             {
                 session.Header.Title = saved.Title;
@@ -1741,8 +1802,9 @@ public sealed class DaemonServer : IAsyncDisposable
             return loaded ?? throw new DaemonRequestException($"Session {requestedSessionId} not found");
         }
 
-        if (legacySession is not null && SessionBelongsTo(legacySession, workspace))
-            return legacySession;
+        if (legacySession is not null && SessionBelongsTo(legacySession, workspace)
+            && _runtime.Sessions.Load(workspace, legacySession.Header.Id) is { } refreshed)
+            return legacySession = refreshed;
 
         legacySession = _runtime.Sessions.LoadLatest(workspace)
                         ?? _runtime.Sessions.Create(workspace);
@@ -1844,11 +1906,11 @@ public sealed class DaemonServer : IAsyncDisposable
         ["version"] = ProtocolVersion,
         ["transport"] = "jsonl",
         ["capabilities"] = new JsonArray(
-            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.approval", "agent.mode", "workspace", "provider",
+            "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.approval", "user-questions", "agent.mode", "workspace", "provider",
             "model", "mcp", "skill", "usage", "project", "session", "global-session", "memory", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild",
             "worktree", "command-session", "lazy-skills", "mcp-auth", "mcp-content", "subagent-lifecycle", "schedule-context", "conversation-widgets", "desktop-browser"),
         ["methods"] = new JsonArray(
-            "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel", "agent.approve",
+            "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel", "agent.approve", "agent.answer",
             "config.status", "config.rebuild",
             "browser.attach", "browser.reply",
             "workspace.get", "workspace.open", "agent.mode.get", "agent.mode.switch",

@@ -20,6 +20,8 @@ export type DaemonEventName =
   | 'workflow'
   | 'plan_update'
   | 'approval_request'
+  | 'question_request'
+  | 'question_resolved'
   | 'subagent_start'
   | 'subagent_progress'
   | 'subagent_done'

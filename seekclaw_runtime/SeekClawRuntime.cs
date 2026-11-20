@@ -272,6 +272,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
         foreach (var tool in new ITool[]
                  {
                      new PlanTool(prompts),
+                     new AskUserTool(prompts),
                      new LoadSkillTool(prompts, Skills),
                      new ScheduleTool(prompts, Schedules),
                      new SeekClaw.Runtime.Presentation.PresentArtifactTool(prompts),

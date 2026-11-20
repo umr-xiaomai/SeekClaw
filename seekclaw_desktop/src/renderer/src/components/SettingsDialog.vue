@@ -872,7 +872,10 @@ async function saveProvider(value: ProviderFormValue): Promise<void> {
     const parameters: Record<string, unknown> = {
       ...provider,
       models: value.models.split(/\r?\n|,/).map((model) => model.trim()).filter(Boolean),
-      modelDetails: value.modelDetails ?? []
+      modelDetails: (value.modelDetails ?? []).map((model) => ({
+        ...model,
+        capabilities: model.capabilities ? { ...model.capabilities } : undefined
+      }))
     }
     if (apiKey.trim()) parameters.apiKey = apiKey.trim()
     else if (editingProviderId.value) parameters.clearApiKey = true

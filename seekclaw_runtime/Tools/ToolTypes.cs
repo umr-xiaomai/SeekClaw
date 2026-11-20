@@ -18,6 +18,7 @@ public sealed class ToolContext
     public string CallId { get; init; } = "";
     public string SessionId { get; init; } = "";
     public string? TurnRequestId { get; init; }
+    public Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? AskUser { get; init; }
     /// <summary>Conversation storage scope, which may differ from its worktree execution directory.</summary>
     public WorkspaceInfo? SessionWorkspace { get; init; }
     /// <summary>Effective network permission, including the conversation's ceiling.</summary>

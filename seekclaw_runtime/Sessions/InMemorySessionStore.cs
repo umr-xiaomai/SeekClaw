@@ -16,7 +16,8 @@ public sealed class InMemorySessionStore : ISessionStore
         WorkspaceInfo workspace,
         ReasoningLevel reasoningLevel = ReasoningLevel.High,
         bool networkEnabled = true,
-        string? parentSessionId = null)
+        string? parentSessionId = null,
+        string? modelRef = null)
     {
         var id = Guid.NewGuid().ToString("N")[..8];
         var header = new SessionHeader
@@ -24,6 +25,7 @@ public sealed class InMemorySessionStore : ISessionStore
             Id = id,
             Workspace = workspace.Root,
             ParentSessionId = string.IsNullOrWhiteSpace(parentSessionId) ? null : parentSessionId,
+            ModelRef = modelRef,
             ReasoningLevel = reasoningLevel,
             NetworkEnabled = networkEnabled,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -56,7 +58,8 @@ public sealed class InMemorySessionStore : ISessionStore
     {
         var source = Load(workspace, sourceSessionId)
             ?? throw new KeyNotFoundException($"Session {sourceSessionId} not found.");
-        var forked = Create(workspace, source.Header.ReasoningLevel, source.Header.NetworkEnabled);
+        var forked = Create(workspace, source.Header.ReasoningLevel, source.Header.NetworkEnabled,
+            modelRef: source.Header.ModelRef);
         forked.Header.Title = title ?? source.Header.Title;
         forked.Header.TitleSource = "manual";
         var count = keepMessageCount > 0 ? Math.Min(keepMessageCount, source.Messages.Count) : source.Messages.Count;
@@ -90,7 +93,10 @@ public sealed class InMemorySessionStore : ISessionStore
         string? title = null,
         bool? archived = null,
         ReasoningLevel? reasoningLevel = null,
-        bool? networkEnabled = null)
+        bool? networkEnabled = null,
+        string? modelRef = null,
+        bool clearModelRef = false,
+        bool setModelRefIfMissing = false)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
             throw new KeyNotFoundException($"Session {sessionId} not found.");
@@ -102,6 +108,11 @@ public sealed class InMemorySessionStore : ISessionStore
         if (archived.HasValue) session.Header.Archived = archived.Value;
         if (reasoningLevel.HasValue) session.Header.ReasoningLevel = reasoningLevel.Value;
         if (networkEnabled.HasValue) session.Header.NetworkEnabled = networkEnabled.Value;
+        lock (session)
+        {
+            if ((modelRef is not null || clearModelRef) && (!setModelRefIfMissing || session.Header.ModelRef is null))
+                session.Header.ModelRef = modelRef;
+        }
         return session.Header;
     }
 

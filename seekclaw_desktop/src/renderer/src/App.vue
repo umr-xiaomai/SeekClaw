@@ -12,8 +12,9 @@ import {
   Telescope,
   Trash2
 } from '@lucide/vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowReactive, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, watch } from 'vue'
 import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
+import { finishesQuestionTurn, parseQuestionRequest, parseQuestionResolved, type UserQuestion } from '../../shared/user-questions'
 import AppTitleBar from './components/AppTitleBar.vue'
 import ActivityBar from './components/ActivityBar.vue'
 import AboutDialog from './components/AboutDialog.vue'
@@ -23,6 +24,7 @@ import Composer from './components/Composer.vue'
 import ComposerProjectSelector from './components/ComposerProjectSelector.vue'
 import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
 import InlineApprovalCard from './components/InlineApprovalCard.vue'
+import InlineQuestionCard from './components/InlineQuestionCard.vue'
 
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationProcess from './components/ConversationProcess.vue'
@@ -236,8 +238,10 @@ async function openConversationBrowser(): Promise<void> {
     if (project) await ensureRuntimeProject(project)
     const scope = sessionScope(thread, project)
     if (!thread.sessionId) {
-      const response = await window.seekclaw.daemon.request('session.new', { ...scope, reasoningLevel: thread.reasoningLevel, networkEnabled: thread.networkEnabled ?? true })
+      const modelRef = thread.modelRef ?? (defaultModel.value || undefined)
+      const response = await window.seekclaw.daemon.request('session.new', { ...scope, modelRef, reasoningLevel: thread.reasoningLevel, networkEnabled: thread.networkEnabled ?? true })
       thread.sessionId = response.data
+      thread.modelRef = modelRef
       thread.sessionLoaded = true
       if (thread.titleSource === 'manual')
         await window.seekclaw.daemon.request('session.update', { ...scope, id: thread.sessionId, title: thread.title })
@@ -316,7 +320,8 @@ const selectedProjectId = ref('')
 const runtimeWorkspacePath = ref('')
 const models = ref<string[]>([])
 const modelCatalog = ref<RuntimeModelCatalogItem[]>([])
-const activeModel = ref('')
+const defaultModel = ref('')
+const pendingModelChanges = reactive(new Set<string>())
 const mode = ref('guardrail')
 const busy = computed(() => Boolean(activeThread.value?.running))
 const scrollArea = ref<HTMLElement | null>(null)
@@ -397,10 +402,17 @@ watch(() => activeThread.value?.sessionId, async id => {
     if (sequence === browserStateSequence) browserState.value = state
   }
 })
+const activeModel = computed(() => activeThread.value?.modelRef ?? defaultModel.value)
 const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? ReasoningLevel.High)
 const activeModelCatalogItem = computed(() =>
   modelCatalog.value.find((model) => model.ref === activeModel.value)
 )
+const composerModels = computed(() => {
+  const separator = defaultModel.value.indexOf('/')
+  if (separator < 1) return []
+  const providerPrefix = defaultModel.value.slice(0, separator + 1)
+  return models.value.filter((model) => model.startsWith(providerPrefix))
+})
 const activeModelSupportsImages = computed(() =>
   activeModelCatalogItem.value?.capabilities?.vision === true)
 const activeModelMaxReasoning = computed<ReasoningLevel>(() => {
@@ -976,10 +988,8 @@ async function loadRuntimeState(): Promise<void> {
       selectedProjectId.value = currentProject?.id ?? ''
     models.value = available
     modelCatalog.value = catalog
-    activeModel.value = catalog.find((model) => model.active)?.ref
-      ?? (available.length > 0
-        ? (available.includes(activeModel.value) ? activeModel.value : available[0] ?? '')
-        : '')
+    defaultModel.value = catalog.find((model) => model.active)?.ref
+      ?? (available.includes(defaultModel.value) ? defaultModel.value : available[0] ?? '')
     mode.value = modeResponse.data
     await refreshAllProjectSessions()
     await migrateImplicitDocumentsProject()
@@ -1026,6 +1036,7 @@ function handleDaemonState(state: DaemonState): void {
   if (state.connected) {
     return
   }
+  pendingQuestions.value = []
   if (conversationLoading.value) {
     conversationLoading.value = false
     conversationLoadError.value = '已与 SeekClaw Runtime 断开连接，正在尝试重连…'
@@ -1153,6 +1164,7 @@ function newTask(projectId?: string): void {
     projectId: project?.id,
     updatedAt: Date.now(),
     messages: [],
+    modelRef: defaultModel.value || undefined,
     reasoningLevel: ReasoningLevel.High,
     networkEnabled: true,
     archived: false,
@@ -1228,6 +1240,7 @@ async function branchFromMessage(message: ChatMessage): Promise<void> {
     messages: clonedMessages,
     sessionId: newSessionId,
     sessionLoaded: true,
+    modelRef: currentThread.modelRef,
     reasoningLevel: currentThread.reasoningLevel ?? ReasoningLevel.High,
     networkEnabled: currentThread.networkEnabled ?? true,
     archived: false,
@@ -1418,6 +1431,7 @@ async function selectThread(id: string): Promise<void> {
       applySessionTitle(thread, saved)
       thread.archived = Boolean(saved.archived)
       thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
+      thread.modelRef = saved.modelRef ?? undefined
       thread.networkEnabled = saved.networkEnabled ?? true
       thread.stats = sessionStats(saved)
     }
@@ -1580,7 +1594,7 @@ async function regenerateMessage(message: ChatMessage): Promise<void> {
 async function sendMessage(content: string, images: ImageAttachment[], files?: FileAttachment[]): Promise<void> {
   const thread = activeThread.value
   const project = thread ? projects.value.find((item) => item.id === thread.projectId) : undefined
-  if (!thread || (thread.projectId && !project) || thread.archived) return
+  if (!thread || (thread.projectId && !project) || thread.archived || activeQuestion.value) return
   if (!content.trim() && images.length === 0 && (!files || files.length === 0)) return
   if (thread.running || thread.queueDraining) {
     thread.queuedMessages ??= []
@@ -1602,6 +1616,31 @@ function rememberFinishedRequest(thread: ThreadItem, requestId: number): void {
 
 function isFinishedRequest(thread: ThreadItem, requestId: number): boolean {
   return thread.finishedRequestIds?.includes(requestId) === true
+}
+
+interface PendingUserQuestion extends UserQuestion {
+  draft: string
+  submitting: boolean
+  submitted: boolean
+  error: string
+}
+
+const pendingQuestions = ref<PendingUserQuestion[]>([])
+const activeQuestion = computed(() => pendingQuestions.value.find((item) => item.sessionId === activeThread.value?.sessionId))
+
+async function submitQuestionAnswer(question: PendingUserQuestion | undefined, answer: string): Promise<void> {
+  if (!question || question !== activeQuestion.value || question.submitting || question.submitted || !answer.trim()) return
+  question.submitting = true
+  question.error = ''
+  try {
+    const response = await window.seekclaw.daemon.request('agent.answer', { questionId: question.questionId, answer })
+    if (response.event === 'cancelled') throw new Error('发送已取消')
+    question.submitted = true
+  } catch (error) {
+    question.error = `发送回答失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    question.submitting = false
+  }
 }
 
 const pendingApprovals = ref<PendingToolApproval[]>([])
@@ -1728,7 +1767,7 @@ async function handleApprovalRequest(event: DaemonMessage): Promise<void> {
 }
 
 function scheduleQueuedDrain(thread: ThreadItem): void {
-  if (!thread.running && !thread.queueDraining && !thread.archived && thread.queuedMessages?.length)
+  if (!thread.running && !thread.queueDraining && !thread.archived && !pendingModelChanges.has(thread.id) && thread.queuedMessages?.length)
     void drainQueuedMessages(thread)
 }
 
@@ -1767,7 +1806,8 @@ function editQueuedMessage(thread: ThreadItem, queued: QueuedMessage): void {
 }
 
 async function steerQueuedMessage(thread: ThreadItem, queued: QueuedMessage): Promise<void> {
-  if (!thread.running || !thread.sessionId || !daemonState.value.connected) return
+  if (!thread.running || !thread.sessionId || !daemonState.value.connected
+    || pendingQuestions.value.some((question) => question.sessionId === thread.sessionId)) return
   const index = thread.queuedMessages?.findIndex((item) => item.id === queued.id) ?? -1
   if (index < 0) return
   const project = projects.value.find((item) => item.id === thread.projectId)
@@ -1851,12 +1891,15 @@ async function runMessageTurn(
     const scope = sessionScope(thread, project)
     let sessionCreated = false
     if (!thread.sessionId) {
+      const modelRef = thread.modelRef ?? (defaultModel.value || undefined)
       const sessionResponse = await window.seekclaw.daemon.request('session.new', {
         ...scope,
+        modelRef,
         reasoningLevel,
         networkEnabled: thread.networkEnabled ?? true
       })
       thread.sessionId = sessionResponse.data
+      thread.modelRef = modelRef
       thread.sessionLoaded = true
       sessionCreated = true
     }
@@ -1873,8 +1916,10 @@ async function runMessageTurn(
       images: plainImages(images),
       sessionId: thread.sessionId,
       reasoningLevel,
+      supportsUserQuestions: true,
       ...scope
     }, { timeoutMs: CHAT_FIRST_EVENT_TIMEOUT_MS })
+    pendingQuestions.value = pendingQuestions.value.filter((question) => !finishesQuestionTurn(response, question))
     rememberFinishedRequest(thread, response.id)
     const turnAssistantBubbles = thread.messages.slice(turnStartIndex).filter((item) => item.role === 'assistant')
     const finalAssistant = turnAssistantBubbles[turnAssistantBubbles.length - 1] ?? assistant
@@ -1906,6 +1951,10 @@ async function runMessageTurn(
     // A terminal event may already have started the next queued turn. Do not let
     // this older request clear that newer turn's state.
     if (thread.activeTurnToken !== turnToken) return
+    if (thread.requestId !== undefined) {
+      pendingQuestions.value = pendingQuestions.value.filter((question) =>
+        question.turnId !== thread.requestId || question.sessionId !== thread.sessionId)
+    }
     // Belt-and-braces: finalize every leftover "..." placeholder when this turn
     // settles. The captured assistant can be a stale bubble (a mid-turn steer
     // created a fresh one) and the terminal event itself may have been dropped
@@ -2006,8 +2055,10 @@ async function manageTaskWorktree(action: 'create' | 'archive' | 'restore', base
   try {
     const scope = sessionScope(thread, project)
     if (!thread.sessionId) {
-      const response = await window.seekclaw.daemon.request('session.new', { ...scope, reasoningLevel: thread.reasoningLevel, networkEnabled: thread.networkEnabled ?? true })
+      const modelRef = thread.modelRef ?? (defaultModel.value || undefined)
+      const response = await window.seekclaw.daemon.request('session.new', { ...scope, modelRef, reasoningLevel: thread.reasoningLevel, networkEnabled: thread.networkEnabled ?? true })
       thread.sessionId = response.data
+      thread.modelRef = modelRef
       if (thread.titleSource === 'manual')
         await window.seekclaw.daemon.request('session.update', { ...scope, id: thread.sessionId, title: thread.title })
     }
@@ -2107,6 +2158,30 @@ const handleDaemonEvent = createDaemonEventHandler({
 })
 
 function handleDaemonMessage(event: DaemonMessage): void {
+  if (event.event === 'question_request') {
+    const question = parseQuestionRequest(event)
+    if (!question || !daemonState.value.connected) return
+    const thread = threads.value.find((item) => item.sessionId === question.sessionId)
+    if (!thread?.running || isFinishedRequest(thread, question.turnId)
+      || (thread.requestId !== undefined && thread.requestId !== question.turnId)) return
+    thread.requestId = question.turnId
+    if (!pendingQuestions.value.some((item) => item.sessionId === question.sessionId && item.questionId === question.questionId)) {
+      pendingQuestions.value.push({ ...question, draft: '', submitting: false, submitted: false, error: '' })
+    }
+    return
+  }
+  if (event.event === 'question_resolved') {
+    const resolved = parseQuestionResolved(event)
+    if (resolved) {
+      pendingQuestions.value = pendingQuestions.value.filter((item) =>
+        item.sessionId !== resolved.sessionId || item.questionId !== resolved.questionId)
+    }
+    return
+  }
+  if (event.requestMethod === 'agent.answer') return
+  if (event.event === 'done' || event.event === 'cancelled' || event.event === 'error' || event.event === 'result') {
+    pendingQuestions.value = pendingQuestions.value.filter((question) => !finishesQuestionTurn(event, question))
+  }
   if (event.event === 'approval_request') {
     void handleApprovalRequest(event)
     return
@@ -2150,11 +2225,25 @@ async function changeNetwork(enabled: boolean): Promise<void> {
 }
 
 async function changeModel(model: string): Promise<void> {
-  const previousModel = activeModel.value
-  activeModel.value = model
-  if (!daemonState.value.connected || !model) return
-  try { await window.seekclaw.daemon.request('model.switch', { model }) }
-  catch { activeModel.value = previousModel }
+  const thread = activeThread.value
+  if (!thread || thread.archived || thread.running || !model || pendingModelChanges.has(thread.id)) return
+  if (!thread.sessionId) {
+    thread.modelRef = model
+    return
+  }
+  const project = projects.value.find((item) => item.id === thread.projectId)
+  pendingModelChanges.add(thread.id)
+  try {
+    await window.seekclaw.daemon.request('session.update', {
+      ...sessionScope(thread, project), id: thread.sessionId, modelRef: model
+    })
+    thread.modelRef = model
+  } catch (error) {
+    await window.seekclaw.notify('切换会话模型失败', error instanceof Error ? error.message : String(error))
+  } finally {
+    pendingModelChanges.delete(thread.id)
+    scheduleQueuedDrain(thread)
+  }
 }
 
 async function changeMode(nextMode: string): Promise<void> {
@@ -2424,6 +2513,7 @@ watch(theme, applyTheme)
           </section>
 
           <footer class="composer-region">
+            <div class="sr-only" role="status">{{ activeQuestion ? '有问题等待回答' : '' }}</div>
             <InlineApprovalCard
               :approval="activePendingApproval"
               :queue-count="activeThreadApprovals.length"
@@ -2495,13 +2585,25 @@ watch(theme, applyTheme)
 
             <TaskStepList :steps="activeThreadTurnSteps" :running="activeThread?.running"
               :phase="activeThread?.phase" />
-            <Composer ref="composer" :busy="busy"
-              :disabled="!activeThread || activeThread.archived || conversationLoading"
+            <InlineQuestionCard
+              v-if="activeQuestion"
+              class="composer-frame"
+              :key="activeQuestion.turnId + ':' + activeQuestion.questionId"
+              v-model:draft="activeQuestion.draft"
+              :request="activeQuestion"
+              :submitting="activeQuestion.submitting"
+              :submitted="activeQuestion.submitted"
+              :error="activeQuestion.error"
+              @answer="submitQuestionAnswer(activeQuestion, $event)"
+              @cancel="stopTurn"
+            />
+            <Composer ref="composer" :busy="busy" :obscured="Boolean(activeQuestion)"
+              :disabled="!activeThread || activeThread.archived || conversationLoading || pendingModelChanges.has(activeThread.id)"
               :disabled-placeholder="!activeThread ? '请选择或新建一个任务开始对话' : conversationLoading ? '正在加载会话…' : '恢复任务后可继续对话'"
               :workspace-path="activeThread?.executionWorkspace || activeProject?.path"
               :has-active-session="Boolean(activeThread?.sessionId)"
               :model="activeModel"
-              :models="models" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
+              :models="composerModels" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
               :reasoning-level="activeReasoningLevel" :max-reasoning-level="activeModelMaxReasoning"
               :supports-reasoning="activeModelSupportsReasoning" :network-enabled="activeThread?.networkEnabled ?? true"
               :optimize-prompt="optimizePrompt" @send="sendMessage" @stop="stopTurn" @change-model="changeModel"

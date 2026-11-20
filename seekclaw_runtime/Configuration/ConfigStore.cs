@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SeekClaw.Runtime.Providers;
 
 namespace SeekClaw.Runtime.Configuration;
 
@@ -55,6 +56,9 @@ public sealed class ConfigStore : IConfigStore
     {
         lock (_gate)
         {
+            // Models added without an explicit capability declaration inherit the family
+            // inference, so persisted configuration and runtime agree on reasoning levels.
+            ModelCapabilityResolver.Apply(Config);
             Directory.CreateDirectory(Path.GetDirectoryName(_configFile)!);
             var json = JsonSerializer.Serialize(Config, SeekClawJsonContext.Default.SeekClawConfig);
             File.WriteAllText(_configFile, json);
@@ -120,6 +124,7 @@ public sealed class ConfigStore : IConfigStore
                     {
                         if (string.IsNullOrWhiteSpace(loaded.Model))
                             MigrateLegacyProfiles(loaded, _configFile);
+                        ModelCapabilityResolver.Apply(loaded);
                         HasAnomaly = false;
                         AnomalyDetail = null;
                         return loaded;

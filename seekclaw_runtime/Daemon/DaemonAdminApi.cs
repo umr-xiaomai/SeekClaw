@@ -415,6 +415,7 @@ internal sealed partial class DaemonAdminApi(
                     model.MaxOutputAuto = node["maxOutputAuto"]?.GetValue<bool>() ?? model.MaxOutputAuto;
                     if (node["detectedContextWindow"]?.GetValue<int?>() is > 0 and var dc) model.DetectedContextWindow = dc;
                     if (node["detectedMaxOutput"]?.GetValue<int?>() is > 0 and var dm) model.DetectedMaxOutput = dm;
+                    ApplyCapabilities(node!, model.Capabilities);
 
                     return model;
                 })
@@ -620,6 +621,7 @@ internal sealed partial class DaemonAdminApi(
         }
         model.ContextWindowAuto = parameters["contextWindowAuto"]?.GetValue<bool>() ?? model.ContextWindowAuto;
         model.MaxOutputAuto = parameters["maxOutputAuto"]?.GetValue<bool>() ?? model.MaxOutputAuto;
+        ApplyCapabilities(parameters, model.Capabilities);
         runtime.ConfigStore.Save();
         return new JsonObject
         {
@@ -1151,6 +1153,8 @@ internal sealed partial class DaemonAdminApi(
                 ? (worktree["workspacePath"] ?? worktree["path"])?.DeepClone() : JsonValue.Create(workspace.IsGlobal ? null : workspace.Root),
             ["worktree"] = runtime.Worktrees.Get(workspace.Root, id),
             ["archived"] = session.Header.Archived,
+            ["modelRef"] = session.Header.ModelRef ?? session.Messages.LastOrDefault(message =>
+                message.Role == ChatRole.Assistant && !string.IsNullOrWhiteSpace(message.ModelRef))?.ModelRef,
             ["reasoningLevel"] = session.Header.ReasoningLevel.ToWireValue(),
             ["networkEnabled"] = session.Header.NetworkEnabled,
             ["llmRounds"] = session.Header.LlmRounds,
@@ -1166,6 +1170,17 @@ internal sealed partial class DaemonAdminApi(
         }.ToJsonString();
     }
 
+    internal string? ParseSessionModelRef(JsonNode? node)
+    {
+        if (node is null) return null;
+        if (node is not JsonValue value || !value.TryGetValue<string>(out var reference)
+            || string.IsNullOrWhiteSpace(reference))
+            throw new DaemonRequestException("params.modelRef must be a model reference or null");
+        return runtime.Models.Resolve(reference.Trim()) is { Provider.Enabled: true } model
+            ? model.Ref
+            : throw new DaemonRequestException($"Model '{reference}' is not configured or enabled");
+    }
+
     public string UpdateSession(JsonObject parameters)
     {
         var workspace = SessionWorkspace(parameters);
@@ -1179,11 +1194,13 @@ internal sealed partial class DaemonAdminApi(
         var networkEnabled = parameters.ContainsKey("networkEnabled")
             ? parameters["networkEnabled"]?.GetValue<bool?>() ?? true
             : (bool?)null;
+        var modelRef = ParseSessionModelRef(parameters["modelRef"]);
         try
         {
             var header = runtime.Sessions.UpdateMetadata(
                 workspace, id, title: title, reasoningLevel: reasoningLevel,
-                networkEnabled: networkEnabled);
+                networkEnabled: networkEnabled, modelRef: modelRef,
+                clearModelRef: modelRef is null && parameters.ContainsKey("modelRef"));
             return JsonSerializer.Serialize(header, SeekClawJsonContext.Default.SessionHeader);
         }
         catch (Exception ex) when (ex is FileNotFoundException or InvalidDataException or ArgumentException)
@@ -1320,7 +1337,36 @@ internal sealed partial class DaemonAdminApi(
         ["contextWindowAuto"] = model.ContextWindowAuto, ["maxOutputAuto"] = model.MaxOutputAuto,
         ["detectedContextWindow"] = model.DetectedContextWindow, ["detectedMaxOutput"] = model.DetectedMaxOutput,
         ["vision"] = true,
+        ["capabilities"] = new JsonObject
+        {
+            ["streaming"] = model.Capabilities.Streaming,
+            ["tools"] = model.Capabilities.ToolCalling,
+            ["thinking"] = model.Capabilities.Thinking,
+            ["reasoning"] = model.Capabilities.Reasoning,
+            ["maxReasoningLevel"] = model.Capabilities.MaxReasoningLevel.ToWireValue(),
+            ["mcp"] = model.Capabilities.Mcp,
+        },
     };
+
+    /// <summary>
+    /// Applies an optional capability override (manual declaration) from a save/update
+    /// payload. Missing keys keep their current value so partial updates stay safe.
+    /// </summary>
+    private static void ApplyCapabilities(JsonObject node, ModelCapabilities capabilities)
+    {
+        if (node["capabilities"] is not JsonObject caps) return;
+        if (caps["streaming"]?.GetValue<bool?>() is { } streaming) capabilities.Streaming = streaming;
+        if (caps["tools"]?.GetValue<bool?>() is { } tools) capabilities.ToolCalling = tools;
+        if (caps["toolCalling"]?.GetValue<bool?>() is { } toolCalling) capabilities.ToolCalling = toolCalling;
+        if (caps["thinking"]?.GetValue<bool?>() is { } thinking) capabilities.Thinking = thinking;
+        if (caps["reasoning"]?.GetValue<bool?>() is { } reasoning) capabilities.Reasoning = reasoning;
+        if (caps["jsonMode"]?.GetValue<bool?>() is { } jsonMode) capabilities.JsonMode = jsonMode;
+        if (caps["embedding"]?.GetValue<bool?>() is { } embedding) capabilities.Embedding = embedding;
+        if (caps["mcp"]?.GetValue<bool?>() is { } mcp) capabilities.Mcp = mcp;
+        if (caps["maxReasoningLevel"]?.GetValue<string>() is { } maxLevel
+            && ReasoningLevelExtensions.TryParse(maxLevel, out var level))
+            capabilities.MaxReasoningLevel = level;
+    }
 
     public string BrowserScope(JsonObject parameters)
     {

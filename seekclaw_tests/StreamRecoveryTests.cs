@@ -306,6 +306,80 @@ public sealed class StreamRecoveryTests : IDisposable
         Assert.Equal("error", runtime.Sessions.Load(runtime.Workspace, session.Header.Id)!.Messages[^1].FinishReason);
     }
 
+    [Fact]
+    public async Task SessionModelRouting_PinsSuccessfulFallback_AndNeverFailsOverOncePinned()
+    {
+        var success = new Attempt([new LlmCompleted(new LlmCompletion { Text = "done", FinishReason = "stop" })]);
+        var failed = new Attempt([], Interrupted());
+        var client = new ScriptedClient(failed, success, failed);
+        await using var runtime = Runtime(client);
+        var config = runtime.ConfigStore.Config;
+        config.Providers.Single().Models.Add(new ModelConfig { Id = "fallback" });
+        config.Routing.FailoverEnabled = true;
+        config.Routing.Fallback = ["test/fallback"];
+        config.Routing.Retry.MaxAttempts = 1;
+        var workspace = runtime.Workspace;
+        var session = runtime.Sessions.Create(workspace);
+
+        var first = await runtime.Agent.RunTurnAsync(session, workspace, "hello", CancellationToken.None, pinSessionModel: true);
+        Assert.Null(first.Error);
+        var saved = runtime.Sessions.Load(workspace, session.Header.Id)!;
+        Assert.Equal("test/fallback", saved.Header.ModelRef);
+        Assert.Equal("test/fallback", saved.Messages.Last().ModelRef);
+
+        var second = await runtime.Agent.RunTurnAsync(saved, workspace, "again", CancellationToken.None, pinSessionModel: true);
+        Assert.Contains("ResponseEnded", second.Error);
+
+        var legacy = runtime.Sessions.Create(workspace);
+        runtime.Sessions.Append(legacy, new ChatMessage { Role = ChatRole.Assistant, Text = "old reply", ModelRef = "test/fallback" });
+        runtime.Sessions.Append(legacy, new ChatMessage { Role = ChatRole.Assistant, Text = "without metadata" });
+        var resumed = await runtime.Agent.RunTurnAsync(legacy, workspace, "continue", CancellationToken.None, pinSessionModel: true);
+        Assert.Contains("ResponseEnded", resumed.Error);
+        Assert.Equal("test/fallback", runtime.Sessions.Load(workspace, legacy.Header.Id)!.Header.ModelRef);
+        Assert.Equal(["model", "fallback", "fallback", "fallback"], client.Requests.Select(request => request.Model.Id));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AskUser_WaitsForAnswerAndPairsToolResultEvenOnCancellation(bool cancel)
+    {
+        var client = new ScriptedClient(
+            new Attempt([new LlmCompleted(new LlmCompletion
+            {
+                ToolCalls = [new ToolCallRequest("question-call", "ask_user", """{"question":"Which format?","options":["A","B"]}""")],
+                FinishReason = "tool_calls",
+            })]),
+            new Attempt([new LlmCompleted(new LlmCompletion { Text = "done", FinishReason = "stop" })]));
+        await using var runtime = Runtime(client);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var session = runtime.Sessions.Create(runtime.Workspace);
+        var answer = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var asked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var turn = runtime.Agent.RunTurnAsync(session, runtime.Workspace, "choose a format", cts.Token,
+            askUser: (question, options, ct) =>
+            {
+                Assert.Equal("Which format?", question);
+                Assert.Equal(["A", "B"], options);
+                asked.SetResult(true);
+                return answer.Task.WaitAsync(ct);
+            });
+        await asked.Task.WaitAsync(cts.Token);
+        Assert.Single(client.Requests);
+        Assert.Contains(client.Requests[0].Tools, tool => tool.Name == "ask_user");
+
+        if (cancel) cts.Cancel();
+        else answer.SetResult("B");
+
+        var result = await turn;
+        Assert.Equal(cancel, result.Cancelled);
+        Assert.Null(result.Error);
+        var messages = runtime.Sessions.Load(runtime.Workspace, session.Header.Id)!.Messages;
+        var response = Assert.Single(messages, message => message.ToolCallId == "question-call");
+        if (cancel) Assert.Contains("cancelled", response.Text);
+        else Assert.Equal("B", JsonNode.Parse(response.Text)!["answer"]!.GetValue<string>());
+    }
+
     private SeekClawRuntime Runtime(ScriptedClient client, int retryDelay = 0)
     {
         var config = new ConfigStore(Path.Combine(_root, "config.json"), Path.Combine(_root, "state.json"));

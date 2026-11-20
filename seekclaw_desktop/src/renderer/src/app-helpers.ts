@@ -41,6 +41,7 @@ export interface RuntimeSessionHeader {
   createdAt: string
   updatedAt: string
   reasoningLevel?: string
+  modelRef?: string | null
   networkEnabled?: boolean
   llmRounds?: number
   executionSteps?: number

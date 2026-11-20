@@ -58,6 +58,39 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Equal("test/model", message["modelRef"]!.GetValue<string>());
     }
 
+    [Fact]
+    public async Task SessionModelRef_RoundTripsThroughDaemonMetadataAndFork()
+    {
+        var connection = await StartServerAsync((_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+        _runtime!.ConfigStore.Config.Providers.Add(new ProviderConfig
+        {
+            Id = "session-test",
+            Models = [new ModelConfig { Id = "first" }, new ModelConfig { Id = "second" }],
+        });
+        await connection.SendAsync(1, "session.new", new JsonObject { ["modelRef"] = "session-test/first" });
+        var created = await connection.ReadAsync();
+        Assert.Equal("result", created["event"]!.GetValue<string>());
+        var id = created["data"]!.GetValue<string>();
+
+        await connection.SendAsync(2, "session.get", new JsonObject { ["id"] = id });
+        Assert.Equal("session-test/first", ParseData(await connection.ReadAsync())["modelRef"]!.GetValue<string>());
+
+        await connection.SendAsync(3, "session.update", new JsonObject { ["id"] = id, ["modelRef"] = "session-test/second" });
+        Assert.Equal("session-test/second", ParseData(await connection.ReadAsync())["modelRef"]!.GetValue<string>());
+
+        await connection.SendAsync(4, "session.list");
+        var listed = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
+        Assert.Equal("session-test/second", Assert.Single(listed)!["modelRef"]!.GetValue<string>());
+
+        await connection.SendAsync(5, "session.fork", new JsonObject { ["id"] = id });
+        Assert.Equal("session-test/second", ParseData(await connection.ReadAsync())["modelRef"]!.GetValue<string>());
+
+        await connection.SendAsync(6, "session.update", new JsonObject { ["id"] = id, ["modelRef"] = null });
+        var cleared = ParseData(await connection.ReadAsync()).AsObject();
+        Assert.True(cleared.ContainsKey("modelRef"));
+        Assert.Null(cleared["modelRef"]);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -536,7 +569,7 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var generate = typeof(DaemonServer).GetMethod("GenerateSessionTitleAsync",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         var task = Assert.IsAssignableFrom<Task>(generate.Invoke(_server,
-            [session, _runtime.Workspace, "检查标题加载状态", CancellationToken.None]));
+            [session, _runtime.Workspace, "检查标题加载状态", CancellationToken.None, null]));
 
         var started = await connection.ReadUntilAsync(item =>
             item["event"]!.GetValue<string>() == "session.title");
@@ -1456,7 +1489,8 @@ public sealed class DaemonServerTests : IAsyncDisposable
 
         public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(
             Func<ModelInfo, LlmRequest> requestFactory, WorkspaceConfig? workspace,
-            [EnumeratorCancellation] CancellationToken ct, Func<ModelInfo, bool>? candidateFilter = null)
+            [EnumeratorCancellation] CancellationToken ct, Func<ModelInfo, bool>? candidateFilter = null,
+            ModelInfo? pinnedModel = null)
         {
             await Task.Yield();
             ct.ThrowIfCancellationRequested();

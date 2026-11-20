@@ -44,6 +44,7 @@ public sealed partial class Agent(
     IFileLockCoordinator fileLocks,
     FileLockScope lockScope,
     IToolApprovalGate approvalGate,
+    IModelRegistry modelRegistry,
     SeekClaw.Runtime.SubAgents.SubAgentScope? subAgentScope = null,
     SeekClaw.Runtime.Execution.SessionTurnCoordinator? turns = null,
     WorktreeManager? worktrees = null,
@@ -58,7 +59,10 @@ public sealed partial class Agent(
         IReadOnlyList<ChatImageAttachment>? images = null,
         AgentSteeringQueue? steering = null,
         string? turnRequestId = null,
-        bool captureCrossSessionMemory = true)
+        bool captureCrossSessionMemory = true,
+        bool pinSessionModel = false,
+        Action<ModelInfo?>? onModelRouteReady = null,
+        Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? askUser = null)
     {
         using var turnLease = turns is null ? null : await turns.AcquireAsync(
             session.FilePath + "|" + session.Scope + "|" + session.Header.Id, ct).ConfigureAwait(false);
@@ -71,6 +75,7 @@ public sealed partial class Agent(
             session.Header.Title = latest.Header.Title;
             session.Header.Archived = latest.Header.Archived;
             session.Header.ReasoningLevel = latest.Header.ReasoningLevel;
+            session.Header.ModelRef = latest.Header.ModelRef;
             session.Header.LlmRounds = latest.Header.LlmRounds;
             session.Header.ExecutionSteps = latest.Header.ExecutionSteps;
             session.Header.InputTokens = latest.Header.InputTokens;
@@ -101,9 +106,28 @@ public sealed partial class Agent(
         var reachedMaxSteps = false;
         var step = 0;
         Task? maintenance = null;
+        string? firstTurnModelRef = null;
 
         try
         {
+            ModelInfo? pinnedModel = null;
+            if (pinSessionModel)
+            {
+                if (session.Header.ModelRef is null && session.Messages.LastOrDefault(message =>
+                        message.Role == ChatRole.Assistant && !string.IsNullOrWhiteSpace(message.ModelRef))?.ModelRef is { } historicalRef)
+                {
+                    session.Header.ModelRef = sessionStore.UpdateMetadata(sessionWorkspace, session.Header.Id,
+                        modelRef: historicalRef, setModelRefIfMissing: true).ModelRef;
+                }
+                if (session.Header.ModelRef is { } modelRef)
+                {
+                    pinnedModel = modelRegistry.Resolve(modelRef) is { Provider.Enabled: true } model
+                        ? model
+                        : throw new LlmException($"Session model '{modelRef}' is not configured or enabled.", retryable: false);
+                }
+            }
+            onModelRouteReady?.Invoke(pinnedModel);
+
             // Repair iterations are extra model turns appended after a failed build
             // verification; they must not consume the main task's MaxSteps budget.
             // Reserve one extra step per allowed repair so long multi-step tasks are
@@ -159,16 +183,20 @@ public sealed partial class Agent(
                 var turnHasImages = session.Messages
                     .Skip(turnMessageIndex)
                     .Any(message => message.Images is { Count: > 0 });
-                var model = turnHasImages
+                var model = pinnedModel ?? (turnHasImages
                     ? providerManager.BuildCandidates(workspace.Config)
                         .FirstOrDefault(candidate => candidate.Model.Capabilities.Vision)
                       ?? throw new LlmException(
                           "No configured model supports image understanding.",
                           retryable: false)
-                    : providerManager.ResolveActive(workspace.Config);
+                    : providerManager.ResolveActive(workspace.Config));
+                if (turnHasImages && !model.Capabilities.Vision)
+                    throw new LlmException($"Session model '{model.Ref}' does not support image understanding.", retryable: false);
                 var requiresVision = turnHasImages && model.Model.Capabilities.Vision;
                 var effectiveNetworkEnabled = session.Header.NetworkEnabled && agentConfig.NetworkEnabled;
                 var tools = ActiveTools(workspace, model, effectiveNetworkEnabled);
+                if (askUser is null)
+                    tools = tools.Where(tool => tool.Name != Tools.Builtin.AskUserTool.ToolName).ToList();
                 var systemPrompt = await ComposeSystemPromptAsync(
                     workspace, model, tools, effectiveNetworkEnabled, ct).ConfigureAwait(false);
 
@@ -184,7 +212,7 @@ public sealed partial class Agent(
                     && source.Count != lastCompactedCount)
                 {
                     if (await CompactContextAsync(
-                            session, workspace, model, systemPrompt, turnMessageIndex, step, requiresVision, ct).ConfigureAwait(false))
+                            session, workspace, model, systemPrompt, turnMessageIndex, step, requiresVision, ct, pinnedModel).ConfigureAwait(false))
                     {
                         turnMessageIndex = session.Messages.FindIndex(message => ReferenceEquals(message, userMessage));
                         if (turnMessageIndex < 0) turnMessageIndex = 0;
@@ -201,17 +229,16 @@ public sealed partial class Agent(
                         events.Publish(new ImageViewedEvent(image.Id, image.Name, image.MediaType));
                 events.Publish(new ModelInvocationStartedEvent(model.Provider.Id, model.Model.Id, step));
 
-                var completion = await StreamOnceAsync(
+                var (completion, invokedModel) = await StreamOnceAsync(
                     model, workspace, systemPrompt, history, tools,
-                    reasoningLevel ?? agentConfig.ReasoningLevel, requiresVision, ct).ConfigureAwait(false);
-
+                    reasoningLevel ?? agentConfig.ReasoningLevel, requiresVision, ct, pinnedModel).ConfigureAwait(false);
                 var assistant = new ChatMessage
                 {
                     Role = ChatRole.Assistant,
                     Text = completion.Text,
                     Thinking = completion.Thinking.Length > 0 ? completion.Thinking : null,
                     ThinkingSignature = completion.ThinkingSignature,
-                    ModelRef = $"{model.Provider.Id}/{model.Model.Id}",
+                    ModelRef = invokedModel.Ref,
                     FinishReason = completion.FinishReason,
                     ErrorMessage = completion.ErrorMessage,
                     ToolCalls = completion.ToolCalls.Count > 0 ? completion.ToolCalls : null,
@@ -220,6 +247,8 @@ public sealed partial class Agent(
                         : null,
                 };
                 sessionStore.Append(session, assistant);
+                if (completion.ErrorMessage is null && completion.FinishReason is not ("cancelled" or "incomplete"))
+                    firstTurnModelRef = invokedModel.Ref;
                 if (completion.ErrorMessage is { } completionError)
                 {
                     finalText = isContinuation ? finalText + completion.Text : completion.Text;
@@ -249,6 +278,36 @@ public sealed partial class Agent(
                 }
                 else if (completion.ToolCalls.Count > 0)
                 {
+                    if (completion.ToolCalls.Count > 1 && completion.ToolCalls.Any(call => call.Name == Tools.Builtin.AskUserTool.ToolName))
+                    {
+                        foreach (var call in completion.ToolCalls)
+                            sessionStore.Append(session, ChatMessage.ToolResult(call.Id, call.Name,
+                                "No tools were executed. Call ask_user on its own before proceeding.", false));
+                        continue;
+                    }
+
+                    if (completion.ToolCalls is [{ Name: Tools.Builtin.AskUserTool.ToolName } questionCall])
+                    {
+                        PublishWorkflow(step, "tool", questionCall.Name);
+                        try
+                        {
+                            var answer = await ExecuteToolAsync(questionCall, workspace, sessionWorkspace, model,
+                                session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct).ConfigureAwait(false);
+                            sessionStore.Append(session, answer.Message);
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                        {
+                            sessionStore.Append(session, ChatMessage.ToolResult(questionCall.Id, questionCall.Name,
+                                "The question was cancelled before the user answered.", false));
+                            throw;
+                        }
+                        PublishSteering(AppendSteering(session, steering));
+                        ResetRepeatToolTracking(ref lastRepeatToolName, ref lastRepeatToolArgs, ref consecutiveRepeatToolCount);
+                        truncatedSteps = 0;
+                        isContinuation = false;
+                        continue;
+                    }
+
                     var readOnlyBatch = new List<ToolCallRequest>();
                     foreach (var call in completion.ToolCalls)
                     {
@@ -267,7 +326,7 @@ public sealed partial class Agent(
                             {
                                 foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
                                 var batchResults = await Task.WhenAll(readOnlyBatch.Select(c =>
-                                    ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, ct))).ConfigureAwait(false);
+                                    ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct))).ConfigureAwait(false);
                                 for (var i = 0; i < batchResults.Length; i++)
                                 {
                                     var result = batchResults[i];
@@ -282,7 +341,7 @@ public sealed partial class Agent(
 
                             PublishWorkflow(step, "tool", call.Name);
                             var singleResult = await ExecuteToolAsync(
-                                call, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, ct).ConfigureAwait(false);
+                                call, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct).ConfigureAwait(false);
                             mutated |= singleResult.ToolMutated;
                             var singleMessage = AppendRepeatToolReminderIfNeeded(
                                 call, singleResult.Message, model,
@@ -295,7 +354,7 @@ public sealed partial class Agent(
                     {
                         foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
                         var batchResults = await Task.WhenAll(readOnlyBatch.Select(c =>
-                            ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, ct))).ConfigureAwait(false);
+                            ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct))).ConfigureAwait(false);
                         for (var i = 0; i < batchResults.Length; i++)
                         {
                             var result = batchResults[i];
@@ -443,9 +502,11 @@ public sealed partial class Agent(
 
                         var source = activeRequiresVision ? session.Messages : WithoutImages(session.Messages);
                         var history = ContextPlanner.FitToWindow(source, activeModel.Model, activeSystemPrompt);
-                        var finalCompletion = await StreamOnceAsync(
+                        var (finalCompletion, wrapUpModel) = await StreamOnceAsync(
                             activeModel, workspace, activeSystemPrompt, history, [],
-                            reasoningLevel ?? agentConfig.ReasoningLevel, activeRequiresVision, ct).ConfigureAwait(false);
+                            reasoningLevel ?? agentConfig.ReasoningLevel, activeRequiresVision, ct, pinnedModel).ConfigureAwait(false);
+                        if (finalCompletion.ErrorMessage is null && finalCompletion.FinishReason is not ("cancelled" or "incomplete"))
+                            firstTurnModelRef = wrapUpModel.Ref;
 
                         var assistantSummary = new ChatMessage
                         {
@@ -453,7 +514,7 @@ public sealed partial class Agent(
                             Text = finalCompletion.Text,
                             Thinking = finalCompletion.Thinking.Length > 0 ? finalCompletion.Thinking : null,
                             ThinkingSignature = finalCompletion.ThinkingSignature,
-                            ModelRef = $"{activeModel.Provider.Id}/{activeModel.Model.Id}",
+                            ModelRef = wrapUpModel.Ref,
                             FinishReason = finalCompletion.FinishReason,
                             ErrorMessage = finalCompletion.ErrorMessage,
                         };
@@ -478,6 +539,14 @@ public sealed partial class Agent(
                 }
             }
 
+            if (pinSessionModel && pinnedModel is null && firstTurnModelRef is not null)
+            {
+                // Keep the first turn's routing intact, including failover. Save the model
+                // that answered without overwriting an explicit update made during the turn.
+                session.Header.ModelRef = sessionStore.UpdateMetadata(sessionWorkspace, session.Header.Id,
+                    modelRef: firstTurnModelRef, setModelRefIfMissing: true).ModelRef;
+            }
+
             if (captureCrossSessionMemory
                 && agentConfig.EnableCrossSessionMemory
                 && !cancelled
@@ -491,7 +560,7 @@ public sealed partial class Agent(
                 // awaiting it: desktop clients unfreeze on `done`, and blocking that response on
                 // an extra completion made finished answers look stuck for seconds.
                 maintenance = CaptureCrossSessionMemoryAsync(
-                    session, sessionWorkspace, activeModel, userInput, finalText, ct);
+                    session, sessionWorkspace, pinnedModel, userInput, finalText, ct);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -12,6 +12,25 @@ const saved = (id: string, parentSessionId?: string): RuntimeSessionHeader => ({
 })
 
 describe('sidebar session synchronization', () => {
+  it('keeps each session’s model independent when another session changes models', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({ data: JSON.stringify([
+        { ...saved('first'), modelRef: 'provider/one' },
+        { ...saved('second'), modelRef: 'provider/two' }
+      ]) })
+      .mockResolvedValueOnce({ data: JSON.stringify([
+        { ...saved('first'), modelRef: 'provider/one' },
+        { ...saved('second'), modelRef: 'provider/three' }
+      ]) })
+    vi.stubGlobal('window', { seekclaw: { daemon: { request } } })
+    const threads = ref<ThreadItem[]>([])
+    const context = { threads, daemonState: ref({ connected: true, endpoint: 'test' }) }
+    await refreshGlobalSessions(context)
+    expect(threads.value.map((thread) => thread.modelRef)).toEqual(['provider/one', 'provider/two'])
+    await refreshGlobalSessions(context)
+    expect(threads.value.map((thread) => thread.modelRef)).toEqual(['provider/one', 'provider/three'])
+  })
+
   it('filters internal project sessions and removes child rows cached by older versions without title guessing', async () => {
     const request = vi.fn().mockResolvedValue({ data: JSON.stringify([saved('user'), saved('scheduled'), saved('child', 'user')]) })
     vi.stubGlobal('window', { seekclaw: { daemon: { request } } })

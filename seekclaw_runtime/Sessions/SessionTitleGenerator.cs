@@ -9,10 +9,11 @@ namespace SeekClaw.Runtime.Sessions;
 internal static class SessionTitleGenerator
 {
     public static async Task<string?> GenerateAsync(
-        IProviderManager providers, WorkspaceInfo workspace, string firstPrompt, CancellationToken ct)
+        IProviderManager providers, WorkspaceInfo workspace, string firstPrompt, CancellationToken ct,
+        ModelInfo? pinnedModel = null)
     {
         ct.ThrowIfCancellationRequested();
-        var model = providers.ResolveActive(workspace.Config);
+        var model = pinnedModel ?? providers.ResolveActive(workspace.Config);
         var prompt = TruncatePrompt(firstPrompt, 6000);
         var output = new StringBuilder();
         await foreach (var evt in providers.StreamAsync(candidate => new LlmRequest
@@ -30,7 +31,7 @@ internal static class SessionTitleGenerator
             EnableThinking = false,
             ReasoningLevel = ReasoningLevel.None,
         }, workspace.Config, ct,
-            candidate => string.Equals(candidate.Ref, model.Ref, StringComparison.OrdinalIgnoreCase)).ConfigureAwait(false))
+            candidate => string.Equals(candidate.Ref, model.Ref, StringComparison.OrdinalIgnoreCase), pinnedModel).ConfigureAwait(false))
         {
             ct.ThrowIfCancellationRequested();
             switch (evt)

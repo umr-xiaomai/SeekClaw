@@ -20,6 +20,7 @@ import ModelReasoningMenu from './ModelReasoningMenu.vue'
 
 const props = defineProps<{
   busy: boolean
+  obscured?: boolean
   disabled?: boolean
   disabledPlaceholder?: string
   taskId?: string
@@ -849,7 +850,7 @@ watch(() => props.supportsImages, async (supported) => {
 </script>
 
 <template>
-  <div class="composer-frame">
+  <div v-show="!obscured" class="composer-frame">
     <div v-if="$slots.context" class="composer-context-strip">
       <slot name="context" />
     </div>
@@ -953,7 +954,7 @@ watch(() => props.supportsImages, async (supported) => {
   <Teleport to="body">
     <Transition name="select-popover">
       <section
-        v-if="plusMenuOpen"
+        v-if="plusMenuOpen && !obscured"
         ref="plusMenu"
         class="composer-plus-popover"
         :data-placement="plusPlacedAbove ? 'above' : 'below'"
@@ -999,7 +1000,7 @@ watch(() => props.supportsImages, async (supported) => {
   <Teleport to="body">
     <Transition name="select-popover">
       <section
-        v-if="showTriggerPopover"
+        v-if="showTriggerPopover && !obscured"
         ref="triggerMenu"
         class="composer-trigger-popover"
         data-placement="above"

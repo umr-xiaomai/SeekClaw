@@ -22,6 +22,7 @@ public sealed partial class Agent
         string sessionId,
         bool networkEnabled,
         string? turnRequestId,
+        Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? askUser,
         CancellationToken ct)
     {
         var parsedArguments = ToolArguments.Parse(call.ArgumentsJson);
@@ -117,6 +118,7 @@ public sealed partial class Agent
             CallId = call.Id,
             SessionId = sessionId,
             TurnRequestId = turnRequestId,
+            AskUser = askUser,
             SessionWorkspace = sessionWorkspace,
             NetworkEnabled = networkEnabled,
             Coordinator = fileLocks,

@@ -101,7 +101,7 @@ This example uses the current field names:
 - `promptCaching` defaults to enabled; Anthropic requests emit native cache checkpoints and incompatible third-party gateways can opt out.
 - `reasoningEffortMap` can override neutral levels with Provider wire values, for example `{ "ultra": "xhigh" }`.
 - `agent.reasoningLevel` is the default for CLI and legacy clients; Desktop persists the selected level independently in each Session.
-- `capabilities.maxReasoningLevel` declares the highest supported model level. It defaults to `Max`; higher requests are clamped, and DeepSeek always maps `XHigh`/`Ultra` to `Max`.
+- `capabilities` declares a model's `thinking`, `reasoning` and `maxReasoningLevel` manually. When absent, the runtime infers them from model-list metadata (for example OpenRouter's `supported_parameters`) and built-in family rules (OpenAI o-series and GPT-5, Claude 3.7+/4, DeepSeek, Gemini 2.5/3, Grok 3-mini/4); unknown models are treated as having no reasoning support. Levels above the declared maximum are clamped automatically, and DeepSeek always maps `XHigh`/`Ultra` to `Max`.
 
 ### Routing
 

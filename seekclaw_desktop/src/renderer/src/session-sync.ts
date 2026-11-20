@@ -40,6 +40,7 @@ export async function refreshProjectSessions(context: SessionSyncContext, projec
         existing.updatedAt = new Date(saved.updatedAt).getTime()
         existing.archived = Boolean(saved.archived)
         existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
+        existing.modelRef = saved.modelRef ?? undefined
         existing.networkEnabled = saved.networkEnabled ?? true
       } else {
         threads.value.push({
@@ -51,6 +52,7 @@ export async function refreshProjectSessions(context: SessionSyncContext, projec
           messages: [],
           sessionId: saved.id,
           sessionLoaded: false,
+          modelRef: saved.modelRef ?? undefined,
           reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
           networkEnabled: saved.networkEnabled ?? true,
           archived: Boolean(saved.archived)
@@ -83,6 +85,7 @@ export async function refreshGlobalSessions(context: SessionSyncContext): Promis
       existing.updatedAt = new Date(saved.updatedAt).getTime()
       existing.archived = Boolean(saved.archived)
       existing.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
+      existing.modelRef = saved.modelRef ?? undefined
       existing.networkEnabled = saved.networkEnabled ?? true
     } else {
       threads.value.push({
@@ -93,6 +96,7 @@ export async function refreshGlobalSessions(context: SessionSyncContext): Promis
         messages: [],
         sessionId: saved.id,
         sessionLoaded: false,
+        modelRef: saved.modelRef ?? undefined,
         reasoningLevel: normalizeReasoningLevel(saved.reasoningLevel),
         networkEnabled: saved.networkEnabled ?? true,
         archived: Boolean(saved.archived)
@@ -132,6 +136,7 @@ export async function reloadThreadSession(
     applySessionTitle(thread, saved)
     thread.archived = Boolean(saved.archived)
     thread.reasoningLevel = normalizeReasoningLevel(saved.reasoningLevel)
+    thread.modelRef = saved.modelRef ?? undefined
     thread.stats = sessionStats(saved)
   } catch {
     thread.sessionLoaded = false

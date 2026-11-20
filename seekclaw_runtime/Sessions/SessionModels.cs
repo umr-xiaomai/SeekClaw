@@ -15,6 +15,8 @@ public sealed class SessionHeader
     /// <summary>Owning conversation for an internal child session; null for user and scheduled conversations.</summary>
     public string? ParentSessionId { get; set; }
     public bool Archived { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+    public string? ModelRef { get; set; }
     public ReasoningLevel ReasoningLevel { get; set; } = ReasoningLevel.High;
     /// <summary>Per-session "联网" toggle; controls web_search + web_fetch together.</summary>
     public bool NetworkEnabled { get; set; } = true;

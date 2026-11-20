@@ -14,6 +14,12 @@ const tokenPresets: ComboboxOption[] = [
   { value: 2000000, label: '2M', description: '2,000,000 Tokens' }
 ]
 
+export interface ModelCapabilityConfig {
+  thinking?: boolean
+  reasoning?: boolean
+  maxReasoningLevel?: string
+}
+
 export interface ModelDetailConfig {
   id: string
   alias?: string
@@ -24,7 +30,17 @@ export interface ModelDetailConfig {
   maxOutputAuto?: boolean
   detectedContextWindow?: number | null
   detectedMaxOutput?: number | null
+  capabilities?: ModelCapabilityConfig
 }
+
+const reasoningLevels = [
+  { value: 'low', label: '低 (Low)' },
+  { value: 'medium', label: '中 (Medium)' },
+  { value: 'high', label: '高 (High)' },
+  { value: 'max', label: '最大 (Max)' },
+  { value: 'xhigh', label: '极高 (X-High)' },
+  { value: 'ultra', label: '超级 (Ultra)' }
+]
 
 const props = defineProps<{
   open: boolean
@@ -45,6 +61,8 @@ const form = reactive<ModelDetailConfig>({
 })
 
 const firstInput = ref<HTMLInputElement | null>(null)
+const reasoningMode = ref<'auto' | 'off' | 'level'>('auto')
+const reasoningMax = ref('max')
 
 function close(): void {
   emit('close')
@@ -57,7 +75,12 @@ function handleSave(): void {
     contextWindow: Number(form.contextWindow) || 1000000,
     maxOutput: Number(form.maxOutput) || 128000,
     contextWindowAuto: form.contextWindowAuto, maxOutputAuto: form.maxOutputAuto,
-    detectedContextWindow: form.detectedContextWindow, detectedMaxOutput: form.detectedMaxOutput
+    detectedContextWindow: form.detectedContextWindow, detectedMaxOutput: form.detectedMaxOutput,
+    capabilities: reasoningMode.value === 'auto'
+      ? undefined
+      : reasoningMode.value === 'off'
+        ? { thinking: false, reasoning: false, maxReasoningLevel: 'none' }
+        : { thinking: true, reasoning: true, maxReasoningLevel: reasoningMax.value }
   })
 }
 
@@ -83,6 +106,20 @@ watch(() => props.open, (open) => {
     form.maxOutputAuto = props.model.maxOutputAuto ?? false
     form.detectedContextWindow = props.model.detectedContextWindow
     form.detectedMaxOutput = props.model.detectedMaxOutput
+
+    const caps = props.model.capabilities
+    if (caps && caps.maxReasoningLevel === 'none' && !caps.reasoning && !caps.thinking) {
+      reasoningMode.value = 'off'
+      reasoningMax.value = 'max'
+    } else if (caps && (caps.reasoning || caps.thinking || caps.maxReasoningLevel)) {
+      reasoningMode.value = 'level'
+      reasoningMax.value = caps.maxReasoningLevel && caps.maxReasoningLevel !== 'none'
+        ? caps.maxReasoningLevel
+        : 'high'
+    } else {
+      reasoningMode.value = 'auto'
+      reasoningMax.value = 'max'
+    }
   }
   document.addEventListener('keydown', handleKeydown)
   void nextTick(() => firstInput.value?.focus())
@@ -178,6 +215,38 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
                 </label>
               </div>
               <small class="model-context-hint">当会话估算 Tokens 接近该上下文长度时，运行时会自动压缩较早的历史消息。</small>
+            </section>
+
+            <section class="model-form-section">
+              <div class="model-section-heading">
+                <strong>思考能力</strong>
+              </div>
+              <div class="model-form-grid two-columns">
+                <label class="form-field">
+                  <FieldLabel
+                    en="Reasoning Capability"
+                    zh="推理支持"
+                    help="自动：按供应商元数据与模型家族推断；不启用：始终不发送思考参数；声明档位：手动声明模型支持的最高档位。"
+                  />
+                  <select v-model="reasoningMode" class="form-input">
+                    <option value="auto">自动推断</option>
+                    <option value="off">不启用推理</option>
+                    <option value="level">声明最高档位</option>
+                  </select>
+                </label>
+                <label v-if="reasoningMode === 'level'" class="form-field">
+                  <FieldLabel
+                    en="Max Reasoning Level"
+                    zh="最高思考档位"
+                    help="运行时会把超出的档位自动收敛到该值，避免向供应商发送不支持的参数。"
+                  />
+                  <select v-model="reasoningMax" class="form-input">
+                    <option v-for="level in reasoningLevels" :key="level.value" :value="level.value">
+                      {{ level.label }}
+                    </option>
+                  </select>
+                </label>
+              </div>
             </section>
 
 

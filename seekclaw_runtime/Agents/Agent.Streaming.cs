@@ -10,17 +10,18 @@ namespace SeekClaw.Runtime.Agents;
 public sealed partial class Agent
 {
     private async Task<LlmCompletion?> CollectCompletionAsync(
-        Func<ModelInfo, LlmRequest> requestFactory, WorkspaceInfo workspace, CancellationToken ct)
+        Func<ModelInfo, LlmRequest> requestFactory, WorkspaceInfo workspace, CancellationToken ct,
+        ModelInfo? pinnedModel = null)
     {
         LlmCompletion? completion = null;
-        await foreach (var evt in providerManager.StreamAsync(requestFactory, workspace.Config, ct).ConfigureAwait(false))
+        await foreach (var evt in providerManager.StreamAsync(requestFactory, workspace.Config, ct, pinnedModel: pinnedModel).ConfigureAwait(false))
         {
             if (evt is LlmCompleted completed) completion = completed.Completion;
         }
         return completion;
     }
 
-    private async Task<LlmCompletion> StreamOnceAsync(
+    private async Task<(LlmCompletion Completion, ModelInfo Model)> StreamOnceAsync(
         ModelInfo activeModel,
         WorkspaceInfo workspace,
         string systemPrompt,
@@ -28,33 +29,39 @@ public sealed partial class Agent
         IReadOnlyList<ITool> tools,
         ReasoningLevel reasoningLevel,
         bool requiresVision,
-        CancellationToken ct)
+        CancellationToken ct,
+        ModelInfo? pinnedModel)
     {
+        var invokedModel = activeModel;
         var config = configStore.Config;
         var temperature = workspace.Config?.Temperature ?? config.Temperature;
         var definitions = tools
             .Select(t => new ToolDefinition(t.Name, t.Description, t.ParameterSchema))
             .ToList();
 
-        LlmRequest RequestFor(ModelInfo model) => new()
+        LlmRequest RequestFor(ModelInfo model)
         {
-            Provider = model.Provider,
-            Model = model.Model,
-            // Re-fit for the concrete candidate because automatic failover models can have
-            // a smaller user-declared context window than the initially selected model.
-            Messages = ContextPlanner.FitToWindow(history, model.Model, systemPrompt),
-            System = systemPrompt,
-            Tools = definitions,
-            Temperature = temperature,
-            MaxTokens = model.Model.EffectiveMaxOutput,
-            EnableThinking = reasoningLevel != ReasoningLevel.None
-                && (model.Model.Capabilities.Thinking
-                    || model.Model.Capabilities.Reasoning
-                    || ReasoningLevelAdapter.IsDeepSeek(model.Provider, model.Model)),
-            ThinkingBudgetTokens = config.Agent.ThinkingBudgetTokens,
-            ReasoningLevel = reasoningLevel,
-            OptimizeDeepSeek = configStore.Config.Routing.DeepSeekOptimizationEnabled,
-        };
+            invokedModel = model;
+            return new LlmRequest
+            {
+                Provider = model.Provider,
+                Model = model.Model,
+                // Re-fit for the concrete candidate because automatic failover models can have
+                // a smaller user-declared context window than the initially selected model.
+                Messages = ContextPlanner.FitToWindow(history, model.Model, systemPrompt),
+                System = systemPrompt,
+                Tools = definitions,
+                Temperature = temperature,
+                MaxTokens = model.Model.EffectiveMaxOutput,
+                EnableThinking = reasoningLevel != ReasoningLevel.None
+                    && (model.Model.Capabilities.Thinking
+                        || model.Model.Capabilities.Reasoning
+                        || ReasoningLevelAdapter.IsDeepSeek(model.Provider, model.Model)),
+                ThinkingBudgetTokens = config.Agent.ThinkingBudgetTokens,
+                ReasoningLevel = reasoningLevel,
+                OptimizeDeepSeek = configStore.Config.Routing.DeepSeekOptimizationEnabled,
+            };
+        }
 
         LlmCompletion? completion = null;
         var streamedText = new StringBuilder();
@@ -67,7 +74,7 @@ public sealed partial class Agent
                 ? static candidate => candidate.Model.Capabilities.Vision
                 : null;
             await foreach (var evt in providerManager.StreamAsync(
-                               RequestFor, workspace.Config, ct, candidateFilter).ConfigureAwait(false))
+                               RequestFor, workspace.Config, ct, candidateFilter, pinnedModel).ConfigureAwait(false))
             {
                 switch (evt)
                 {
@@ -110,35 +117,35 @@ public sealed partial class Agent
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Preserve whatever was streamed before the user hit Ctrl+C.
-            return new LlmCompletion
+            return (new LlmCompletion
             {
                 Text = streamedText.ToString(),
                 Thinking = streamedThinking.ToString(),
                 FinishReason = "cancelled",
-            };
+            }, invokedModel);
         }
         catch (LlmException ex)
         {
             // Keep partial output for history/UI, but never commit partially streamed
             // tool arguments or mistake the interrupted response for a successful turn.
-            return new LlmCompletion
+            return (new LlmCompletion
             {
                 Text = streamedText.ToString(),
                 Thinking = streamedThinking.ToString(),
                 FinishReason = "error",
                 ErrorMessage = ex.Message,
-            };
+            }, invokedModel);
         }
         finally
         {
             if (thinkingOpen) events.Publish(new ThinkingCompletedEvent());
         }
 
-        return completion ?? new LlmCompletion
+        return (completion ?? new LlmCompletion
         {
             Text = streamedText.ToString(),
             Thinking = streamedThinking.ToString(),
             FinishReason = "incomplete",
-        };
+        }, invokedModel);
     }
 }

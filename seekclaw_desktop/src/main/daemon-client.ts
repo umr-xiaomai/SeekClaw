@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createConnection, type Socket } from 'node:net'
 import type { DaemonMessage, DaemonRequestOptions, DaemonState } from '../shared/ipc.js'
+import { finishesQuestionTurn, parseQuestionRequest, parseQuestionResolved, type UserQuestion } from '../shared/user-questions.js'
 
 interface PendingRequest {
   method: string
@@ -20,6 +21,7 @@ export class DaemonClient extends EventEmitter {
   private nextId = 1
   private connecting: Promise<DaemonState> | null = null
   private readonly pending = new Map<number, PendingRequest>()
+  private readonly questions = new Map<string, UserQuestion>()
 
   constructor(readonly endpoint = process.platform === 'win32'
     ? String.raw`\\.\pipe\seekclaw`
@@ -90,9 +92,14 @@ export class DaemonClient extends EventEmitter {
     params: Record<string, unknown> = {},
     options: DaemonRequestOptions = {}
   ): Promise<DaemonMessage> {
-    const state = await this.connect()
-    if (!state.connected || !this.socket)
-      throw new Error(state.error ?? `Unable to connect to ${this.endpoint}`)
+    if (method === 'agent.answer') {
+      if (this.socket?.readyState !== 'open' || typeof params.questionId !== 'string'
+        || !this.questions.has(params.questionId)) throw new Error('此问题已不再等待回答')
+    } else {
+      const state = await this.connect()
+      if (!state.connected || !this.socket)
+        throw new Error(state.error ?? `Unable to connect to ${this.endpoint}`)
+    }
 
     const id = this.nextId++
     const timeoutMs = options.timeoutMs ?? 60_000
@@ -136,7 +143,9 @@ export class DaemonClient extends EventEmitter {
   }
 
   private bindSocket(socket: Socket): void {
-    socket.on('data', (chunk: string) => this.consume(chunk))
+    socket.on('data', (chunk: string) => {
+      if (this.socket === socket) this.consume(chunk)
+    })
     socket.on('close', () => {
       if (this.socket !== socket) return
       this.socket = null
@@ -194,6 +203,16 @@ export class DaemonClient extends EventEmitter {
       request.idleTimer = undefined
     }
     const event = request ? { ...message, requestMethod: request.method } : message
+    const question = parseQuestionRequest(event)
+    if (question && request?.method === 'chat') this.questions.set(question.questionId, question)
+    const resolved = parseQuestionResolved(event)
+    if (resolved && this.questions.get(resolved.questionId)?.sessionId === resolved.sessionId)
+      this.questions.delete(resolved.questionId)
+    if (TERMINAL_EVENTS.has(event.event)) {
+      for (const [id, pendingQuestion] of this.questions) {
+        if (finishesQuestionTurn(event, pendingQuestion)) this.questions.delete(id)
+      }
+    }
     this.emit('event', event)
     if (!TERMINAL_EVENTS.has(message.event)) return
 
@@ -204,6 +223,7 @@ export class DaemonClient extends EventEmitter {
   }
 
   private rejectPending(error: Error): void {
+    this.questions.clear()
     for (const request of this.pending.values()) {
       if (request.idleTimer) clearTimeout(request.idleTimer)
       request.reject(error)

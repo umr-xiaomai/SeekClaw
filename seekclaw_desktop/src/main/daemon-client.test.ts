@@ -2,6 +2,7 @@ import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server } from 'node:net'
+import { createInterface } from 'node:readline'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DaemonMessage } from '../shared/ipc.js'
 import { DaemonClient } from './daemon-client.js'
@@ -169,6 +170,75 @@ describe('DaemonClient', () => {
 
     expect(response.event).toBe('cancelled')
     expect(response.data).toBe('partial')
+  })
+
+  it('answers questions on their original connection and retires them on resolution or turn completion', async () => {
+    const suffix = `${process.pid}-${Date.now()}-questions`
+    const endpoint = process.platform === 'win32'
+      ? String.raw`\\.\pipe\seekclaw-test-${suffix}`
+      : join(tmpdir(), `seekclaw-test-${suffix}.sock`)
+    const answers: unknown[] = []
+    let connections = 0
+    const server = createServer((socket) => {
+      connections++
+      const lines = createInterface({ input: socket })
+      const send = (message: DaemonMessage) => socket.write(`${JSON.stringify(message)}\n`)
+      let turnId: number
+      lines.on('line', (line) => {
+        const { id, method, params } = JSON.parse(line)
+        if (method === 'chat') {
+          turnId = id
+          for (const questionId of ['answerable', 'remaining']) {
+            send({ id, event: 'question_request', sessionId: 'session', data: JSON.stringify({ questionId, question: 'Which one?', options: ['A', 'B'] }) })
+          }
+          send({ id, event: 'question_resolved', sessionId: 'other-session', data: '{"questionId":"answerable"}' })
+        } else if (method === 'agent.answer') {
+          answers.push(params)
+          send({ id: turnId, event: 'question_resolved', sessionId: 'session', data: '{"questionId":"answerable"}' })
+          send({ id, event: 'result', data: '{}' })
+        } else if (method === 'agent.cancel') {
+          send({ id: turnId, event: 'cancelled', sessionId: 'session', data: '' })
+          send({ id, event: 'result', data: '{}' })
+        }
+      })
+    })
+    servers.push(server)
+    server.listen(endpoint)
+    await once(server, 'listening')
+
+    const client = new DaemonClient(endpoint)
+    clients.push(client)
+    function waitForQuestions(): Promise<void> {
+      return new Promise((resolve) => {
+        function onEvent(event: DaemonMessage): void {
+          if (event.event !== 'question_resolved' || event.sessionId !== 'other-session') return
+          client.off('event', onEvent)
+          resolve()
+        }
+        client.on('event', onEvent)
+      })
+    }
+
+    const questions = waitForQuestions()
+    const chat = client.request('chat', { sessionId: 'session', supportsUserQuestions: true })
+    await questions
+    const answer = { questionId: 'answerable', answer: 'Custom answer' }
+    await expect(client.request('agent.answer', answer)).resolves.toMatchObject({ event: 'result' })
+    await expect(client.request('agent.answer', answer)).rejects.toThrow('此问题已不再等待回答')
+    await client.request('agent.cancel')
+    await expect(chat).resolves.toMatchObject({ event: 'cancelled' })
+    await expect(client.request('agent.answer', { questionId: 'remaining', answer: 'A' })).rejects.toThrow('此问题已不再等待回答')
+    const nextQuestions = waitForQuestions()
+    const nextChat = client.request('chat', { sessionId: 'session', supportsUserQuestions: true })
+    const disconnected = expect(nextChat).rejects.toThrow('Daemon disconnected')
+    await nextQuestions
+    client.disconnect()
+    await disconnected
+    await expect(client.request('agent.answer', answer)).rejects.toThrow('此问题已不再等待回答')
+    expect(connections).toBe(1)
+    await client.connect()
+    await expect(client.request('agent.answer', answer)).rejects.toThrow('此问题已不再等待回答')
+    expect(answers).toEqual([answer])
   })
 
   it('correctly reassembles large messages delivered across multiple fragmented chunks', async () => {

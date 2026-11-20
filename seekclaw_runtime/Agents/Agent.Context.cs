@@ -56,7 +56,8 @@ public sealed partial class Agent
         int currentTurnStartIndex,
         int step,
         bool requiresVision,
-        CancellationToken ct)
+        CancellationToken ct,
+        ModelInfo? pinnedModel)
     {
         var source = session.Messages;
         var (old, recent) = ContextPlanner.SplitForCompaction(source, model.Model, systemPrompt);
@@ -113,7 +114,7 @@ public sealed partial class Agent
         string? summary;
         try
         {
-            summary = await SummarizeContextAsync(model, workspace, systemPrompt, old, ct).ConfigureAwait(false);
+            summary = await SummarizeContextAsync(workspace, systemPrompt, old, ct, pinnedModel).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -161,11 +162,11 @@ public sealed partial class Agent
     }
 
     private async Task<string?> SummarizeContextAsync(
-        ModelInfo model,
         WorkspaceInfo workspace,
         string systemPrompt,
         IReadOnlyList<ChatMessage> old,
-        CancellationToken ct)
+        CancellationToken ct,
+        ModelInfo? pinnedModel)
     {
         // Image payloads are not needed for the summary; dropping them keeps the call small.
         var instruction = promptProvider.TryGet("builtin/summarize");
@@ -205,7 +206,7 @@ public sealed partial class Agent
                     Purpose = applyDeepSeekCompaction ? "compaction" : null,
                 };
             },
-            workspace, ct).ConfigureAwait(false);
+            workspace, ct, pinnedModel).ConfigureAwait(false);
         return completion?.Text;
     }
 }

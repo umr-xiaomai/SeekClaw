@@ -75,6 +75,10 @@ public static class ReasoningLevelAdapter
             return ReasoningLevel.None;
 
         var supportedMaximum = model.Capabilities.MaxReasoningLevel;
+        // An explicit provider effort map is an opt-in declaration: allow it to carry models
+        // the capability resolver left at "none" (unknown families).
+        if (explicitlyMapped && supportedMaximum == ReasoningLevel.None)
+            supportedMaximum = ReasoningLevel.Max;
 
         // DeepSeek currently exposes Max as its highest portable effort. Extended UI levels
         // deliberately converge here instead of leaking unsupported strings into its API.
@@ -101,6 +105,10 @@ public static class ReasoningLevelAdapter
         var mapped = request.Provider.ReasoningEffortMap?
             .FirstOrDefault(item => item.Key.Equals(key, StringComparison.OrdinalIgnoreCase)).Value;
         if (!string.IsNullOrWhiteSpace(mapped)) return mapped;
+
+        // Families with a restricted effort ladder (xAI only accepts low|high).
+        if (ModelCapabilityResolver.TryWireEffort(request.Provider, request.Model, effective, out var familyEffort))
+            return familyEffort;
 
         // DeepSeek wire protocol accepts only low/high/max when thinking is enabled, and omits reasoning_effort when disabled.
         if (IsDeepSeek(request.Provider, request.Model))

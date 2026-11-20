@@ -110,7 +110,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 - `promptCaching` 默认启用；Anthropic 协议会发送原生缓存检查点，不兼容的第三方网关可关闭。
 - `reasoningEffortMap` 可覆盖统一档位到 Provider 参数的映射，例如 `{ "ultra": "xhigh" }`。
 - `agent.reasoningLevel` 是 CLI/旧客户端的默认档位；Desktop 会把档位作为 Session 元数据独立保存。
-- `capabilities.maxReasoningLevel` 声明模型支持的最高档位。默认是 `Max`，超过后自动降级；DeepSeek 的 `XHigh` 与 `Ultra` 固定降级为 `Max`。
+- `capabilities` 可手动声明模型的 `thinking`、`reasoning` 与 `maxReasoningLevel`；未声明时 Runtime 会依据模型列表元数据（如 OpenRouter 的 `supported_parameters`）和内置家族规则（OpenAI o 系列与 GPT-5、Claude 3.7+/4、DeepSeek、Gemini 2.5/3、Grok 3-mini/4）自动推断，未知模型按“不支持推理”处理。超过声明上限的档位会自动降级；DeepSeek 的 `XHigh` 与 `Ultra` 固定降级为 `Max`。
 
 ### 路由
 

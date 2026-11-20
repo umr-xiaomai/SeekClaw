@@ -23,7 +23,8 @@ public interface ISessionStore
         WorkspaceInfo workspace,
         ReasoningLevel reasoningLevel = ReasoningLevel.High,
         bool networkEnabled = true,
-        string? parentSessionId = null);
+        string? parentSessionId = null,
+        string? modelRef = null);
     AgentSession Fork(
         WorkspaceInfo workspace,
         string sourceSessionId,
@@ -43,7 +44,10 @@ public interface ISessionStore
         string? title = null,
         bool? archived = null,
         ReasoningLevel? reasoningLevel = null,
-        bool? networkEnabled = null);
+        bool? networkEnabled = null,
+        string? modelRef = null,
+        bool clearModelRef = false,
+        bool setModelRefIfMissing = false);
     SessionHeader RecordUsage(WorkspaceInfo workspace, string sessionId, SessionUsage usage);
     /// <summary>Sets an automatic title only while the session has not been manually named.</summary>
     SessionHeader? TrySetGeneratedTitle(WorkspaceInfo workspace, string sessionId, string title);
@@ -67,7 +71,8 @@ public sealed class SessionStore : ISessionStore
         WorkspaceInfo workspace,
         ReasoningLevel reasoningLevel = ReasoningLevel.High,
         bool networkEnabled = true,
-        string? parentSessionId = null)
+        string? parentSessionId = null,
+        string? modelRef = null)
     {
         EnsureLegacyImported(workspace);
         var id = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
@@ -77,6 +82,7 @@ public sealed class SessionStore : ISessionStore
             Id = id,
             Workspace = workspace.IsGlobal ? null : Path.GetFullPath(workspace.Root),
             ParentSessionId = string.IsNullOrWhiteSpace(parentSessionId) ? null : parentSessionId,
+            ModelRef = modelRef,
             ReasoningLevel = reasoningLevel,
             NetworkEnabled = networkEnabled,
             CreatedAt = now,
@@ -119,6 +125,7 @@ public sealed class SessionStore : ISessionStore
                 Title = branchTitle,
                 TitleSource = "manual",
                 Archived = false,
+                ModelRef = sourceHeader.ModelRef,
                 ReasoningLevel = sourceHeader.ReasoningLevel,
                 NetworkEnabled = sourceHeader.NetworkEnabled,
                 CreatedAt = now,
@@ -246,7 +253,7 @@ public sealed class SessionStore : ISessionStore
             SELECT id, title, workspace, archived, reasoning_level, network_enabled,
                    llm_rounds, execution_steps, input_tokens, total_input_tokens,
                    cached_input_tokens, output_tokens, output_elapsed_ms,
-                   created_at, updated_at, parent_session_id, title_source
+                   created_at, updated_at, parent_session_id, title_source, model_ref
             FROM sessions
             WHERE scope = $scope {(includeArchived ? "" : "AND archived = 0")}
               AND parent_session_id IS NULL
@@ -444,7 +451,10 @@ public sealed class SessionStore : ISessionStore
         string? title = null,
         bool? archived = null,
         ReasoningLevel? reasoningLevel = null,
-        bool? networkEnabled = null)
+        bool? networkEnabled = null,
+        string? modelRef = null,
+        bool clearModelRef = false,
+        bool setModelRefIfMissing = false)
     {
         ValidateSessionId(sessionId);
         EnsureLegacyImported(workspace);
@@ -477,6 +487,11 @@ public sealed class SessionStore : ISessionStore
             {
                 assignments.Add("network_enabled = $networkEnabled");
                 command.Parameters.AddWithValue("$networkEnabled", networkEnabled.Value ? 1 : 0);
+            }
+            if (modelRef is not null || clearModelRef)
+            {
+                assignments.Add(setModelRefIfMissing ? "model_ref = COALESCE(model_ref, $modelRef)" : "model_ref = $modelRef");
+                command.Parameters.AddWithValue("$modelRef", (object?)modelRef ?? DBNull.Value);
             }
             command.CommandText = $"""
                 UPDATE sessions SET {string.Join(", ", assignments)}
@@ -725,16 +740,17 @@ public sealed class SessionStore : ISessionStore
             INSERT {(ignoreConflict ? "OR IGNORE" : "")} INTO sessions(
                 scope, id, workspace, title, archived, reasoning_level, network_enabled,
                 llm_rounds, execution_steps, input_tokens, total_input_tokens,
-                cached_input_tokens, output_tokens, output_elapsed_ms, created_at, updated_at, parent_session_id, title_source)
+                cached_input_tokens, output_tokens, output_elapsed_ms, created_at, updated_at, parent_session_id, title_source, model_ref)
             VALUES($scope, $id, $workspace, $title, $archived, $reasoningLevel, $networkEnabled,
                    $llmRounds, $executionSteps, $inputTokens, $totalInputTokens,
-                   $cachedInputTokens, $outputTokens, $outputElapsedMs, $createdAt, $updatedAt, $parentSessionId, $titleSource);
+                   $cachedInputTokens, $outputTokens, $outputElapsedMs, $createdAt, $updatedAt, $parentSessionId, $titleSource, $modelRef);
             """;
         command.Parameters.AddWithValue("$scope", scope);
         command.Parameters.AddWithValue("$id", header.Id);
         command.Parameters.AddWithValue("$workspace", (object?)header.Workspace ?? DBNull.Value);
         command.Parameters.AddWithValue("$parentSessionId", (object?)header.ParentSessionId ?? DBNull.Value);
         command.Parameters.AddWithValue("$title", (object?)header.Title ?? DBNull.Value);
+        command.Parameters.AddWithValue("$modelRef", (object?)header.ModelRef ?? DBNull.Value);
         command.Parameters.AddWithValue("$titleSource", header.Title is not null && header.TitleSource == "pending" ? "manual" : header.TitleSource);
         command.Parameters.AddWithValue("$archived", header.Archived ? 1 : 0);
         command.Parameters.AddWithValue("$reasoningLevel", (int)header.ReasoningLevel);
@@ -759,7 +775,7 @@ public sealed class SessionStore : ISessionStore
             SELECT id, title, workspace, archived, reasoning_level, network_enabled,
                    llm_rounds, execution_steps, input_tokens, total_input_tokens,
                    cached_input_tokens, output_tokens, output_elapsed_ms,
-                   created_at, updated_at, parent_session_id, title_source
+                   created_at, updated_at, parent_session_id, title_source, model_ref
             FROM sessions WHERE scope = $scope AND id = $sessionId;
             """;
         command.Parameters.AddWithValue("$scope", scope);
@@ -787,6 +803,7 @@ public sealed class SessionStore : ISessionStore
         UpdatedAt = DateTimeOffset.Parse(reader.GetString(14)),
         ParentSessionId = reader.IsDBNull(15) ? null : reader.GetString(15),
         TitleSource = reader.GetString(16),
+        ModelRef = reader.IsDBNull(17) ? null : reader.GetString(17),
     };
 
     private static string TitleFrom(string text) =>

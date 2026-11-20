@@ -12,7 +12,7 @@ public sealed partial class Agent
     private async Task CaptureCrossSessionMemoryAsync(
         AgentSession session,
         WorkspaceInfo workspace,
-        ModelInfo model,
+        ModelInfo? pinnedModel,
         string userInput,
         string finalText,
         CancellationToken ct)
@@ -51,7 +51,7 @@ public sealed partial class Agent
                     EnableThinking = false,
                     ReasoningLevel = ReasoningLevel.None,
                 },
-                workspace, ct).ConfigureAwait(false);
+                workspace, ct, pinnedModel).ConfigureAwait(false);
 
             foreach (var content in ParseCrossSessionMemories(completion?.Text))
                 memoryStore.Save(content, workspace, session.Header.Id);

@@ -330,7 +330,9 @@ onBeforeUnmount(removeListeners)
           <!-- View 1: Reasoning Intensity View (Codex Style) -->
           <div v-if="currentView === 'intensity'" class="intensity-view">
             <div class="intensity-header">
-              <div class="intensity-title">{{ currentDetailLabel }}</div>
+              <Transition name="level-title-swap" mode="out-in">
+                <div :key="currentDetailLabel" class="intensity-title">{{ currentDetailLabel }}</div>
+              </Transition>
               <button
                 type="button"
                 class="intensity-model-link"
@@ -571,6 +573,22 @@ onBeforeUnmount(removeListeners)
   font-weight: 500;
   color: var(--text);
   line-height: 1.4;
+  will-change: opacity, transform;
+}
+
+.level-title-swap-enter-active,
+.level-title-swap-leave-active {
+  transition: opacity 110ms ease, transform 110ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.level-title-swap-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.level-title-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 .intensity-model-link {
@@ -632,7 +650,7 @@ onBeforeUnmount(removeListeners)
   border-radius: 10px;
   background: var(--accent);
   pointer-events: none;
-  transition: width 130ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
   overflow: hidden;
 }
 
@@ -699,9 +717,15 @@ onBeforeUnmount(removeListeners)
   100% { left: 105%; opacity: 0; }
 }
 
-.slider-bar-track.dragging .slider-bar-fill,
+.slider-bar-track.dragging .slider-bar-fill {
+  transition-duration: 90ms;
+  transition-timing-function: cubic-bezier(0.33, 0, 0.67, 1);
+}
+
 .slider-bar-track.dragging .slider-bar-thumb {
-  transition: none;
+  transition-duration: 90ms;
+  transition-timing-function: cubic-bezier(0.33, 0, 0.67, 1);
+  transform: translateX(-50%) scale(1.08);
 }
 
 /* Intermediate Dots */
@@ -714,11 +738,12 @@ onBeforeUnmount(removeListeners)
   transform: translate(-50%, -50%);
   background: color-mix(in srgb, var(--text) 25%, transparent);
   pointer-events: none;
-  transition: background-color 130ms ease;
+  transition: background-color 160ms ease, transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .slider-step-dot.active {
   background: rgba(255, 255, 255, 0.85);
+  transform: translate(-50%, -50%) scale(1.2);
 }
 
 /* White Circle Thumb */
@@ -732,7 +757,10 @@ onBeforeUnmount(removeListeners)
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.1);
   transform: translateX(-50%);
   pointer-events: none;
-  transition: left 130ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    left 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: left;
 }
 
 /* Model Select View */
@@ -885,6 +913,11 @@ onBeforeUnmount(removeListeners)
 
   .max-particle-stream {
     display: none;
+  }
+
+  .level-title-swap-enter-active,
+  .level-title-swap-leave-active {
+    transition: none;
   }
 
   .model-reasoning-trigger,

@@ -25,7 +25,8 @@ public interface IProviderManager
         Func<ModelInfo, LlmRequest> requestFactory,
         WorkspaceConfig? workspace,
         CancellationToken ct,
-        Func<ModelInfo, bool>? candidateFilter = null);
+        Func<ModelInfo, bool>? candidateFilter = null,
+        ModelInfo? pinnedModel = null);
 
     /// <summary>Sends a minimal real completion to verify a model end-to-end.</summary>
     Task<(bool Success, string Detail, double LatencyMs)> TestModelAsync(ModelInfo model, CancellationToken ct = default);
@@ -98,11 +99,12 @@ public sealed class ProviderManager(
         Func<ModelInfo, LlmRequest> requestFactory,
         WorkspaceConfig? workspace,
         [EnumeratorCancellation] CancellationToken ct,
-        Func<ModelInfo, bool>? candidateFilter = null)
+        Func<ModelInfo, bool>? candidateFilter = null,
+        ModelInfo? pinnedModel = null)
     {
-        var candidates = candidateFilter is null
-            ? BuildCandidates(workspace)
-            : BuildCandidates(workspace).Where(candidateFilter).ToList();
+        IReadOnlyList<ModelInfo> candidates = pinnedModel is null ? BuildCandidates(workspace) : [pinnedModel];
+        if (candidateFilter is not null)
+            candidates = candidates.Where(candidateFilter).ToList();
         if (candidates.Count == 0)
             throw new LlmException(
                 candidateFilter is null ? "No models configured." : "No compatible models configured.",
@@ -199,6 +201,18 @@ public sealed class ProviderManager(
 
                     // Only repeat this model invocation, whose tool calls have not been
                     // committed. Earlier tool executions remain in request history.
+                    //
+                    // A 400 that names a reasoning parameter means the model does not accept
+                    // it: disable the declaration and retry once before treating it as a
+                    // transport failure (the corrected capability is persisted by Save()).
+                    if (!hasOutput && TryDisableRejectedReasoning(model, failure))
+                    {
+                        eventBus.Publish(new StatusEvent(
+                            "Model rejected reasoning parameters; retrying without them.", model.Ref));
+                        attempt--; // capability correction, not a transport retry
+                        continue;
+                    }
+
                     if (failure.Retryable && attempt < Retry.MaxAttempts)
                     {
                         TimeSpan delay;
@@ -362,7 +376,7 @@ public sealed class ProviderManager(
             if (array is null)
                 throw new LlmException($"Model list response from {provider.Id} does not contain a model array.", retryable: false);
 
-            var models = array.Select(ParseModelMetadata).Where(model => model is not null)
+            var models = array.Select(node => ParseModelMetadata(provider, node)).Where(model => model is not null)
                 .Select(model => model!).DistinctBy(model => model.Id, StringComparer.OrdinalIgnoreCase)
                 .OrderBy(model => model.Id, StringComparer.OrdinalIgnoreCase).ToList();
             if (models.Count == 0)
@@ -371,7 +385,7 @@ public sealed class ProviderManager(
         }
     }
 
-    internal static ModelConfig? ParseModelMetadata(JsonNode? node)
+    internal static ModelConfig? ParseModelMetadata(ProviderConfig provider, JsonNode? node)
     {
         var id = ModelId(node)?.Trim();
         if (string.IsNullOrEmpty(id)) return null;
@@ -382,12 +396,48 @@ public sealed class ProviderManager(
                 if (value is JsonValue number && number.TryGetValue<int>(out var n) && n > 0) return n;
             return null;
         }
-        return new ModelConfig
+        var model = new ModelConfig
         {
             Id = id, ContextWindowAuto = true, MaxOutputAuto = true,
             DetectedContextWindow = Positive(obj?["context_window"], obj?["context_length"], obj?["max_context_length"], (obj?["limit"] as JsonObject)?["context"]),
             DetectedMaxOutput = Positive(obj?["max_output_tokens"], obj?["max_completion_tokens"], obj?["max_output"], (obj?["limit"] as JsonObject)?["output"], (obj?["top_provider"] as JsonObject)?["max_completion_tokens"]),
         };
+        ModelCapabilityResolver.Apply(provider, model, ReasoningSupportHint(obj));
+        return model;
+    }
+
+    /// <summary>
+    /// Reads the reasoning signals a model catalogue may expose: OpenRouter lists it in
+    /// supported_parameters, other gateways use explicit booleans or a capabilities object.
+    /// </summary>
+    private static bool? ReasoningSupportHint(JsonObject? obj)
+    {
+        if (obj is null) return null;
+
+        if (obj["supported_parameters"] is JsonArray supported)
+        {
+            var names = supported.Select(item => item?.GetValue<string>()).Where(name => !string.IsNullOrWhiteSpace(name));
+            if (names.Any(name => name!.Equals("reasoning", StringComparison.OrdinalIgnoreCase)
+                                  || name.Equals("reasoning_effort", StringComparison.OrdinalIgnoreCase)
+                                  || name.Equals("include_reasoning", StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+
+        if (obj["capabilities"] is JsonObject capabilities)
+        {
+            if (ReadBoolean(capabilities["reasoning"]) is { } reasoning) return reasoning;
+            if (ReadBoolean(capabilities["thinking"]) is { } thinking) return thinking;
+            if (capabilities["thinking"] is JsonObject thinkingObject
+                && ReadBoolean(thinkingObject["supported"]) is { } thinkingSupported)
+                return thinkingSupported;
+        }
+
+        return ReadBoolean(obj["supports_reasoning"])
+               ?? ReadBoolean(obj["reasoning"])
+               ?? ReadBoolean(obj["thinking"]);
+
+        static bool? ReadBoolean(JsonNode? node) =>
+            node is JsonValue value && value.TryGetValue<bool>(out var flag) ? flag : null;
     }
 
     // ---------------------------------------------------------------- helpers
@@ -451,6 +501,35 @@ public sealed class ProviderManager(
 
     public static decimal ComputeCost(ModelConfig model, TokenUsage usage) =>
         (model.InputPricePerMTok * usage.InputTokens + model.OutputPricePerMTok * usage.OutputTokens) / 1_000_000m;
+
+    /// <summary>
+    /// Some gateways reject reasoning_effort/thinking with a 400. Clearing the declaration and
+    /// retrying keeps the turn alive; the correction is saved so the UI stops advertising levels
+    /// the model refuses.
+    /// </summary>
+    private bool TryDisableRejectedReasoning(ModelInfo model, LlmException failure)
+    {
+        if (failure.StatusCode is not (400 or 422)) return false;
+        if (!MentionsReasoningParameter(failure.Message)) return false;
+
+        var capabilities = model.Model.Capabilities;
+        if (!capabilities.Thinking && !capabilities.Reasoning
+            && capabilities.MaxReasoningLevel == ReasoningLevel.None)
+            return false;
+
+        capabilities.Thinking = false;
+        capabilities.Reasoning = false;
+        capabilities.MaxReasoningLevel = ReasoningLevel.None;
+        try { configStore.Save(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return true;
+    }
+
+    private static bool MentionsReasoningParameter(string message) =>
+        message.Contains("reasoning_effort", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("reasoning", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("thinking", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("output_config", StringComparison.OrdinalIgnoreCase);
 
     private TimeSpan BackoffDelay(int attempt, ModelInfo model)
     {

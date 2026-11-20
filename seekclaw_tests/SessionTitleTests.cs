@@ -223,6 +223,9 @@ public sealed class SessionTitleTests : IDisposable
         var existing = store.Load(Workspace, "legacy-session")!;
         Assert.Equal("manual", existing.Header.TitleSource);
         Assert.Equal("My existing title", existing.Header.Title);
+        Assert.Null(existing.Header.ModelRef);
+        store.UpdateMetadata(Workspace, "legacy-session", modelRef: "provider/model");
+        Assert.Equal("provider/model", Assert.Single(store.List(Workspace)).ModelRef);
         Assert.Null(store.TrySetGeneratedTitle(Workspace, "legacy-session", "Replacement title"));
         Assert.Equal("My existing title", store.Load(Workspace, "legacy-session")!.Header.Title);
     }
@@ -255,7 +258,8 @@ public sealed class SessionTitleTests : IDisposable
         public ModelInfo ResolveActive(WorkspaceConfig? workspace = null) => Model;
         public IReadOnlyList<ModelInfo> BuildCandidates(WorkspaceConfig? workspace = null) => [Model];
         public async IAsyncEnumerable<LlmStreamEvent> StreamAsync(Func<ModelInfo, LlmRequest> requestFactory, WorkspaceConfig? workspace,
-            [EnumeratorCancellation] CancellationToken ct, Func<ModelInfo, bool>? candidateFilter = null)
+            [EnumeratorCancellation] CancellationToken ct, Func<ModelInfo, bool>? candidateFilter = null,
+            ModelInfo? pinnedModel = null)
         {
             Request = requestFactory(Model);
             WorkspaceConfig = workspace;
