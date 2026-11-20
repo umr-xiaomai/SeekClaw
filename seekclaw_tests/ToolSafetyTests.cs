@@ -107,6 +107,18 @@ public sealed class ToolSafetyTests : IDisposable
         Assert.Equal(expectedReadOnly, BashTool.IsReadOnlyCommand(command));
     }
 
+    [Theory]
+    [InlineData("findstr /S /N /C:\"Prepare(\" /C:\"Activate(\" /C:\"HoldPending(\" ha_webapi\\*.cs ha_webapi\\Controllers\\*.cs 2>nul | more +0", true)]
+    [InlineData("findstr /N pattern file.txt 2> NUL|more", true)]
+    [InlineData("findstr /N pattern file.txt 2>nul.log | more", false)]
+    [InlineData("findstr /N pattern file.txt 2>logs/nul | more", false)]
+    [InlineData("findstr /N pattern file.txt 2>nul > result.txt", false)]
+    [InlineData("dotnet build 2>nul", false)]
+    public void BashTool_IsReadOnlyCommand_RecognizesWindowsStderrDiscard(string command, bool expectedReadOnlyOnWindows)
+    {
+        Assert.Equal(OperatingSystem.IsWindows() && expectedReadOnlyOnWindows, BashTool.IsReadOnlyCommand(command));
+    }
+
     [Fact]
     public void PromptVariables_MapApprovalModesAndHonorExplicitOverride()
     {

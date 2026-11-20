@@ -49,6 +49,8 @@ const props = withDefaults(defineProps<{
   readOnly?: boolean
   /** Render user message as a compact collapsible task prompt disclosure instead of a bubble. */
   compactTaskPrompt?: boolean
+  /** Hide thinking block when parent process summary folds all turn reasoning. */
+  hideThinking?: boolean
 }>(), {
   imageSources: () => ({}),
   widgets: () => [],
@@ -57,7 +59,8 @@ const props = withDefaults(defineProps<{
   smoothOutput: true,
   showSubAgentSummary: true,
   readOnly: false,
-  compactTaskPrompt: false
+  compactTaskPrompt: false,
+  hideThinking: false
 })
 
 const emit = defineEmits<{
@@ -373,7 +376,7 @@ const liveStatusLabel = computed(() => {
         </div>
       </details>
 
-      <div v-if="hasThinking || isThinking" class="thinking-wrapper">
+      <div v-if="!hideThinking && (hasThinking || isThinking)" class="thinking-wrapper">
         <button type="button" class="thinking-toggle" :class="{ active: isThinking }"
           :disabled="!hasThinking" @click="hasThinking && (thinkingOpen = !thinkingOpen)">
           <span :class="{ 'thinking-shimmer': isThinking }">{{ thinkingLabel }}</span>

@@ -22,17 +22,38 @@ const DEFAULT_DURATION_MS = 500
 const FEATHER_PX = 44
 
 function isTransientStatusNode(el: Element): boolean {
-  if (el.matches('.live-status-row, .response-placeholder, .process-thinking-row')) return true
-  if (el.matches('.thinking-wrapper') && !el.querySelector('.thinking-content')) return true
+  if (el.matches('.live-status-row, .response-placeholder, .process-thinking-row, .process-tail-status, footer.assistant-footer, footer.user-footer')) return true
+  if (el.matches('.thinking-wrapper') && !el.querySelector('.thinking-content') && el.querySelector('.thinking-toggle.active')) return true
   return false
 }
 
 function collectLeafContainers(root: HTMLElement): HTMLElement[] {
   const result: HTMLElement[] = []
-  const assistant = root.matches('.assistant-message') ? root : root.querySelector<HTMLElement>('.assistant-message')
-  const source = assistant ?? root
-  for (const child of Array.from(source.children)) {
-    if (child instanceof HTMLElement && !isTransientStatusNode(child)) {
+  const assistantMessages = root.matches('.assistant-message')
+    ? [root]
+    : Array.from(root.querySelectorAll<HTMLElement>('.assistant-message'))
+
+  if (assistantMessages.length === 0) {
+    for (const child of Array.from(root.children)) {
+      if (child instanceof HTMLElement && !isTransientStatusNode(child)) {
+        result.push(child)
+      }
+    }
+    return result
+  }
+
+  for (const child of Array.from(root.children)) {
+    if (!(child instanceof HTMLElement) || isTransientStatusNode(child)) continue
+    if (assistantMessages.some((msg) => child.contains(msg))) {
+      for (const msg of assistantMessages) {
+        if (!child.contains(msg)) continue
+        for (const leaf of Array.from(msg.children)) {
+          if (leaf instanceof HTMLElement && !isTransientStatusNode(leaf)) {
+            result.push(leaf)
+          }
+        }
+      }
+    } else {
       result.push(child)
     }
   }
@@ -172,11 +193,11 @@ export function captureCollapseSnapshot(sourceEl: HTMLElement | null): CollapseS
   const lines = measureVisualLines(retained, rootRect.left, originTop, height)
 
   const clone = sourceEl.cloneNode(true) as HTMLElement
-  for (const transient of Array.from(clone.querySelectorAll('.live-status-row, .response-placeholder, .process-thinking-row'))) {
+  for (const transient of Array.from(clone.querySelectorAll('.live-status-row, .response-placeholder, .process-thinking-row, .process-tail-status'))) {
     transient.remove()
   }
   for (const wrapper of Array.from(clone.querySelectorAll('.thinking-wrapper'))) {
-    if (!wrapper.querySelector('.thinking-content')) {
+    if (!wrapper.querySelector('.thinking-content') && wrapper.querySelector('.thinking-toggle.active')) {
       wrapper.remove()
     }
   }

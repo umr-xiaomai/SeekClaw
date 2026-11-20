@@ -7,7 +7,6 @@ import { animateReverseLineCollapse, captureCollapseSnapshot, type CollapseSnaps
 import { isSubAgentTool, messageSubAgents } from '../subagent-activity'
 import type { ChatMessage, SubAgentActivity } from '../types'
 import ConversationMessage from './ConversationMessage.vue'
-import MarkdownMessage from './MarkdownMessage.vue'
 import SubAgentActivityList from './SubAgentActivityList.vue'
 import { phaseStatusText, preparingToolLabel, toolLabel, toolTarget } from './tool-presentation'
 
@@ -109,8 +108,38 @@ const allEvents = computed(() => {
     return true
   })
 })
+function withFoldedResponseThinking(
+  items: ConversationProcessItem[],
+  response: ConversationProcessItem | null,
+  running: boolean,
+  hasProcess: boolean
+): ConversationProcessItem[] {
+  const thinking = response?.message.thinking?.trim()
+  if (running || !hasProcess || !response || !thinking) return items
+  return [
+    ...items,
+    {
+      ...response,
+      message: {
+        id: `${response.message.id}:thinking`,
+        role: 'assistant',
+        content: '',
+        thinking: response.message.thinking,
+        createdAt: response.message.createdAt,
+        state: 'done',
+        thinkingActive: false
+      },
+      widgets: [],
+      showFooter: false,
+      isIntermediate: true
+    }
+  ]
+}
+
 const expandedProcessSteps = computed(() => {
-  if (props.query.trim()) return props.turn.process
+  if (props.query.trim()) {
+    return withFoldedResponseThinking(props.turn.process, props.turn.response, props.turn.running, props.turn.process.length > 0)
+  }
   const includeEvents = allEvents.value.length > 0
   const result: ConversationProcessItem[] = []
   let lastKind: 'none' | 'tool' | 'subagent' = 'none'
@@ -180,7 +209,7 @@ const expandedProcessSteps = computed(() => {
       lastKind = 'none'
     }
   }
-  return result
+  return withFoldedResponseThinking(result, props.turn.response, props.turn.running, props.turn.process.length > 0)
 })
 const responseEvents = computed(() => {
   if (!props.turn.response) return []
@@ -194,27 +223,37 @@ const responseEvents = computed(() => {
 const hasLiveSubAgents = computed(() =>
   agents.value.some((agent) => agent.status === 'starting' || (agent.status === 'running' && agent.live))
 )
-const nonSubAgentToolCount = computed(() =>
-  props.turn.process.reduce((count, item) =>
-    count + (item.message.tools?.filter((tool) => !isSubAgentTool(tool)).length ?? 0), 0)
-)
-const leadInCommentaries = computed(() =>
-  props.turn.process
-    .map((item) => ({ id: item.message.id, content: item.message.content.trim() }))
-    .filter((entry) => entry.content.length > 0)
-)
-const isInlineSubAgentLive = computed(() =>
-  props.turn.running
-  && !props.turn.response
-  && !isExpanded.value
-  && (agents.value.length > 0 || allEvents.value.length > 0)
-  && nonSubAgentToolCount.value === 0
-)
 const showSubAgentsOutside = computed(() =>
   !isExpanded.value
+  && (!props.turn.running || props.turn.process.length === 0)
   && (props.turn.running || hasLiveSubAgents.value)
   && (agents.value.length > 0 || allEvents.value.length > 0)
 )
+const completedAt = ref<number | null>(null)
+function formatTurnDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 500) return ''
+  const totalSeconds = Math.max(1, Math.round(ms / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `用时 ${hours}h ${minutes}m ${seconds}s`
+  if (minutes > 0) return `用时 ${minutes}m ${seconds}s`
+  return `用时 ${seconds}s`
+}
+const turnDurationLabel = computed(() => {
+  if (props.turn.running) return ''
+  const timestamps: number[] = []
+  const pushTs = (value?: number | null) => {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) timestamps.push(value)
+  }
+  pushTs(props.turn.user?.message.createdAt)
+  for (const item of props.turn.process) pushTs(item.message.createdAt)
+  pushTs(props.turn.response?.message.createdAt)
+  for (const ev of allEvents.value) pushTs(ev.createdAt)
+  if (completedAt.value && timestamps.length > 0) pushTs(completedAt.value)
+  if (timestamps.length < 2) return ''
+  return formatTurnDuration(Math.max(...timestamps) - Math.min(...timestamps))
+})
 const status = computed(() => {
   const process = summary.value
   if (props.turn.running) {
@@ -241,22 +280,17 @@ const status = computed(() => {
     if (p) return p
     return '正在等待模型响应'
   }
-  const total = process.toolCount ? `${process.toolCount} 项操作` : `${process.stepCount} 个步骤`
-  return process.errorCount ? `${total} · ${process.errorCount} 项异常` : total
+  return turnDurationLabel.value
 })
-const latestProcessItem = computed(() => props.turn.process.at(-1) ?? null)
 const isThinkingStatus = computed(() => props.turn.running && status.value === '正在思考')
-const isPureLiveOpening = computed(() =>
-  props.turn.running
-  && !props.turn.response
-  && !isExpanded.value
-  && props.turn.process.length === 1
-  && summary.value.toolCount === 0
-  && summary.value.errorCount === 0
-  && leadInCommentaries.value.length === 0
-  && agents.value.length === 0
-  && allEvents.value.length === 0
-  && Boolean(latestProcessItem.value)
+const expandedStepsHaveThinkingShimmer = computed(() =>
+  expandedProcessSteps.value.some((item) => {
+    const msg = item.message
+    return isStreaming(msg)
+      && msg.state === 'thinking'
+      && !msg.preparingTool
+      && (msg.thinkingActive ?? true)
+  })
 )
 const hasLiveStepIndicator = computed(() =>
   expandedProcessSteps.value.some((item) => {
@@ -272,9 +306,7 @@ const tailWaitingLabel = computed(() => {
   return p ? (p.endsWith('…') ? p : `${p}…`) : '正在等待模型响应…'
 })
 
-const inlineLiveRef = ref<HTMLElement | null>(null)
-const openingStepRef = ref<HTMLElement | null>(null)
-const responseHostRef = ref<HTMLElement | null>(null)
+const liveProcessRef = ref<HTMLElement | null>(null)
 const wipeHostRef = ref<HTMLElement | null>(null)
 const detailsEntering = ref(false)
 let activeWipe: ReverseCollapseController | null = null
@@ -283,17 +315,17 @@ let mounted = false
 
 interface TurnVisualSignature {
   hasDetails: boolean
+  isRunning: boolean
   isExpanded: boolean
-  isInlineLive: boolean
   responseId: string | null
   processMessageIds: string[]
 }
 
 function currentVisualSignature(): TurnVisualSignature {
   return {
-    hasDetails: props.turn.process.length > 0 && !isInlineSubAgentLive.value && !isPureLiveOpening.value,
+    hasDetails: props.turn.process.length > 0,
+    isRunning: props.turn.running,
     isExpanded: isExpanded.value,
-    isInlineLive: isInlineSubAgentLive.value,
     responseId: props.turn.response?.message.id ?? null,
     processMessageIds: props.turn.process.map((item) => item.message.id)
   }
@@ -317,48 +349,40 @@ onBeforeUnmount(() => {
   if (enteringTimer) clearTimeout(enteringTimer)
 })
 
+watch(() => props.turn.running, (running, prevRunning) => {
+  if (running) {
+    completedAt.value = null
+  } else if (prevRunning) {
+    completedAt.value = Date.now()
+  }
+}, { flush: 'sync' })
+
 watch(currentVisualSignature, (nextSig) => {
   const prevSig = lastSignature
   lastSignature = nextSig
   if (!mounted || !prevSig) return
 
-  if (nextSig.isExpanded) {
+  if (nextSig.isExpanded || nextSig.isRunning) {
     cancelActiveWipe()
     return
   }
 
-  let sourceEl: HTMLElement | null = null
-  if (nextSig.hasDetails && !nextSig.isExpanded) {
-    if (prevSig.isInlineLive && !nextSig.isInlineLive) {
-      sourceEl = inlineLiveRef.value
-    } else if (
-      prevSig.responseId !== null
-      && nextSig.responseId !== prevSig.responseId
-      && nextSig.processMessageIds.includes(prevSig.responseId)
-    ) {
-      sourceEl = responseHostRef.value
-    } else if (!prevSig.hasDetails && !prevSig.isInlineLive && !prevSig.responseId) {
-      sourceEl = openingStepRef.value
-    }
-  }
+  if (prevSig.isRunning && !nextSig.isRunning && nextSig.hasDetails) {
+    const snapshot: CollapseSnapshot | null = captureCollapseSnapshot(liveProcessRef.value)
+    if (!snapshot) return
 
-  if (!sourceEl) return
-  const snapshot: CollapseSnapshot | null = captureCollapseSnapshot(sourceEl)
-  if (!snapshot) return
-
-  if (!prevSig.hasDetails) {
     detailsEntering.value = true
     if (enteringTimer) clearTimeout(enteringTimer)
     enteringTimer = setTimeout(() => {
       detailsEntering.value = false
     }, 260)
-  }
 
-  void nextTick(() => {
-    if (!mounted || isExpanded.value) return
-    cancelActiveWipe()
-    activeWipe = animateReverseLineCollapse(wipeHostRef.value, snapshot, 500)
-  })
+    void nextTick(() => {
+      if (!mounted || isExpanded.value || props.turn.running) return
+      cancelActiveWipe()
+      activeWipe = animateReverseLineCollapse(wipeHostRef.value, snapshot, 500)
+    })
+  }
 }, { flush: 'pre' })
 
 function isDimmed(message: ChatMessage): boolean {
@@ -389,66 +413,66 @@ function onToggle(event: Event): void {
       @open-diff="(path, diff) => emit('openDiff', path, diff)" @branch="emit('branch', $event)" @edit="emit('edit', $event)" />
 
     <template v-if="turn.process.length">
-      <div v-if="isInlineSubAgentLive" ref="inlineLiveRef" class="process-inline-live">
-        <div v-for="entry in leadInCommentaries" :key="entry.id" class="process-lead-in">
-          <MarkdownMessage :content="entry.content" :streaming="false" />
+      <div v-if="turn.running" ref="liveProcessRef" class="process-live-timeline">
+        <div v-for="item in expandedProcessSteps" :key="item.message.id" class="process-step process-live-step">
+          <ConversationMessage :message="item.message" :image-sources="imageSources" :widgets="item.widgets"
+            :session-id="sessionId" :workspace="workspace" :phase="phase" :streaming="isStreaming(item.message)"
+            :smooth-output="!query.trim()" :show-footer="item.showFooter" :is-intermediate="item.isIntermediate"
+            :hide-sub-agents="allEvents.length === 0" :show-sub-agent-summary="false" :read-only="readOnly"
+            :dimmed="isDimmed(item.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
+            @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)"
+            @open-sub-agent="emit('openSubAgent', $event)" />
         </div>
-        <SubAgentActivityList :agents="agents" :events="allEvents" @open-sub-agent="emit('openSubAgent', $event)" />
-        <div v-if="isThinkingStatus || hasLiveSubAgents" class="process-thinking-row">
+        <SubAgentActivityList v-if="allEvents.length === 0 && agents.length > 0" :agents="agents"
+          @open-sub-agent="emit('openSubAgent', $event)" />
+        <SubAgentActivityList v-if="responseEvents.length" :agents="agents" :events="responseEvents" :show-summary="false"
+          @open-sub-agent="emit('openSubAgent', $event)" />
+        <div v-if="!turn.response && hasLiveSubAgents && !expandedStepsHaveThinkingShimmer" class="process-thinking-row">
           <span class="thinking-shimmer">正在思考</span>
         </div>
-      </div>
-
-      <div v-else-if="isPureLiveOpening && latestProcessItem" ref="openingStepRef" class="process-thinking-step">
-        <ConversationMessage :message="latestProcessItem.message" :image-sources="imageSources" :widgets="latestProcessItem.widgets"
-          :session-id="sessionId" :workspace="workspace" :phase="phase" :streaming="isStreaming(latestProcessItem.message)"
-          :smooth-output="!query.trim()" :show-footer="false" :is-intermediate="false" :hide-sub-agents="true" :read-only="readOnly"
-          :dimmed="isDimmed(latestProcessItem.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
-          @branch="emit('branch', $event)" @edit="emit('edit', $event)" @open-sub-agent="emit('openSubAgent', $event)" />
+        <div v-else-if="!turn.response && !hasLiveSubAgents && !hasLiveStepIndicator"
+          class="process-tail-status" role="status" aria-live="polite">
+          <LoaderCircle :size="14" class="spin process-state" aria-hidden="true" />
+          <span>{{ tailWaitingLabel }}</span>
+        </div>
       </div>
 
       <details v-else class="conversation-process" :class="{ 'is-entering': detailsEntering }" :open="isExpanded" @toggle="onToggle">
-        <summary :title="status">
+        <summary :title="status ? `已完成工作 ${status}` : '已完成工作'">
           <ChevronRight :size="14" class="process-chevron" aria-hidden="true" />
-          <LoaderCircle v-if="turn.running && !isThinkingStatus" :size="14" class="process-state spin" aria-label="正在工作" />
-          <CircleAlert v-else-if="!turn.running && summary.errorCount" :size="14" class="process-state is-error" aria-label="工作过程包含异常" />
-          <Check v-else-if="!turn.running" :size="14" class="process-state" aria-hidden="true" />
-          <span class="process-title">{{ turn.running || summary.errorCount ? '工作过程' : '已完成工作' }}</span>
-          <span class="process-description" :class="{ 'thinking-shimmer': isThinkingStatus }">{{ status }}</span>
+          <CircleAlert v-if="summary.errorCount" :size="14" class="process-state is-error" aria-label="工作过程包含异常" />
+          <Check v-else :size="14" class="process-state" aria-hidden="true" />
+          <span class="process-title">已完成工作</span>
+          <span v-if="status" class="process-description">{{ status }}</span>
         </summary>
         <div v-if="isExpanded" class="process-history">
           <div v-for="item in expandedProcessSteps" :key="item.message.id" class="process-step">
             <ConversationMessage :message="item.message" :image-sources="imageSources" :widgets="item.widgets"
               :session-id="sessionId" :workspace="workspace" :phase="phase" :streaming="isStreaming(item.message)"
-              :smooth-output="!query.trim()"
-              :show-footer="item.showFooter" :is-intermediate="item.isIntermediate"
+              :smooth-output="!query.trim()" :show-footer="item.showFooter" :is-intermediate="item.isIntermediate"
               :hide-sub-agents="allEvents.length === 0" :show-sub-agent-summary="false" :read-only="readOnly"
               :dimmed="isDimmed(item.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
-              @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)" @open-sub-agent="emit('openSubAgent', $event)" />
+              @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)"
+              @open-sub-agent="emit('openSubAgent', $event)" />
           </div>
           <SubAgentActivityList v-if="allEvents.length === 0 && agents.length > 0" :agents="agents"
             @open-sub-agent="emit('openSubAgent', $event)" />
           <SubAgentActivityList v-if="responseEvents.length" :agents="agents" :events="responseEvents" :show-summary="false"
             @open-sub-agent="emit('openSubAgent', $event)" />
-          <div v-if="turn.running && !turn.response && !hasLiveSubAgents && !hasLiveStepIndicator"
-            class="process-tail-status" role="status" aria-live="polite">
-            <LoaderCircle :size="14" class="spin process-state" aria-hidden="true" />
-            <span>{{ tailWaitingLabel }}</span>
-          </div>
         </div>
       </details>
     </template>
 
     <div ref="wipeHostRef" class="collapse-wipe-host" aria-hidden="true" />
 
-    <SubAgentActivityList v-if="showSubAgentsOutside && !isInlineSubAgentLive" :agents="agents" :events="allEvents"
+    <SubAgentActivityList v-if="showSubAgentsOutside" :agents="agents" :events="allEvents"
       @open-sub-agent="emit('openSubAgent', $event)" />
 
-    <div v-if="turn.response" ref="responseHostRef" class="turn-response-host">
+    <div v-if="turn.response" class="turn-response-host">
       <ConversationMessage :message="turn.response.message" :image-sources="imageSources"
         :widgets="turn.response.widgets" :session-id="sessionId" :workspace="workspace" :phase="phase"
         :streaming="isStreaming(turn.response.message)" :show-footer="turn.response.showFooter"
-        :smooth-output="!query.trim()" :read-only="readOnly"
+        :smooth-output="!query.trim()" :read-only="readOnly" :hide-thinking="!turn.running && turn.process.length > 0"
         :is-intermediate="turn.response.isIntermediate" :hide-sub-agents="true" :dimmed="isDimmed(turn.response.message)"
         @open-diff="(path, diff) => emit('openDiff', path, diff)" @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)"
         @open-sub-agent="emit('openSubAgent', $event)" />
@@ -458,10 +482,8 @@ function onToggle(event: Event): void {
 
 <style scoped>
 .conversation-turn { display: flow-root; min-width: 0; }
-.process-inline-live { display: grid; gap: 6px; min-width: 0; margin: 0 0 12px; }
-.process-lead-in { min-width: 0; font-size: 15px; line-height: 1.72; }
+.process-live-timeline { display: grid; gap: 4px; min-width: 0; margin: 0 0 10px; }
 .process-thinking-row { margin: 2px 0 4px; font-size: 13.5px; line-height: 1.5; }
-.process-thinking-step :deep(.message) { margin-bottom: 6px; }
 .conversation-process { min-width: 0; margin: 0 0 12px; color: var(--text-muted); interpolate-size: allow-keywords; }
 .conversation-process:has(+ .collapse-wipe-host:not(:empty)) { margin-bottom: 4px; }
 .conversation-process.is-entering { animation: process-header-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both; }
@@ -480,8 +502,8 @@ function onToggle(event: Event): void {
 @starting-style { .conversation-process[open] > .process-history { block-size: 0; opacity: 0; } }
 .process-step { display: flow-root; min-width: 0; }
 .process-step :deep(.message) { margin-bottom: 0; }
-.process-step :deep(.assistant-message) { font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
-.process-step :deep(.markdown-body) { font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
+.process-history .process-step :deep(.assistant-message) { font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
+.process-history .process-step :deep(.markdown-body) { font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
 .process-step :deep(.markdown-body p) { margin: 2px 0 4px; }
 .process-step :deep(.tool-list) { margin: 0; }
 .process-step :deep(.markdown-body + .tool-list) { margin-top: 4px; }

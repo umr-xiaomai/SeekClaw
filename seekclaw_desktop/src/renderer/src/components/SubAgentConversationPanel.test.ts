@@ -81,14 +81,15 @@ describe('SubAgentConversationPanel Codex layout & shared turn rendering', () =>
       createdAt: '2026-11-17T10:00:00Z',
       updatedAt: '2026-11-17T10:01:00Z',
       messages: [
-        { role: 'user', text: '规划周末旅行并核对开放时间' },
+        { role: 'user', text: '规划周末旅行并核对开放时间', timestamp: 1_700_000_000_000 },
         {
           role: 'assistant',
           text: '先读取本地文档',
+          timestamp: 1_700_000_003_000,
           toolCalls: [{ id: 'tc-1', name: 'read_file', input: '{"path":"README.md"}' }]
         },
-        { role: 'tool', text: '{"ok":true}', toolName: 'read_file', toolCallId: 'tc-1' },
-        { role: 'assistant', text: '例如规划一次周末旅行：整理景点并与交通住宿整合。' }
+        { role: 'tool', text: '{"ok":true}', toolName: 'read_file', toolCallId: 'tc-1', timestamp: 1_700_000_005_000 },
+        { role: 'assistant', text: '例如规划一次周末旅行：整理景点并与交通住宿整合。', timestamp: 1_700_000_012_000 }
       ]
     })
 
@@ -108,7 +109,8 @@ describe('SubAgentConversationPanel Codex layout & shared turn rendering', () =>
     expect(html).toContain('任务指令')
     expect(html).not.toContain('user-bubble')
     expect(html).toContain('已完成工作')
-    expect(html).toContain('1 项操作')
+    expect(html).toContain('用时 12s')
+    expect(html).not.toContain('项操作')
     expect(html).toContain('例如规划一次周末旅行：整理景点并与交通住宿整合。')
     expect(html).toContain('复制回答')
     expect(html).not.toContain('在此分叉新任务')

@@ -212,6 +212,11 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (string.IsNullOrWhiteSpace(command)) return false;
 
         var trimmed = Regex.Replace(command.Trim(), @"(?<=\s|^)[12]>&[12](?=\s|$|[|;&])", "");
+        if (OperatingSystem.IsWindows())
+        {
+            trimmed = Regex.Replace(trimmed, @"(?<=\s|^)2>[ \t]*nul(?=\s|$|\|)", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
         // File redirection, backgrounding/command substitution, file-setting cmdlets, or script blocks mean not guaranteed read-only
         if (trimmed.Contains('>') ||
             trimmed.Contains('{') ||

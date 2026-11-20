@@ -17,15 +17,52 @@ function items(): ConversationProcessItem[] {
 }
 
 describe('conversation process presentation', () => {
-  it('keeps detailed history unmounted by default while the user, streaming answer, and child lifecycle stay visible', async () => {
-    const turn = projectConversationTurns(items(), { running: true, assistantId: 'answer-1' })[0]!
-    const html = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn, assistantId: 'answer-1' }) }))
-    expect(html).toContain('message-user-1')
-    expect(html).toContain('项目检查结果已准备好')
-    expect(html).toContain('测试工程师正在工作')
-    expect(html).toContain('工作过程')
-    expect(html).not.toContain('只在展开时挂载的详细工作记录')
-    expect(html).not.toContain('process-history')
+  it('shows intermediate work live while running and collapses into 已完成工作 用时 after completion', async () => {
+    const timedItems: ConversationProcessItem[] = [
+      { message: { id: 'user-1', role: 'user', content: '检查项目', createdAt: 1_700_000_000_000 }, widgets: [], showFooter: false },
+      {
+        message: {
+          id: 'step-1', role: 'assistant', content: '只在展开时挂载的详细工作记录', thinking: '先排查入口文件', createdAt: 1_700_000_002_000,
+          tools: [{ id: 'read', name: 'read_file', filePath: '/src/app.ts', state: 'done' }],
+          subAgents: [{ id: 'child-1', role: 'tester', status: 'running', live: true }]
+        },
+        widgets: [], showFooter: false, isIntermediate: true
+      },
+      {
+        message: {
+          id: 'answer-1', role: 'assistant', content: '项目检查结果已准备好', thinking: '汇总检查结果', state: 'streaming', createdAt: 1_700_000_018_000
+        },
+        widgets: [], showFooter: true
+      }
+    ]
+
+    const liveTurn = projectConversationTurns(timedItems, { running: true, assistantId: 'answer-1' })[0]!
+    const liveHtml = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn: liveTurn, assistantId: 'answer-1' }) }))
+    expect(liveHtml).toContain('message-user-1')
+    expect(liveHtml).toContain('process-live-timeline')
+    expect(liveHtml).toContain('只在展开时挂载的详细工作记录')
+    expect(liveHtml).toContain('项目检查结果已准备好')
+    expect(liveHtml).not.toContain('process-history')
+
+    timedItems[1]!.message.subAgents![0]!.status = 'completed'
+    timedItems[1]!.message.subAgents![0]!.live = false
+    timedItems[2]!.message.state = 'done'
+    const finishedTurn = projectConversationTurns(timedItems, { running: false })[0]!
+    const collapsedHtml = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn: finishedTurn }) }))
+    expect(collapsedHtml).toContain('已完成工作')
+    expect(collapsedHtml).toContain('用时 18s')
+    expect(collapsedHtml).not.toContain('项操作')
+    expect(collapsedHtml).not.toContain('个步骤')
+    expect(collapsedHtml).not.toContain('只在展开时挂载的详细工作记录')
+    expect(collapsedHtml).not.toContain('process-history')
+    expect(collapsedHtml).toContain('项目检查结果已准备好')
+    // Answer-1's thinking folds inside 已完成工作 rather than staying outside the final answer.
+    expect(collapsedHtml).not.toContain('已完成思考')
+
+    const expandedHtml = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn: finishedTurn, expanded: true }) }))
+    expect(expandedHtml).toContain('process-history')
+    expect(expandedHtml).toContain('只在展开时挂载的详细工作记录')
+    expect(expandedHtml.match(/已完成思考/g)).toHaveLength(2)
   })
 
   it('reveals searchable history without hiding the final result or its artifact action', async () => {

@@ -21,5 +21,8 @@ export function finalizeAssistantBubbles(
     item.preparingTool = undefined
     if (item.state !== 'thinking' && item.state !== 'streaming') continue
     item.state = terminalState
+    if (item.createdAt >= 1_000_000_000) {
+      item.createdAt = Math.max(item.createdAt, Date.now())
+    }
   }
 }
