@@ -1,6 +1,4 @@
 import { EventEmitter } from 'node:events'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { createConnection, type Socket } from 'node:net'
 import type { DaemonMessage, DaemonRequestOptions, DaemonState } from '../shared/ipc.js'
 import { finishesQuestionTurn, parseQuestionRequest, parseQuestionResolved, type UserQuestion } from '../shared/user-questions.js'
@@ -23,9 +21,7 @@ export class DaemonClient extends EventEmitter {
   private readonly pending = new Map<number, PendingRequest>()
   private readonly questions = new Map<string, UserQuestion>()
 
-  constructor(readonly endpoint = process.platform === 'win32'
-    ? String.raw`\\.\pipe\seekclaw`
-    : join(homedir(), '.seekclaw', 'daemon.sock')) {
+  constructor(readonly endpoint: string) {
     super()
   }
 

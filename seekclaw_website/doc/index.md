@@ -12,7 +12,7 @@ SeekClaw 是基于 **.NET 10**、本地优先且可扩展的通用 AI Agent Runt
 | **项目任务与不绑定项目的任务** | 项目任务可连接文件、终端、Git 与专属 Memory；不绑定目录的任务适合调研、写作、知识整理及日常工作。 |
 | **多 Provider 与路由** | 支持 Anthropic 与 OpenAI 两种线协议，并可接入 OpenAI-compatible 服务，包括 Google、OpenRouter、Ollama、MiMo 和 LM Studio。 |
 | **Tools、Skills 与 MCP** | 内置文件、搜索、Shell 和网络工具，可通过 Skills 与 stdio / SSE MCP Server 扩展。 |
-| **会话与工作区持久化** | 会话按工作区保存为 JSONL，支持恢复、归档和删除；项目元数据隔离在 `.seekclaw/`。 |
+| **会话与工作区持久化** | 会话在全局 SQLite 数据库中按工作区区分，支持恢复、归档和删除。工作区配置和相关文件存放在 `~/.seekclaw/workspaces/<workspace-key>/`。 |
 | **自动验证与修复** | 文件修改后可触发 .NET、Node、Rust、Go 或 Python 等项目的构建检查，并把错误反馈给 Agent 修复。 |
 | **诊断与用量** | Desktop 和 CLI 都能检查 Runtime / Provider 状态；Desktop 汇总调用、Token、延迟和成本。 |
 

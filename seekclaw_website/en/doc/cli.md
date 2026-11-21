@@ -105,7 +105,7 @@ seekclaw doctor
 ## Workspace, Skills, and MCP
 
 ```bash
-# Initialize .seekclaw directories and .gitignore entries
+# Initialize and print the workspace state directory without changing the project or .gitignore
 seekclaw init
 
 seekclaw skill list

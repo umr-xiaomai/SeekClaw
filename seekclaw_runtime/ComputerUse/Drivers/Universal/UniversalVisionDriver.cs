@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using SeekClaw.Runtime.ComputerUse.Abstractions;
+using SeekClaw.Runtime.Configuration;
 
 namespace SeekClaw.Runtime.ComputerUse.Drivers.Universal;
 
@@ -31,7 +32,7 @@ public sealed class UniversalVisionDriver : IComputerDriver, IScreenCapture, IIn
 
     public async Task<ScreenCapture?> CaptureScreenAsync(int monitorIndex, CancellationToken ct)
     {
-        var tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw_capture_{Guid.NewGuid():N}.png");
+        var tempFile = Path.Combine(SeekClawPaths.GetTemporaryDirectory(), $"seekclaw_capture_{Guid.NewGuid():N}.png");
         try
         {
             var captured = false;

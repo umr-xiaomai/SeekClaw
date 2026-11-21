@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using SeekClaw.Runtime.Execution;
 using SeekClaw.Runtime.Prompts;
 
 namespace SeekClaw.Runtime.Tools.Builtin;
@@ -12,12 +13,22 @@ namespace SeekClaw.Runtime.Tools.Builtin;
 /// </summary>
 public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
 {
-    public override string Name => "bash";
+    internal const string LegacyName = "bash";
+    internal const string PowerShellName = "powershell";
+    public override string Name { get; } = LegacyName;
+
+    private BashTool(IPromptProvider prompts, string name) : this(prompts) => Name = name;
+
+    internal static BashTool? CreatePowerShellTool(IPromptProvider prompts) =>
+        VendoredPowerShell.IsRequired ? new BashTool(prompts, PowerShellName) : null;
+
+    protected override string DescriptionKey => VendoredPowerShell.IsRequired ? "tool/powershell" : base.DescriptionKey;
     public override string StatusLabel => "Running command";
     public override bool Mutating => true; // A shell command may change anything
 
     public override JsonObject ParameterSchema => ToolSchema.Object(
-        ("command", ToolSchema.String("Shell command to execute"), true),
+        ("command", ToolSchema.String(VendoredPowerShell.IsRequired
+            ? "PowerShell 7 command to execute" : "Shell command to execute"), true),
         ("cwd", ToolSchema.String("Working directory (defaults to the workspace root)"), false),
         ("timeout_seconds", ToolSchema.Integer("Timeout in seconds (default from config)"), false));
 
@@ -37,13 +48,13 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
 
-        var (shell, shellArgs) = ResolveShell(command);
         var buffer = new HeadTailBuffer(maxBytes: 128 * 1024);
         using var jobScope = new ProcessJobScope();
 
         Process? process = null;
         try
         {
+            var (shell, shellArgs) = ResolveShell(command);
             var psi = new ProcessStartInfo
             {
                 FileName = shell,
@@ -56,6 +67,10 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+
+            if (VendoredPowerShell.IsRequired)
+                foreach (var (name, value) in VendoredPowerShell.ChildEnvironment)
+                    psi.Environment[name] = value;
 
             foreach (var arg in shellArgs)
             {
@@ -169,8 +184,8 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
 
     /// <summary>
     /// Resolves the shell executable and arguments for the current OS.
-    /// On Windows, prefers pwsh/powershell with UTF-8 prefix and non-interactive flags,
-    /// avoiding unintentional invocation of MSYS2/Git bash on Windows command strings.
+    /// Windows x64 uses the vendored PowerShell. Other Windows architectures keep the
+    /// legacy PATH-based shell selection.
     /// </summary>
     internal static (string Shell, string[] Args) ResolveShell(string command)
     {
@@ -184,10 +199,13 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
             return (bashPath, ["-c", command]);
         }
 
+        if (VendoredPowerShell.IsRequired)
+            return VendoredPowerShell.ResolveCommand(command);
+
         var pwsh = FindOnPath("pwsh.exe") ?? FindOnPath("powershell.exe");
         if (pwsh is not null)
         {
-            var utf8Script = $"try {{ [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 }} catch {{ }}; {command}";
+            var utf8Script = VendoredPowerShell.WithUtf8Output(command);
             return (pwsh, ["-NoProfile", "-NonInteractive", "-NoLogo", "-Command", utf8Script]);
         }
 

@@ -20,7 +20,7 @@ public interface IPromptProvider
 
     string? GetRendered(string key, IReadOnlyDictionary<string, string> variables);
 
-    /// <summary>Points the highest-priority root at &lt;workspace&gt;/.seekclaw/prompts.</summary>
+    /// <summary>Points the highest-priority root at the workspace's prompts directory under ~/.seekclaw/workspaces.</summary>
     void SetWorkspaceRoot(string? promptsDir);
 }
 
@@ -61,7 +61,7 @@ public sealed class FilePromptProvider : IPromptProvider, IDisposable
     public string Get(string key) =>
         TryGet(key) ?? throw new FileNotFoundException(
             $"Prompt '{key}' not found. Expected '{key}.txt' under a prompts/ directory " +
-            "(workspace .seekclaw/prompts, ~/.seekclaw/prompts, or the application's prompts folder).");
+            "(the workspace data directory, ~/.seekclaw/prompts, or the application's prompts folder).");
 
     public string Render(string template, IReadOnlyDictionary<string, string> variables)
     {

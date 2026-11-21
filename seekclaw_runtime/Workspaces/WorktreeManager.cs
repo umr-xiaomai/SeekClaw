@@ -79,9 +79,8 @@ public sealed class WorktreeManager(ExecutionRecordStore records, IWorkspaceMana
         WorkspacePathGuard.Resolve(path, executionRoot);
         if (!Directory.Exists(executionRoot)) throw new DirectoryNotFoundException("The project directory is absent from the selected Git revision.");
         var detected = workspaces.Detect(executionRoot);
-        // Local project settings are often ignored by Git. Carry configuration forward without copying secrets to disk.
-        return new WorkspaceInfo { Root = executionRoot, ProjectKinds = detected.ProjectKinds, Config = source.Config ?? detected.Config,
-            ConfigurationRoot = source.ConfigurationRoot ?? source.Root };
+        return new WorkspaceInfo { Root = executionRoot, ProjectKinds = detected.ProjectKinds, Config = source.Config,
+            ConfigurationRoot = source.ConfigurationRoot ?? source.Root, ProjectStateDirectory = source.SeekClawDir };
     }
 
     public async Task<JsonObject> ArchiveAsync(string source, string taskId, CancellationToken ct = default)

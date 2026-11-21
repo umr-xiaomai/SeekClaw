@@ -29,4 +29,22 @@
     <None Include="prompts\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <BundledPowerShellDir>$(MSBuildProjectDirectory)/../seekclaw_third_party/powershell/win-x64</BundledPowerShellDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <Content Include="$(BundledPowerShellDir)/**/*"
+             Link="powershell/win-x64/%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToPublishDirectory="PreserveNewest"
+             ExcludeFromSingleFile="true" />
+  </ItemGroup>
+
+  <Target Name="VerifyBundledPowerShell" BeforeTargets="PrepareForPublish" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <Error Condition="!Exists('$(BundledPowerShellDir)/pwsh.exe') Or !Exists('$(BundledPowerShellDir)/System.Management.Automation.dll') Or !Exists('$(BundledPowerShellDir)/LICENSE.txt') Or !Exists('$(BundledPowerShellDir)/ThirdPartyNotices.txt')"
+           Text="Bundled PowerShell is incomplete. Restore seekclaw_third_party/powershell/win-x64 from the SeekClaw checkout." />
+    <VerifyFileHash File="$(BundledPowerShellDir)/pwsh.exe" Hash="e94166ed9f376559c1359bafb08bc49e463a494c330f67644ec1d9f1ffeb5ee5" />
+    <VerifyFileHash File="$(BundledPowerShellDir)/System.Management.Automation.dll" Hash="a689b32adcea9a781caa0fbae25ca55ed40f084247fc877d2cbbc8278d283c01" />
+  </Target>
+
 </Project>

@@ -1,4 +1,5 @@
 import { ReasoningLevel } from './types'
+import type { ModelReasoningCapabilities } from './model-reasoning'
 import { parseConversationWidgets } from './conversation-widgets'
 import { countDiffLines } from './diff-parser'
 import type {
@@ -95,13 +96,8 @@ export interface RuntimeProject {
 export interface RuntimeModelCatalogItem {
   ref: string
   active: boolean
-  capabilities?: {
-    vision?: boolean
-    thinking?: boolean
-    reasoning?: boolean
-    maxReasoningLevel?: string
-    [key: string]: boolean | string | undefined
-  }
+  requestDefaultReasoningLevel?: string
+  capabilities?: ModelReasoningCapabilities & { vision?: boolean }
 }
 
 export function normalizeReasoningLevel(value?: string): ReasoningLevel {

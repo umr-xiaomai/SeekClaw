@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
+using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
@@ -41,13 +42,10 @@ public sealed class CaptureScreenTool(IPromptProvider prompts) : BuiltinTool(pro
             var imageName = $"screenshot_{timestamp}.png";
             var base64Data = Convert.ToBase64String(captureResult.Bytes);
 
-            // Persist copy to workspace cache or temp directory
             string? savedPath = null;
             try
             {
-                var targetDir = context.Workspace.IsGlobal
-                    ? Path.Combine(Path.GetTempPath(), "seekclaw", "screenshots")
-                    : Path.Combine(context.Workspace.CacheDir, "screenshots");
+                var targetDir = Path.Combine(context.Workspace.CacheDir, "screenshots");
                 Directory.CreateDirectory(targetDir);
                 savedPath = Path.Combine(targetDir, imageName);
                 await File.WriteAllBytesAsync(savedPath, captureResult.Bytes, ct).ConfigureAwait(false);
@@ -109,7 +107,7 @@ public sealed class CaptureScreenTool(IPromptProvider prompts) : BuiltinTool(pro
 
     private static async Task<ScreenCaptureResult> CaptureWindowsPowerShellAsync(CancellationToken ct)
     {
-        var tempFile = Path.Combine(Path.GetTempPath(), $"screen_{Guid.NewGuid():N}.png");
+        var tempFile = Path.Combine(SeekClawPaths.GetTemporaryDirectory(), $"screen_{Guid.NewGuid():N}.png");
         var script = $"Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b = New-Object Drawing.Bitmap([Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); $g = [Drawing.Graphics]::FromImage($b); $g.CopyFromScreen(0,0,0,0,$b.Size); $b.Save('{tempFile.Replace("'", "''")}', [Drawing.Imaging.ImageFormat]::Png); $b.Dispose(); $g.Dispose();";
         try
         {
@@ -142,7 +140,7 @@ public sealed class CaptureScreenTool(IPromptProvider prompts) : BuiltinTool(pro
 
     private static async Task<ScreenCaptureResult> CaptureMacScreenAsync(CancellationToken ct)
     {
-        var tempFile = Path.Combine(Path.GetTempPath(), $"screen_{Guid.NewGuid():N}.png");
+        var tempFile = Path.Combine(SeekClawPaths.GetTemporaryDirectory(), $"screen_{Guid.NewGuid():N}.png");
         try
         {
             var psi = new ProcessStartInfo("screencapture", $"-x \"{tempFile}\"")
@@ -170,7 +168,7 @@ public sealed class CaptureScreenTool(IPromptProvider prompts) : BuiltinTool(pro
 
     private static async Task<ScreenCaptureResult> CaptureLinuxScreenAsync(CancellationToken ct)
     {
-        var tempFile = Path.Combine(Path.GetTempPath(), $"screen_{Guid.NewGuid():N}.png");
+        var tempFile = Path.Combine(SeekClawPaths.GetTemporaryDirectory(), $"screen_{Guid.NewGuid():N}.png");
         try
         {
             // Try grim (Wayland) then import / scrot (X11)

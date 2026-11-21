@@ -375,7 +375,8 @@ public sealed class OpenAiCompatibleClient(ILlmHttpFactory httpFactory) : ILlmCl
         // Reasoning models count thinking toward the completion budget; the modern
         // max_completion_tokens parameter covers it (max_tokens is rejected by OpenAI
         // reasoning endpoints). DeepSeek and other compatible gateways keep max_tokens.
-        var useMaxCompletionTokens = request.Model.Capabilities.Reasoning
+        var useMaxCompletionTokens = (request.Model.Capabilities.Reasoning
+                || request.Model.Capabilities.SupportedReasoningLevels?.Any(level => level != ReasoningLevel.None) == true)
             && !ReasoningLevelAdapter.IsDeepSeek(request.Provider, request.Model)
             && ModelCapabilityResolver.PrefersMaxCompletionTokens(request.Provider, request.Model);
         if (request.MaxTokens is { } maxTokens)

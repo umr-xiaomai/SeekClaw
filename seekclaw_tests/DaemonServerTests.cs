@@ -91,6 +91,131 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Null(cleared["modelRef"]);
     }
 
+    [Fact]
+    public async Task ModelReasoningSettings_RoundTripAndSetNewSessionDefault()
+    {
+        var connection = await StartServerAsync((_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+        await connection.SendAsync(1, "provider.upsert", new JsonObject
+        {
+            ["id"] = "reasoning-test",
+            ["baseUrl"] = "https://example.test/v1",
+            ["modelDetails"] = new JsonArray(
+                new JsonObject
+                {
+                    ["id"] = "sparse", ["alias"] = "Sparse Model", ["maxOutput"] = 4096,
+                    ["capabilities"] = new JsonObject
+                    {
+                        ["supportedReasoningLevels"] = new JsonArray("low", "high"),
+                        ["defaultReasoningLevel"] = "low",
+                        ["tools"] = false,
+                    },
+                },
+                new JsonObject { ["id"] = "gpt-5" }),
+        });
+        var models = ParseData(await connection.ReadAsync())["modelDetails"]!.AsArray();
+        var caps = models[0]!["capabilities"]!.AsObject();
+        Assert.Equal(new[] { "low", "high" }, caps["supportedReasoningLevels"]!.AsArray().Select(item => item!.GetValue<string>()));
+        Assert.Equal("low", caps["defaultReasoningLevel"]!.GetValue<string>());
+        var legacy = models[1]!["capabilities"]!.AsObject();
+        Assert.True(legacy.ContainsKey("supportedReasoningLevels"));
+        Assert.Null(legacy["supportedReasoningLevels"]);
+        Assert.True(legacy.ContainsKey("defaultReasoningLevel"));
+        Assert.Null(legacy["defaultReasoningLevel"]);
+        Assert.True(legacy["reasoning"]!.GetValue<bool>());
+        Assert.Equal("high", legacy["maxReasoningLevel"]!.GetValue<string>());
+
+        var reloaded = new ConfigStore(Path.Combine(_tempDir, "config.json"), Path.Combine(_tempDir, "state.json"));
+        var persistedCaps = reloaded.Config.FindProvider("reasoning-test")!.Models[0].Capabilities;
+        Assert.Equal(new[] { ReasoningLevel.Low, ReasoningLevel.High }, persistedCaps.SupportedReasoningLevels);
+        Assert.Equal(ReasoningLevel.Low, persistedCaps.DefaultReasoningLevel);
+
+        await connection.SendAsync(2, "provider.use", new JsonObject { ["id"] = "reasoning-test" });
+        Assert.Equal("result", (await connection.ReadAsync())["event"]!.GetValue<string>());
+        await AssertNewSessionReasoning(3, new JsonObject(), "low");
+        await AssertNewSessionReasoning(5, new JsonObject { ["modelRef"] = "reasoning-test/sparse", ["reasoningLevel"] = "none" }, "none");
+        await AssertNewSessionReasoning(7, new JsonObject { ["modelRef"] = "reasoning-test/sparse", ["reasoningLevel"] = "ultra" }, "ultra");
+        await AssertNewSessionReasoning(9, new JsonObject { ["modelRef"] = "reasoning-test/gpt-5" },
+            _runtime!.ConfigStore.Config.Agent.ReasoningLevel.ToWireValue());
+
+        await connection.SendAsync(11, "model.update", new JsonObject
+        {
+            ["provider"] = "reasoning-test", ["id"] = "sparse",
+            ["capabilities"] = new JsonObject { ["supportedReasoningLevels"] = new JsonArray(), ["defaultReasoningLevel"] = null },
+        });
+        caps = ParseData(await connection.ReadAsync())["capabilities"]!.AsObject();
+        Assert.Empty(caps["supportedReasoningLevels"]!.AsArray());
+        Assert.Null(caps["defaultReasoningLevel"]);
+        Assert.False(caps["tools"]!.GetValue<bool>());
+
+        await connection.SendAsync(12, "model.catalog");
+        var catalog = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
+        var model = Assert.Single(catalog, item => item!["ref"]!.GetValue<string>() == "reasoning-test/sparse")!;
+        Assert.Empty(model["capabilities"]!["supportedReasoningLevels"]!.AsArray());
+        Assert.Null(model["capabilities"]!["defaultReasoningLevel"]);
+        Assert.Equal(4096, model["maxOutput"]!.GetValue<int>());
+
+        reloaded.Reload();
+        var persisted = reloaded.Config.FindProvider("reasoning-test")!.Models[0];
+        Assert.Equal("Sparse Model", persisted.Alias);
+        Assert.Empty(persisted.Capabilities.SupportedReasoningLevels!);
+        Assert.Null(persisted.Capabilities.DefaultReasoningLevel);
+        Assert.False(persisted.Capabilities.ToolCalling);
+
+        await connection.SendAsync(13, "model.update", new JsonObject
+        {
+            ["provider"] = "reasoning-test", ["id"] = "sparse",
+            ["capabilities"] = new JsonObject { ["supportedReasoningLevels"] = null },
+        });
+        Assert.Null(ParseData(await connection.ReadAsync())["capabilities"]!["supportedReasoningLevels"]);
+
+        async Task AssertNewSessionReasoning(int requestId, JsonObject parameters, string expected)
+        {
+            await connection.SendAsync(requestId, "session.new", parameters);
+            var created = await connection.ReadAsync();
+            Assert.Equal("result", created["event"]!.GetValue<string>());
+            await connection.SendAsync(requestId + 1, "session.get", new JsonObject { ["id"] = created["data"]!.GetValue<string>() });
+            Assert.Equal(expected, ParseData(await connection.ReadAsync())["reasoningLevel"]!.GetValue<string>());
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"supportedReasoningLevels":"high"}""", "supportedReasoningLevels")]
+    [InlineData("""{"supportedReasoningLevels":["banana"]}""", "supportedReasoningLevels")]
+    [InlineData("""{"supportedReasoningLevels":["low", "LOW"]}""", "supportedReasoningLevels")]
+    [InlineData("""{"defaultReasoningLevel":3}""", "defaultReasoningLevel")]
+    [InlineData("""{"supportedReasoningLevels":["low"],"defaultReasoningLevel":"high"}""", "defaultReasoningLevel")]
+    public async Task ModelReasoningSettings_InvalidEditsLeaveConfigurationIntact(string input, string field)
+    {
+        var connection = await StartServerAsync((_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)));
+        var model = new ModelConfig { Id = "model", Alias = "Original" };
+        var provider = new ProviderConfig { Id = "reasoning-test", BaseUrl = "https://example.test/v1", Models = [model] };
+        _runtime!.ConfigStore.Config.Providers.Add(provider);
+        _runtime.ConfigStore.Save();
+
+        var draft = new JsonObject { ["id"] = model.Id, ["alias"] = "Changed", ["capabilities"] = JsonNode.Parse(input) };
+        await connection.SendAsync(1, "provider.upsert", new JsonObject
+        {
+            ["id"] = provider.Id,
+            ["modelDetails"] = new JsonArray(draft.DeepClone()),
+        });
+        await AssertRejected();
+
+        draft["provider"] = provider.Id;
+        await connection.SendAsync(2, "model.update", draft);
+        await AssertRejected();
+
+        async Task AssertRejected()
+        {
+            var result = await connection.ReadAsync();
+            Assert.Equal("error", result["event"]!.GetValue<string>());
+            Assert.Contains(field, result["data"]!.GetValue<string>());
+            var current = _runtime.ConfigStore.Config.FindProvider(provider.Id)!.Models[0];
+            Assert.Equal("Original", current.Alias);
+            Assert.Null(current.Capabilities.SupportedReasoningLevels);
+            Assert.Null(current.Capabilities.DefaultReasoningLevel);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -953,7 +1078,8 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Equal("readonly", currentMode["data"]!.GetValue<string>());
 
         var persisted = JsonNode.Parse(await File.ReadAllTextAsync(
-            Path.Combine(workspaceB, ".seekclaw", "config.json")))!.AsObject();
+            TestWorkspaceManager().Detect(workspaceB).ConfigFile))!.AsObject();
+        Assert.False(Directory.Exists(Path.Combine(workspaceB, ".seekclaw")));
         Assert.Equal("readonly", persisted["mode"]!.GetValue<string>());
 
         await connection.SendAsync(5, "workspace.open", new JsonObject
@@ -980,7 +1106,7 @@ public sealed class DaemonServerTests : IAsyncDisposable
               }
             }
             """);
-        var skillDirectory = Path.Combine(workspace, "skills", "reviewer");
+        var skillDirectory = Path.Combine(TestWorkspaceManager().Detect(workspace).SkillsDir, "reviewer");
         Directory.CreateDirectory(skillDirectory);
         await File.WriteAllTextAsync(Path.Combine(skillDirectory, "prompt.txt"), "Review changes carefully.");
         var connection = await StartServerAsync(
@@ -1063,7 +1189,8 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var mcpServers = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
         Assert.Contains(mcpServers, server => server!["name"]!.GetValue<string>() == "inline-test");
         Assert.Contains("updated-command", await File.ReadAllTextAsync(
-            Path.Combine(workspace, ".seekclaw", "config.json")));
+            TestWorkspaceManager().Detect(workspace).ConfigFile));
+        Assert.False(Directory.Exists(Path.Combine(workspace, ".seekclaw")));
 
         await connection.SendAsync(15, "skill.list");
         var skills = JsonNode.Parse((await connection.ReadAsync())["data"]!.GetValue<string>())!.AsArray();
@@ -1328,10 +1455,12 @@ public sealed class DaemonServerTests : IAsyncDisposable
             Path.Combine(_tempDir, "state.json"));
         var databaseFile = Path.Combine(_tempDir, "seekclaw.db");
         var health = new OfflineHealthChecker(new HealthChecker(new LlmHttpFactory(), configStore));
+        var workspaces = TestWorkspaceManager();
         _runtime = providers is null
-            ? SeekClawRuntime.Create(workspace, configStore, databaseFile, health)
-            : SeekClawRuntime.CreateIsolated(new WorkspaceManager().Detect(workspace), configureServices: services =>
+            ? SeekClawRuntime.Create(workspace, configStore, databaseFile, health, workspaces)
+            : SeekClawRuntime.CreateIsolated(workspaces.Detect(workspace), configureServices: services =>
             {
+                services.AddSingleton<IWorkspaceManager>(workspaces);
                 services.AddSingleton<IConfigStore>(configStore);
                 services.AddSingleton(new SeekClawDatabase(databaseFile));
                 services.AddSingleton<IHealthChecker>(health);
@@ -1441,12 +1570,17 @@ public sealed class DaemonServerTests : IAsyncDisposable
     private string CreateWorkspace(string name, string? workspaceConfig = null)
     {
         var root = Path.Combine(_tempDir, name);
-        var configDir = Path.Combine(root, ".seekclaw");
-        Directory.CreateDirectory(configDir);
+        Directory.CreateDirectory(root);
         if (workspaceConfig is not null)
-            File.WriteAllText(Path.Combine(configDir, "config.json"), workspaceConfig);
+        {
+            var workspace = TestWorkspaceManager().Detect(root);
+            Directory.CreateDirectory(workspace.SeekClawDir);
+            File.WriteAllText(workspace.ConfigFile, workspaceConfig);
+        }
         return root;
     }
+
+    private WorkspaceManager TestWorkspaceManager() => new(Path.Combine(_tempDir, "profile", ".seekclaw"));
 
     private static JsonObject ParseData(JsonObject response) =>
         JsonNode.Parse(response["data"]!.GetValue<string>())!.AsObject();

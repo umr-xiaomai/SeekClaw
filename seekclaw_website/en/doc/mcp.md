@@ -22,7 +22,7 @@ Queries return MCP environment-variable names but not their sensitive values. Wh
 
 ## JSON configuration
 
-Global servers can be stored under `mcp.servers` in `~/.seekclaw/config.json`. A workspace can use `.seekclaw/mcp/servers.json` or the `mcp` field in `.seekclaw/config.json`; a workspace entry with the same name overrides the global one.
+Global servers can be stored under `mcp.servers` in `~/.seekclaw/config.json`. For a workspace, use `mcp/servers.json` or the `mcp` field in `config.json` under `~/.seekclaw/workspaces/<workspace-key>/`. A workspace entry with the same name overrides the global one.
 
 ```json
 {

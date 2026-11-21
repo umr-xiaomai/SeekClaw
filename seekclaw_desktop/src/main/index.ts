@@ -10,6 +10,7 @@ import type { DaemonMessage, DaemonRequestOptions, RevertDiffItem } from '../sha
 import { ConversationBrowser } from './conversation-browser.js'
 import type { BrowserCommand, BrowserPanelLayout } from '../shared/browser.js'
 import { DaemonClient } from './daemon-client.js'
+import { configureDesktopPaths } from './desktop-paths.js'
 import { PendingApprovalCache } from './pending-approval-cache.js'
 import { checkoutGitBranch, createGitBranch, getGitBranches, getGitCommitDiff, getGitHistory, getGitOverview, listWorkspaceFiles, openProjectTerminal, revertFileDiffs } from './project-tools.js'
 import {
@@ -20,7 +21,8 @@ import {
   showComputerOverlay
 } from './computer-overlay.js'
 
-const daemon = new DaemonClient()
+const desktopPaths = configureDesktopPaths(app)
+const daemon = new DaemonClient(desktopPaths.daemonEndpoint)
 const pendingApprovals = new PendingApprovalCache()
 let mainWindow: BrowserWindow | null = null
 let conversationBrowser: ConversationBrowser | null = null
@@ -92,7 +94,7 @@ async function ensureDaemonRunning(): Promise<void> {
       ...process.env,
       SEEKCLAW_MANAGED_BY_DESKTOP: '1',
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1',
-      DOTNET_BUNDLE_EXTRACT_BASE_DIR: join(app.getPath('userData'), 'dotnet_bundle')
+      DOTNET_BUNDLE_EXTRACT_BASE_DIR: desktopPaths.dotnetBundle
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
@@ -335,7 +337,7 @@ function registerIpc(): void {
     supportsMica,
     defaultWorkspace: is.dev ? resolve(app.getAppPath(), '..') : app.getPath('userData'),
     documentsPath: app.getPath('documents'),
-    userProfilePath: app.getPath('home')
+    userProfilePath: desktopPaths.userProfile
   }))
 
   ipcMain.handle('app:select-workspace', async () => {

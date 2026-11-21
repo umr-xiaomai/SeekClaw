@@ -55,7 +55,6 @@ public sealed class McpManager(
         foreach (var (name, server) in configStore.Config.Mcp.Servers)
             servers[name] = server;
 
-        // <workspace>/mcp/servers.json
         var serversFile = Path.Combine(workspace.McpDir, "servers.json");
         if (File.Exists(serversFile))
         {
@@ -69,7 +68,6 @@ public sealed class McpManager(
             catch (JsonException) { }
         }
 
-        // Workspace .seekclaw/config.json wins.
         foreach (var (name, server) in workspace.Config?.Mcp?.Servers ?? [])
             servers[name] = server;
 

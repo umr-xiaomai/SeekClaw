@@ -94,8 +94,12 @@ public sealed class ModelCapabilities
     public bool ToolCalling { get; set; } = true;
     public bool JsonMode { get; set; }
     public bool Reasoning { get; set; }
-    /// <summary>Highest neutral reasoning level accepted by this model.</summary>
+    /// <summary>Highest neutral reasoning level when no exact set is configured.</summary>
     public ReasoningLevel MaxReasoningLevel { get; set; } = ReasoningLevel.Max;
+    /// <summary>Exact supported levels. Null uses legacy or inferred capabilities, and an empty list disables reasoning.</summary>
+    public List<ReasoningLevel>? SupportedReasoningLevels { get; set; }
+    /// <summary>Initial reasoning level for new sessions. Null uses the session fallback.</summary>
+    public ReasoningLevel? DefaultReasoningLevel { get; set; }
     public bool Embedding { get; set; }
     public bool Mcp { get; set; } = true;
 }
@@ -205,7 +209,7 @@ public sealed class McpOAuthConfig
     public string? Scope { get; set; }
 }
 
-/// <summary>Per-workspace overrides stored in &lt;workspace&gt;/.seekclaw/config.json.</summary>
+/// <summary>Per-workspace overrides stored in ~/.seekclaw/workspaces/&lt;workspace-key&gt;/config.json.</summary>
 public sealed class WorkspaceConfig
 {
     public string? Provider { get; set; }

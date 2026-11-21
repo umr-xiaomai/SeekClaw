@@ -2,6 +2,8 @@
 
 SeekClaw Desktop is an Electron and Vue client for the same .NET Runtime used by the CLI. It connects through the local Daemon IPC protocol and provides a graphical workspace for projects, tasks, models, tools, and runtime health. Desktop and CLI share Provider, Profile, MCP, Skill, and session data.
 
+The Desktop app uses a dedicated profile directory at `~/.seekclaw/desktop/` (`%USERPROFILE%\.seekclaw\desktop` on Windows). The shared SQLite database is `~/.seekclaw/seekclaw.db`.
+
 ![SeekClaw Desktop AI chat and project management](/screenshots/desktop/chat-and-projects.png)
 
 ## Install and launch

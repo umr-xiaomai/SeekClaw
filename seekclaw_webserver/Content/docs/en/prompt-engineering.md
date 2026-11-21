@@ -39,7 +39,7 @@ SeekClaw employs a layered prompt and specification injection architecture, allo
 
 For long-running codebases, agents need to retain cross-session context, past architectural decisions, and key lessons.
 
-- **Location**: `<workspace>/.seekclaw/MEMORY.md`.
+- **Location**: `~/.seekclaw/workspaces/<workspace-key>/memory/MEMORY.md`. Run `seekclaw init` from the project to find its state directory.
 - **Automatic Context Fitting**: Loaded and bounded automatically into the system prompt.
 - **Evolution**: The agent can autonomously append key findings to `MEMORY.md` upon resolving major issues.
 

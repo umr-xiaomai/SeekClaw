@@ -176,3 +176,6 @@ token-cache/
 .seekclaw/
 .workbuddy/
 packaging/
+/.tmp/powershell-vendor/
+!/seekclaw_third_party/powershell/win-x64/**/
+!/seekclaw_third_party/powershell/win-x64/**/*.pdb

@@ -92,7 +92,7 @@ Checks cover the workspace, metadata directory, Provider configuration, Memory, 
 - **Structured Task Planner**: Unfolds interactive real-time subtask checklists (`update_plan`).
 - **Scheduled Tasks & Background Automation**: Built-in Cron scheduling engine with dedicated Desktop dialog for task management.
 - **Official Skills Hub**: Direct marketplace integration for discovering, downloading, and hot-reloading official and community skills via UI or `seekclaw skill install`.
-- **Consolidated SQLite Storage**: Migrated conversation history and project metadata to centralized `seekclaw.db` with automatic legacy JSONL migration.
+- The **global SQLite database** at `~/.seekclaw/seekclaw.db` stores conversation history and the Desktop project list.
 - **Mid-turn Steering**: Allows queuing supplemental instructions mid-stream without interrupting the current tool turn.
 - **Multi-Provider Failover**: Automatic retries, circuit breaking, and candidate chains across OpenAI- and Anthropic-compatible providers.
 

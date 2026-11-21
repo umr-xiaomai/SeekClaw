@@ -119,10 +119,13 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
         string startDirectory,
         IConfigStore configStore,
         string? databaseFile = null,
-        IHealthChecker? healthChecker = null)
+        IHealthChecker? healthChecker = null,
+        IWorkspaceManager? workspaceManager = null)
         => CreateCore(startDirectory, services =>
         {
             services.AddSingleton(configStore);
+            if (workspaceManager is not null)
+                services.AddSingleton(workspaceManager);
             if (databaseFile is not null)
                 services.AddSingleton(new SeekClawDatabase(databaseFile));
             if (healthChecker is not null)
@@ -291,6 +294,9 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                      new SubAgentControlTool(prompts, SubAgentRunner, SubAgentTasks),
                   })
             Tools.Register(tool);
+
+        if (BashTool.CreatePowerShellTool(prompts) is { } powerShellTool)
+            Tools.Register(powerShellTool);
 
         Extensions.InitializeAll(this);
     }

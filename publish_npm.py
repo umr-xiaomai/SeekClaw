@@ -361,6 +361,11 @@ def stage_platform_package(rid: str, version: str) -> Path:
     shutil.copy2(executable, destination)
     if info["os"] != "win32":
         os.chmod(destination, 0o755)
+    if rid == "win-x64":
+        powershell = BUILD_ROOT / rid / "powershell" / rid
+        if not (powershell / "pwsh.exe").is_file():
+            raise BuildError(f"Published PowerShell runtime is missing: {powershell}")
+        shutil.copytree(powershell, bin_dir / "powershell" / rid)
 
     prompts_in_publish = BUILD_ROOT / rid / "prompts"
     prompts_source = prompts_in_publish if prompts_in_publish.is_dir() else CLI_PROMPTS

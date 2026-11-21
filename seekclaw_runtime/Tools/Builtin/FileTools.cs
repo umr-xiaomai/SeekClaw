@@ -18,7 +18,8 @@ public abstract class BuiltinTool(IPromptProvider prompts) : ITool
     public virtual string StatusLabel => "Working";
 
     /// <summary>Tool descriptions live in prompts/tool/&lt;name&gt;.txt (hot-reloadable).</summary>
-    public string Description => prompts.TryGet($"tool/{Name}") ?? $"The {Name} tool.";
+    protected virtual string DescriptionKey => $"tool/{Name}";
+    public string Description => prompts.TryGet(DescriptionKey) ?? $"The {Name} tool.";
 
     /// <summary>How long a mutating tool waits for the central file write lock before failing.</summary>
     protected static readonly TimeSpan FileWriteLockTimeout = TimeSpan.FromSeconds(30);

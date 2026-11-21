@@ -35,6 +35,9 @@ internal sealed class CommandProcess(Process process, Stream input, Stream outpu
             WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
         };
+        if (VendoredPowerShell.IsRequired)
+            foreach (var (name, value) in VendoredPowerShell.ChildEnvironment)
+                start.Environment[name] = value;
         foreach (var arg in args) start.ArgumentList.Add(arg);
         var process = Process.Start(start) ?? throw new IOException("Could not start command.");
         return new CommandProcess(process, process.StandardInput.BaseStream, process.StandardOutput.BaseStream,

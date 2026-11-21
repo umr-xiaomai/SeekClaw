@@ -1569,6 +1569,9 @@ def main() -> int:
             )
 
             if cur_platform == PLATFORM_WINDOWS:
+                bundled_shell = unpacked_output / "resources" / "runtime" / "powershell" / "win-x64" / "pwsh.exe"
+                if not bundled_shell.is_file():
+                    raise BuildError(f"Bundled PowerShell executable is missing: {bundled_shell}")
                 portable_output = PUBLISH_DIR / "SeekClaw-win-x64"
                 portable_zip_output = PUBLISH_DIR / f"SeekClaw-portable-{release_version}-win-x64.zip"
                 installer_output = PUBLISH_DIR / f"SeekClaw-Setup-{release_version}-win-x64.exe"

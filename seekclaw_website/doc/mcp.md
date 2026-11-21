@@ -22,7 +22,7 @@ Desktop 查询现有配置时只返回环境变量键名，不返回敏感值。
 
 ## JSON 配置
 
-全局 Server 可放在 `~/.seekclaw/config.json` 的 `mcp.servers` 中。工作区可使用 `.seekclaw/mcp/servers.json` 或 `.seekclaw/config.json` 的 `mcp` 字段；工作区同名配置覆盖全局项。
+全局 Server 可放在 `~/.seekclaw/config.json` 的 `mcp.servers` 中。工作区可使用 `~/.seekclaw/workspaces/<workspace-key>/` 下的 `mcp/servers.json`，或同一目录下 `config.json` 的 `mcp` 字段。工作区同名配置覆盖全局项。
 
 ```json
 {

@@ -24,6 +24,8 @@ public static class ModelCapabilityResolver
         [ReasoningLevel.Medium] = "high",
         [ReasoningLevel.High] = "high",
         [ReasoningLevel.Max] = "high",
+        [ReasoningLevel.XHigh] = "high",
+        [ReasoningLevel.Ultra] = "high",
     };
 
     /// <summary>Model families whose reasoning effort values are known to be safe on the wire.</summary>
@@ -107,7 +109,8 @@ public static class ModelCapabilityResolver
     /// inference must not overwrite it.
     /// </summary>
     public static bool IsConfigured(ModelCapabilities capabilities) =>
-        capabilities.Thinking
+        capabilities.SupportedReasoningLevels is not null
+        || capabilities.Thinking
         || capabilities.Reasoning
         || capabilities.MaxReasoningLevel != ReasoningLevel.Max;
 

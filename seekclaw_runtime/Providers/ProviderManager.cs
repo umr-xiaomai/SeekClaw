@@ -513,13 +513,18 @@ public sealed class ProviderManager(
         if (!MentionsReasoningParameter(failure.Message)) return false;
 
         var capabilities = model.Model.Capabilities;
-        if (!capabilities.Thinking && !capabilities.Reasoning
-            && capabilities.MaxReasoningLevel == ReasoningLevel.None)
+        if (capabilities.SupportedReasoningLevels is { } supported
+            ? !supported.Any(level => level != ReasoningLevel.None)
+            : !capabilities.Thinking && !capabilities.Reasoning
+                && capabilities.MaxReasoningLevel == ReasoningLevel.None
+                && model.Provider.ReasoningEffortMap is not { Count: > 0 })
             return false;
 
         capabilities.Thinking = false;
         capabilities.Reasoning = false;
         capabilities.MaxReasoningLevel = ReasoningLevel.None;
+        capabilities.SupportedReasoningLevels = [];
+        capabilities.DefaultReasoningLevel = null;
         try { configStore.Save(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         return true;

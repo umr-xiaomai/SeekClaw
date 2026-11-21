@@ -92,7 +92,7 @@ seekclaw doctor
 - **结构化任务规划卡片（Task Planner）**：支持多步骤子任务实时清单跟踪（`update_plan`）；
 - **计划任务与后台自动化**：内置 Cron 定时任务调度器与桌面端可视化管理对话框；
 - **官方技能市场中心**：支持通过桌面端弹窗或 CLI `seekclaw skill install` 一键浏览与下载安装官方技能；
-- **SQLite 集中持久化**：会话与项目列表统一迁移至全局 SQLite 数据库 `seekclaw.db`，支持旧版本 JSONL 自动导入与数据自愈；
+- 会话与 Desktop 项目列表保存在**全局 SQLite 数据库** `~/.seekclaw/seekclaw.db`；
 - **实时插话（Mid-turn Steering）**：输出中途可平滑追加附加指导指令，不打断模型当前执行；
 - **多模型与故障转移**：支持 OpenAI / Anthropic 兼容协议、模型候选链自动重试与熔断降级。
 

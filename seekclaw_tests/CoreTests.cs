@@ -477,10 +477,14 @@ public sealed class CoreTests : IDisposable
     }
 
     [Fact]
-    public void Bootstrap_CreatesSpecDirectories_AndGitignoreEntries()
+    public void Bootstrap_CreatesCentralDirectoriesWithoutChangingProject()
     {
         var workspace = NewWorkspace("boot");
-        var created = new WorkspaceManager().Bootstrap(workspace);
+        var manager = new WorkspaceManager(Path.Combine(_dir, "state"));
+        workspace = manager.Detect(workspace.Root);
+        var gitignore = Path.Combine(workspace.Root, ".gitignore");
+        File.WriteAllText(gitignore, "bin/\n");
+        var created = manager.Bootstrap(workspace);
 
         Assert.True(Directory.Exists(workspace.CacheDir));
         Assert.False(Directory.Exists(workspace.SessionsDir));
@@ -488,21 +492,18 @@ public sealed class CoreTests : IDisposable
         Assert.True(Directory.Exists(workspace.SkillsDir));
         Assert.True(Directory.Exists(workspace.McpDir));
         Assert.True(Directory.Exists(workspace.DocsDir));
-        Assert.NotEmpty(created);
-
-        var gitignore = File.ReadAllLines(Path.Combine(workspace.Root, ".gitignore"));
-        Assert.Contains(".cache/", gitignore);
-        Assert.Contains(".session/", gitignore);
-
-        // Idempotent: second run creates nothing new.
-        Assert.Empty(new WorkspaceManager().Bootstrap(new WorkspaceManager().Detect(workspace.Root)));
+        Assert.Contains(workspace.SeekClawDir, created);
+        Assert.Equal("bin/\n", File.ReadAllText(gitignore));
+        Assert.Equal(gitignore, Assert.Single(Directory.EnumerateFileSystemEntries(workspace.Root)));
+        Assert.Empty(manager.Bootstrap(manager.Detect(workspace.Root)));
     }
 
     private WorkspaceInfo NewWorkspace(string name = "ws")
     {
         var root = Path.Combine(_dir, name);
         Directory.CreateDirectory(root);
-        return new WorkspaceInfo { Root = root, ProjectKinds = [] };
+        return new WorkspaceInfo { Root = root, ProjectKinds = [],
+            ProjectStateDirectory = WorkspaceManager.GetStateDirectory(Path.Combine(_dir, "state"), root) };
     }
 
     private SessionStore NewSessionStore() =>

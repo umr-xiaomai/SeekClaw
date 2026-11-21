@@ -318,11 +318,10 @@ const liveStatusLabel = computed(() => {
               <span class="file-chip-name">{{ file.name }}</span>
             </button>
           </div>
-          <div v-if="message.images?.length" class="user-image-grid" :class="{ single: message.images.length === 1 }">
+          <div v-if="message.images?.length" class="user-image-grid">
             <button v-for="image in message.images" :key="image.id" type="button" class="user-image-button"
               :title="`预览 ${image.name}`" @click="previewImage(image.id, image.name)">
               <img :src="imageUrl(image.id)" :alt="image.name">
-              <span>{{ image.name }}</span>
             </button>
           </div>
           <div v-if="message.content" class="task-prompt-text">{{ message.content }}</div>
@@ -338,11 +337,10 @@ const liveStatusLabel = computed(() => {
             <span class="file-chip-name">{{ file.name }}</span>
           </button>
         </div>
-        <div v-if="message.images?.length" class="user-image-grid" :class="{ single: message.images.length === 1 }">
+        <div v-if="message.images?.length" class="user-image-grid">
           <button v-for="image in message.images" :key="image.id" type="button" class="user-image-button"
             :title="`预览 ${image.name}`" @click="previewImage(image.id, image.name)">
             <img :src="imageUrl(image.id)" :alt="image.name">
-            <span>{{ image.name }}</span>
           </button>
         </div>
         <div v-if="message.content" class="user-bubble">{{ message.content }}</div>

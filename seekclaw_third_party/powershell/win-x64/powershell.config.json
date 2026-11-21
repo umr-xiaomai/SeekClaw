@@ -1,0 +1,8 @@
+{
+  "Microsoft.PowerShell:ExecutionPolicy": "RemoteSigned",
+  "WindowsPowerShellCompatibilityModuleDenyList": [
+    "PSScheduledJob",
+    "BestPractices",
+    "UpdateServices"
+  ]
+}

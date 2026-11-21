@@ -48,7 +48,7 @@ public sealed record SkillInfo(SkillManifest Manifest, string Directory, bool En
 
 public interface ISkillManager
 {
-    /// <summary>Rescans ~/.seekclaw/skills and &lt;workspace&gt;/skills. Directory changes apply without restart.</summary>
+    /// <summary>Rescans global and workspace skills. Directory changes apply without restart.</summary>
     IReadOnlyList<SkillInfo> Discover(WorkspaceInfo workspace);
 
     void SetEnabled(string skillName, bool enabled);
@@ -153,7 +153,7 @@ public sealed class SkillManager : ISkillManager
             {
                 Directory.CreateDirectory(_workspace.SeekClawDir);
                 File.WriteAllText(
-                    Path.Combine(_workspace.SeekClawDir, "config.json"),
+                    _workspace.ConfigFile,
                     JsonSerializer.Serialize(_workspace.Config, SeekClawJsonContext.Default.WorkspaceConfig));
             }
         }
@@ -232,7 +232,7 @@ public sealed class SkillManager : ISkillManager
     private void ImportZip(string zipFile, bool overwrite = false)
     {
         var extractionRoot = Path.Combine(
-            Path.GetTempPath(), "seekclaw-skill-import-" + Guid.NewGuid().ToString("N"));
+            SeekClawPaths.GetTemporaryDirectory(), "seekclaw-skill-import-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(extractionRoot);
 
         try

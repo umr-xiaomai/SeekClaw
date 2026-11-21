@@ -1,6 +1,8 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Data;
 
 namespace SeekClaw.Runtime.Workspaces;
 
@@ -13,32 +15,23 @@ public sealed class WorkspaceInfo
     public bool IsGlobal { get; init; }
     /// <summary>File execution root; a global workspace's Root stores settings, not user artifacts.</summary>
     public string WorkingDirectory => IsGlobal ? Directory.GetCurrentDirectory() : Root;
-    /// <summary>Fallback for local settings omitted from a Git worktree checkout.</summary>
     public string? ConfigurationRoot { get; init; }
+    internal string? ProjectStateDirectory { get; init; }
 
     public string Name => IsGlobal ? "Global" : Path.GetFileName(Root.TrimEnd(Path.DirectorySeparatorChar, '/'));
 
-    public string SeekClawDir => IsGlobal ? Root : Path.Combine(Root, ".seekclaw");
-    public string PromptsDir => ConfigurationDirectory("prompts", conventional: false);
-    public string MemoryDir => ConfigurationDirectory("memory", conventional: false);
+    public string SeekClawDir => IsGlobal ? Root
+        : ProjectStateDirectory ?? WorkspaceManager.GetStateDirectory(SeekClawPaths.Home, ConfigurationRoot ?? Root);
+    public string ConfigFile => Path.Combine(SeekClawDir, "config.json");
+    public string PromptsDir => Path.Combine(SeekClawDir, "prompts");
+    public string MemoryDir => Path.Combine(SeekClawDir, "memory");
     public string MemoryFile => Path.Combine(MemoryDir, "MEMORY.md");
     public string CacheDir => Path.Combine(SeekClawDir, "cache");
-    public string SessionsDir => IsGlobal
-        ? Path.Combine(Root, "sessions")
-        : Directory.Exists(Path.Combine(Root, ".session")) ? Path.Combine(Root, ".session") : Path.Combine(SeekClawDir, "sessions");
+    public string SessionsDir => Path.Combine(SeekClawDir, "sessions");
     public string LogsDir => Path.Combine(SeekClawDir, "logs");
-    public string SkillsDir => ConfigurationDirectory("skills", conventional: true);
-    public string McpDir => ConfigurationDirectory("mcp", conventional: true);
-    public string DocsDir => Directory.Exists(Path.Combine(Root, "docs")) ? Path.Combine(Root, "docs") : Path.Combine(SeekClawDir, "docs");
-
-    private string ConfigurationDirectory(string name, bool conventional)
-    {
-        if (conventional && Directory.Exists(Path.Combine(Root, name))) return Path.Combine(Root, name);
-        var local = Path.Combine(SeekClawDir, name);
-        if (Directory.Exists(local) || ConfigurationRoot is null) return local;
-        if (conventional && Directory.Exists(Path.Combine(ConfigurationRoot, name))) return Path.Combine(ConfigurationRoot, name);
-        return Path.Combine(ConfigurationRoot, ".seekclaw", name);
-    }
+    public string SkillsDir => Path.Combine(SeekClawDir, "skills");
+    public string McpDir => Path.Combine(SeekClawDir, "mcp");
+    public string DocsDir => Path.Combine(SeekClawDir, "docs");
 }
 
 public interface IWorkspaceManager
@@ -49,7 +42,7 @@ public interface IWorkspaceManager
     /// <summary>Creates the directory-free context used by daemon clients for global tasks.</summary>
     WorkspaceInfo CreateGlobal(string? stateRoot = null);
 
-    /// <summary>Creates the standard workspace directories and .gitignore entries (seekclaw init).</summary>
+    /// <summary>Creates the workspace state directories in the user profile (seekclaw init).</summary>
     IReadOnlyList<string> Bootstrap(WorkspaceInfo workspace);
 
     string? LoadMemory(WorkspaceInfo workspace);
@@ -61,7 +54,7 @@ public interface IWorkspaceManager
 public sealed class WorkspaceManager : IWorkspaceManager
 {
     private static readonly string[] RootMarkers =
-        [".git", ".seekclaw", "package.json", "pyproject.toml", "Cargo.toml", "go.mod"];
+        [".git", "package.json", "pyproject.toml", "Cargo.toml", "go.mod"];
 
     private readonly string _seekClawHome;
 
@@ -76,17 +69,19 @@ public sealed class WorkspaceManager : IWorkspaceManager
     {
         var start = Path.GetFullPath(startDirectory ?? Directory.GetCurrentDirectory());
         var root = FindRoot(start) ?? start;
+        var stateDirectory = GetStateDirectory(_seekClawHome, root);
         return new WorkspaceInfo
         {
             Root = root,
             ProjectKinds = DetectKinds(root),
-            Config = LoadWorkspaceConfig(root),
+            ProjectStateDirectory = stateDirectory,
+            Config = LoadWorkspaceConfig(Path.Combine(stateDirectory, "config.json")),
         };
     }
 
     public WorkspaceInfo CreateGlobal(string? stateRoot = null) => new()
     {
-        Root = Path.GetFullPath(stateRoot ?? SeekClawPaths.Home),
+        Root = Path.GetFullPath(stateRoot ?? _seekClawHome),
         ProjectKinds = [],
         Config = null,
         IsGlobal = true,
@@ -96,11 +91,8 @@ public sealed class WorkspaceManager : IWorkspaceManager
     {
         for (var dir = new DirectoryInfo(start); dir is not null; dir = dir.Parent)
         {
-            var matched = RootMarkers.Where(marker =>
-                    Directory.Exists(Path.Combine(dir.FullName, marker)) ||
-                    File.Exists(Path.Combine(dir.FullName, marker)))
-                .ToList();
-            if (matched.Count > 0 && !IsOnlySeekClawHomeMarker(dir, matched))
+            if (RootMarkers.Any(marker => Directory.Exists(Path.Combine(dir.FullName, marker))
+                    || File.Exists(Path.Combine(dir.FullName, marker))))
                 return dir.FullName;
 
             if (HasFiles(dir, "*.sln") || HasFiles(dir, "*.slnx"))
@@ -109,19 +101,10 @@ public sealed class WorkspaceManager : IWorkspaceManager
         return null;
     }
 
-    internal bool IsOnlySeekClawHomeMarker(DirectoryInfo dir, IReadOnlyList<string> matched)
+    internal static string GetStateDirectory(string stateRoot, string workspaceRoot)
     {
-        // ~/.seekclaw is the user's own global SeekClaw state directory, not a project
-        // marker. Without this exclusion every plain folder under the user profile would
-        // resolve to the profile as its workspace root, merging unrelated projects into a
-        // single shared session scope (and making sessions appear under the wrong project).
-        if (matched.Count != 1 || !matched[0].Equals(".seekclaw", StringComparison.Ordinal))
-            return false;
-
-        var markerPath = Path.GetFullPath(Path.Combine(dir.FullName, ".seekclaw"));
-        return string.Equals(
-            markerPath, _seekClawHome,
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        var key = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(SeekClawDatabase.PathKey(workspaceRoot))));
+        return Path.Combine(stateRoot, "workspaces", key);
     }
 
     private static List<string> DetectKinds(string root)
@@ -181,9 +164,8 @@ public sealed class WorkspaceManager : IWorkspaceManager
         catch (IOException) { return false; }
     }
 
-    private static WorkspaceConfig? LoadWorkspaceConfig(string root)
+    private static WorkspaceConfig? LoadWorkspaceConfig(string file)
     {
-        var file = Path.Combine(root, ".seekclaw", "config.json");
         if (!File.Exists(file)) return null;
         try
         {
@@ -208,21 +190,8 @@ public sealed class WorkspaceManager : IWorkspaceManager
             if (!Directory.Exists(dir))
             {
                 Directory.CreateDirectory(dir);
-                created.Add(Path.GetRelativePath(workspace.Root, dir));
+                created.Add(dir);
             }
-        }
-
-        var gitignore = Path.Combine(workspace.Root, ".gitignore");
-        var required = new[] { ".seekclaw/", ".session/", ".cache/", "logs/" };
-        var existing = File.Exists(gitignore) ? File.ReadAllLines(gitignore).ToList() : [];
-        var missing = required.Where(entry => !existing.Any(line => line.Trim() == entry || line.Trim() == entry.TrimEnd('/'))).ToList();
-        if (missing.Count > 0)
-        {
-            if (existing.Count > 0 && existing[^1].Length > 0) existing.Add("");
-            existing.Add("# SeekClaw");
-            existing.AddRange(missing);
-            File.WriteAllLines(gitignore, existing);
-            created.Add(".gitignore (updated)");
         }
 
         return created;

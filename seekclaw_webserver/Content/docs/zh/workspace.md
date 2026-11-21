@@ -1,10 +1,10 @@
 # 工作区、任务与 Memory
 
-工作区决定项目任务可访问的目录、项目类型、会话位置和项目级配置。Desktop 还提供不绑定目录的任务，两种范围使用独立的 Session 存储。
+工作区决定项目任务可访问的目录、项目类型、会话范围和项目级配置。Desktop 也支持不绑定项目目录的任务。
 
 ## 项目工作区识别
 
-Runtime 从当前目录向上查找 `.git`、`.seekclaw`、`package.json`、`pyproject.toml`、`Cargo.toml`、`go.mod`、`*.sln` 或 `*.slnx` 等根标记，并检测以下项目类型：
+Runtime 从当前目录向上查找 `.git`、`package.json`、`pyproject.toml`、`Cargo.toml`、`go.mod`、`*.sln` 或 `*.slnx` 等根标记，并检测以下项目类型：
 
 | 类型 | 典型特征 |
 | --- | --- |
@@ -18,36 +18,36 @@ Runtime 从当前目录向上查找 `.git`、`.seekclaw`、`package.json`、`pyp
 
 Desktop 在任务顶栏显示完整工作区目录，并把打开位置、终端、Git 变更与 Git 历史限制在该目录。
 
-## `.seekclaw` 目录
+## 工作区状态目录
 
-新工作区执行 `seekclaw init` 后，默认结构为：
+SeekClaw 将应用状态存放在 `~/.seekclaw`（Windows 上为 `%USERPROFILE%\.seekclaw`）。每个工作区在 `workspaces/` 下有独立目录，`<workspace-key>` 是工作区规范化完整路径的稳定 SHA-256 哈希。工作区移动后，如果规范化路径发生变化，就会得到新的键。
+
+在项目中运行 `seekclaw init` 会初始化并打印其状态目录路径，不会改动项目目录或 `.gitignore`。项目专用配置和文件存放在这里：
 
 ```text
-<workspace>/
-└── .seekclaw/
-    ├── config.json          # 可选的工作区配置覆盖
-    ├── prompts/             # 项目专用 Prompt 模板
-    ├── memory/
-    │   └── MEMORY.md        # 项目长期架构与开发约定
-    ├── cache/               # 工作区临时缓存
-    ├── logs/                # 诊断与运行日志
-    ├── skills/              # 本地专属技能定义
-    ├── mcp/
-    │   └── servers.json     # 项目级 MCP 服务器配置
-    └── docs/
+~/.seekclaw/workspaces/<workspace-key>/
+├── config.json          # 可选的工作区配置覆盖
+├── prompts/             # 项目专用 Prompt 模板
+├── memory/
+│   └── MEMORY.md        # 项目长期开发约定
+├── skills/              # SeekClaw 工作区技能
+└── mcp/
+    └── servers.json     # 项目级 MCP 服务器配置
 ```
 
-会话数据和任务历史统一持久化在全局 SQLite 数据库 `~/.seekclaw/seekclaw.db` 中。首次升级访问工作区时，旧的 `.seekclaw/sessions/*.jsonl` 会自动导入数据库，原文件保留为安全备份。初始化也会给 `.gitignore` 自动补充 SeekClaw 忽略项。
+SeekClaw 会忽略项目内旧的 `.seekclaw/` 目录，不会迁移或删除其中的数据。仓库里的 `AGENTS.md` 和 `.gitignore` 仍分别用于提供 Agent 指令和文件忽略规则。
+
+会话和 Desktop 项目列表保存在全局 SQLite 数据库 `~/.seekclaw/seekclaw.db`。Desktop 专用的应用程序配置目录为 `~/.seekclaw/desktop/`。
 
 ## 不绑定项目的任务
 
-不绑定项目的任务使用 `~/.seekclaw` 下的 Session 空间，Session 头不会写入项目路径。它没有固定项目目录，但文件与命令工具仍可正常使用；Runtime 会跳过工作区 Prompt 与自动构建验证。
+不绑定项目的任务使用同一个 SQLite 数据库中的独立会话范围。会话头不记录项目路径。它没有固定项目目录，但文件与命令工具仍可正常使用；Runtime 会跳过工作区 Prompt 与自动构建验证。
 
 一个项目或未绑定项目的范围都可以没有任务。Desktop 只有在首条消息发送时才创建 Session；侧栏的“任务”区域显示不绑定项目的任务，项目任务仍列在对应项目下。
 
 ## Memory
 
-项目 Memory 位于 `.seekclaw/memory/MEMORY.md`。Agent 组装提示词时会读取该文件，可用于记录稳定的架构、命名、测试和发布约定：
+项目 Memory 位于 `~/.seekclaw/workspaces/<workspace-key>/memory/MEMORY.md`。Agent 组装提示词时会读取该文件，可用于记录稳定的架构、命名、测试和发布约定：
 
 ```markdown
 # 项目约定

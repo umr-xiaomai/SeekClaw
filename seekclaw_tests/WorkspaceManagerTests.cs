@@ -57,29 +57,25 @@ public sealed class WorkspaceManagerTests : IDisposable
     }
 
     [Fact]
-    public void Detect_ProjectLevelSeekClawDir_StillResolvesToThatProject()
+    public void Detect_IgnoresProjectLevelSeekClawDirectoryAndReadsOnlyCentralConfig()
     {
-        var project = CreateDir(Path.Combine(_dir, "projB"));
-        Directory.CreateDirectory(Path.Combine(project, ".seekclaw"));
+        var project = CreateDir(Path.Combine(_dir, "project"));
+        var nested = CreateDir(Path.Combine(project, "src"));
+        var legacy = CreateDir(Path.Combine(project, ".seekclaw"));
+        var legacyConfig = Path.Combine(legacy, "config.json");
+        File.WriteAllText(legacyConfig, """{"mode":"edit"}""");
+        var state = Path.Combine(_dir, "profile", ".seekclaw");
+        var manager = new WorkspaceManager(state);
 
-        Assert.Equal(Path.GetFullPath(project), new WorkspaceManager().Detect(project).Root);
-    }
-
-    [Fact]
-    public void IsOnlySeekClawHomeMarker_MatchesOnlyTheGlobalStateDirectory()
-    {
-        var home = Path.Combine(_dir, "profile");
-        Directory.CreateDirectory(Path.Combine(home, ".seekclaw"));
-        var dir = new DirectoryInfo(home);
-        var stateDir = Path.Combine(home, ".seekclaw");
-
-        // The profile's ~/.seekclaw is excluded only when it is exactly the global state dir.
-        Assert.True(new WorkspaceManager(stateDir).IsOnlySeekClawHomeMarker(dir, [".seekclaw"]));
-        Assert.False(new WorkspaceManager(Path.Combine(_dir, "other-home")).IsOnlySeekClawHomeMarker(dir, [".seekclaw"]));
-
-        // Real project markers (git, or another marker beside .seekclaw) still resolve.
-        Assert.False(new WorkspaceManager(stateDir).IsOnlySeekClawHomeMarker(dir, [".seekclaw", ".git"]));
-        Assert.False(new WorkspaceManager(stateDir).IsOnlySeekClawHomeMarker(dir, [".git"]));
+        Assert.Equal(nested, manager.Detect(nested).Root);
+        var info = manager.Detect(project);
+        Assert.Null(info.Config);
+        Assert.StartsWith(Path.Combine(state, "workspaces") + Path.DirectorySeparatorChar, info.SeekClawDir);
+        Assert.False(Directory.Exists(info.SeekClawDir));
+        Directory.CreateDirectory(info.SeekClawDir);
+        File.WriteAllText(info.ConfigFile, """{"mode":"readonly"}""");
+        Assert.Equal("readonly", manager.Detect(project).Config?.Mode);
+        Assert.Equal("""{"mode":"edit"}""", File.ReadAllText(legacyConfig));
     }
 
     [Fact]

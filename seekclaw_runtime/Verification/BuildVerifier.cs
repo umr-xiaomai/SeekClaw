@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using CliWrap;
 using CliWrap.Buffered;
+using SeekClaw.Runtime.Execution;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Verification;
@@ -61,15 +62,20 @@ public sealed class BuildVerifier : IVerifier
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromMinutes(10));
 
-        var (shell, args) = ResolveShell(command);
-
         try
         {
-            var result = await Cli.Wrap(shell)
+            var (shell, args) = ResolveShell(command);
+            var launch = Cli.Wrap(shell)
                 .WithArguments(args)
                 .WithWorkingDirectory(workspace.Root)
-                .WithValidation(CommandResultValidation.None)
-                .ExecuteBufferedAsync(cts.Token);
+                .WithValidation(CommandResultValidation.None);
+            if (VendoredPowerShell.IsRequired)
+                launch = launch.WithEnvironmentVariables(env =>
+                {
+                    foreach (var (name, value) in VendoredPowerShell.ChildEnvironment)
+                        env.Set(name, value);
+                });
+            var result = await launch.ExecuteBufferedAsync(cts.Token);
 
             var output = new StringBuilder(result.StandardOutput);
             if (result.StandardError.Length > 0) output.AppendLine().Append(result.StandardError);
@@ -82,12 +88,18 @@ public sealed class BuildVerifier : IVerifier
         {
             return new VerifyResult(false, command, "Verification timed out after 10 minutes.");
         }
+        catch (FileNotFoundException ex) when (VendoredPowerShell.IsRequired)
+        {
+            return new VerifyResult(false, command, ex.Message);
+        }
     }
 
     private static (string Shell, string[] Args) ResolveShell(string command)
     {
         if (!OperatingSystem.IsWindows())
             return ("/bin/bash", ["-c", command]);
+        if (VendoredPowerShell.IsRequired)
+            return VendoredPowerShell.ResolveCommand(command);
 
         var pwsh = FindOnPath("pwsh.exe") ?? FindOnPath("powershell.exe");
         if (pwsh is not null) return (pwsh, ["-NoProfile", "-NonInteractive", "-Command", command]);

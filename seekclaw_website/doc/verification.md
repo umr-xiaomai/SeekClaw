@@ -44,7 +44,7 @@ Python 与 Unity 当前没有内置默认验证命令，可通过工作区覆盖
 }
 ```
 
-工作区 `.seekclaw/config.json`：
+工作区 `~/.seekclaw/workspaces/<workspace-key>/config.json`：
 
 ```json
 {

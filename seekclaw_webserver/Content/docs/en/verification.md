@@ -44,7 +44,7 @@ Global `~/.seekclaw/config.json`:
 }
 ```
 
-Workspace `.seekclaw/config.json`:
+Workspace `~/.seekclaw/workspaces/<workspace-key>/config.json`:
 
 ```json
 {

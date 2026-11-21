@@ -5,8 +5,10 @@ A Skill is a directory-based prompt extension. The prompt from every enabled Ski
 ## Locations and precedence
 
 - Global: `~/.seekclaw/skills/<skill-name>/`
-- Workspace: `<workspace>/.seekclaw/skills/<skill-name>/`
-- Legacy compatibility: an existing root-level `skills/` directory remains in use.
+- Workspace: `~/.seekclaw/workspaces/<workspace-key>/skills/<skill-name>/`. Run `seekclaw init` from the project to find its state directory.
+- External inputs: SeekClaw also discovers skills supplied in the project's `.agents/skills/` and `.claude/skills/` directories.
+
+SeekClaw no longer loads skills from the project's legacy `.seekclaw/skills/` or root-level `skills/` directories.
 
 A workspace Skill overrides a global Skill with the same name. Global tasks have no project Skill root but can still use global Skills.
 

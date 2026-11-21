@@ -1352,29 +1352,28 @@ body.is-resizing-sidebar .app-body {
 }
 
 .user-image-grid {
-  display: grid;
-  width: min(100%, 390px);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.user-image-grid.single {
-  width: min(100%, 280px);
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+  gap: 8px;
 }
 
 .user-image-button {
-  position: relative;
+  flex: none;
+  width: min(72px, 100%);
   min-width: 0;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 1;
   padding: 0;
   overflow: hidden;
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: 12px;
+  cursor: pointer;
 }
 
 .user-image-button img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -1384,21 +1383,6 @@ body.is-resizing-sidebar .app-body {
 .user-image-button:hover img,
 .user-image-button:focus-visible img {
   transform: scale(1.025);
-}
-
-.user-image-button span {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  padding: 15px 8px 6px;
-  overflow: hidden;
-  color: #fff;
-  font-size: 10px;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: linear-gradient(transparent, rgb(0 0 0 / 62%));
 }
 
 .assistant-message {
@@ -4581,36 +4565,50 @@ body.is-resizing-git-panel .subagent-conversation-panel * {
   clip: rect(0, 0, 0, 0);
 }
 
-.toggle-switch {
-  display: flex;
-  width: 38px;
-  height: 22px;
+.toggle-switch,
+.switch-control {
+  --switch-width: 38px;
+  --switch-height: 22px;
+  --switch-inset: 2px;
+  --switch-thumb-size: calc(var(--switch-height) - 2 * var(--switch-inset));
+  position: relative;
+  display: block;
+  width: var(--switch-width);
+  height: var(--switch-height);
   flex: 0 0 auto;
-  align-items: center;
-  padding: 2px;
-  background: var(--border-strong);
+  padding: 0;
+  border: 0;
   border-radius: 999px;
+  background: var(--switch-background, var(--border-strong));
   transition: background-color 160ms ease;
 }
 
-.toggle-switch>span {
-  width: 18px;
-  height: 18px;
+.toggle-switch > span,
+.switch-control > span {
+  position: absolute;
+  inset-block: 0;
+  left: var(--switch-inset);
+  width: var(--switch-thumb-size);
+  height: var(--switch-thumb-size);
+  margin-block: auto;
   background: white;
   border-radius: 50%;
   box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
   transition: transform 180ms cubic-bezier(.2, .8, .2, 1);
 }
 
-.provider-enabled-row input:checked+.toggle-switch {
+input:checked + .toggle-switch,
+.switch-control.active {
   background: var(--accent);
 }
 
-.provider-enabled-row input:checked+.toggle-switch>span {
-  transform: translateX(16px);
+input:checked + .toggle-switch > span,
+.switch-control.active > span {
+  transform: translateX(calc(var(--switch-width) - var(--switch-height)));
 }
 
-.provider-enabled-row input:focus-visible+.toggle-switch {
+input:focus-visible + .toggle-switch,
+.switch-control:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
   outline-offset: 2px;
 }
@@ -4821,19 +4819,6 @@ body.is-resizing-git-panel .subagent-conversation-panel * {
 .model-enabled-row small {
   color: var(--text-muted);
   font-size: 11px;
-}
-
-.model-enabled-row input:checked+.toggle-switch {
-  background: var(--accent);
-}
-
-.model-enabled-row input:checked+.toggle-switch>span {
-  transform: translateX(16px);
-}
-
-.model-enabled-row input:focus-visible+.toggle-switch {
-  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
-  outline-offset: 2px;
 }
 
 .model-editor-error {
@@ -5076,40 +5061,17 @@ body.is-resizing-git-panel .subagent-conversation-panel * {
 }
 
 .switch-control {
-  position: relative;
-  width: 36px;
-  height: 20px;
-  flex: 0 0 auto;
-  padding: 0;
-  background: var(--border-strong);
-  border-radius: 10px;
-  transition: background 140ms ease;
-}
-
-.switch-control span {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 14px;
-  height: 14px;
-  background: white;
-  border-radius: 50%;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
-  transition: transform 140ms ease;
-}
-
-.switch-control.active {
-  background: var(--accent);
-}
-
-.switch-control.active span {
-  transform: translateX(16px);
+  --switch-width: 36px;
+  --switch-height: 20px;
+  --switch-inset: 3px;
+  cursor: pointer;
 }
 
 /* The switch doubles as an inline progress indicator while a background
    reconnect for that server is still running. */
 .switch-control.pending {
   background: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  cursor: wait;
 }
 
 .switch-control>svg {

@@ -526,16 +526,8 @@ internal sealed partial class DaemonAdminApi(
                 ["detectedContextWindow"] = model.Model.DetectedContextWindow,
                 ["detectedMaxOutput"] = model.Model.DetectedMaxOutput,
                 ["tags"] = Strings(model.Model.Tags ?? []),
-                ["capabilities"] = new JsonObject
-                {
-                    ["streaming"] = model.Capabilities.Streaming,
-                    ["tools"] = model.Capabilities.ToolCalling,
-                    ["thinking"] = model.Capabilities.Thinking,
-                    ["vision"] = model.Capabilities.Vision,
-                    ["reasoning"] = model.Capabilities.Reasoning,
-                    ["maxReasoningLevel"] = model.Capabilities.MaxReasoningLevel.ToWireValue(),
-                    ["mcp"] = model.Capabilities.Mcp,
-                },
+                ["requestDefaultReasoningLevel"] = runtime.ConfigStore.Config.Agent.ReasoningLevel.ToWireValue(),
+                ["capabilities"] = ModelCapabilitiesJson(model.Capabilities, includeVision: true),
             });
         }
         return models.ToJsonString();
@@ -601,9 +593,11 @@ internal sealed partial class DaemonAdminApi(
         var modelId = RequiredString(parameters, "id");
         var provider = runtime.ConfigStore.Config.FindProvider(providerId)
                        ?? throw new DaemonRequestException($"Provider not found: {providerId}");
-        var model = provider.Models.FirstOrDefault(item =>
-            item.Id.Equals(modelId, StringComparison.OrdinalIgnoreCase))
-                    ?? throw new DaemonRequestException($"Model not found: {providerId}/{modelId}");
+        var index = provider.Models.FindIndex(item => item.Id.Equals(modelId, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) throw new DaemonRequestException($"Model not found: {providerId}/{modelId}");
+        var model = JsonSerializer.Deserialize(
+            JsonSerializer.Serialize(provider.Models[index], SeekClawJsonContext.Default.ModelConfig),
+            SeekClawJsonContext.Default.ModelConfig)!;
 
         if (parameters.ContainsKey("alias"))
             model.Alias = parameters["alias"]?.GetValue<string>()?.Trim() is { Length: > 0 } alias ? alias : null;
@@ -622,16 +616,12 @@ internal sealed partial class DaemonAdminApi(
         model.ContextWindowAuto = parameters["contextWindowAuto"]?.GetValue<bool>() ?? model.ContextWindowAuto;
         model.MaxOutputAuto = parameters["maxOutputAuto"]?.GetValue<bool>() ?? model.MaxOutputAuto;
         ApplyCapabilities(parameters, model.Capabilities);
+        provider.Models[index] = model;
         runtime.ConfigStore.Save();
-        return new JsonObject
-        {
-            ["provider"] = provider.Id,
-            ["id"] = model.Id,
-            ["alias"] = model.Alias,
-            ["contextWindow"] = model.ContextWindow,
-            ["maxOutput"] = model.MaxOutput,
-            ["vision"] = model.Capabilities.Vision,
-        }.ToJsonString();
+        var detail = ModelDetailJson(model);
+        detail["provider"] = provider.Id;
+        detail["alias"] = model.Alias;
+        return detail.ToJsonString();
     }
 
     public string ListMcpServers()
@@ -794,7 +784,7 @@ internal sealed partial class DaemonAdminApi(
                 response.EnsureSuccessStatusCode();
 
                 var fileName = GetDownloadedFileName(response, path);
-                var tempDir = Path.Combine(Path.GetTempPath(), $"seekclaw-import-{Guid.NewGuid():N}");
+                var tempDir = Path.Combine(SeekClawPaths.GetTemporaryDirectory(), $"seekclaw-import-{Guid.NewGuid():N}");
                 Directory.CreateDirectory(tempDir);
                 tempFile = Path.Combine(tempDir, fileName);
 
@@ -1337,16 +1327,26 @@ internal sealed partial class DaemonAdminApi(
         ["contextWindowAuto"] = model.ContextWindowAuto, ["maxOutputAuto"] = model.MaxOutputAuto,
         ["detectedContextWindow"] = model.DetectedContextWindow, ["detectedMaxOutput"] = model.DetectedMaxOutput,
         ["vision"] = true,
-        ["capabilities"] = new JsonObject
-        {
-            ["streaming"] = model.Capabilities.Streaming,
-            ["tools"] = model.Capabilities.ToolCalling,
-            ["thinking"] = model.Capabilities.Thinking,
-            ["reasoning"] = model.Capabilities.Reasoning,
-            ["maxReasoningLevel"] = model.Capabilities.MaxReasoningLevel.ToWireValue(),
-            ["mcp"] = model.Capabilities.Mcp,
-        },
+        ["capabilities"] = ModelCapabilitiesJson(model.Capabilities),
     };
+
+    private static JsonObject ModelCapabilitiesJson(ModelCapabilities capabilities, bool includeVision = false)
+    {
+        var result = new JsonObject
+        {
+            ["streaming"] = capabilities.Streaming,
+            ["tools"] = capabilities.ToolCalling,
+            ["thinking"] = capabilities.Thinking,
+            ["reasoning"] = capabilities.Reasoning,
+            ["maxReasoningLevel"] = capabilities.MaxReasoningLevel.ToWireValue(),
+            ["supportedReasoningLevels"] = capabilities.SupportedReasoningLevels is { } supported
+                ? Strings(supported.Select(level => level.ToWireValue())) : null,
+            ["defaultReasoningLevel"] = capabilities.DefaultReasoningLevel?.ToWireValue(),
+            ["mcp"] = capabilities.Mcp,
+        };
+        if (includeVision) result["vision"] = capabilities.Vision;
+        return result;
+    }
 
     /// <summary>
     /// Applies an optional capability override (manual declaration) from a save/update
@@ -1355,6 +1355,38 @@ internal sealed partial class DaemonAdminApi(
     private static void ApplyCapabilities(JsonObject node, ModelCapabilities capabilities)
     {
         if (node["capabilities"] is not JsonObject caps) return;
+
+        const string supportedPath = "params.capabilities.supportedReasoningLevels";
+        const string defaultPath = "params.capabilities.defaultReasoningLevel";
+        var hasSupported = caps.TryGetPropertyValue("supportedReasoningLevels", out var supportedNode);
+        var hasDefault = caps.TryGetPropertyValue("defaultReasoningLevel", out var defaultNode);
+        if (hasSupported || hasDefault)
+        {
+            var supported = capabilities.SupportedReasoningLevels;
+            if (hasSupported)
+            {
+                supported = supportedNode switch
+                {
+                    null => null,
+                    JsonArray levels => levels.Select((item, index) =>
+                        ParseReasoningLevel(item, $"{supportedPath}[{index}]", wireNamesOnly: true)).ToList(),
+                    _ => throw new DaemonRequestException($"{supportedPath} must be an array or null"),
+                };
+                if (supported is not null && supported.Distinct().Count() != supported.Count)
+                    throw new DaemonRequestException($"{supportedPath} must not contain duplicate levels");
+            }
+
+            var defaultLevel = capabilities.DefaultReasoningLevel;
+            if (hasDefault)
+                defaultLevel = defaultNode is null ? null : ParseReasoningLevel(defaultNode, defaultPath, wireNamesOnly: true);
+            if (defaultLevel is { } selected && selected != ReasoningLevel.None
+                && supported is not null && !supported.Contains(selected))
+                throw new DaemonRequestException($"{defaultPath} must be a supported level, none, or null");
+
+            capabilities.SupportedReasoningLevels = supported;
+            capabilities.DefaultReasoningLevel = defaultLevel;
+        }
+
         if (caps["streaming"]?.GetValue<bool?>() is { } streaming) capabilities.Streaming = streaming;
         if (caps["tools"]?.GetValue<bool?>() is { } tools) capabilities.ToolCalling = tools;
         if (caps["toolCalling"]?.GetValue<bool?>() is { } toolCalling) capabilities.ToolCalling = toolCalling;
@@ -1426,7 +1458,7 @@ internal sealed partial class DaemonAdminApi(
         {
             Directory.CreateDirectory(runtime.Workspace.SeekClawDir);
             File.WriteAllText(
-                Path.Combine(runtime.Workspace.SeekClawDir, "config.json"),
+                runtime.Workspace.ConfigFile,
                 JsonSerializer.Serialize(runtime.Workspace.Config!, SeekClawJsonContext.Default.WorkspaceConfig));
             return;
         }
@@ -1465,12 +1497,14 @@ internal sealed partial class DaemonAdminApi(
         OptionalString(parameters, name)
         ?? throw new DaemonRequestException($"params.{name} is required");
 
-    private static ReasoningLevel ParseReasoningLevel(JsonNode? node, string parameterName)
+    private static ReasoningLevel ParseReasoningLevel(JsonNode? node, string parameterName, bool wireNamesOnly = false)
     {
         var value = node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text)
             ? text
             : null;
-        if (ReasoningLevelExtensions.TryParse(value, out var level)) return level;
+        if (ReasoningLevelExtensions.TryParse(value, out var level)
+            && (!wireNamesOnly || string.Equals(value?.Trim(), level.ToWireValue(), StringComparison.OrdinalIgnoreCase)))
+            return level;
         throw new DaemonRequestException(
             $"{parameterName} must be one of: none, low, medium, high, max, xhigh, ultra");
     }

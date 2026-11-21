@@ -70,11 +70,11 @@ During development, simply drop your skill folder into your personal skills dire
 - **Windows**: `%USERPROFILE%\.seekclaw\skills\my-awesome-skill\`
 - **Linux / macOS**: `~/.seekclaw/skills/my-awesome-skill/`
 
-Then inspect it via CLI:
+For a project-specific skill, run `seekclaw init` from the project and place `my-awesome-skill/` in the `skills/` subdirectory of the printed state directory. Run the following commands from that project to check discovery.
 
 ```bash
-# List all active skills
-seekclaw skills list
+# List discovered skills
+seekclaw skill list
 
 # Verify syntax and health
 seekclaw doctor

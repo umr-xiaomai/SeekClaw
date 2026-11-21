@@ -5,8 +5,10 @@ Skill 是一个目录化 Prompt 扩展。每个已启用 Skill 的 Prompt 会在
 ## 目录与优先级
 
 - 全局：`~/.seekclaw/skills/<skill-name>/`
-- 工作区：`<workspace>/.seekclaw/skills/<skill-name>/`
-- 兼容旧结构：如果项目根目录已经有 `skills/`，继续使用该目录。
+- 工作区：`~/.seekclaw/workspaces/<workspace-key>/skills/<skill-name>/`。在项目中运行 `seekclaw init` 可查看其状态目录。
+- 外部来源：SeekClaw 也会发现由项目中的 `.agents/skills/` 和 `.claude/skills/` 提供的技能。
+
+SeekClaw 不再从项目内旧的 `.seekclaw/skills/` 或项目根目录的 `skills/` 加载技能。
 
 同名工作区 Skill 覆盖全局 Skill。不绑定项目的任务没有项目 Skill 根目录，但仍可使用全局 Skill。
 

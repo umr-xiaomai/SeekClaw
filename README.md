@@ -89,7 +89,7 @@ SeekClaw 是基于 .NET 10.0 构建的高性能 AI Agent 运行时，采用清�
 
 - **项目识别**：自动识别 Git、.NET、Node.js、Python、Rust、Go、Unity、Vue 项目
 - **隔离配置**：每个工作区独立的配置、缓存和内存，会话按工作区作用域隔离
-- **自动初始化**：自动创建 `.seekclaw/` 目录结构
+- **工作区初始化**：`seekclaw init` 创建并打印集中存放的工作区状态目录
 - **任务隔离**：按对话创建 Git worktree，支持快照归档与恢复
 
 ### 🔧 开发者体验
@@ -120,7 +120,7 @@ SeekClaw Desktop 是功能完备的图形客户端（基于 Electron + Vue 3）�
   cd SeekClaw
   build.cmd
   ```
-  `build.cmd` 将自动安装前端依赖、构建自包含 Runtime 与 Electron 应用，产物输出于 `publish\SeekClaw-win-x64\SeekClaw.exe`。
+  `build.cmd` 将自动安装前端依赖、构建自包含 Runtime 与 Electron 应用，产物输出于 `publish\SeekClaw-win-x64\SeekClaw.exe`。Windows x64 随包提供 PowerShell 7。源码构建直接使用 Git 中的 `seekclaw_third_party/powershell/win-x64/` 运行文件。
 
 ### 方式二：通过 npm 安装 CLI
 
@@ -321,7 +321,11 @@ SeekClaw/
 
 ### 工作区配置
 
-每个项目可以在 `.seekclaw/config.json` 中覆盖：
+SeekClaw 将应用状态存放在 `~/.seekclaw`（Windows 上为 `%USERPROFILE%\.seekclaw`）。项目配置、记忆、提示词、MCP 和技能集中存放在 `~/.seekclaw/workspaces/<workspace-key>/`。`<workspace-key>` 是工作区规范化完整路径的稳定 SHA-256 哈希。
+
+在项目中运行 `seekclaw init` 会初始化并打印状态目录，不会改动项目目录或 `.gitignore`。项目内旧的 `.seekclaw/` 会被忽略，不会被迁移或删除。仓库中的 `AGENTS.md` 和 `.gitignore` 仍分别用于提供 Agent 指令和文件忽略规则。
+
+每个项目可以在 `~/.seekclaw/workspaces/<workspace-key>/config.json` 中覆盖以下设置：
 
 - 提供商和模型选择（`provider`、`model`、`temperature`）
 - Agent 模式与系统提示词（`mode`、`systemPrompt`）
@@ -386,9 +390,11 @@ seekclaw --continue
 seekclaw --resume <session-id>
 ```
 
-会话数据和 Desktop 项目列表统一保存在 `~/.seekclaw/seekclaw.db`。升级后首次访问工作区时，旧的 JSONL 会话会自动导入，原文件保留为备份。Provider、模型、MCP、Skill、工作区配置保存在 JSON 文件，用量记录保存在 `~/.seekclaw/usage.jsonl`。
+会话数据和 Desktop 项目列表统一保存在全局 SQLite 数据库 `~/.seekclaw/seekclaw.db`，用量记录保存在 `~/.seekclaw/usage.jsonl`。Desktop 专用的应用程序配置目录为 `~/.seekclaw/desktop/`。
 
 ### 技能与 MCP 管理
+
+SeekClaw 从 `~/.seekclaw/workspaces/<workspace-key>/skills/` 加载项目技能，也会发现 `.agents/skills/` 和 `.claude/skills/` 提供的外部技能。项目内旧的 `.seekclaw/skills/` 和项目根目录的 `skills/` 不再参与技能发现。
 
 ```bash
 # 技能管理（支持从官方技能市场或 URL 直接安装）

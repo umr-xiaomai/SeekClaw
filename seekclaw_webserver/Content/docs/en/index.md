@@ -12,7 +12,7 @@ SeekClaw is a local-first, extensible general-purpose AI Agent Runtime built on 
 | **Project and global tasks** | Project tasks connect files, terminals, Git, and dedicated Memory. Directory-free global tasks support research, writing, knowledge work, and everyday tasks. |
 | **Providers and routing** | Supports Anthropic and OpenAI wire protocols plus OpenAI-compatible services such as Google, OpenRouter, Ollama, MiMo, and LM Studio. |
 | **Tools, Skills, and MCP** | Includes file, search, shell, and web tools and can be extended with Skills and stdio / SSE MCP servers. |
-| **Session and workspace state** | Sessions are stored per workspace as JSONL and can be resumed, archived, or removed. Project metadata is isolated under `.seekclaw/`. |
+| **Session and workspace state** | Sessions are scoped by workspace in the global SQLite database and can be resumed, archived, or removed. Workspace settings and assets live under `~/.seekclaw/workspaces/<workspace-key>/`. |
 | **Verification and repair** | Code changes can trigger checks for .NET, Node, Rust, Go, Python, and other projects, with failures returned to the Agent for repair. |
 | **Diagnostics and usage** | Desktop and CLI inspect Runtime and Provider health; Desktop also aggregates calls, tokens, latency, and cost. |
 

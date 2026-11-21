@@ -98,7 +98,7 @@ public sealed class CommandSessionManager(ExecutionRecordStore? records = null) 
     {
         private const int OutputLimit = 128 * 1024;
         private readonly CommandProcess _process;
-        private readonly ProcessJobScope _job = new();
+        private readonly ProcessJobScope _job;
         private readonly CancellationTokenSource _timeout;
         private readonly CancellationTokenRegistration _killRegistration;
         private readonly SemaphoreSlim _input = new(1, 1);
@@ -126,7 +126,9 @@ public sealed class CommandSessionManager(ExecutionRecordStore? records = null) 
         {
             Owner = owner;
             Command = command;
-            _process = CommandProcess.Start(command, directory, pty);
+            _job = new ProcessJobScope();
+            try { _process = CommandProcess.Start(command, directory, pty); }
+            catch { _job.Dispose(); throw; }
             _processId = _process.Process.Id;
             _processStartedAt = _process.Process.StartTime.ToUniversalTime().ToString("O");
             _directory = Path.GetFullPath(directory);

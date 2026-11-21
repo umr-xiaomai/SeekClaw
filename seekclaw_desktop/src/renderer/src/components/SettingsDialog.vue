@@ -874,7 +874,12 @@ async function saveProvider(value: ProviderFormValue): Promise<void> {
       models: value.models.split(/\r?\n|,/).map((model) => model.trim()).filter(Boolean),
       modelDetails: (value.modelDetails ?? []).map((model) => ({
         ...model,
-        capabilities: model.capabilities ? { ...model.capabilities } : undefined
+        capabilities: model.capabilities ? {
+          ...model.capabilities,
+          supportedReasoningLevels: model.capabilities.supportedReasoningLevels
+            ? [...model.capabilities.supportedReasoningLevels]
+            : model.capabilities.supportedReasoningLevels
+        } : undefined
       }))
     }
     if (apiKey.trim()) parameters.apiKey = apiKey.trim()

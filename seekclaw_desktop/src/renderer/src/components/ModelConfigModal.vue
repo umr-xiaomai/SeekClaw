@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { Save, X } from '@lucide/vue'
-import { nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { reasoningLevels, supportedReasoningLevels, type ModelReasoningCapabilities } from '../model-reasoning'
+import type { ReasoningLevel } from '../types'
 import ComboboxInput, { ComboboxOption } from './ComboboxInput.vue'
 import FieldLabel from './FieldLabel.vue'
+import SelectMenu from './SelectMenu.vue'
 
 const tokenPresets: ComboboxOption[] = [
   { value: 128000, label: '128K', description: '128,000 Tokens' },
@@ -14,12 +17,6 @@ const tokenPresets: ComboboxOption[] = [
   { value: 2000000, label: '2M', description: '2,000,000 Tokens' }
 ]
 
-export interface ModelCapabilityConfig {
-  thinking?: boolean
-  reasoning?: boolean
-  maxReasoningLevel?: string
-}
-
 export interface ModelDetailConfig {
   id: string
   alias?: string
@@ -30,17 +27,8 @@ export interface ModelDetailConfig {
   maxOutputAuto?: boolean
   detectedContextWindow?: number | null
   detectedMaxOutput?: number | null
-  capabilities?: ModelCapabilityConfig
+  capabilities?: ModelReasoningCapabilities
 }
-
-const reasoningLevels = [
-  { value: 'low', label: '低 (Low)' },
-  { value: 'medium', label: '中 (Medium)' },
-  { value: 'high', label: '高 (High)' },
-  { value: 'max', label: '最大 (Max)' },
-  { value: 'xhigh', label: '极高 (X-High)' },
-  { value: 'ultra', label: '超级 (Ultra)' }
-]
 
 const props = defineProps<{
   open: boolean
@@ -61,8 +49,17 @@ const form = reactive<ModelDetailConfig>({
 })
 
 const firstInput = ref<HTMLInputElement | null>(null)
-const reasoningMode = ref<'auto' | 'off' | 'level'>('auto')
-const reasoningMax = ref('max')
+const defaultReasoning = ref('auto')
+const selectedLevels = ref<ReasoningLevel[]>([])
+const initialLevels = ref<ReasoningLevel[]>([])
+const defaultOptions = computed(() => [
+  { value: 'auto', label: '自动（使用请求层默认值）' },
+  ...reasoningLevels.filter(({ value }) => selectedLevels.value.includes(value))
+])
+
+watch(selectedLevels, (levels) => {
+  if (!levels.some((level) => level === defaultReasoning.value)) defaultReasoning.value = 'auto'
+})
 
 function close(): void {
   emit('close')
@@ -76,11 +73,14 @@ function handleSave(): void {
     maxOutput: Number(form.maxOutput) || 128000,
     contextWindowAuto: form.contextWindowAuto, maxOutputAuto: form.maxOutputAuto,
     detectedContextWindow: form.detectedContextWindow, detectedMaxOutput: form.detectedMaxOutput,
-    capabilities: reasoningMode.value === 'auto'
-      ? undefined
-      : reasoningMode.value === 'off'
-        ? { thinking: false, reasoning: false, maxReasoningLevel: 'none' }
-        : { thinking: true, reasoning: true, maxReasoningLevel: reasoningMax.value }
+    capabilities: {
+      ...props.model?.capabilities,
+      defaultReasoningLevel: defaultReasoning.value === 'auto' ? null : defaultReasoning.value,
+      supportedReasoningLevels: selectedLevels.value.length === initialLevels.value.length
+        && initialLevels.value.every((level) => selectedLevels.value.includes(level))
+        ? props.model?.capabilities?.supportedReasoningLevels ?? null
+        : [...selectedLevels.value]
+    }
   })
 }
 
@@ -107,19 +107,10 @@ watch(() => props.open, (open) => {
     form.detectedContextWindow = props.model.detectedContextWindow
     form.detectedMaxOutput = props.model.detectedMaxOutput
 
-    const caps = props.model.capabilities
-    if (caps && caps.maxReasoningLevel === 'none' && !caps.reasoning && !caps.thinking) {
-      reasoningMode.value = 'off'
-      reasoningMax.value = 'max'
-    } else if (caps && (caps.reasoning || caps.thinking || caps.maxReasoningLevel)) {
-      reasoningMode.value = 'level'
-      reasoningMax.value = caps.maxReasoningLevel && caps.maxReasoningLevel !== 'none'
-        ? caps.maxReasoningLevel
-        : 'high'
-    } else {
-      reasoningMode.value = 'auto'
-      reasoningMax.value = 'max'
-    }
+    const capabilities = props.model.capabilities
+    initialLevels.value = capabilities ? supportedReasoningLevels(capabilities) : []
+    selectedLevels.value = [...initialLevels.value]
+    defaultReasoning.value = selectedLevels.value.find((level) => level === capabilities?.defaultReasoningLevel) ?? 'auto'
   }
   document.addEventListener('keydown', handleKeydown)
   void nextTick(() => firstInput.value?.focus())
@@ -221,31 +212,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
               <div class="model-section-heading">
                 <strong>思考能力</strong>
               </div>
-              <div class="model-form-grid two-columns">
-                <label class="form-field">
-                  <FieldLabel
-                    en="Reasoning Capability"
-                    zh="推理支持"
-                    help="自动：按供应商元数据与模型家族推断；不启用：始终不发送思考参数；声明档位：手动声明模型支持的最高档位。"
-                  />
-                  <select v-model="reasoningMode" class="form-input">
-                    <option value="auto">自动推断</option>
-                    <option value="off">不启用推理</option>
-                    <option value="level">声明最高档位</option>
-                  </select>
-                </label>
-                <label v-if="reasoningMode === 'level'" class="form-field">
-                  <FieldLabel
-                    en="Max Reasoning Level"
-                    zh="最高思考档位"
-                    help="运行时会把超出的档位自动收敛到该值，避免向供应商发送不支持的参数。"
-                  />
-                  <select v-model="reasoningMax" class="form-input">
-                    <option v-for="level in reasoningLevels" :key="level.value" :value="level.value">
+              <div class="model-form-grid">
+                <div class="form-field">
+                  <span class="reasoning-field-label">默认思考强度</span>
+                  <SelectMenu v-model="defaultReasoning" :options="defaultOptions" label="默认思考强度" />
+                </div>
+                <fieldset class="reasoning-fieldset">
+                  <legend class="reasoning-field-label">支持的思考强度</legend>
+                  <div class="reasoning-checks">
+                    <label v-for="level in reasoningLevels" :key="level.value" class="reasoning-check">
+                      <input v-model="selectedLevels" type="checkbox" :value="level.value" />
                       {{ level.label }}
-                    </option>
-                  </select>
-                </label>
+                    </label>
+                  </div>
+                </fieldset>
               </div>
             </section>
 
@@ -389,6 +369,48 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   background: var(--surface-hover);
   cursor: not-allowed;
   border-color: var(--border);
+}
+
+.reasoning-field-label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.reasoning-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.reasoning-fieldset legend {
+  margin-bottom: 8px;
+  padding: 0;
+}
+
+.reasoning-checks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
+  padding: 10px 12px;
+  background: var(--surface-subtle);
+  border-radius: var(--radius-control, 8px);
+}
+
+.reasoning-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  cursor: pointer;
+}
+
+.reasoning-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 .model-context-hint {

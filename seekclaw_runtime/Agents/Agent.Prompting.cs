@@ -61,7 +61,7 @@ public sealed partial class Agent
         var disabled = workspace.Config?.DisabledTools;
         var available = disabled is not { Count: > 0 }
             ? toolRegistry.All
-            : toolRegistry.All.Where(t => !disabled.Contains(t.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+            : toolRegistry.All.Where(t => !IsToolDisabled(t, disabled)).ToList();
 
         // The per-session "联网" toggle controls every network tool together
         // (web_search + web_fetch); when off the model never sees them.

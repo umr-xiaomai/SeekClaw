@@ -19,7 +19,12 @@ internal static class DeepSeekOptimizationPolicy
         request.OptimizeDeepSeek && IsDeepSeek(request.Provider, request.Model);
 
     public static bool IsThinkingEnabled(LlmRequest request) =>
-        request.EnableThinking && request.ReasoningLevel != ReasoningLevel.None;
+        request.EnableThinking && ThinkingLevel(request) != ReasoningLevel.None;
+
+    private static ReasoningLevel ThinkingLevel(LlmRequest request) =>
+        request.Model.Capabilities.SupportedReasoningLevels is not null
+            ? ReasoningLevelAdapter.Normalize(request.Provider, request.Model, request.ReasoningLevel)
+            : request.ReasoningLevel;
 
     /// <summary>
     /// On OpenAI Chat Completions with DeepSeek optimization enabled, pass back
@@ -89,7 +94,7 @@ internal static class DeepSeekOptimizationPolicy
         if (!Applies(request) || !IsThinkingEnabled(request))
             return null;
 
-        var effort = request.ReasoningLevel switch
+        var effort = ThinkingLevel(request) switch
         {
             ReasoningLevel.Low => "low",
             ReasoningLevel.Medium or ReasoningLevel.High => "high",

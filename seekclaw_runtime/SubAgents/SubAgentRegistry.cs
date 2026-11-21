@@ -1,3 +1,6 @@
+using SeekClaw.Runtime.Execution;
+using SeekClaw.Runtime.Tools.Builtin;
+
 namespace SeekClaw.Runtime.SubAgents;
 
 public interface ISubAgentRegistry
@@ -19,6 +22,10 @@ public sealed class SubAgentRegistry : ISubAgentRegistry
 
     private void RegisterDefaults()
     {
+        string[] shellTools = VendoredPowerShell.IsRequired
+            ? [BashTool.LegacyName, BashTool.PowerShellName]
+            : [BashTool.LegacyName];
+
         Register(new SubAgentDefinition(
             Role: "researcher",
             Description: "Read-only research specialist. Deeply searches and reads code, inspects project structure, or consults documentation without modifying files. Returns a structured report.",
@@ -34,10 +41,9 @@ public sealed class SubAgentRegistry : ISubAgentRegistry
             Role: "coder",
             Description: "Focused implementation specialist. Performs surgical code edits and creates new files within its assigned task scope, adhering to file locks and style.",
             PromptKey: "subagent/coder",
-            AllowedTools: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "read_file", "write_file", "edit_file", "list_dir", "glob", "grep", "bash", "load_skill"
-            },
+            AllowedTools: new HashSet<string>(
+                ["read_file", "write_file", "edit_file", "list_dir", "glob", "grep", "load_skill", .. shellTools],
+                StringComparer.OrdinalIgnoreCase),
             AllowMutating: true,
             MaxSteps: 12));
 
@@ -45,10 +51,9 @@ public sealed class SubAgentRegistry : ISubAgentRegistry
             Role: "tester",
             Description: "Test and diagnostics specialist. Runs tests or build tools, examines error logs and stack traces, and reports diagnostic findings.",
             PromptKey: "subagent/tester",
-            AllowedTools: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "read_file", "list_dir", "glob", "grep", "bash", "load_skill"
-            },
+            AllowedTools: new HashSet<string>(
+                ["read_file", "list_dir", "glob", "grep", "load_skill", .. shellTools],
+                StringComparer.OrdinalIgnoreCase),
             AllowMutating: true,
             MaxSteps: 10));
 

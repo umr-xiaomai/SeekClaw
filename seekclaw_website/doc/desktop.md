@@ -2,6 +2,8 @@
 
 SeekClaw Desktop 是基于 Electron 与 Vue 的桌面客户端。它通过本地 Daemon IPC 使用同一套 .NET Runtime，在图形界面中提供项目、任务、模型、工具和运行状态管理。CLI 仍然受支持，两种前端共享相同的 Provider、Profile、MCP、Skill 与会话数据。
 
+Desktop 专用的应用程序配置目录为 `~/.seekclaw/desktop/`（Windows 上为 `%USERPROFILE%\.seekclaw\desktop`）。共享的 SQLite 数据库位于 `~/.seekclaw/seekclaw.db`。
+
 ![SeekClaw Desktop 的 AI 对话与项目管理](/screenshots/desktop/chat-and-projects.png)
 
 ## 获取与启动

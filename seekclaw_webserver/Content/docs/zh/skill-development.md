@@ -70,11 +70,11 @@ homepage: "https://github.com/yourname/docker-master"
 - **Windows**: `%USERPROFILE%\.seekclaw\skills\my-awesome-skill\`
 - **Linux / macOS**: `~/.seekclaw/skills/my-awesome-skill/`
 
-放置后在终端中执行：
+如果技能仅供某个项目使用，请在该项目中运行 `seekclaw init`，将 `my-awesome-skill/` 放入命令打印的状态目录下的 `skills/` 子目录。然后在同一项目中查看技能是否已被发现。
 
 ```bash
-# 查看本地已加载的 Skills 列表
-seekclaw skills list
+# 查看已发现的技能
+seekclaw skill list
 
 # 验证特定 Skill 是否正确解析
 seekclaw doctor

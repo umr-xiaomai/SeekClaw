@@ -162,7 +162,7 @@ public static class InitCommand
 {
     public static Command Build()
     {
-        var command = new Command("init", "Bootstrap the workspace (.cache, .session, logs, skills, mcp, docs, .gitignore)");
+        var command = new Command("init", "Initialize workspace settings and data directories under ~/.seekclaw");
         command.SetAction(_ =>
         {
             using var rt = CliHost.CreateRuntime();
@@ -173,6 +173,7 @@ public static class InitCommand
                 foreach (var item in created)
                     AnsiConsole.MarkupLine($"[green]+[/] {Markup.Escape(item)}");
             AnsiConsole.MarkupLine($"Workspace: [cyan]{Markup.Escape(rt.Workspace.Root)}[/] {Markup.Escape($"[{string.Join(", ", rt.Workspace.ProjectKinds)}]")}");
+            AnsiConsole.MarkupLine($"Workspace data: [cyan]{Markup.Escape(rt.Workspace.SeekClawDir)}[/]");
             return 0;
         });
         return command;
@@ -246,7 +247,7 @@ public static class SkillCommands
                     source.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 {
                     AnsiConsole.MarkupLine($"[dim]Downloading from {Markup.Escape(source)}...[/]");
-                    tempFile = Path.Combine(Path.GetTempPath(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
+                    tempFile = Path.Combine(SeekClawPaths.GetTemporaryDirectory(), $"seekclaw-skill-{Guid.NewGuid():N}.zip");
                     using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
                     var response = httpClient.GetAsync(source).GetAwaiter().GetResult();
                     response.EnsureSuccessStatusCode();
@@ -297,7 +298,7 @@ public static class McpCommands
             if (servers.Count == 0)
             {
                 AnsiConsole.MarkupLine("[gray]No MCP servers configured.[/] Add them under [cyan]mcp.servers[/] in "
-                    + "~/.seekclaw/config.json or <workspace>/mcp/servers.json.");
+                    + "~/.seekclaw/config.json or the workspace data directory's mcp/servers.json.");
                 return 0;
             }
             var table = new Table().Border(TableBorder.Rounded);

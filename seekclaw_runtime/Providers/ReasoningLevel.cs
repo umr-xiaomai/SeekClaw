@@ -69,6 +69,13 @@ public static class ReasoningLevelAdapter
         ModelConfig model,
         ReasoningLevel requested)
     {
+        if (requested == ReasoningLevel.None) return ReasoningLevel.None;
+
+        if (model.Capabilities.SupportedReasoningLevels is { } supported)
+            return supported.OrderBy(level => Math.Abs((int)level - (int)requested))
+                .ThenBy(level => level)
+                .FirstOrDefault();
+
         var deepSeek = IsDeepSeek(provider, model);
         var explicitlyMapped = provider.ReasoningEffortMap is { Count: > 0 };
         if (!model.Capabilities.Thinking && !model.Capabilities.Reasoning && !deepSeek && !explicitlyMapped)
@@ -90,14 +97,10 @@ public static class ReasoningLevelAdapter
 
     public static string? OpenAiEffort(LlmRequest request)
     {
-        if (request.OptimizeDeepSeek && !request.EnableThinking && IsDeepSeek(request.Provider, request.Model))
+        if (DeepSeekOptimizationPolicy.Applies(request) && !request.EnableThinking)
             return null;
 
         var effective = Normalize(request.Provider, request.Model, request.ReasoningLevel);
-        if (effective == ReasoningLevel.None &&
-            !request.Model.Capabilities.Thinking && !request.Model.Capabilities.Reasoning)
-            return null;
-
         if (effective == ReasoningLevel.None)
             return null;
 

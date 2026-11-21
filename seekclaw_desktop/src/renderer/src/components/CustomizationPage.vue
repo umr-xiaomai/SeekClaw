@@ -1958,56 +1958,16 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--surface) 90%, transparent);
 }
 
-/* Switch control standard */
 .switch-control {
-  position: relative;
-  width: 38px;
-  height: 22px;
-  padding: 2px;
-  background: color-mix(in srgb, var(--text) 16%, transparent);
-  border: none;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: background-color 150ms ease;
-  display: flex;
-  align-items: center;
+  --switch-width: 38px;
+  --switch-height: 22px;
+  --switch-inset: 2px;
+  --switch-background: color-mix(in srgb, var(--text) 16%, transparent);
 }
 
 .switch-control.compact {
-  width: 32px;
-  height: 18px;
-}
-
-.switch-control span {
-  display: block;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  transition: transform 150ms ease;
-}
-
-.switch-control.compact span {
-  width: 14px;
-  height: 14px;
-}
-
-.switch-control.active {
-  background: var(--accent);
-}
-
-.switch-control.active span {
-  transform: translateX(16px);
-}
-
-.switch-control.compact.active span {
-  transform: translateX(14px);
-}
-
-.switch-control.pending {
-  justify-content: center;
-  cursor: wait;
+  --switch-width: 32px;
+  --switch-height: 18px;
 }
 
 .spin {

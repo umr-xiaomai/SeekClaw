@@ -4,8 +4,10 @@ using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Execution;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Tools;
+using SeekClaw.Runtime.Tools.Builtin;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Agents;
@@ -39,7 +41,7 @@ public sealed partial class Agent
         }
 
         if (workspace.Config?.DisabledTools is { Count: > 0 } disabled
-            && disabled.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))
+            && IsToolDisabled(tool, disabled))
         {
             var message = $"Tool execution denied: '{tool.Name}' is disabled in this workspace.";
             events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
@@ -164,6 +166,12 @@ public sealed partial class Agent
                 result.Content, result.StructuredContent, result.Metadata, result.Widgets),
             (result.Mutated ?? tool.Mutating) && result.Success);
     }
+
+    internal static bool IsToolDisabled(ITool tool, IReadOnlyCollection<string> disabled) =>
+        disabled.Contains(tool.Name, StringComparer.OrdinalIgnoreCase)
+        || (tool is BashTool && VendoredPowerShell.IsRequired
+            && (disabled.Contains(BashTool.LegacyName, StringComparer.OrdinalIgnoreCase)
+                || disabled.Contains(BashTool.PowerShellName, StringComparer.OrdinalIgnoreCase)));
 
     private static bool RequiresApproval(AgentMode mode, ITool tool)
     {

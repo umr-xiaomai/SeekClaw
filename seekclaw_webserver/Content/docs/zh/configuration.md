@@ -4,12 +4,14 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 
 ## 文件位置
 
+应用状态目录为 `~/.seekclaw`（Windows 上为 `%USERPROFILE%\.seekclaw`）。在项目中运行 `seekclaw init` 可查看其工作区状态目录。
+
 | 文件 | 用途 |
 | --- | --- |
 | `~/.seekclaw/config.json` | 全局 Provider、模型、Profile、路由、Agent 和 MCP 配置 |
 | `~/.seekclaw/state.json` | 上次 Session、轮询游标和禁用 Skill 等内部状态 |
 | `~/.seekclaw/usage.jsonl` | 调用、Token、延迟和成本记录 |
-| `<workspace>/.seekclaw/config.json` | 当前项目的覆盖项 |
+| `~/.seekclaw/workspaces/<workspace-key>/config.json` | 当前项目的覆盖项 |
 
 首次运行时，Runtime 使用代码内建的默认配置（`DefaultSeekClawConfig`）自动序列化生成 `~/.seekclaw/config.json`，仓库不再维护静态的默认配置文件。Provider 与模型数据随后完全由用户管理。
 
@@ -117,7 +119,7 @@ SeekClaw 使用全局配置保存 Provider、模型、Profile、路由和 Agent 
 
 ## 工作区覆盖
 
-`<workspace>/.seekclaw/config.json` 使用独立的精简结构，而不是复制完整全局配置：
+`~/.seekclaw/workspaces/<workspace-key>/config.json` 使用独立的精简结构，而不是复制完整全局配置：
 
 ```json
 {

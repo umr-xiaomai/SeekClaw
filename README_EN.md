@@ -88,7 +88,7 @@ SeekClaw is a high-performance AI agent runtime built on .NET 10.0, featuring cl
 
 - **Project Detection**: Automatic recognition of Git, .NET, Node.js, Python, Rust, Go, Unity, Vue projects
 - **Isolated Config**: Per-workspace configuration, cache, and memory with workspace-scoped sessions
-- **Bootstrap**: Automatic project setup with `.seekclaw/` directory structure
+- `seekclaw init` creates and prints the centralized workspace state directory.
 
 ### 🔧 Developer Experience
 
@@ -111,7 +111,7 @@ SeekClaw Desktop is a full-featured graphical client (built on Electron + Vue 3)
   cd SeekClaw
   build.cmd
   ```
-  `build.cmd` automatically installs frontend dependencies, publishes the self-contained Runtime, builds the Electron app, and places the final release at `publish\SeekClaw-win-x64\SeekClaw.exe`.
+  `build.cmd` automatically installs frontend dependencies, publishes the self-contained Runtime, builds the Electron app, and places the final release at `publish\SeekClaw-win-x64\SeekClaw.exe`. Windows x64 bundles PowerShell 7. Source builds use the runtime files tracked in `seekclaw_third_party/powershell/win-x64/`.
 
 ### Option 2: Install CLI via npm
 
@@ -312,7 +312,11 @@ Located at `~/.seekclaw/config.json`:
 
 ### Workspace Configuration
 
-Each project can have `.seekclaw/config.json` to override:
+SeekClaw stores application state under `~/.seekclaw` (`%USERPROFILE%\.seekclaw` on Windows). Project configuration, memory, prompts, MCP, and skills live under `~/.seekclaw/workspaces/<workspace-key>/`. The workspace key is the stable SHA-256 hash of the normalized full workspace path.
+
+Run `seekclaw init` from the project to initialize and print its state directory. The command leaves the project directory and `.gitignore` untouched. SeekClaw ignores any legacy `.seekclaw/` inside the project and leaves it in place without migration or deletion. Repository `AGENTS.md` and `.gitignore` files continue to supply agent instructions and ignore rules.
+
+The file `~/.seekclaw/workspaces/<workspace-key>/config.json` supports overrides for the following settings:
 
 - Provider and model selection (`provider`, `model`, `temperature`)
 - Agent mode and system prompt (`mode`, `systemPrompt`)
@@ -377,9 +381,11 @@ seekclaw --continue
 seekclaw --resume <session-id>
 ```
 
-Sessions and the Desktop project list are stored in `~/.seekclaw/seekclaw.db`. On first access after upgrading, legacy JSONL session files are imported automatically and retained as backups. Provider, model, MCP, skill, and workspace configuration remains in JSON files; usage records remain in `~/.seekclaw/usage.jsonl`.
+Sessions and the Desktop project list are stored in the global SQLite database at `~/.seekclaw/seekclaw.db`. Usage records are stored in `~/.seekclaw/usage.jsonl`. The Desktop app uses a dedicated profile at `~/.seekclaw/desktop/`.
 
 ### Skills and MCP Management
+
+SeekClaw loads project skills from `~/.seekclaw/workspaces/<workspace-key>/skills/` and also discovers externally supplied skills in `.agents/skills/` and `.claude/skills/`. The project's legacy `.seekclaw/skills/` and top-level `skills/` are no longer searched.
 
 ```bash
 # Manage skills (supports installing from official marketplace or URL)

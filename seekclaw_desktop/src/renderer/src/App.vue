@@ -78,6 +78,7 @@ import {
   refreshProjectSessions as refreshProjectSessionsFromStore,
   reloadThreadSession as reloadThreadSessionFromStore
 } from './session-sync'
+import { supportedReasoningLevels } from './model-reasoning'
 import { createThreadActions } from './thread-actions'
 import { createDaemonEventHandler } from './daemon-event-handler'
 import type { ComposerCommandId } from './composer-triggers'
@@ -403,7 +404,11 @@ watch(() => activeThread.value?.sessionId, async id => {
   }
 })
 const activeModel = computed(() => activeThread.value?.modelRef ?? defaultModel.value)
-const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? ReasoningLevel.High)
+function defaultReasoningFor(modelRef: string): ReasoningLevel {
+  const model = modelCatalog.value.find((item) => item.ref === modelRef)
+  return normalizeReasoningLevel(model?.capabilities?.defaultReasoningLevel ?? model?.requestDefaultReasoningLevel)
+}
+const activeReasoningLevel = computed(() => activeThread.value?.reasoningLevel ?? defaultReasoningFor(activeModel.value))
 const activeModelCatalogItem = computed(() =>
   modelCatalog.value.find((model) => model.ref === activeModel.value)
 )
@@ -415,20 +420,7 @@ const composerModels = computed(() => {
 })
 const activeModelSupportsImages = computed(() =>
   activeModelCatalogItem.value?.capabilities?.vision === true)
-const activeModelMaxReasoning = computed<ReasoningLevel>(() => {
-  const cap = activeModelCatalogItem.value?.capabilities
-  if (cap?.maxReasoningLevel) {
-    return normalizeReasoningLevel(cap.maxReasoningLevel)
-  }
-  return ReasoningLevel.Max
-})
-const activeModelSupportsReasoning = computed<boolean>(() => {
-  const cap = activeModelCatalogItem.value?.capabilities
-  if (!cap) return true
-  if (cap.maxReasoningLevel === 'none') return false
-  if (cap.thinking === false && cap.reasoning === false && !cap.maxReasoningLevel) return false
-  return true
-})
+const activeModelReasoningLevels = computed(() => supportedReasoningLevels(activeModelCatalogItem.value?.capabilities))
 const activeImageSources = computed<Record<string, string>>(() =>
   collectMessageImageSources(activeThread.value?.messages ?? [])
 )
@@ -1165,7 +1157,6 @@ function newTask(projectId?: string): void {
     updatedAt: Date.now(),
     messages: [],
     modelRef: defaultModel.value || undefined,
-    reasoningLevel: ReasoningLevel.High,
     networkEnabled: true,
     archived: false,
     stats: {
@@ -1854,7 +1845,7 @@ async function runMessageTurn(
 ): Promise<void> {
   const project = projects.value.find((item) => item.id === thread.projectId)
   if ((thread.projectId && !project) || thread.archived || thread.running) return
-  const reasoningLevel = thread.reasoningLevel ?? ReasoningLevel.High
+  const reasoningLevel = thread.reasoningLevel
   const turnToken = makeId()
   const turnStartIndex = thread.messages.length
 
@@ -2604,8 +2595,8 @@ watch(theme, applyTheme)
               :has-active-session="Boolean(activeThread?.sessionId)"
               :model="activeModel"
               :models="composerModels" :mode="mode" :task-id="activeThread?.id" :supports-images="activeModelSupportsImages"
-              :reasoning-level="activeReasoningLevel" :max-reasoning-level="activeModelMaxReasoning"
-              :supports-reasoning="activeModelSupportsReasoning" :network-enabled="activeThread?.networkEnabled ?? true"
+              :reasoning-level="activeReasoningLevel" :reasoning-levels="activeModelReasoningLevels"
+              :network-enabled="activeThread?.networkEnabled ?? true"
               :optimize-prompt="optimizePrompt" @send="sendMessage" @stop="stopTurn" @change-model="changeModel"
               @change-mode="changeMode" @change-reasoning-level="changeReasoningLevel"
               @change-network="changeNetwork" @command="handleComposerCommand">

@@ -1,3 +1,4 @@
+using System.Collections;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -9,12 +10,16 @@ namespace SeekClaw.Runtime.Execution;
 /// <summary>Windows 10+ ConPTY. Native handles are owned here; command sessions own the streams.</summary>
 internal sealed class WindowsPseudoConsole : IDisposable
 {
+    private const string PowerShellPathVariable = "SEEKCLAW_CONPTY_PWSH";
+    private const uint ExtendedStartupInfoPresent = 0x00080000;
+    private const uint CreateUnicodeEnvironment = 0x00000400;
     private nint _handle;
     private WindowsPseudoConsole(nint handle) => _handle = handle;
 
     public static CommandProcess Start(string command, string directory)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        var vendoredShell = VendoredPowerShell.IsRequired ? VendoredPowerShell.ResolveExecutable() : null;
         if (!CreatePipe(out var inputRead, out var inputWrite, 0, 0)) throw new Win32Exception();
         using (inputRead)
         {
@@ -24,7 +29,7 @@ internal sealed class WindowsPseudoConsole : IDisposable
             {
                 WindowsPseudoConsole? console = null;
                 FileStream? input = null, output = null;
-                nint attributes = 0;
+                nint attributes = 0, environment = 0;
                 var initialized = false;
                 try
                 {
@@ -43,15 +48,23 @@ internal sealed class WindowsPseudoConsole : IDisposable
                         Attributes = attributes,
                     };
                     // EncodedCommand avoids Windows command-line quoting ambiguity for arbitrary scripts.
-                    var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
-                    var shell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
-                        "WindowsPowerShell", "v1.0", "powershell.exe");
-                    var launcher = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+                    var script = vendoredShell is null ? command : VendoredPowerShell.WithUtf8Output(command);
+                    var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+                    var system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+                    var launcher = Path.Combine(system, "cmd.exe");
+                    var shell = Path.Combine(system, "WindowsPowerShell", "v1.0", "powershell.exe");
+                    var flags = "/d /s /c";
+                    if (vendoredShell is not null)
+                    {
+                        environment = CreatePowerShellEnvironment(vendoredShell);
+                        shell = $"%{PowerShellPathVariable}%";
+                        flags = "/d /s /v:off /c";
+                    }
                     // Native hosts can have redirected/invalid standard handles. Reopen the attached
                     // console devices in the child rather than inheriting those handles.
-                    var commandLine = new StringBuilder($"\"{launcher}\" /d /s /c \"\"{shell}\" -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded} <CONIN$ >CONOUT$ 2>&1\"");
-                    if (!CreateProcess(launcher, commandLine, 0, 0, false, 0x00080000 | 0x00000400,
-                            0, directory, ref startup, out var info)) throw new Win32Exception();
+                    var commandLine = new StringBuilder($"\"{launcher}\" {flags} \"\"{shell}\" -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded} <CONIN$ >CONOUT$ 2>&1\"");
+                    if (!CreateProcess(launcher, commandLine, 0, 0, false, ExtendedStartupInfoPresent | CreateUnicodeEnvironment,
+                            environment, directory, ref startup, out var info)) throw new Win32Exception();
                     using var processHandle = new SafeFileHandle(info.Process, true);
                     using var threadHandle = new SafeFileHandle(info.Thread, true);
                     var process = Process.GetProcessById(info.ProcessId);
@@ -75,9 +88,25 @@ internal sealed class WindowsPseudoConsole : IDisposable
                 {
                     if (initialized) DeleteProcThreadAttributeList(attributes);
                     if (attributes != 0) Marshal.FreeHGlobal(attributes);
+                    if (environment != 0) Marshal.FreeHGlobal(environment);
                 }
             }
         }
+    }
+
+    private static nint CreatePowerShellEnvironment(string shell)
+    {
+        var variables = new SortedDictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+            variables[(string)entry.Key] = (string?)entry.Value;
+        foreach (var (name, value) in VendoredPowerShell.ChildEnvironment)
+            variables[name] = value;
+        variables[PowerShellPathVariable] = shell;
+
+        var block = new StringBuilder();
+        foreach (var (name, value) in variables)
+            block.Append(name).Append('=').Append(value).Append('\0');
+        return Marshal.StringToHGlobalUni(block.ToString());
     }
 
     public void Dispose()

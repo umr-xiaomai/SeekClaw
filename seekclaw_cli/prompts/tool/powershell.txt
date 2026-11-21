@@ -1,0 +1,9 @@
+Run a PowerShell 7 command in the workspace using SeekClaw's vendored Windows x64 shell. Prefer the powershell tool. The legacy bash name runs the same PowerShell 7 shell. Use PowerShell syntax, such as Get-ChildItem, Get-Content, Select-String, and $env:NAME. Do not use Bash or cmd.exe syntax.
+
+Run build, test, and install commands only when the user explicitly asks or you have changed code and need verification. A commit or other Git-only task does not require building. Use read_file, glob, grep, and list_dir to inspect code. In read-only or planning modes, use read and search instead of requesting mutating commands.
+
+If the user has a build, test, or another command running, leave it running and wait for its result, reuse its output, or ask how to proceed before starting a competing command.
+
+For Git commits, inspect status and diff, stage specific files, and use a descriptive message. Never amend or run destructive commands such as hard resets, discarding changes, force-pushes, or recursive deletion unless explicitly requested. State the risk and ask before destructive operations.
+
+Keep output bounded and use quiet flags. This tool closes stdin. Use command_session when a process needs input or a terminal.

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Execution;
 
 namespace SeekClaw.Runtime.Providers;
 
@@ -44,7 +45,29 @@ public sealed class HealthChecker(ILlmHttpFactory httpFactory, Configuration.ICo
         var memoryFile = workspace.MemoryFile;
         results.Add(new HealthCheckResult("Workspace Memory", File.Exists(memoryFile), File.Exists(memoryFile) ? memoryFile : "Memory file empty/missing"));
 
+        if (VendoredPowerShell.IsRequired)
+            results.Add(CheckVendoredPowerShell());
+
         return results;
+    }
+
+    internal static HealthCheckResult CheckVendoredPowerShell()
+    {
+        const string name = "Vendored PowerShell 7";
+        string? path = null;
+        try
+        {
+            path = VendoredPowerShell.ResolveExecutable();
+            var info = FileVersionInfo.GetVersionInfo(path);
+            var version = string.IsNullOrWhiteSpace(info.ProductVersion) ? info.FileVersion : info.ProductVersion;
+            return string.IsNullOrWhiteSpace(version)
+                ? new HealthCheckResult(name, false, $"{path} (version unavailable)")
+                : new HealthCheckResult(name, true, $"{path} (version {version})");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            return new HealthCheckResult(name, false, path is null ? ex.Message : $"{path}: {ex.Message}");
+        }
     }
 
     public async Task<HealthReport> CheckAsync(ProviderConfig provider, CancellationToken ct = default)

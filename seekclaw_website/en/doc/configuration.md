@@ -4,12 +4,14 @@ SeekClaw stores Providers, models, Profiles, routing, and Agent defaults in a gl
 
 ## File locations
 
+The application state directory is `~/.seekclaw` (`%USERPROFILE%\.seekclaw` on Windows). Run `seekclaw init` from the project to find its [workspace state directory](./workspace.md).
+
 | File | Purpose |
 | --- | --- |
 | `~/.seekclaw/config.json` | Global Providers, models, Profiles, routing, Agent, and MCP configuration |
 | `~/.seekclaw/state.json` | Internal state such as the last Session, routing cursors, and disabled Skills |
 | `~/.seekclaw/usage.jsonl` | Calls, tokens, latency, and cost records |
-| `<workspace>/.seekclaw/config.json` | Overrides for one project |
+| `~/.seekclaw/workspaces/<workspace-key>/config.json` | Overrides for one project |
 
 On first run, the Runtime generates the global configuration by serializing the code-defined defaults (`DefaultSeekClawConfig`) to `~/.seekclaw/config.json`; no static default configuration file is shipped anymore. Provider and model data are user-managed after that point.
 
@@ -117,7 +119,7 @@ This example uses the current field names:
 
 ## Workspace overrides
 
-`<workspace>/.seekclaw/config.json` uses a smaller dedicated shape rather than copying the complete global configuration:
+`~/.seekclaw/workspaces/<workspace-key>/config.json` uses a smaller dedicated shape rather than copying the complete global configuration:
 
 ```json
 {

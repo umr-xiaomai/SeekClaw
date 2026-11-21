@@ -1035,9 +1035,11 @@ public sealed class DaemonServer : IAsyncDisposable
                         string? modelRef;
                         try
                         {
-                            reasoningLevel = ParseReasoningLevel(
-                                Params(request)["reasoningLevel"], _runtime.ConfigStore.Config.Agent.ReasoningLevel);
-                            modelRef = _admin.ParseSessionModelRef(Params(request)["modelRef"]);
+                            var parameters = Params(request);
+                            modelRef = _admin.ParseSessionModelRef(parameters["modelRef"]);
+                            reasoningLevel = parameters.ContainsKey("reasoningLevel")
+                                ? ParseReasoningLevel(parameters["reasoningLevel"], _runtime.ConfigStore.Config.Agent.ReasoningLevel)
+                                : ResolveSessionReasoningDefault(workspace, modelRef);
                         }
                         catch (DaemonRequestException ex)
                         {
@@ -1857,7 +1859,7 @@ public sealed class DaemonServer : IAsyncDisposable
         if (_runtime.Workspace.Config is not { } workspaceConfig) return;
         workspaceConfig.Mode = mode;
         Directory.CreateDirectory(_runtime.Workspace.SeekClawDir);
-        var path = Path.Combine(_runtime.Workspace.SeekClawDir, "config.json");
+        var path = _runtime.Workspace.ConfigFile;
         File.WriteAllText(path, JsonSerializer.Serialize(workspaceConfig, SeekClawJsonContext.Default.WorkspaceConfig));
     }
 
@@ -1878,6 +1880,14 @@ public sealed class DaemonServer : IAsyncDisposable
         return false;
     }
 
+    private ReasoningLevel ResolveSessionReasoningDefault(WorkspaceInfo workspace, string? modelRef)
+    {
+        var model = modelRef is not null
+            ? _runtime.Models.Resolve(modelRef)
+            : _runtime.Providers.BuildCandidates(workspace.Config).FirstOrDefault();
+        return model?.Capabilities.DefaultReasoningLevel ?? _runtime.ConfigStore.Config.Agent.ReasoningLevel;
+    }
+
     private static ReasoningLevel ParseReasoningLevel(JsonNode? node, ReasoningLevel fallback)
     {
         if (node is null) return fallback;
@@ -1896,6 +1906,7 @@ public sealed class DaemonServer : IAsyncDisposable
         {
             ["path"] = workspace.Root,
             ["name"] = workspace.Name,
+            ["stateDirectory"] = workspace.SeekClawDir,
             ["projectKinds"] = kinds,
             ["mode"] = CurrentMode(),
         }.ToJsonString();

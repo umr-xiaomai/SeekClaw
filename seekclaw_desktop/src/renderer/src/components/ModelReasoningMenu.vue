@@ -2,18 +2,16 @@
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Search } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { formatModelName } from '../app-helpers'
+import { effectiveReasoningLevel, reasoningLevels, supportedReasoningLevels } from '../model-reasoning'
 import { ReasoningLevel } from '../types'
 
 const props = withDefaults(defineProps<{
   model: string
   models: string[]
   reasoningLevel: ReasoningLevel
-  maxReasoningLevel?: ReasoningLevel
-  supportsReasoning?: boolean
+  reasoningLevels?: ReasoningLevel[]
   disabled?: boolean
 }>(), {
-  maxReasoningLevel: ReasoningLevel.Max,
-  supportsReasoning: true,
   disabled: false
 })
 
@@ -22,27 +20,9 @@ const emit = defineEmits<{
   'update:reasoningLevel': [level: ReasoningLevel]
 }>()
 
-interface ReasoningStep {
-  value: ReasoningLevel
-  label: string
-  detailLabel: string
-  rank: number
-}
-
-const ALL_STEPS: ReasoningStep[] = [
-  { value: ReasoningLevel.Low, label: '低', detailLabel: '低强度 (Low)', rank: 1 },
-  { value: ReasoningLevel.Medium, label: '中', detailLabel: '中等强度 (Medium)', rank: 2 },
-  { value: ReasoningLevel.High, label: '高', detailLabel: '高强度 (High)', rank: 3 },
-  { value: ReasoningLevel.Max, label: '最大', detailLabel: '最大强度 (Max)', rank: 4 },
-  { value: ReasoningLevel.XHigh, label: '极高', detailLabel: '极高强度 (X-High)', rank: 5 },
-  { value: ReasoningLevel.Ultra, label: '超级', detailLabel: '超级强度 (Ultra)', rank: 6 }
-]
-
-function getLevelRank(level: ReasoningLevel): number {
-  if (level === ReasoningLevel.None) return 0
-  const found = ALL_STEPS.find((s) => s.value === level)
-  return found ? found.rank : 3
-}
+const availableLevels = computed(() => props.reasoningLevels ?? supportedReasoningLevels())
+const supportsReasoning = computed(() => availableLevels.value.length > 0)
+const effectiveLevel = computed(() => effectiveReasoningLevel(props.reasoningLevel, availableLevels.value))
 
 const open = ref(false)
 const currentView = ref<'intensity' | 'model'>('intensity')
@@ -53,35 +33,15 @@ const sliderTrack = ref<HTMLElement | null>(null)
 const popoverStyle = ref<Record<string, string>>({})
 const isDragging = ref(false)
 
-const steps = computed<ReasoningStep[]>(() => {
-  const maxRank = Math.max(
-    getLevelRank(props.maxReasoningLevel ?? ReasoningLevel.Max),
-    getLevelRank(props.reasoningLevel)
-  )
-
-  const effectiveMaxRank =
-    props.maxReasoningLevel === ReasoningLevel.High && getLevelRank(props.reasoningLevel) <= 3
-      ? 3
-      : Math.max(4, maxRank)
-
-  const result = ALL_STEPS.filter((s) => s.rank <= effectiveMaxRank).map((s) => ({ ...s }))
-
-  if (props.reasoningLevel === ReasoningLevel.None) {
-    result.unshift({
-      value: ReasoningLevel.None,
-      label: '关闭',
-      detailLabel: '已关闭思考 (None)',
-      rank: 0
-    })
+const steps = computed(() => {
+  const result = reasoningLevels.filter(({ value }) => availableLevels.value.includes(value))
+  if (supportsReasoning.value && props.reasoningLevel === ReasoningLevel.None) {
+    result.unshift({ value: ReasoningLevel.None, label: '关闭', detailLabel: '已关闭思考 (None)' })
   }
-
   return result
 })
 
-const currentStepIndex = computed(() => {
-  const idx = steps.value.findIndex((s) => s.value === props.reasoningLevel)
-  return idx >= 0 ? idx : steps.value.length - 1
-})
+const currentStepIndex = computed(() => Math.max(0, steps.value.findIndex(({ value }) => value === effectiveLevel.value)))
 
 const currentLabel = computed(() => {
   return steps.value[currentStepIndex.value]?.label ?? '高'
@@ -91,27 +51,19 @@ const currentDetailLabel = computed(() => {
   return steps.value[currentStepIndex.value]?.detailLabel ?? '高强度 (High)'
 })
 
-const isMaxTier = computed(() => {
-  return (
-    props.reasoningLevel === ReasoningLevel.Max ||
-    props.reasoningLevel === ReasoningLevel.XHigh ||
-    props.reasoningLevel === ReasoningLevel.Ultra
-  )
-})
+const isMaxTier = computed(() => [ReasoningLevel.Max, ReasoningLevel.XHigh, ReasoningLevel.Ultra].includes(effectiveLevel.value))
 
-const fillPercentNumber = computed(() => {
-  if (steps.value.length <= 1) return 100
-  return (currentStepIndex.value / (steps.value.length - 1)) * 100
-})
-
-const fillPercent = computed(() => `${fillPercentNumber.value}%`)
+function stepPosition(index: number): string {
+  if (steps.value.length <= 1) return '50%'
+  return `calc(12px + (100% - 24px) * (${index} / ${steps.value.length - 1}))`
+}
 
 const displayModel = computed(() => formatModelName(props.model))
 
 const triggerLabel = computed(() => displayModel.value)
 
 const showTriggerReasoning = computed(() =>
-  Boolean(props.model) && props.supportsReasoning
+  Boolean(props.model) && supportsReasoning.value
 )
 
 const filteredModels = computed(() => {
@@ -140,7 +92,7 @@ function positionPopover(): void {
 function show(): void {
   if (props.disabled) return
   open.value = true
-  if (!props.supportsReasoning) {
+  if (!supportsReasoning.value) {
     currentView.value = 'model'
   } else {
     currentView.value = 'intensity'
@@ -164,7 +116,7 @@ function toggle(): void {
 
 function selectModel(m: string): void {
   emit('update:model', m)
-  if (props.supportsReasoning) {
+  if (supportsReasoning.value) {
     currentView.value = 'intensity'
   } else {
     hide()
@@ -290,6 +242,12 @@ function removeListeners(): void {
 }
 
 watch(open, (isOpen) => isOpen ? addListeners() : removeListeners())
+watch(supportsReasoning, (supported) => {
+  if (!supported) {
+    isDragging.value = false
+    currentView.value = 'model'
+  }
+})
 watch(() => props.disabled, (disabled) => { if (disabled) hide() })
 onBeforeUnmount(removeListeners)
 </script>
@@ -368,7 +326,7 @@ onBeforeUnmount(removeListeners)
                 :style="{
                   width: currentStepIndex === steps.length - 1
                     ? '100%'
-                    : `calc(12px + (100% - 24px) * (${currentStepIndex} / ${steps.length - 1}))`
+                    : stepPosition(currentStepIndex)
                 }"
               >
                 <div v-if="isMaxTier" class="max-particle-stream" aria-hidden="true">
@@ -396,7 +354,7 @@ onBeforeUnmount(removeListeners)
                   last: index === steps.length - 1
                 }"
                 :style="{
-                  left: `calc(12px + (100% - 24px) * (${index} / ${steps.length - 1}))`
+                  left: stepPosition(index)
                 }"
               />
 
@@ -404,7 +362,7 @@ onBeforeUnmount(removeListeners)
               <div
                 class="slider-bar-thumb"
                 :style="{
-                  left: `calc(12px + (100% - 24px) * (${currentStepIndex} / ${steps.length - 1}))`
+                  left: stepPosition(currentStepIndex)
                 }"
               />
             </div>

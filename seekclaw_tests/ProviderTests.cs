@@ -803,6 +803,71 @@ public sealed class ProviderTests : IDisposable
             OpenAiCompatibleClient.BuildBody(request)["reasoning_effort"]!.GetValue<string>());
     }
 
+    [Theory]
+    [InlineData(ReasoningLevel.None, ReasoningLevel.None)]
+    [InlineData(ReasoningLevel.Low, ReasoningLevel.Low)]
+    [InlineData(ReasoningLevel.Medium, ReasoningLevel.Low)]
+    [InlineData(ReasoningLevel.Max, ReasoningLevel.High)]
+    [InlineData(ReasoningLevel.XHigh, ReasoningLevel.Ultra)]
+    public void ReasoningNormalization_UsesNearestLevelInExactSet(ReasoningLevel requested, ReasoningLevel expected)
+    {
+        var provider = new ProviderConfig { Id = "gateway" };
+        var model = new ModelConfig
+        {
+            Id = "gpt-5",
+            Capabilities = new ModelCapabilities
+            {
+                SupportedReasoningLevels = [ReasoningLevel.Ultra, ReasoningLevel.High, ReasoningLevel.Low],
+            },
+        };
+
+        ModelCapabilityResolver.Apply(provider, model, metadataSupportsReasoning: false);
+        Assert.Equal(new[] { ReasoningLevel.Ultra, ReasoningLevel.High, ReasoningLevel.Low },
+            model.Capabilities.SupportedReasoningLevels);
+        Assert.Equal(expected, ReasoningLevelAdapter.Normalize(provider, model, requested));
+    }
+
+    [Fact]
+    public void DeepSeek_UsesExactLevelsAndRetainsFamilyWireValues()
+    {
+        var provider = new ProviderConfig { Id = "deepseek" };
+        var model = new ModelConfig
+        {
+            Id = "deepseek-reasoner",
+            Capabilities = new ModelCapabilities
+            {
+                SupportedReasoningLevels = [ReasoningLevel.Low, ReasoningLevel.Ultra],
+            },
+        };
+        var request = new LlmRequest
+        {
+            Provider = provider,
+            Model = model,
+            Messages = [ChatMessage.User("think")],
+            OptimizeDeepSeek = true,
+            EnableThinking = true,
+            ReasoningLevel = ReasoningLevel.Medium,
+            MaxTokens = 16_384,
+        };
+
+        Assert.Equal(ReasoningLevel.Low, ReasoningLevelAdapter.Normalize(provider, model, request.ReasoningLevel));
+        var openAi = OpenAiCompatibleClient.BuildBody(request);
+        Assert.Equal("low", openAi["reasoning_effort"]!.GetValue<string>());
+        Assert.Equal(16_384, openAi["max_tokens"]!.GetValue<int>());
+        Assert.Equal("low", AnthropicClient.BuildBody(request)["output_config"]!["effort"]!.GetValue<string>());
+
+        provider.ReasoningEffortMap = new() { ["max"] = "max" };
+        model.Capabilities.SupportedReasoningLevels = [];
+        ModelCapabilityResolver.Apply(provider, model);
+        Assert.Empty(model.Capabilities.SupportedReasoningLevels);
+        openAi = OpenAiCompatibleClient.BuildBody(request);
+        Assert.False(openAi.ContainsKey("reasoning_effort"));
+        Assert.Equal("disabled", openAi["thinking"]!["type"]!.GetValue<string>());
+        var anthropic = AnthropicClient.BuildBody(request);
+        Assert.False(anthropic.ContainsKey("output_config"));
+        Assert.Equal("disabled", anthropic["thinking"]!["type"]!.GetValue<string>());
+    }
+
     [Fact]
     public void OpenAiReasoning_UsesProviderMapping_AfterModelCapabilityNormalization()
     {
@@ -1183,20 +1248,30 @@ public sealed class ProviderTests : IDisposable
         Assert.Equal(0.5, aggregate.SuccessRate);
     }
 
-    [Fact]
-    public async Task StreamAsync_ReasoningParameterRejection_DisablesCapabilityAndRetries()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StreamAsync_ReasoningParameterRejection_DisablesCapabilityAndRetries(bool exactLevels)
     {
         var store = _store;
         store.Config.Routing.Retry.MaxAttempts = 1;
         store.Config.Provider = "alpha";
         store.Config.Model = "big";
         var model = store.Config.Providers[0].Models[0];
-        model.Capabilities = new ModelCapabilities
-        {
-            Thinking = true,
-            Reasoning = true,
-            MaxReasoningLevel = ReasoningLevel.High,
-        };
+        model.Capabilities = exactLevels
+            ? new ModelCapabilities
+            {
+                SupportedReasoningLevels = [ReasoningLevel.Low, ReasoningLevel.High],
+                DefaultReasoningLevel = ReasoningLevel.High,
+                JsonMode = true,
+            }
+            : new ModelCapabilities
+            {
+                Thinking = true,
+                Reasoning = true,
+                MaxReasoningLevel = ReasoningLevel.High,
+                JsonMode = true,
+            };
 
         var client = new RejectReasoningOnceClient();
         var manager = NewManagerWithClients(store, _registry, Path.Combine(_dir, "usage-reasoning.jsonl"), client);
@@ -1221,6 +1296,11 @@ public sealed class ProviderTests : IDisposable
         Assert.False(model.Capabilities.Reasoning);
         Assert.False(model.Capabilities.Thinking);
         Assert.Equal(ReasoningLevel.None, model.Capabilities.MaxReasoningLevel);
+        store.Reload();
+        var persisted = store.Config.FindProvider("alpha")!.Models[0].Capabilities;
+        Assert.Empty(persisted.SupportedReasoningLevels!);
+        Assert.Null(persisted.DefaultReasoningLevel);
+        Assert.True(persisted.JsonMode);
     }
 
     [Fact]
@@ -1423,11 +1503,15 @@ public sealed class ProviderTests : IDisposable
             Calls++;
             await Task.Yield();
             ct.ThrowIfCancellationRequested();
+            var body = OpenAiCompatibleClient.BuildBody(request);
             if (Calls == 1)
+            {
+                Assert.Equal("high", body["reasoning_effort"]!.GetValue<string>());
                 throw new LlmException(
                     "alpha returned HTTP 400: Unsupported parameter: reasoning_effort", 400, retryable: false);
+            }
 
-            Assert.False(request.Model.Capabilities.Reasoning);
+            Assert.False(body.ContainsKey("reasoning_effort"));
             yield return new LlmCompleted(new LlmCompletion { Text = "ok" });
         }
     }

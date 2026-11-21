@@ -459,35 +459,6 @@ textarea.form-input {
   clip: rect(0, 0, 0, 0);
 }
 
-.toggle-switch {
-  display: flex;
-  width: 38px;
-  height: 22px;
-  flex: 0 0 auto;
-  align-items: center;
-  padding: 2px;
-  background: var(--border-strong);
-  border-radius: 999px;
-  transition: background-color 160ms ease;
-}
-
-.toggle-switch > span {
-  width: 18px;
-  height: 18px;
-  background: white;
-  border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.mcp-enabled-row input:checked + .toggle-switch {
-  background: var(--accent);
-}
-
-.mcp-enabled-row input:checked + .toggle-switch > span {
-  transform: translateX(16px);
-}
-
 .mcp-editor-header > div { min-width: 0; }
 .mcp-editor-header p { overflow-wrap: anywhere; }
 .mcp-enabled-row input:focus-visible + .toggle-switch {

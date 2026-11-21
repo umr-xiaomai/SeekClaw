@@ -88,7 +88,7 @@ seekclaw doctor
 ## 工作区、Skills 与 MCP
 
 ```bash
-# 初始化 .seekclaw 目录和 .gitignore 条目
+# 初始化并打印工作区状态目录，不改动项目目录或 .gitignore
 seekclaw init
 
 # 查看已发现技能

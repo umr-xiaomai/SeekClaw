@@ -125,7 +125,8 @@ public sealed class SubAgentRunner(
         var config = CloneConfig(context.Workspace.Config);
         config.Mode = limitedMode.ToModeString();
         var workspace = new WorkspaceInfo { Root = context.Workspace.Root, ProjectKinds = context.Workspace.ProjectKinds, Config = config,
-            ConfigurationRoot = context.Workspace.ConfigurationRoot };
+            IsGlobal = context.Workspace.IsGlobal, ConfigurationRoot = context.Workspace.ConfigurationRoot,
+            ProjectStateDirectory = context.Workspace.ProjectStateDirectory };
         var limitedContext = new ToolContext { Workspace = workspace, Events = context.Events, Agent = context.Agent,
             SessionId = context.SessionId, Owner = context.Owner, Coordinator = context.Coordinator,
             SessionWorkspace = context.SessionWorkspace, NetworkEnabled = context.NetworkEnabled && (record["networkEnabled"]?.GetValue<bool>() ?? false),
@@ -220,7 +221,8 @@ public sealed class SubAgentRunner(
             childConfig.Mode = isolatedRuntime.ConfigStore.Config.Agent.Mode;
             childConfig.SystemPrompt = def.PromptKey; childConfig.AutoVerify = false;
             var childWorkspace = new WorkspaceInfo { Root = context.Workspace.Root,
-                ProjectKinds = context.Workspace.ProjectKinds, Config = childConfig, ConfigurationRoot = context.Workspace.ConfigurationRoot };
+                ProjectKinds = context.Workspace.ProjectKinds, Config = childConfig, IsGlobal = context.Workspace.IsGlobal,
+                ConfigurationRoot = context.Workspace.ConfigurationRoot, ProjectStateDirectory = context.Workspace.ProjectStateDirectory };
 
             // 3. Optional model override
             var modelToUse = request.ModelOverride ?? def.DefaultModelOverride;

@@ -4,7 +4,15 @@ namespace SeekClaw.Runtime.Configuration;
 public static class SeekClawPaths
 {
     /// <summary>The current user's profile directory (parent of the SeekClaw state folder).</summary>
-    public static string HomeDir { get; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    public static string HomeDir { get; } = ResolveUserProfile();
+
+    private static string ResolveUserProfile()
+    {
+        var profile = OperatingSystem.IsWindows() ? Environment.GetEnvironmentVariable("USERPROFILE") : null;
+        return profile is not null && Path.IsPathFullyQualified(profile)
+            ? Path.GetFullPath(profile)
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    }
 
     public static string Home => Path.Combine(HomeDir, ".seekclaw");
 
@@ -17,6 +25,13 @@ public static class SeekClawPaths
     public static string SkillsDir => Path.Combine(Home, "skills");
     public static string PromptsDir => Path.Combine(Home, "prompts");
     public static string SessionsDir => Path.Combine(Home, "sessions");
+
+    public static string GetTemporaryDirectory()
+    {
+        var directory = Path.Combine(Home, "tmp");
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
 
     /// <summary>Directory of the running application (default prompts / seed config ship here).</summary>
     public static string AppDir => AppContext.BaseDirectory;

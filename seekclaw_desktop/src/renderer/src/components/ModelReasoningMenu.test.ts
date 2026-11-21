@@ -4,14 +4,9 @@ import { describe, expect, it } from 'vitest'
 import ModelReasoningMenu from './ModelReasoningMenu.vue'
 import { ReasoningLevel } from '../types'
 
-function renderModel(model: string, supportsReasoning = true): Promise<string> {
+function renderModel(model: string, reasoningLevels?: ReasoningLevel[], reasoningLevel = ReasoningLevel.Max): Promise<string> {
   return renderToString(createSSRApp({
-    render: () => h(ModelReasoningMenu, {
-      model,
-      models: [model],
-      reasoningLevel: ReasoningLevel.Max,
-      supportsReasoning
-    })
+    render: () => h(ModelReasoningMenu, { model, models: [model], reasoningLevel, reasoningLevels })
   }))
 }
 
@@ -31,8 +26,14 @@ describe('model reasoning menu labels', () => {
     expect(html).not.toContain('最大强度 (Max)')
   })
 
+  it('shows the nearest supported level for a saved session level', async () => {
+    const html = await renderModel('gateway/model', [ReasoningLevel.Low, ReasoningLevel.High], ReasoningLevel.Medium)
+
+    expect(html).toMatch(/class="trigger-reasoning-label"[^>]*>低<\/span>/)
+  })
+
   it('renders a model without a reasoning label when reasoning is unsupported', async () => {
-    const html = await renderModel('gateway/team/vision-model', false)
+    const html = await renderModel('gateway/team/vision-model', [])
 
     expect(html).toContain('>team/vision-model</span>')
     expect(html).not.toContain('class="trigger-reasoning-label"')
