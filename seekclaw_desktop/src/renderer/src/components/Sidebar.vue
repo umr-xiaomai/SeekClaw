@@ -14,9 +14,11 @@ import {
   PinOff,
   Plus,
   Search,
+  Settings,
   SlidersHorizontal,
   SquarePen,
-  Trash2
+  Trash2,
+  X
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import ContextMenu from './ContextMenu.vue'
@@ -44,7 +46,6 @@ const emit = defineEmits<{
   renameTask: [thread: ThreadItem]
   forkTask: [thread: ThreadItem]
   copyTask: [thread: ThreadItem, format: 'text' | 'id']
-  showProject: [project: ProjectItem]
   archiveTask: [thread: ThreadItem]
   restoreTask: [thread: ThreadItem]
   deleteTask: [thread: ThreadItem]
@@ -101,6 +102,7 @@ function startResize(event: PointerEvent): void {
 }
 
 const PINNED_THREADS_STORAGE_KEY = 'seekclaw-pinned-threads'
+const PINNED_PROJECTS_STORAGE_KEY = 'seekclaw-pinned-projects'
 
 const searching = ref(false)
 const query = ref('')
@@ -112,9 +114,9 @@ const menuKey = ref('')
 const menuAnchor = shallowRef<ContextMenuAnchor>({ x: 8, y: 8 })
 const menuReturnFocus = shallowRef<HTMLElement | null>(null)
 
-function loadPinnedThreadIds(): Set<string> {
+function loadPinnedIds(storageKey: string): Set<string> {
   try {
-    const raw = localStorage.getItem(PINNED_THREADS_STORAGE_KEY)
+    const raw = localStorage.getItem(storageKey)
     if (!raw) return new Set()
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? new Set(parsed.filter((item): item is string => typeof item === 'string')) : new Set()
@@ -123,15 +125,28 @@ function loadPinnedThreadIds(): Set<string> {
   }
 }
 
-function savePinnedThreadIds(ids: Set<string>): void {
+function savePinnedIds(storageKey: string, ids: Set<string>): void {
   try {
-    localStorage.setItem(PINNED_THREADS_STORAGE_KEY, JSON.stringify(Array.from(ids)))
+    localStorage.setItem(storageKey, JSON.stringify(Array.from(ids)))
   } catch {
     // ignore
   }
 }
 
-const pinnedThreadIds = ref<Set<string>>(loadPinnedThreadIds())
+const pinnedThreadIds = ref(loadPinnedIds(PINNED_THREADS_STORAGE_KEY))
+const pinnedProjectIds = ref(loadPinnedIds(PINNED_PROJECTS_STORAGE_KEY))
+
+const orderedProjects = computed(() => [...props.projects].sort((left, right) =>
+  Number(pinnedProjectIds.value.has(right.id)) - Number(pinnedProjectIds.value.has(left.id))
+))
+
+function toggleProjectPin(projectId: string): void {
+  const next = new Set(pinnedProjectIds.value)
+  if (next.has(projectId)) next.delete(projectId)
+  else next.add(projectId)
+  pinnedProjectIds.value = next
+  savePinnedIds(PINNED_PROJECTS_STORAGE_KEY, next)
+}
 
 function isPinned(thread: ThreadItem): boolean {
   return thread.pinned === true || pinnedThreadIds.value.has(thread.id)
@@ -147,7 +162,7 @@ function togglePin(thread: ThreadItem): void {
     thread.pinned = true
   }
   pinnedThreadIds.value = next
-  savePinnedThreadIds(next)
+  savePinnedIds(PINNED_THREADS_STORAGE_KEY, next)
 }
 
 watch(() => props.threads, (items) => {
@@ -163,7 +178,7 @@ watch(() => props.threads, (items) => {
   })
   if (changed) {
     pinnedThreadIds.value = next
-    savePinnedThreadIds(next)
+    savePinnedIds(PINNED_THREADS_STORAGE_KEY, next)
   }
 }, { immediate: true })
 
@@ -242,18 +257,17 @@ const menuItems = computed<ContextMenuEntry[]>(() => {
   ]
   const project = menuProject.value
   if (project) {
-    const items = props.threads.filter((thread) => thread.projectId === project.id)
+    const items = props.threads.filter((thread) => thread.projectId === project.id && isRealThread(thread))
     const running = items.some((thread) => thread.running)
+    const pinned = pinnedProjectIds.value.has(project.id)
     return [
-      { id: 'new', label: '新建任务', icon: SquarePen },
-      { id: 'edit', label: '编辑项目…', icon: Pencil },
+      { id: 'pin-project', label: pinned ? '取消置顶' : '置顶', icon: pinned ? PinOff : Pin, shortcut: 'P' },
+      { id: 'edit', label: '编辑', icon: Settings, shortcut: 'E' },
       { type: 'separator' },
-      { id: 'show', label: '在资源管理器中显示', icon: FolderOpen },
+      { id: 'archive-all', label: '归档聊天', icon: Archive, shortcut: 'A', disabled: running || (project.loaded && items.every((thread) => thread.archived)) },
       { type: 'separator' },
-      { id: 'archive-all', label: '归档全部任务…', icon: Archive, disabled: running || (!items.length && project.loaded) },
-      { type: 'separator' },
-      { id: 'delete-all', label: '永久删除全部任务…', icon: Trash2, danger: true, disabled: running || (!items.length && project.loaded) },
-      { id: 'delete-project', label: '删除项目和会话…', icon: Trash2, danger: true, disabled: running }
+      { id: 'delete-project', label: '移除项目', icon: X, disabled: running },
+      { id: 'delete-all', label: '删除所有会话', icon: Trash2, danger: true, disabled: running || (project.loaded && !items.length) }
     ]
   }
   const items = props.threads.filter((thread) => !thread.projectId)
@@ -278,9 +292,8 @@ function selectMenuAction(id: string): void {
     else if (id === 'archive') emit('archiveTask', thread)
     else if (id === 'delete') emit('deleteTask', thread)
   } else if (project) {
-    if (id === 'new') createTask(project.id)
+    if (id === 'pin-project') toggleProjectPin(project.id)
     else if (id === 'edit') emit('openProjectProperties', project)
-    else if (id === 'show') emit('showProject', project)
     else if (id === 'archive-all') emit('archiveProjectTasks', project)
     else if (id === 'delete-all') emit('deleteProjectTasks', project)
     else if (id === 'delete-project') emit('deleteProject', project)
@@ -384,7 +397,7 @@ onBeforeUnmount(stopResize)
         </div>
 
         <div v-if="projectSectionExpanded" id="sidebar-projects" class="project-list">
-          <div v-for="project in projects" :key="project.id" class="project-group">
+          <div v-for="project in orderedProjects" :key="project.id" class="project-group">
             <div class="project-heading-row" :class="{ 'has-menu': menuKey === `project:${project.id}` }"
               @contextmenu.prevent="openContextMenu(`project:${project.id}`, $event)">
               <button class="project-row" :title="project.path" :aria-expanded="expandedProjects.has(project.id)" :aria-controls="`project-tasks-${project.id}`"
@@ -397,12 +410,18 @@ onBeforeUnmount(stopResize)
                 <LoaderCircle v-if="!expandedProjects.has(project.id) && projectHasRunningTask(project.id)"
                   class="thread-running-spinner" :size="15" aria-label="项目中有任务正在运行" />
               </button>
-              <button class="icon-button compact row-menu-button" :aria-label="`${project.name} 项目菜单`"
-                data-sidebar-menu-trigger
-                :aria-expanded="menuKey === `project:${project.id}`"
-                @click.stop="toggleMenu(`project:${project.id}`, $event)">
-                <MoreHorizontal :size="16" />
-              </button>
+              <div class="project-row-actions">
+                <button class="icon-button compact" :aria-label="`${project.name} 项目菜单`"
+                  data-sidebar-menu-trigger
+                  :aria-expanded="menuKey === `project:${project.id}`"
+                  @click.stop="toggleMenu(`project:${project.id}`, $event)">
+                  <MoreHorizontal :size="16" />
+                </button>
+                <button type="button" class="icon-button compact" title="新建会话"
+                  :aria-label="`在 ${project.name} 中新建会话`" @click.stop="createTask(project.id)">
+                  <SquarePen :size="15" />
+                </button>
+              </div>
             </div>
 
             <Transition name="project-collapse">

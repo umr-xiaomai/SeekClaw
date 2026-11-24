@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Execution;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Providers;
 
 namespace SeekClaw.Runtime.SubAgents;
 
@@ -33,8 +34,12 @@ public sealed class SubAgentTaskManager(ExecutionRecordStore records, IEventBus?
     public JsonArray List(string parent) => new(records.List("subagent", parent)
         .Select(r => (JsonNode)Get(parent, r["id"]!.GetValue<string>())).ToArray());
 
+    public Task<JsonObject> StartAsync(string parent, JsonObject record,
+        Func<CancellationToken, Task<AgentTurnResult>> run, CancellationToken ct) =>
+        StartAsync(parent, record, (_, token) => run(token), ct);
+
     public async Task<JsonObject> StartAsync(string parent, JsonObject record,
-        Func<CancellationToken, Task<AgentTurnResult>> run, CancellationToken ct)
+        Func<AgentSteeringQueue, CancellationToken, Task<AgentTurnResult>> run, CancellationToken ct)
     {
         var id = record["id"]!.GetValue<string>();
         using var lease = await _operations.AcquireAsync(id, ct).ConfigureAwait(false);
@@ -68,7 +73,7 @@ public sealed class SubAgentTaskManager(ExecutionRecordStore records, IEventBus?
             {
                 try
                 {
-                    var result = await run(cancellation.Token).ConfigureAwait(false);
+                    var result = await run(running.Steering, cancellation.Token).ConfigureAwait(false);
                     record["status"] = result.Cancelled ? "cancelled" : result.Error is null ? "completed" : "failed";
                     record["output"] = result.Text; record["error"] = result.Error;
                     if (result.Maintenance is { } maintenance) await maintenance.ConfigureAwait(false);
@@ -77,6 +82,7 @@ public sealed class SubAgentTaskManager(ExecutionRecordStore records, IEventBus?
                 catch (Exception ex) { record["status"] = "failed"; record["error"] = ex.Message; }
                 finally
                 {
+                    running.Steering.Complete();
                     record["updatedAt"] = DateTimeOffset.UtcNow.ToString("O");
                     try { records.Put("subagent", id, parent, record); }
                     finally
@@ -93,6 +99,43 @@ public sealed class SubAgentTaskManager(ExecutionRecordStore records, IEventBus?
             }, CancellationToken.None);
             return snapshot;
         }
+    }
+
+    /// <summary>
+    /// Enqueues guidance without touching a live session or interrupting an active
+    /// model/tool request. If completion already closed the queue, wait for the old
+    /// turn to release its session before the caller starts a follow-up turn.
+    /// </summary>
+    public async Task<JsonObject?> TrySteerAsync(string parent, string id, string instruction, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(instruction);
+        if (instruction.Length > 32_000) throw new ArgumentException("Sub-agent guidance is limited to 32000 characters.");
+        using var lease = await _operations.AcquireAsync(id, ct).ConfigureAwait(false);
+        var record = Get(parent, id);
+        Task? finishing = null;
+        lock (_state)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ct.ThrowIfCancellationRequested();
+            if (_running.TryGetValue(id, out var active) && !active.Task.IsCompleted)
+            {
+                if (active.Cancellation.IsCancellationRequested)
+                    throw new InvalidOperationException("Sub-agent is stopping; wait before sending another instruction.");
+                var enqueue = active.Steering.Enqueue(ChatMessage.User(instruction));
+                if (enqueue == AgentSteeringEnqueueResult.Accepted)
+                {
+                    record["instructionQueued"] = true;
+                    return record;
+                }
+                if (enqueue == AgentSteeringEnqueueResult.Full)
+                    throw new InvalidOperationException("Sub-agent guidance queue is full; wait for the next model/tool boundary before sending more.");
+                finishing = active.Task;
+            }
+            else if (record["status"]?.GetValue<string>() == "running" && ProcessIdentity.IsAlive(record))
+                throw new InvalidOperationException("Sub-agent is owned by another running runtime.");
+        }
+        if (finishing is not null) await finishing.WaitAsync(ct).ConfigureAwait(false);
+        return null;
     }
 
     public async Task<JsonObject> WaitAsync(string parent, string id, int milliseconds, CancellationToken ct)
@@ -142,6 +185,7 @@ public sealed class SubAgentTaskManager(ExecutionRecordStore records, IEventBus?
     private sealed class RunningTask(CancellationTokenSource cancellation)
     {
         public CancellationTokenSource Cancellation { get; } = cancellation;
+        public AgentSteeringQueue Steering { get; } = new(32);
         public Task Task { get; set; } = Task.CompletedTask;
     }
 }

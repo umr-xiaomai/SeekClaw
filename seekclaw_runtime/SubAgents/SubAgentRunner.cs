@@ -69,30 +69,37 @@ public sealed class SubAgentRunner(
         if (registry.Resolve(request.Role) is null) throw new ArgumentException("Unknown sub-agent role.");
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Task);
         var sessions = new SessionStore(taskServices.Database);
-        var session = sessions.Create(context.Workspace, networkEnabled: context.NetworkEnabled && context.Agent.NetworkEnabled,
+        var storageWorkspace = context.SessionWorkspace ?? context.Workspace;
+        var session = sessions.Create(storageWorkspace, networkEnabled: context.NetworkEnabled && context.Agent.NetworkEnabled,
             parentSessionId: Parent(context));
         var id = Guid.NewGuid().ToString("N");
         try
         {
+            var parent = request.InheritContext && !string.IsNullOrWhiteSpace(context.SessionId)
+                ? sessions.Load(context.SessionWorkspace ?? context.Workspace, context.SessionId) : null;
+            var inheritedContext = SubAgentContextBuilder.Build(parent?.Messages ?? [], request.Task, request.Context);
+            if (inheritedContext is not null) sessions.Append(session, ChatMessage.User(inheritedContext));
             if (request.Isolated)
                 await taskServices.Worktrees.CreateAsync(context.Workspace.Root, session.Header.Id, ct: ct).ConfigureAwait(false);
             var record = new System.Text.Json.Nodes.JsonObject
             {
-                ["id"] = id, ["sessionId"] = session.Header.Id, ["workspace"] = context.Workspace.Root,
+                ["id"] = id, ["sessionId"] = session.Header.Id, ["workspace"] = storageWorkspace.Root,
+                ["sessionWorkspace"] = storageWorkspace.Root, ["sessionGlobal"] = storageWorkspace.IsGlobal,
+                ["executionWorkspace"] = context.Workspace.Root,
                 ["role"] = request.Role, ["name"] = request.Name, ["model"] = request.ModelOverride,
                 ["mode"] = context.Workspace.Config?.Mode ?? context.Agent.Mode,
                 ["networkEnabled"] = context.NetworkEnabled && context.Agent.NetworkEnabled,
             };
             // Capture the small immutable permission/configuration context; no child depends on its parent's DI lifetime.
-            return await taskServices.SubAgents.StartAsync(Parent(context), record, async token =>
+            return await taskServices.SubAgents.StartAsync(Parent(context), record, async (steering, token) =>
             {
-                var result = await RunSessionAsync(request, context, session, id, synchronous, token).ConfigureAwait(false);
+                var result = await RunSessionAsync(request, context, session, id, synchronous, token, steering).ConfigureAwait(false);
                 return new AgentTurnResult(result.Output, token.IsCancellationRequested, result.Error);
             }, ct).ConfigureAwait(false);
         }
         catch
         {
-            try { sessions.Delete(context.Workspace, session.Header.Id); } catch { }
+            try { sessions.Delete(storageWorkspace, session.Header.Id); } catch { }
             throw;
         }
     }
@@ -103,12 +110,21 @@ public sealed class SubAgentRunner(
         if (context.SubAgentDepth >= 1) throw new InvalidOperationException("Sub-agents cannot control sibling tasks.");
         ArgumentException.ThrowIfNullOrWhiteSpace(instruction);
         var record = taskServices.SubAgents.Get(Parent(context), id);
+        var storageWorkspace = context.SessionWorkspace ?? context.Workspace;
+        var legacy = record["executionWorkspace"] is null;
+        var storedRoot = record["workspace"]!.GetValue<string>();
         if (!string.Equals(
-                SeekClawDatabase.PathKey(record["workspace"]!.GetValue<string>()),
-                SeekClawDatabase.PathKey(context.Workspace.Root),
-                StringComparison.Ordinal))
+                SeekClawDatabase.PathKey(storedRoot), SeekClawDatabase.PathKey(storageWorkspace.Root), StringComparison.Ordinal)
+            && !(legacy && string.Equals(SeekClawDatabase.PathKey(storedRoot), SeekClawDatabase.PathKey(context.Workspace.Root), StringComparison.Ordinal)))
             throw new InvalidOperationException("Sub-agent workspace changed; return to the original workspace before resuming.");
-        var session = new SessionStore(taskServices.Database).Load(context.Workspace, record["sessionId"]!.GetValue<string>())
+        // Older versions stored children directly under the effective worktree.
+        // Keep that scope readable instead of duplicating or moving their history.
+        if (legacy && SeekClawDatabase.PathKey(storedRoot) != SeekClawDatabase.PathKey(storageWorkspace.Root))
+            storageWorkspace = context.Workspace;
+        var queued = await taskServices.SubAgents.TrySteerAsync(Parent(context), id, instruction, ct).ConfigureAwait(false);
+        if (queued is not null) return queued;
+        record = taskServices.SubAgents.Get(Parent(context), id);
+        var session = new SessionStore(taskServices.Database).Load(storageWorkspace, record["sessionId"]!.GetValue<string>())
             ?? throw new InvalidOperationException("Sub-agent session is missing.");
         var request = new SubAgentTaskRequest(
             record["role"]!.GetValue<string>(),
@@ -124,23 +140,25 @@ public sealed class SubAgentRunner(
             : mode == AgentMode.Edit || current == AgentMode.Edit ? AgentMode.Edit : current;
         var config = CloneConfig(context.Workspace.Config);
         config.Mode = limitedMode.ToModeString();
-        var workspace = new WorkspaceInfo { Root = context.Workspace.Root, ProjectKinds = context.Workspace.ProjectKinds, Config = config,
-            IsGlobal = context.Workspace.IsGlobal, ConfigurationRoot = context.Workspace.ConfigurationRoot,
-            ProjectStateDirectory = context.Workspace.ProjectStateDirectory };
+        var workspace = new WorkspaceInfo { Root = record["executionWorkspace"]?.GetValue<string>() ?? storedRoot,
+            ProjectKinds = context.Workspace.ProjectKinds, Config = config,
+            IsGlobal = context.Workspace.IsGlobal,
+            ConfigurationRoot = context.Workspace.ConfigurationRoot ?? (context.SessionWorkspace ?? context.Workspace).Root,
+            ProjectStateDirectory = context.Workspace.ProjectStateDirectory ?? (context.SessionWorkspace ?? context.Workspace).SeekClawDir };
         var limitedContext = new ToolContext { Workspace = workspace, Events = context.Events, Agent = context.Agent,
             SessionId = context.SessionId, Owner = context.Owner, Coordinator = context.Coordinator,
-            SessionWorkspace = context.SessionWorkspace, NetworkEnabled = context.NetworkEnabled && (record["networkEnabled"]?.GetValue<bool>() ?? false),
+            SessionWorkspace = storageWorkspace, NetworkEnabled = context.NetworkEnabled && (record["networkEnabled"]?.GetValue<bool>() ?? false),
             ApprovalGate = context.ApprovalGate, SubAgentDepth = context.SubAgentDepth };
         session.Header.NetworkEnabled &= record["networkEnabled"]?.GetValue<bool>() ?? false;
-        return await taskServices.SubAgents.StartAsync(Parent(context), record, async token =>
+        return await taskServices.SubAgents.StartAsync(Parent(context), record, async (steering, token) =>
         {
-            var result = await RunSessionAsync(request, limitedContext, session, id, synchronous: false, token).ConfigureAwait(false);
+            var result = await RunSessionAsync(request, limitedContext, session, id, synchronous: false, token, steering).ConfigureAwait(false);
             return new AgentTurnResult(result.Output, token.IsCancellationRequested, result.Error);
         }, ct).ConfigureAwait(false);
     }
 
     private async Task<SubAgentTaskResult> RunSessionAsync(SubAgentTaskRequest request, ToolContext context,
-        AgentSession? savedSession, string? persistentId, bool synchronous, CancellationToken ct)
+        AgentSession? savedSession, string? persistentId, bool synchronous, CancellationToken ct, AgentSteeringQueue? steering = null)
     {
         if (context.SubAgentDepth >= 1)
         {
@@ -193,17 +211,18 @@ public sealed class SubAgentRunner(
                     if (savedSession is null) services.AddSingleton<ISessionStore>(new InMemorySessionStore());
                 });
 
-            if (isolatedRuntime.Mcp.LoadServerConfigs(context.Workspace).Count > 0)
-                await isolatedRuntime.Mcp.ConnectAllAsync(context.Workspace, ct).ConfigureAwait(false);
+            await isolatedRuntime.Mcp.PrepareAsync(context.Workspace, ct).ConfigureAwait(false);
 
             // Filter after MCP registration, so role restrictions cover remote tools too.
+            var allowMcpDiscovery = def.AllowedTools?.Any(name => name.StartsWith("mcp__", StringComparison.OrdinalIgnoreCase)) == true;
             isolatedRuntime.Tools.RetainOnly(tool =>
             {
                 if (tool.Name is "invoke_subagent" or "subagent")
                     return false;
                 if (!def.AllowMutating && tool.Mutating)
                     return false;
-                if (def.AllowedTools is { Count: > 0 } && !def.AllowedTools.Contains(tool.Name))
+                if (def.AllowedTools is { Count: > 0 } && !def.AllowedTools.Contains(tool.Name)
+                    && !(allowMcpDiscovery && tool.Name == "tool_search"))
                     return false;
                 return true;
             });
@@ -242,6 +261,8 @@ public sealed class SubAgentRunner(
             var session = savedSession ?? isolatedRuntime.Sessions.Create(
                 childWorkspace,
                 networkEnabled: context.NetworkEnabled && context.Agent.NetworkEnabled);
+            if (savedSession is null && SubAgentContextBuilder.Build([], request.Task, request.Context) is { } background)
+                isolatedRuntime.Sessions.Append(session, ChatMessage.User(background));
 
             // Keep child streams under the parent's routing envelope. Consumers can
             // inspect the child without mixing its tokens into the parent's answer.
@@ -275,6 +296,9 @@ public sealed class SubAgentRunner(
                                 break;
                             case AssistantMessageCompletedEvent message:
                                 Progress("Responding", kind: "message_done", delta: message.Text);
+                                break;
+                            case UserSteerEvent guidance:
+                                Progress("Guidance received", kind: "guidance", delta: guidance.Instruction);
                                 break;
                             case ToolCallStartedEvent tool:
                                 Progress($"Using {tool.ToolName}", tool.ArgumentSummary, "tool_start");
@@ -311,15 +335,32 @@ public sealed class SubAgentRunner(
                     childWorkspace,
                     request.Task,
                     ct,
-                    turnRequestId: synchronous ? context.TurnRequestId : null).ConfigureAwait(false);
+                    steering: steering,
+                    turnRequestId: synchronous ? context.TurnRequestId : null,
+                    sessionStorageWorkspace: context.SessionWorkspace ?? context.Workspace).ConfigureAwait(false);
                 if (turnResult.Maintenance is { } maintenance) await maintenance.ConfigureAwait(false);
             }
             finally
             {
-                // Drain terminal deltas before publishing completion. Cancellation
-                // still interrupts the reader through the linked token.
-                childSubscription.Dispose();
-                try { await forwardTask.ConfigureAwait(false); } catch { }
+                // A transport failure or cancellation can end a turn before its
+                // next boundary. Retain accepted guidance for a later resume rather
+                // than silently dropping it; the task still keeps its failure status.
+                try
+                {
+                    steering?.Complete();
+                    foreach (var message in steering?.Drain() ?? [])
+                    {
+                        isolatedRuntime.Sessions.Append(session, message);
+                        Progress("Guidance retained", kind: "guidance", delta: message.Text);
+                    }
+                }
+                finally
+                {
+                    // Drain terminal deltas before publishing completion. Cancellation
+                    // still interrupts the reader through the linked token.
+                    childSubscription.Dispose();
+                    try { await forwardTask.ConfigureAwait(false); } catch { }
+                }
             }
 
             stopwatch.Stop();

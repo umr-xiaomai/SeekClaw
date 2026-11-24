@@ -3,6 +3,7 @@ using SeekClaw.Runtime.Presentation;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Goals;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Workspaces;
 
@@ -17,6 +18,7 @@ public sealed class ToolContext
     public int MaxOutputChars { get; init; } = 30_000;
     public string CallId { get; init; } = "";
     public string SessionId { get; init; } = "";
+    internal GoalExecution? GoalExecution { get; init; }
     public string? TurnRequestId { get; init; }
     public Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? AskUser { get; init; }
     /// <summary>Conversation storage scope, which may differ from its worktree execution directory.</summary>
@@ -188,6 +190,7 @@ public interface ITool
 public interface IToolRegistry
 {
     IDisposable Register(ITool tool);
+    IDisposable? TryRegister(ITool tool);
     ITool? Resolve(string name);
     IReadOnlyList<ITool> All { get; }
     /// <summary>Filters registered tools in-place so only those satisfying the predicate remain.</summary>
@@ -198,6 +201,7 @@ public sealed class ToolRegistry : IToolRegistry
 {
     private readonly Lock _gate = new();
     private readonly List<ITool> _tools = [];
+    private readonly List<Func<ITool, bool>> _filters = [];
 
     public IReadOnlyList<ITool> All
     {
@@ -208,19 +212,23 @@ public sealed class ToolRegistry : IToolRegistry
     {
         lock (_gate)
         {
+            _filters.Add(predicate);
             _tools.RemoveAll(t => !predicate(t));
         }
     }
 
-    public IDisposable Register(ITool tool)
+    public IDisposable Register(ITool tool) => TryRegister(tool)
+        ?? throw new InvalidOperationException($"Tool '{tool.Name}' is already registered or not permitted.");
+
+    public IDisposable? TryRegister(ITool tool)
     {
         lock (_gate)
         {
-            if (_tools.Any(t => t.Name.Equals(tool.Name, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidOperationException($"Tool '{tool.Name}' is already registered.");
+            if (_filters.Any(filter => !filter(tool))
+                || _tools.Any(t => t.Name.Equals(tool.Name, StringComparison.OrdinalIgnoreCase))) return null;
             _tools.Add(tool);
+            return new Registration(this, tool);
         }
-        return new Registration(this, tool);
     }
 
     public ITool? Resolve(string name)

@@ -1,4 +1,4 @@
-Deploys a specialized sub-agent with its own isolated context window to execute a focused, self-contained sub-task. Provide an optional short display name (e.g. 'Demo explainer') to label the sub-agent in the UI.
+Deploys a specialized sub-agent with its own isolated context window to execute a focused sub-task. The child receives a bounded selection of relevant parent requirements and results, without private reasoning or replayed tool calls. Use context for additional concise background, or inherit_context=false to start fresh. Still provide a concrete task and scope. Provide an optional short display name (e.g. 'Demo explainer') to label the sub-agent in the UI.
 
 Use this tool to:
 - Perform deep or broad codebase exploration, searches, and analysis without polluting your own context window (use role: 'researcher').

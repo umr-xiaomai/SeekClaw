@@ -18,6 +18,8 @@ public sealed class InvokeSubAgentTool(
         ("role", ToolSchema.String("Specialist role of the sub-agent: 'researcher', 'coder', 'tester', or 'general'"), true),
         ("task", ToolSchema.String("Clear, self-contained task description and instructions for the sub-agent"), true),
         ("name", ToolSchema.String("Optional short display name for the sub-agent (e.g. 'Demo explainer')"), false),
+        ("inherit_context", ToolSchema.Boolean("Include selected parent requirements and relevant results; defaults to true"), false),
+        ("context", ToolSchema.String("Optional concise background to include with the delegated task"), false),
         ("model", ToolSchema.String("Optional model override in 'provider/model' format (e.g. 'openai/gpt-4o-mini'). Omit to use the active or default model."), false)
     );
 
@@ -42,7 +44,8 @@ public sealed class InvokeSubAgentTool(
 
         var model = GetString(arguments, "model")?.Trim();
 
-        var request = new SubAgentTaskRequest(role, task, model, Name: name);
+        var request = new SubAgentTaskRequest(role, task, model, Name: name,
+            InheritContext: arguments["inherit_context"]?.GetValue<bool>() ?? true, Context: GetString(arguments, "context"));
         var result = await runner.ExecuteSubTaskAsync(request, context, ct).ConfigureAwait(false);
 
         if (!result.Success)

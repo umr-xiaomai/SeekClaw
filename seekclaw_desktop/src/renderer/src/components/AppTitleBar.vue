@@ -13,6 +13,9 @@ type MenuAction =
   | 'openTerminal'
   | 'openGitChanges'
   | 'openGitHistory'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'resetZoom'
   | 'openDiagnostics'
   | 'openDevTools'
   | 'openAbout'
@@ -29,8 +32,10 @@ interface MenuItem {
 const props = defineProps<{
   sidebarOpen: boolean
   projectPath?: string
+  zoomFactor: number
 }>()
 const emit = defineEmits<{
+  changeZoomFactor: [factor: number]
   toggleSidebar: []
   newTask: []
   openWorkspace: []
@@ -75,7 +80,11 @@ const menus: Array<{ id: MenuName; label: string; items: MenuItem[] }> = [
       { label: '打开终端', shortcut: 'Ctrl+`', action: 'openTerminal', requiresProject: true },
       { separator: true },
       { label: 'Git 变更', action: 'openGitChanges', requiresProject: true },
-      { label: 'Git 历史', action: 'openGitHistory', requiresProject: true }
+      { label: 'Git 历史', action: 'openGitHistory', requiresProject: true },
+      { separator: true },
+      { label: '放大', shortcut: 'Ctrl+=', action: 'zoomIn' },
+      { label: '缩小', shortcut: 'Ctrl+-', action: 'zoomOut' },
+      { label: '重置缩放', shortcut: 'Ctrl+0', action: 'resetZoom' }
     ]
   },
   {
@@ -99,7 +108,18 @@ function switchOpenMenu(menu: MenuName): void {
   if (activeMenu.value) activeMenu.value = menu
 }
 
+const zoomStep = 0.05
+const minZoom = 0.75
+const maxZoom = 1.5
+
+function isActionDisabled(action?: MenuAction): boolean {
+  if (action === 'zoomIn') return props.zoomFactor >= maxZoom
+  if (action === 'zoomOut') return props.zoomFactor <= minZoom
+  return action === 'resetZoom' && props.zoomFactor === 1
+}
+
 function runAction(action?: MenuAction): void {
+  if (isActionDisabled(action)) return
   activeMenu.value = null
   switch (action) {
     case 'newTask': emit('newTask'); break
@@ -111,6 +131,9 @@ function runAction(action?: MenuAction): void {
     case 'openTerminal': emit('openTerminal'); break
     case 'openGitChanges': emit('openGitChanges'); break
     case 'openGitHistory': emit('openGitHistory'); break
+    case 'zoomIn': emit('changeZoomFactor', Math.min(maxZoom, props.zoomFactor + zoomStep)); break
+    case 'zoomOut': emit('changeZoomFactor', Math.max(minZoom, props.zoomFactor - zoomStep)); break
+    case 'resetZoom': emit('changeZoomFactor', 1); break
     case 'openDiagnostics': emit('openDiagnostics'); break
     case 'openDevTools': emit('openDevTools'); break
     case 'openAbout': emit('openAbout'); break
@@ -153,7 +176,11 @@ function handleKeydown(event: KeyboardEvent): void {
     ',': 'openSettings',
     l: 'focusComposer',
     b: 'toggleSidebar',
-    '`': 'openTerminal'
+    '`': 'openTerminal',
+    '=': 'zoomIn',
+    '+': 'zoomIn',
+    '-': 'zoomOut',
+    '0': 'resetZoom'
   }
   const action = shortcuts[event.key.toLocaleLowerCase()]
   if (!action || (action === 'openTerminal' && !props.projectPath)) return
@@ -209,7 +236,7 @@ onBeforeUnmount(() => {
                 v-else
                 class="app-menu-item"
                 role="menuitem"
-                :disabled="item.requiresProject && !projectPath"
+                :disabled="(item.requiresProject && !projectPath) || isActionDisabled(item.action)"
                 @pointerdown.stop
                 @click="activateItem(item)"
               >

@@ -12,6 +12,9 @@ export interface SubAgentTaskSnapshot {
   id: string
   parent?: string
   sessionId: string
+  workspace?: string
+  sessionWorkspace?: string
+  sessionGlobal?: boolean
   role?: string
   model?: string | null
   status: SubAgentActivity['status']
@@ -71,7 +74,7 @@ export function createSubAgentConversationSource(api: ConversationApi, changed: 
     const consumed = new Set<number>()
     live = live.filter((item) => {
       const index = session.messages.findIndex((saved, index) =>
-        index >= item.after && !consumed.has(index) && saved.role === 'assistant'
+        index >= item.after && !consumed.has(index) && saved.role === item.message.role
         && (Boolean(item.message.content) || Boolean(item.message.thinking))
         && saved.text === item.message.content
         && (!item.message.thinking || saved.thinking === item.message.thinking))
@@ -116,7 +119,10 @@ export function createSubAgentConversationSource(api: ConversationApi, changed: 
           || (task.parent && task.parent !== current.parentSessionId))
           throw new Error('子 Agent 记录与当前对话不匹配。')
         if (disposed || token !== generation) return
-        const saved = await api.request('session.get', { ...scope, id: task.sessionId })
+        const sessionScope = task.sessionGlobal === true ? { global: true }
+          : task.sessionWorkspace ? { workspace: task.sessionWorkspace }
+            : current.workspace && task.workspace ? { workspace: task.workspace } : scope
+        const saved = await api.request('session.get', { ...sessionScope, id: task.sessionId })
         const session = JSON.parse(saved.data) as RuntimeSession
         if (!session || session.id !== task.sessionId || !Array.isArray(session.messages)
           || (session.parentSessionId && session.parentSessionId !== current.parentSessionId))
@@ -183,6 +189,14 @@ export function createSubAgentConversationSource(api: ConversationApi, changed: 
           item.message.content = delta
           item.message.state = 'done'
         }
+        schedule()
+      } else if (kind === 'guidance' && delta) {
+        if (active) active.message.state = 'done'
+        active = undefined
+        live.push({
+          after: state.session?.messages.length ?? 0,
+          message: { id: `subagent-guidance:${generation}:${++serial}`, role: 'user', content: delta, createdAt: Date.now() }
+        })
         schedule()
       } else {
         if (kind === 'tool_start' && active) { active.message.state = 'done'; active = undefined }

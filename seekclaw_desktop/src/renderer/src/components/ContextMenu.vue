@@ -2,7 +2,7 @@
 import { ChevronRight } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch, type ComponentPublicInstance } from 'vue'
 import {
-  contextMenuFocusIndex, isContextMenuAction, positionContextMenu, positionContextSubmenu,
+  contextMenuFocusIndex, contextMenuShortcutIndex, isContextMenuAction, positionContextMenu, positionContextSubmenu,
   type ContextMenuAction, type ContextMenuAnchor, type ContextMenuEntry
 } from './context-menu'
 
@@ -151,6 +151,15 @@ function handleKeydown(event: KeyboardEvent, depth: number): void {
     return
   }
   if (event.key === 'Tab') { close(true); return }
+  if (!event.altKey && !event.ctrlKey && !event.metaKey) {
+    const shortcutIndex = contextMenuShortcutIndex(items, event.key)
+    if (shortcutIndex >= 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      select(depth, shortcutIndex)
+      return
+    }
+  }
   if (!['Enter', ' ', 'ArrowRight', 'ArrowLeft', 'Escape'].includes(event.key)) return
   event.preventDefault()
   event.stopPropagation()

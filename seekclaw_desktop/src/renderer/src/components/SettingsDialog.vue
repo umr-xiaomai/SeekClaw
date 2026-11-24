@@ -526,11 +526,15 @@ async function toggleCrossSessionMemory(): Promise<void> {
   }
 }
 
+async function removeMemory(id: string): Promise<void> {
+  await window.seekclaw.daemon.request('memory.delete', { id })
+  crossSessionMemories.value = crossSessionMemories.value.filter(item => item.id !== id)
+}
+
 async function deleteCrossSessionMemory(id: string): Promise<void> {
   beginAction(`memory.delete:${id}`)
   try {
-    await requestJson<string>('memory.delete', { id })
-    crossSessionMemories.value = crossSessionMemories.value.filter(item => item.id !== id)
+    await removeMemory(id)
     notice.value = '已删除该条记忆'
   } catch (reason) {
     fail(reason)
@@ -627,7 +631,7 @@ async function clearGroupMemories(group: MemoryGroup): Promise<void> {
       await requestJson<{ deleted: number }>('memory.deleteByWorkspace', { workspace: group.path })
     } else {
       for (const item of group.items) {
-        await requestJson('memory.delete', { id: item.id })
+        await removeMemory(item.id)
       }
     }
     crossSessionMemories.value = crossSessionMemories.value.filter(

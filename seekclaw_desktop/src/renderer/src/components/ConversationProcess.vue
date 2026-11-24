@@ -1,14 +1,19 @@
 <script setup lang="ts">
-import { Check, ChevronRight, CircleAlert, LoaderCircle } from '@lucide/vue'
+import { Check, ChevronRight, CircleAlert } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { messageMatches } from '../app-helpers'
-import { summarizeConversationProcess, type ConversationProcessItem, type ConversationTurnProjection } from '../conversation-process'
+import { collectTurnDiff, type ToolDiffPreview } from '../conversation-diffs'
+import { type ConversationProcessItem, type ConversationTurnProjection } from '../conversation-process'
 import { animateReverseLineCollapse, captureCollapseSnapshot, type CollapseSnapshot, type ReverseCollapseController } from '../reverse-collapse'
-import { isSubAgentTool, messageSubAgents } from '../subagent-activity'
-import type { ChatMessage, SubAgentActivity } from '../types'
+import { messageSubAgents } from '../subagent-activity'
+import { extractThinkingHeading } from '../thinking-status'
+import type { ChatMessage, SubAgentActivity, SubAgentLifecycleEvent, ToolActivity } from '../types'
 import ConversationMessage from './ConversationMessage.vue'
+import ConversationWidgets from './ConversationWidgets.vue'
+import ProcessActivityGroup from './ProcessActivityGroup.vue'
 import SubAgentActivityList from './SubAgentActivityList.vue'
-import { phaseStatusText, preparingToolLabel, toolLabel, toolTarget } from './tool-presentation'
+import ToolCallRow from './ToolCallRow.vue'
+import { phaseStatusText, preparingToolLabel, toolDisplayState } from './tool-presentation'
 
 const props = withDefaults(defineProps<{
   turn: ConversationTurnProjection
@@ -16,10 +21,15 @@ const props = withDefaults(defineProps<{
   sessionId?: string
   workspace?: string
   phase?: string
+  /** Approval and clarification panels already indicate that the turn is paused. */
+  awaitingUser?: boolean
+  approvalCallIds?: ReadonlySet<string>
   imageSources?: Record<string, string>
   query?: string
   /** Optional controlled state, retained by the virtualized conversation view. */
   expanded?: boolean
+  /** Open activity disclosures, retained when a virtualized turn leaves the viewport. */
+  activityDisclosures?: ReadonlySet<string>
   /** Read-only rendering (e.g. sub-agent view) keeps copy actions while hiding mutations. */
   readOnly?: boolean
   /** Render the user turn prompt as a compact collapsible disclosure. */
@@ -27,17 +37,28 @@ const props = withDefaults(defineProps<{
 }>(), { phase: '', imageSources: () => ({}), query: '', expanded: undefined, readOnly: false, compactTaskPrompt: false })
 
 const emit = defineEmits<{
+  openDiffPreview: [preview: ToolDiffPreview, trigger: HTMLButtonElement]
   openDiff: [filePath: string, diff: string]
   branch: [message: ChatMessage]
   retry: [message: ChatMessage]
   edit: [message: ChatMessage]
   openSubAgent: [activity: SubAgentActivity]
+  openBrowserResult: [tool: ToolActivity]
   'update:expanded': [expanded: boolean]
+  setActivityDisclosure: [id: string, expanded: boolean]
 }>()
 
 const uncontrolledExpanded = ref(false)
+const localActivityDisclosures = ref(new Set<string>())
+const activityDisclosures = computed(() => props.activityDisclosures ?? localActivityDisclosures.value)
+function setActivityDisclosure(id: string, expanded: boolean): void {
+  if (props.activityDisclosures === undefined) {
+    if (expanded) localActivityDisclosures.value.add(id)
+    else localActivityDisclosures.value.delete(id)
+  }
+  emit('setActivityDisclosure', id, expanded)
+}
 const isExpanded = computed(() => Boolean(props.query.trim()) || (props.expanded ?? uncontrolledExpanded.value))
-const summary = computed(() => summarizeConversationProcess(props.turn.process))
 function isSettledStatus(status: SubAgentActivity['status']): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'interrupted'
 }
@@ -59,26 +80,21 @@ function visibleNonSubAgentTools(message: ChatMessage) {
   return (message.tools ?? []).filter((tool) => !represented.has(tool.id))
 }
 
-function isBareStep(item: ConversationProcessItem): boolean {
-  const msg = item.message
-  return !msg.content.trim()
-    && !msg.thinking?.trim()
-    && !msg.errorMessage?.trim()
-    && !(msg.viewedImages?.length)
-    && !(msg.images?.length)
-    && !(msg.files?.length)
-    && item.widgets.length === 0
-}
+const turnDiff = computed(() => {
+  if (props.turn.running) return null
+  const items = props.turn.response ? [...props.turn.process, props.turn.response] : props.turn.process
+  return collectTurnDiff(items.flatMap(({ message }) => message.tools ?? []))
+})
 
-function isPureToolStep(item: ConversationProcessItem, includeEvents: boolean): boolean {
-  return isBareStep(item) && !(includeEvents && item.message.subAgentEvents?.length)
-}
+const responseTools = computed(() => props.turn.response ? visibleNonSubAgentTools(props.turn.response.message) : [])
+const hasProcessError = computed(() => props.turn.process.some(({ message }) =>
+  Boolean(message.errorMessage?.trim()) || message.tools?.some((tool) => toolDisplayState(tool) === 'error')
+) || responseTools.value.some((tool) => toolDisplayState(tool) === 'error'))
 
-function isPureSubAgentStep(item: ConversationProcessItem, includeEvents: boolean): boolean {
-  return isBareStep(item)
-    && includeEvents
-    && visibleNonSubAgentTools(item.message).length === 0
-    && Boolean(item.message.subAgentEvents?.length)
+function hasVisibleMessage(item: ConversationProcessItem): boolean {
+  const message = item.message
+  return Boolean(message.content.trim() || message.errorMessage?.trim() || message.viewedImages?.length
+    || message.images?.length || message.files?.length || item.widgets.length)
 }
 
 const agents = computed(() => {
@@ -108,127 +124,119 @@ const allEvents = computed(() => {
     return true
   })
 })
-function withFoldedResponseThinking(
-  items: ConversationProcessItem[],
-  response: ConversationProcessItem | null,
-  running: boolean,
-  hasProcess: boolean
-): ConversationProcessItem[] {
-  const thinking = response?.message.thinking?.trim()
-  if (running || !hasProcess || !response || !thinking) return items
-  return [
-    ...items,
-    {
-      ...response,
-      message: {
-        id: `${response.message.id}:thinking`,
-        role: 'assistant',
-        content: '',
-        thinking: response.message.thinking,
-        createdAt: response.message.createdAt,
-        state: 'done',
-        thinkingActive: false
-      },
-      widgets: [],
-      showFooter: false,
-      isIntermediate: true
-    }
-  ]
-}
+type ActivityStep = { kind: 'activity'; id: string; tools: ToolActivity[]; reasoning: string[] }
+type MessageStep = { kind: 'message'; id: string; item: ConversationProcessItem }
+type LifecycleStep = { kind: 'lifecycle'; id: string; events: SubAgentLifecycleEvent[] }
+type ProcessStep = ActivityStep | MessageStep | LifecycleStep | { kind: 'tool'; id: string; tool: ToolActivity }
 
-const expandedProcessSteps = computed(() => {
-  if (props.query.trim()) {
-    return withFoldedResponseThinking(props.turn.process, props.turn.response, props.turn.running, props.turn.process.length > 0)
+const processSteps = computed(() => {
+  const steps: ProcessStep[] = []
+  let activity: ActivityStep | undefined
+  let lastActivity: ActivityStep | undefined
+  let anchor = props.turn.id
+  let pendingReasoning: string[] = []
+  const seenEvents = new Set<string>()
+
+  function startSegmentAfter(id: string): void {
+    anchor = id
+    activity = undefined
   }
-  const includeEvents = allEvents.value.length > 0
-  const result: ConversationProcessItem[] = []
-  let lastKind: 'none' | 'tool' | 'subagent' = 'none'
-  for (const item of props.turn.process) {
-    const activeStep = isStreaming(item.message) || Boolean(item.message.preparingTool)
-    if (isPureToolStep(item, includeEvents) && !activeStep) {
-      const tools = visibleNonSubAgentTools(item.message)
-      if (tools.length === 0) continue
-      if (lastKind === 'tool' && result.length > 0) {
-        const prev = result[result.length - 1]!
-        result[result.length - 1] = {
-          ...prev,
-          message: {
-            ...prev.message,
-            tools: [...(prev.message.tools ?? []), ...tools],
-            subAgents: undefined,
-            subAgentEvents: undefined
-          }
-        }
-      } else {
-        result.push({
-          ...item,
-          message: {
-            ...item.message,
-            tools,
-            subAgents: undefined,
-            subAgentEvents: undefined
-          }
-        })
-        lastKind = 'tool'
-      }
-    } else if (isPureSubAgentStep(item, includeEvents) && !activeStep) {
-      const events = item.message.subAgentEvents ?? []
-      if (lastKind === 'subagent' && result.length > 0) {
-        const prev = result[result.length - 1]!
-        const mergedEvents = [...(prev.message.subAgentEvents ?? [])]
-        const seen = new Set(mergedEvents.map((e) => e.id))
-        for (const ev of events) {
-          if (!seen.has(ev.id)) {
-            seen.add(ev.id)
-            mergedEvents.push(ev)
-          }
-        }
-        mergedEvents.sort((a, b) => a.createdAt - b.createdAt)
-        const mergedAgents = new Map((prev.message.subAgents ?? []).map((a) => [a.id, a]))
-        for (const a of item.message.subAgents ?? []) mergedAgents.set(a.id, a)
-        result[result.length - 1] = {
-          ...prev,
-          message: {
-            ...prev.message,
-            subAgents: [...mergedAgents.values()],
-            subAgentEvents: mergedEvents
-          }
-        }
-      } else {
-        result.push({
-          ...item,
-          message: {
-            ...item.message,
-            tools: []
-          }
-        })
-        lastKind = 'subagent'
-      }
-    } else {
-      result.push(item)
-      lastKind = 'none'
+
+  function addReasoning(message: ChatMessage): void {
+    const reasoning = message.thinking?.trim()
+    if (reasoning && (!isStreaming(message) || message.thinkingActive === false)) {
+      (activity?.reasoning ?? pendingReasoning).push(reasoning)
     }
   }
-  return withFoldedResponseThinking(result, props.turn.response, props.turn.running, props.turn.process.length > 0)
+
+  function addTool(tool: ToolActivity): void {
+    if (props.turn.running && tool.state === 'running') {
+      const id = `tool:${tool.id}`
+      steps.push({ kind: 'tool', id, tool })
+      return
+    }
+    if (!activity) {
+      // Key the disclosure by the boundary, so late reasoning or additional
+      // tool results don't reset an already expanded group.
+      activity = { kind: 'activity', id: `activity:${anchor}`, tools: [], reasoning: pendingReasoning }
+      pendingReasoning = []
+      lastActivity = activity
+      // A completed-call summary comes before any calls still in progress in this segment.
+      const firstRunning = steps.findLastIndex((step) => step.kind === 'message' || step.kind === 'lifecycle') + 1
+      steps.splice(firstRunning, 0, activity)
+    }
+    activity.tools.push(tool)
+  }
+
+  function addLifecycle(events: SubAgentLifecycleEvent[] | undefined): void {
+    if (!events?.length) return
+    const previous = steps.at(-1)
+    if (previous?.kind === 'lifecycle') {
+      previous.events.push(...events)
+      return
+    }
+    const id = `lifecycle:${events[0]!.id}`
+    steps.push({ kind: 'lifecycle', id, events })
+    startSegmentAfter(id)
+  }
+
+  function addMessageActivities(message: ChatMessage, tools: ToolActivity[], response = false): void {
+    addReasoning(message)
+    if (!message.subAgentEvents?.length) {
+      for (const tool of tools) addTool(tool)
+      return
+    }
+
+    const allTools = message.tools ?? []
+    const visibleTools = new Set(tools)
+    const eventsAtTool = new Map<number, SubAgentLifecycleEvent[]>()
+    let lastIndex = -1
+    for (const event of message.subAgentEvents) {
+      if (seenEvents.has(event.id)) continue
+      seenEvents.add(event.id)
+      const toolId = event.afterToolId === undefined && event.kind === 'started'
+        ? event.agent.sourceToolId : event.afterToolId
+      const index = toolId ? allTools.findIndex((tool) => tool.id === toolId || tool.callId === toolId) : -1
+      // Old responses appended events after their tools without recording an anchor.
+      const fallbackIndex = response && event.afterToolId === undefined ? allTools.length - 1 : -1
+      lastIndex = Math.max(lastIndex, index < 0 ? fallbackIndex : index)
+      const events = eventsAtTool.get(lastIndex) ?? []
+      events.push(event)
+      eventsAtTool.set(lastIndex, events)
+    }
+    addLifecycle(eventsAtTool.get(-1))
+    allTools.forEach((tool, index) => {
+      if (visibleTools.has(tool)) addTool(tool)
+      addLifecycle(eventsAtTool.get(index))
+    })
+  }
+
+  for (const item of props.turn.process) {
+    if (hasVisibleMessage(item)) {
+      const id = `message:${item.message.id}`
+      steps.push({ kind: 'message', id, item })
+      startSegmentAfter(id)
+    }
+    addMessageActivities(item.message, visibleNonSubAgentTools(item.message))
+  }
+
+  // Older sessions can persist a final answer in a message that also has tools.
+  if (props.turn.response) addMessageActivities(props.turn.response.message, responseTools.value, true)
+
+  if (!props.turn.running && pendingReasoning.length) {
+    if (lastActivity) {
+      lastActivity.reasoning.push(...pendingReasoning)
+    } else {
+      steps.push({ kind: 'activity', id: `reasoning:${props.turn.id}`, tools: [], reasoning: pendingReasoning })
+    }
+  }
+  return steps
 })
-const responseEvents = computed(() => {
-  if (!props.turn.response) return []
-  const seen = new Set(props.turn.process.flatMap((item) => (item.message.subAgentEvents ?? []).map((event) => event.id)))
-  return (props.turn.response.message.subAgentEvents ?? []).filter((event) => {
-    if (seen.has(event.id)) return false
-    seen.add(event.id)
-    return true
-  })
-})
+const hasHistory = computed(() => processSteps.value.length > 0 || agents.value.length > 0)
 const hasLiveSubAgents = computed(() =>
   agents.value.some((agent) => agent.status === 'starting' || (agent.status === 'running' && agent.live))
 )
-const showSubAgentsOutside = computed(() =>
-  !isExpanded.value
-  && (!props.turn.running || props.turn.process.length === 0)
-  && (props.turn.running || hasLiveSubAgents.value)
-  && (agents.value.length > 0 || allEvents.value.length > 0)
-)
+const showSubAgentsOutside = computed(() => !props.turn.running && !isExpanded.value && hasLiveSubAgents.value)
 const completedAt = ref<number | null>(null)
 function formatTurnDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 500) return ''
@@ -254,56 +262,22 @@ const turnDurationLabel = computed(() => {
   if (timestamps.length < 2) return ''
   return formatTurnDuration(Math.max(...timestamps) - Math.min(...timestamps))
 })
-const status = computed(() => {
-  const process = summary.value
-  if (props.turn.running) {
-    if (process.activeTool && !isSubAgentTool(process.activeTool)) {
-      return `${toolLabel(process.activeTool)} ${toolTarget(process.activeTool)}`.trim()
-    }
-    const latest = process.latestMessage
-    if (latest?.preparingTool) {
-      return preparingToolLabel(latest.preparingTool).replace(/…$/, '')
-    }
-    if (props.turn.response) {
-      return props.turn.response.message.preparingTool
-        ? preparingToolLabel(props.turn.response.message.preparingTool).replace(/…$/, '')
-        : '正在生成回答'
-    }
-    const latestThinking = Boolean(
-      latest?.state === 'thinking'
-      && (latest.thinkingActive ?? true)
-    )
-    if (latestThinking || hasLiveSubAgents.value) {
-      return '正在思考'
-    }
-    const p = phaseStatusText(props.phase)
-    if (p) return p
-    return '正在等待模型响应'
-  }
-  return turnDurationLabel.value
-})
-const isThinkingStatus = computed(() => props.turn.running && status.value === '正在思考')
-const expandedStepsHaveThinkingShimmer = computed(() =>
-  expandedProcessSteps.value.some((item) => {
-    const msg = item.message
-    return isStreaming(msg)
-      && msg.state === 'thinking'
-      && !msg.preparingTool
-      && (msg.thinkingActive ?? true)
-  })
-)
-const hasLiveStepIndicator = computed(() =>
-  expandedProcessSteps.value.some((item) => {
-    const msg = item.message
-    if (msg.preparingTool) return true
-    if ((msg.tools ?? []).some((tool) => !isSubAgentTool(tool) && tool.state === 'running')) return true
-    if (isStreaming(msg) && (msg.state === 'thinking' || msg.state === 'streaming') && !msg.content.trim()) return true
-    return false
-  })
-)
-const tailWaitingLabel = computed(() => {
+const liveStatus = computed(() => {
+  if (!props.turn.running || props.awaitingUser) return null
+  const messages = [...props.turn.process, ...(props.turn.response ? [props.turn.response] : [])]
+    .map((item) => item.message)
+  const current = messages.findLast((message) => message.id === props.assistantId) ?? messages.at(-1)
+  if (current?.errorMessage?.trim()) return null
+  // Active operations already have dedicated rows.
+  if (processSteps.value.some((step) => step.kind === 'tool')) return null
   const p = phaseStatusText(props.phase)
-  return p ? (p.endsWith('…') ? p : `${p}…`) : '正在等待模型响应…'
+  if (p) return { label: p, thinking: false }
+  if (current?.preparingTool) return { label: preparingToolLabel(current.preparingTool), thinking: false }
+  if (current?.state === 'thinking' && (current.thinkingActive ?? true)) {
+    return { label: extractThinkingHeading(current.thinking) ?? '正在思考', thinking: true }
+  }
+  if (props.turn.response && current?.id === props.turn.response.message.id && current.content.trim()) return null
+  return { label: '正在思考', thinking: true }
 })
 
 const liveProcessRef = ref<HTMLElement | null>(null)
@@ -317,17 +291,13 @@ interface TurnVisualSignature {
   hasDetails: boolean
   isRunning: boolean
   isExpanded: boolean
-  responseId: string | null
-  processMessageIds: string[]
 }
 
 function currentVisualSignature(): TurnVisualSignature {
   return {
-    hasDetails: props.turn.process.length > 0,
+    hasDetails: hasHistory.value,
     isRunning: props.turn.running,
-    isExpanded: isExpanded.value,
-    responseId: props.turn.response?.message.id ?? null,
-    processMessageIds: props.turn.process.map((item) => item.message.id)
+    isExpanded: isExpanded.value
   }
 }
 
@@ -392,6 +362,7 @@ function isStreaming(message: ChatMessage): boolean {
   return props.turn.running && message.id === props.assistantId
 }
 function onToggle(event: Event): void {
+  if (props.turn.running || event.target !== event.currentTarget) return
   const details = event.currentTarget as HTMLDetailsElement
   // Search reveals history temporarily without overwriting the user's preference.
   if (props.query.trim()) {
@@ -412,56 +383,45 @@ function onToggle(event: Event): void {
       :read-only="readOnly" :compact-task-prompt="compactTaskPrompt" :dimmed="isDimmed(turn.user.message)"
       @open-diff="(path, diff) => emit('openDiff', path, diff)" @branch="emit('branch', $event)" @edit="emit('edit', $event)" />
 
-    <template v-if="turn.process.length">
-      <div v-if="turn.running" ref="liveProcessRef" class="process-live-timeline">
-        <div v-for="item in expandedProcessSteps" :key="item.message.id" class="process-step process-live-step">
-          <ConversationMessage :message="item.message" :image-sources="imageSources" :widgets="item.widgets"
-            :session-id="sessionId" :workspace="workspace" :phase="phase" :streaming="isStreaming(item.message)"
-            :smooth-output="!query.trim()" :show-footer="item.showFooter" :is-intermediate="item.isIntermediate"
-            :hide-sub-agents="allEvents.length === 0" :show-sub-agent-summary="false" :read-only="readOnly"
-            :dimmed="isDimmed(item.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
+    <details v-if="hasHistory" :open="turn.running || isExpanded"
+      :class="turn.running ? 'process-live-timeline' : ['conversation-process', { 'is-entering': detailsEntering }]"
+      @toggle="onToggle">
+      <summary v-show="!turn.running" :title="turn.running ? undefined : turnDurationLabel || '已完成工作'">
+        <template v-if="!turn.running">
+          <CircleAlert v-if="hasProcessError" :size="14" class="process-state is-error" aria-label="工作过程包含异常" />
+          <Check v-else :size="14" class="process-state" aria-hidden="true" />
+          <span class="process-title">已完成工作</span>
+          <span v-if="turnDurationLabel" class="process-description">{{ turnDurationLabel }}</span>
+          <ChevronRight :size="14" class="process-chevron" aria-hidden="true" />
+        </template>
+      </summary>
+      <div v-if="turn.running || isExpanded" ref="liveProcessRef" class="process-timeline"
+        :class="{ 'process-history': !turn.running }">
+        <div v-for="step in processSteps" :key="step.id" class="process-step">
+          <ProcessActivityGroup v-if="step.kind === 'activity'" :tools="step.tools" :reasoning="step.reasoning"
+            :expanded="activityDisclosures.has(step.id)" :activity-disclosures="activityDisclosures"
+            @update:expanded="setActivityDisclosure(step.id, $event)" @set-activity-disclosure="setActivityDisclosure"
+            @open-diff="(path, diff) => emit('openDiff', path, diff)" @open-browser-result="emit('openBrowserResult', $event)"
+            @open-sub-agent="emit('openSubAgent', $event)" />
+          <ToolCallRow v-else-if="step.kind === 'tool'" :tool="step.tool"
+            :awaiting-approval="approvalCallIds?.has(step.tool.callId ?? step.tool.id)"
+            :expanded="activityDisclosures.has(step.id)" @update:expanded="setActivityDisclosure(step.id, $event)"
+            @open-diff="(path, diff) => emit('openDiff', path, diff)" @open-browser-result="emit('openBrowserResult', $event)"
+            @open-sub-agent="emit('openSubAgent', $event)" />
+          <SubAgentActivityList v-else-if="step.kind === 'lifecycle'" :agents="agents" :events="step.events"
+            :show-summary="false" @open-sub-agent="emit('openSubAgent', $event)" />
+          <ConversationMessage v-else :message="step.item.message" :image-sources="imageSources" :widgets="step.item.widgets"
+            :session-id="sessionId" :workspace="workspace" :streaming="isStreaming(step.item.message)"
+            :smooth-output="!query.trim()" :show-footer="step.item.showFooter" :is-intermediate="step.item.isIntermediate"
+            progress hide-tools hide-sub-agents :read-only="readOnly"
+            :dimmed="isDimmed(step.item.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
             @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)"
             @open-sub-agent="emit('openSubAgent', $event)" />
         </div>
         <SubAgentActivityList v-if="allEvents.length === 0 && agents.length > 0" :agents="agents"
           @open-sub-agent="emit('openSubAgent', $event)" />
-        <SubAgentActivityList v-if="responseEvents.length" :agents="agents" :events="responseEvents" :show-summary="false"
-          @open-sub-agent="emit('openSubAgent', $event)" />
-        <div v-if="!turn.response && hasLiveSubAgents && !expandedStepsHaveThinkingShimmer" class="process-thinking-row">
-          <span class="thinking-shimmer">正在思考</span>
-        </div>
-        <div v-else-if="!turn.response && !hasLiveSubAgents && !hasLiveStepIndicator"
-          class="process-tail-status" role="status" aria-live="polite">
-          <LoaderCircle :size="14" class="spin process-state" aria-hidden="true" />
-          <span>{{ tailWaitingLabel }}</span>
-        </div>
       </div>
-
-      <details v-else class="conversation-process" :class="{ 'is-entering': detailsEntering }" :open="isExpanded" @toggle="onToggle">
-        <summary :title="status ? `已完成工作 ${status}` : '已完成工作'">
-          <ChevronRight :size="14" class="process-chevron" aria-hidden="true" />
-          <CircleAlert v-if="summary.errorCount" :size="14" class="process-state is-error" aria-label="工作过程包含异常" />
-          <Check v-else :size="14" class="process-state" aria-hidden="true" />
-          <span class="process-title">已完成工作</span>
-          <span v-if="status" class="process-description">{{ status }}</span>
-        </summary>
-        <div v-if="isExpanded" class="process-history">
-          <div v-for="item in expandedProcessSteps" :key="item.message.id" class="process-step">
-            <ConversationMessage :message="item.message" :image-sources="imageSources" :widgets="item.widgets"
-              :session-id="sessionId" :workspace="workspace" :phase="phase" :streaming="isStreaming(item.message)"
-              :smooth-output="!query.trim()" :show-footer="item.showFooter" :is-intermediate="item.isIntermediate"
-              :hide-sub-agents="allEvents.length === 0" :show-sub-agent-summary="false" :read-only="readOnly"
-              :dimmed="isDimmed(item.message)" @open-diff="(path, diff) => emit('openDiff', path, diff)"
-              @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)"
-              @open-sub-agent="emit('openSubAgent', $event)" />
-          </div>
-          <SubAgentActivityList v-if="allEvents.length === 0 && agents.length > 0" :agents="agents"
-            @open-sub-agent="emit('openSubAgent', $event)" />
-          <SubAgentActivityList v-if="responseEvents.length" :agents="agents" :events="responseEvents" :show-summary="false"
-            @open-sub-agent="emit('openSubAgent', $event)" />
-        </div>
-      </details>
-    </template>
+    </details>
 
     <div ref="wipeHostRef" class="collapse-wipe-host" aria-hidden="true" />
 
@@ -470,44 +430,47 @@ function onToggle(event: Event): void {
 
     <div v-if="turn.response" class="turn-response-host">
       <ConversationMessage :message="turn.response.message" :image-sources="imageSources"
-        :widgets="turn.response.widgets" :session-id="sessionId" :workspace="workspace" :phase="phase"
+        :widgets="turn.response.widgets" :turn-diff="turnDiff" :session-id="sessionId" :workspace="workspace"
         :streaming="isStreaming(turn.response.message)" :show-footer="turn.response.showFooter"
-        :smooth-output="!query.trim()" :read-only="readOnly" :hide-thinking="!turn.running && turn.process.length > 0"
+        :smooth-output="!query.trim()" :read-only="readOnly"
+        hide-tools
         :is-intermediate="turn.response.isIntermediate" :hide-sub-agents="true" :dimmed="isDimmed(turn.response.message)"
         @open-diff="(path, diff) => emit('openDiff', path, diff)" @branch="emit('branch', $event)" @retry="emit('retry', $event)" @edit="emit('edit', $event)"
+        @open-diff-preview="(preview, trigger) => emit('openDiffPreview', preview, trigger)"
         @open-sub-agent="emit('openSubAgent', $event)" />
+    </div>
+    <ConversationWidgets v-else-if="turnDiff" :widgets="[]" :diff="turnDiff"
+      @open-diff-preview="(preview, trigger) => emit('openDiffPreview', preview, trigger)" />
+    <div v-if="liveStatus" class="process-tail-status" :class="{ 'process-thinking-row': liveStatus.thinking }"
+      role="status" aria-live="polite">
+      <span :class="{ 'thinking-shimmer': liveStatus.thinking }">{{ liveStatus.label }}</span>
     </div>
   </div>
 </template>
 
 <style scoped>
 .conversation-turn { display: flow-root; min-width: 0; }
-.process-live-timeline { display: grid; gap: 4px; min-width: 0; margin: 0 0 10px; }
-.process-thinking-row { margin: 2px 0 4px; font-size: 13.5px; line-height: 1.5; }
+.process-live-timeline { min-width: 0; margin: 0 0 10px; }
+.process-timeline { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; min-width: 0; }
 .conversation-process { min-width: 0; margin: 0 0 12px; color: var(--text-muted); interpolate-size: allow-keywords; }
 .conversation-process:has(+ .collapse-wipe-host:not(:empty)) { margin-bottom: 4px; }
 .conversation-process.is-entering { animation: process-header-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both; }
 @keyframes process-header-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
-.conversation-process > summary { display: flex; align-items: center; gap: 7px; min-height: 28px; max-width: 100%; padding: 2px 0; border-radius: 6px; cursor: pointer; list-style: none; font-size: 13px; line-height: 1.45; }
+.conversation-process > summary { display: flex; align-items: center; gap: 8px; min-height: 27px; width: fit-content; max-width: 100%; padding: 2px 0; border-radius: 5px; cursor: pointer; list-style: none; font-size: 13px; line-height: 1.45; }
 .conversation-process > summary::-webkit-details-marker { display: none; }
 .conversation-process > summary:hover, .conversation-process[open] > summary { color: var(--text-secondary); }
 .conversation-process > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .process-chevron, .process-state { flex-shrink: 0; }
 .process-chevron { transition: transform 120ms ease; }
 .conversation-process[open] > summary .process-chevron { transform: rotate(90deg); }
-.process-title { flex-shrink: 0; }
+.process-title { flex-shrink: 0; font-weight: 550; }
 .process-state.is-error { color: var(--danger); }
 .process-description { min-width: 0; overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
-.process-history { display: grid; gap: 2px; min-width: 0; margin: 4px 0 8px 6px; padding: 2px 0 2px 14px; border-left: 1px solid var(--border); overflow: clip; block-size: auto; opacity: 1; transition: block-size 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease; }
+.process-history { gap: 2px; margin: 4px 0 8px 6px; padding: 2px 0 2px 14px; border-left: 1px solid var(--border); overflow: clip; block-size: auto; opacity: 1; transition: block-size 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease; }
 @starting-style { .conversation-process[open] > .process-history { block-size: 0; opacity: 0; } }
 .process-step { display: flow-root; min-width: 0; }
-.process-step :deep(.message) { margin-bottom: 0; }
-.process-history .process-step :deep(.assistant-message) { font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
-.process-history .process-step :deep(.markdown-body) { font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
-.process-step :deep(.markdown-body p) { margin: 2px 0 4px; }
-.process-step :deep(.tool-list) { margin: 0; }
-.process-step :deep(.markdown-body + .tool-list) { margin-top: 4px; }
-.process-tail-status { display: flex; align-items: center; gap: 7px; min-height: 26px; padding: 2px 0; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
+.process-tail-status { display: flex; align-items: center; min-height: 27px; padding: 1px 0; margin: 4px 0; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
+.process-thinking-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .turn-response-host { display: flow-root; min-width: 0; }
 .collapse-wipe-host { display: flow-root; min-width: 0; }
 .collapse-wipe-host :deep(.collapse-wipe-shell) { overflow: hidden; margin-bottom: 8px; pointer-events: none; will-change: height, opacity; }

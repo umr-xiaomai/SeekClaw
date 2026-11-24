@@ -56,7 +56,7 @@ export function subAgentsFromTool(tool: ToolActivity): SubAgentActivity[] {
   })
   if (agents.length) return agents
   const action = text(args?.action)
-  if (tool.name.toLowerCase() !== 'invoke_subagent' && action !== 'spawn' && action !== 'send') return []
+  if (tool.name.toLowerCase() !== 'invoke_subagent' && !['spawn', 'send', 'followup'].includes(action ?? '')) return []
   return [{
     id: text(args?.id) ?? `tool:${tool.id}`,
     role: text(args?.role) ?? 'general',
@@ -119,7 +119,7 @@ function sourceTool(message: ChatMessage, id: string, role?: string): ToolActivi
     || text(subAgentArguments(tool)?.id) === id) ?? tools.findLast((tool) => {
     const args = subAgentArguments(tool)
     return tool.state === 'running' && (!role || args?.role === role)
-      && (tool.name === 'invoke_subagent' || args?.action === 'spawn' || args?.action === 'send')
+      && (tool.name === 'invoke_subagent' || ['spawn', 'send', 'followup'].includes(String(args?.action)))
   })
 }
 
@@ -135,8 +135,12 @@ function appendLifecycle(
   if (messages.some((message) => message.subAgentEvents?.some((event) => event.id === id))) return
   const target = current ?? messages.findLast((message) => message.role === 'assistant')
   if (!target) return
+  const lastTool = target.tools?.at(-1)
   target.subAgentEvents ??= []
-  target.subAgentEvents.push({ id, agentId: activity.id, kind, agent: { ...activity }, createdAt: Date.now(), contentOffset: target.content.length })
+  target.subAgentEvents.push({
+    id, agentId: activity.id, kind, agent: { ...activity }, createdAt: Date.now(),
+    contentOffset: target.content.length, afterToolId: lastTool?.callId ?? lastTool?.id ?? null
+  })
 }
 
 export function applySubAgentEvent(
@@ -152,7 +156,7 @@ export function applySubAgentEvent(
   const sourceId = source?.callId ?? source?.id ?? `request:${event.id}`
   // A duplicate launch can arrive while a second same-role spawn is pending.
   // Only an explicit send can start another instruction for the same real child.
-  const followUp = source && subAgentArguments(source)?.action === 'send'
+  const followUp = source && ['send', 'followup'].includes(String(subAgentArguments(source)?.action))
   const runId = activity?.requestId === event.id && !followUp
     ? activity.runId ?? sourceId : sourceId
   if (event.event === 'subagent_start' && messages.some((message) => message.subAgentEvents?.some((entry) =>

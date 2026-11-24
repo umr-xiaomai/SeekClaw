@@ -11,14 +11,24 @@ public sealed class AgentSteeringQueue
     private readonly Lock _gate = new();
     private readonly Queue<ChatMessage> _messages = new();
     private bool _accepting = true;
+    private readonly int _capacity;
 
-    public bool TryEnqueue(ChatMessage message)
+    public AgentSteeringQueue(int capacity = int.MaxValue)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+        _capacity = capacity;
+    }
+
+    public bool TryEnqueue(ChatMessage message) => Enqueue(message) == AgentSteeringEnqueueResult.Accepted;
+
+    internal AgentSteeringEnqueueResult Enqueue(ChatMessage message)
     {
         lock (_gate)
         {
-            if (!_accepting) return false;
+            if (!_accepting) return AgentSteeringEnqueueResult.Closed;
+            if (_messages.Count >= _capacity) return AgentSteeringEnqueueResult.Full;
             _messages.Enqueue(message);
-            return true;
+            return AgentSteeringEnqueueResult.Accepted;
         }
     }
 
@@ -51,3 +61,5 @@ public sealed class AgentSteeringQueue
         lock (_gate) _accepting = false;
     }
 }
+
+internal enum AgentSteeringEnqueueResult { Accepted, Closed, Full }

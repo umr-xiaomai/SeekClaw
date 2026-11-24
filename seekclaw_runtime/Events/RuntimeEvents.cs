@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using SeekClaw.Runtime.Presentation;
+using SeekClaw.Runtime.Goals;
 
 namespace SeekClaw.Runtime.Events;
 
@@ -15,6 +16,8 @@ public abstract record RuntimeEvent
 // ---------------------------------------------------------------- turn lifecycle
 
 public sealed record TurnStartedEvent(string SessionId, string UserInput) : RuntimeEvent;
+
+public sealed record SessionGoalChangedEvent(SessionGoal Goal) : RuntimeEvent;
 
 public sealed record UserSteerEvent(string Instruction) : RuntimeEvent;
 

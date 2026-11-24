@@ -551,7 +551,6 @@ body.is-resizing-sidebar .app-body {
 .section-heading,
 .conversation-title,
 .tool-row,
-.thinking-toggle,
 .composer-toolbar,
 .select-control,
 .settings-row {
@@ -836,18 +835,22 @@ body.is-resizing-sidebar .app-body {
   padding: 6px 9px;
 }
 
-.row-menu-button {
+.project-row-actions {
+  display: flex;
+  align-items: center;
   flex: 0 0 auto;
+  gap: 2px;
   margin-right: 3px;
   opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
 
-.project-heading-row:hover .row-menu-button,
-.project-heading-row:focus-within .row-menu-button,
-.project-heading-row.has-menu .row-menu-button,
-.thread-heading-row:hover .row-menu-button,
-.row-menu-button:focus-visible {
+.project-heading-row:hover .project-row-actions,
+.project-heading-row:focus-within .project-row-actions,
+.project-heading-row.has-menu .project-row-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .thread-row-actions {
@@ -964,6 +967,8 @@ body.is-resizing-sidebar .app-body {
 }
 
 .workspace-main {
+  --conversation-width: 49rem;
+  --conversation-composer-width: calc(var(--conversation-width) + 20px);
   position: relative;
   display: grid;
   flex: 1 1 auto;
@@ -1280,10 +1285,10 @@ body.is-resizing-sidebar .app-body {
 }
 
 .conversation-content {
-  width: min(100%, 940px);
+  width: min(100%, var(--conversation-width, 940px));
   min-height: 100%;
   margin: 0 auto;
-  padding: 42px 34px 90px;
+  padding: 28px 26px 24px;
 }
 
 .message {
@@ -1299,40 +1304,30 @@ body.is-resizing-sidebar .app-body {
 .user-message-stack {
   position: relative;
   display: flex;
-  width: min(78%, 670px);
+  width: min(86%, 610px);
+  min-width: 0;
   align-items: flex-end;
   flex-direction: column;
   gap: 8px;
 }
 
 .user-bubble {
-  max-width: min(78%, 670px);
-  padding: 11px 15px;
+  max-width: 100%;
+  padding: 10px 15px;
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: var(--surface-hover);
-  border-radius: 17px;
-}
-
-.user-message-stack .user-bubble {
-  max-width: 100%;
-}
-
-.user-files-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-  max-width: 100%;
-  margin-bottom: 4px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 16px 16px 4px 16px;
 }
 
 .user-file-chip {
   display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: 7px;
-  max-width: 260px;
+  max-width: min(100%, 260px);
   height: 28px;
   padding: 2px 8px 2px 4px;
   background: var(--surface);
@@ -1351,59 +1346,12 @@ body.is-resizing-sidebar .app-body {
   transform: translateY(-1px);
 }
 
-.user-image-grid {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  max-width: 100%;
-  gap: 8px;
-}
-
-.user-image-button {
-  flex: none;
-  width: min(72px, 100%);
-  min-width: 0;
-  aspect-ratio: 1;
-  padding: 0;
-  overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  cursor: pointer;
-}
-
-.user-image-button img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform 180ms ease;
-}
-
-.user-image-button:hover img,
-.user-image-button:focus-visible img {
-  transform: scale(1.025);
-}
-
 .assistant-message {
   position: relative;
   width: 100%;
   min-width: 0;
   font-size: 15px;
   line-height: 1.72;
-}
-
-.thinking-toggle {
-  gap: 6px;
-  margin: 0 0 6px;
-  padding: 2px 0;
-  color: var(--text-muted);
-  font-size: 13.5px;
-  background: transparent;
-}
-
-.thinking-toggle.active {
-  color: var(--text-muted);
 }
 
 .thinking-shimmer {
@@ -1444,22 +1392,6 @@ body.is-resizing-sidebar .app-body {
   to {
     background-position: -100% 0;
   }
-}
-
-.thinking-toggle svg:last-child {
-  transition: transform 150ms ease;
-}
-
-.thinking-toggle svg.rotated {
-  transform: rotate(180deg);
-}
-
-.thinking-content {
-  margin: 0 0 10px;
-  color: var(--text-secondary);
-  font-size: 12.5px;
-  line-height: 1.65;
-  white-space: pre-wrap;
 }
 
 .assistant-activity {
@@ -2292,14 +2224,27 @@ body.is-resizing-sidebar .app-body {
 }
 
 .composer-region {
+  position: relative;
   z-index: 5;
   min-width: 0;
   padding: 0 28px 12px;
 }
 
+.conversation-jump-latest {
+  position: absolute;
+  inset: auto auto calc(100% + 6px) 50%;
+  width: 32px;
+  height: 32px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-raised);
+  box-shadow: var(--composer-shadow);
+}
+
 .pending-message-stack {
   display: grid;
-  width: min(100%, 940px);
+  width: min(100%, var(--conversation-composer-width, 940px));
   max-height: 240px;
   margin: 0 auto 8px;
   gap: 6px;
@@ -2394,7 +2339,7 @@ body.is-resizing-sidebar .app-body {
 
 .composer-frame {
   min-width: 0;
-  width: min(100%, 940px);
+  width: min(100%, var(--conversation-composer-width, 940px));
   margin: 0 auto;
 }
 
@@ -5942,7 +5887,7 @@ input:focus-visible + .toggle-switch,
   }
 
   .conversation-content {
-    padding: 28px 17px 76px;
+    padding: 22px 17px 24px;
   }
 
   .empty-state {
@@ -5966,16 +5911,8 @@ input:focus-visible + .toggle-switch,
     margin-bottom: 26px;
   }
 
-  .user-bubble {
-    max-width: 90%;
-  }
-
   .user-message-stack {
     width: 90%;
-  }
-
-  .user-message-stack .user-bubble {
-    max-width: 100%;
   }
 
   .image-preview-backdrop {
@@ -8681,7 +8618,7 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
 .inline-approval-card {
   display: grid;
   gap: 8px;
-  width: min(100%, 940px);
+  width: min(100%, var(--conversation-composer-width, 940px));
   margin: 0 auto 10px;
   padding: 12px 14px;
   background: var(--surface-raised);
@@ -8868,7 +8805,7 @@ body.is-resizing-git-panel .git-tree-resize-handle::after {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: min(100%, 940px);
+  width: min(100%, var(--conversation-composer-width, 940px));
   margin: 0 auto 8px;
   padding: 7px 12px;
   font-size: 12.5px;

@@ -5,6 +5,7 @@ using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Execution;
+using SeekClaw.Runtime.Goals;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Tools.Builtin;
@@ -25,7 +26,9 @@ public sealed partial class Agent
         bool networkEnabled,
         string? turnRequestId,
         Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? askUser,
-        CancellationToken ct)
+        CancellationToken ct,
+        GoalExecution? goal,
+        IReadOnlyList<ITool> advertisedTools)
     {
         var parsedArguments = ToolArguments.Parse(call.ArgumentsJson);
         var effectiveArgumentsJson = parsedArguments.Obj is not null ? parsedArguments.Json : call.ArgumentsJson;
@@ -36,6 +39,14 @@ public sealed partial class Agent
         if (tool is null)
         {
             var message = $"Unknown tool: {call.Name}";
+            events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
+            return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
+        }
+
+        if (tool is Mcp.McpToolAdapter adapter
+            && (!adapter.IsLoaded(sessionId) || !advertisedTools.Any(advertised => advertised.Name.Equals(tool.Name, StringComparison.OrdinalIgnoreCase))))
+        {
+            const string message = "The MCP tool schema was not loaded for this request. Use tool_search first.";
             events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, message, TimeSpan.Zero));
             return new ToolExecution(ChatMessage.ToolResult(call.Id, call.Name, message, false), false);
         }
@@ -77,7 +88,7 @@ public sealed partial class Agent
         }
         var arguments = parsedArguments.Obj;
 
-        if (RequiresApproval(mode, tool))
+        if (RequiresApproval(mode, tool, arguments))
         {
             ToolApprovalDecision decision;
             try
@@ -119,6 +130,7 @@ public sealed partial class Agent
             MaxOutputChars = ContextPlanner.ToolOutputBudget(model.Model, configStore.Config.Agent),
             CallId = call.Id,
             SessionId = sessionId,
+            GoalExecution = goal,
             TurnRequestId = turnRequestId,
             AskUser = askUser,
             SessionWorkspace = sessionWorkspace,
@@ -169,13 +181,16 @@ public sealed partial class Agent
 
     internal static bool IsToolDisabled(ITool tool, IReadOnlyCollection<string> disabled) =>
         disabled.Contains(tool.Name, StringComparer.OrdinalIgnoreCase)
+        || (tool is ExecCommandTool or WriteStdinTool
+            && disabled.Contains(CommandSessionTool.ToolName, StringComparer.OrdinalIgnoreCase))
         || (tool is BashTool && VendoredPowerShell.IsRequired
             && (disabled.Contains(BashTool.LegacyName, StringComparer.OrdinalIgnoreCase)
                 || disabled.Contains(BashTool.PowerShellName, StringComparer.OrdinalIgnoreCase)));
 
-    private static bool RequiresApproval(AgentMode mode, ITool tool)
+    private static bool RequiresApproval(AgentMode mode, ITool tool, JsonObject arguments)
     {
         if (mode is not (AgentMode.Manual or AgentMode.Guardrail)) return false;
+        if (tool is WriteStdinTool && WriteStdinTool.IsPoll(arguments)) return false;
 
         if (tool.Mutating
             || tool.RequiresNetwork

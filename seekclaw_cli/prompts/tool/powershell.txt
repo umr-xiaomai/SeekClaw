@@ -6,4 +6,4 @@ If the user has a build, test, or another command running, leave it running and 
 
 For Git commits, inspect status and diff, stage specific files, and use a descriptive message. Never amend or run destructive commands such as hard resets, discarding changes, force-pushes, or recursive deletion unless explicitly requested. State the risk and ask before destructive operations.
 
-Keep output bounded and use quiet flags. This tool closes stdin. Use command_session when a process needs input or a terminal.
+Keep output bounded and use quiet flags. This tool closes stdin. Use exec_command with tty: true when a process needs terminal input, then use write_stdin on the returned sessionId.

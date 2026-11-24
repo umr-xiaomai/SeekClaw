@@ -1,4 +1,5 @@
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Tools;
@@ -53,7 +54,7 @@ public sealed partial class Agent
         return basePrompt;
     }
 
-    private IReadOnlyList<ITool> ActiveTools(WorkspaceInfo workspace, ModelInfo model, bool networkEnabled)
+    private IReadOnlyList<ITool> ActiveTools(WorkspaceInfo workspace, ModelInfo model, bool networkEnabled, string sessionId)
     {
         var rawMode = workspace.Config?.Mode ?? configStore.Config.Agent.Mode;
         var mode = AgentModeExtensions.Parse(rawMode);
@@ -78,6 +79,12 @@ public sealed partial class Agent
 
         // The complete tool schema is part of the provider's cached prompt prefix. MCP
         // discovery order is not a semantic concern, so canonicalize it for cache stability.
-        return available.OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+        return available.Where(tool => tool switch
+            {
+                McpToolAdapter adapter => adapter.IsLoaded(sessionId),
+                McpToolSearchTool search => search.IsAvailable(workspace, networkEnabled),
+                _ => true,
+            })
+            .OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
     }
 }

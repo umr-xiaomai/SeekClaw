@@ -1,6 +1,7 @@
 import type { ChatMessage } from './types'
 
 const HIDDEN_SYSTEM_PREFIXES = [
+  '>>> [Delegated context]',
   '>>> [output truncated]',
   '>>> [System Directive:',
   'The automatic verification step',

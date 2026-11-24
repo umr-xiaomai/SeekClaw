@@ -30,6 +30,28 @@ function setup() {
 afterEach(() => vi.useRealTimers())
 
 describe('read-only sub-agent conversation source', () => {
+  it('shows boundary-delivered guidance immediately and reconciles it with persisted child history once', async () => {
+    vi.useFakeTimers()
+    const test = setup()
+    await test.select()
+    test.event('text', 'Initial result')
+    test.event('guidance', 'Also check empty input')
+    test.event('text', 'Checking empty input now')
+    expect(test.state().messages.map((message) => [message.role, message.content])).toEqual([
+      ['user', 'Inspect the renderer'],
+      ['assistant', 'Initial result'],
+      ['user', 'Also check empty input'],
+      ['assistant', 'Checking empty input now']
+    ])
+    const session = saved()
+    session.messages.push({ role: 'assistant', text: 'Initial result' }, { role: 'user', text: 'Also check empty input' })
+    test.save(session)
+    await vi.advanceTimersByTimeAsync(180)
+    expect(test.state().messages.filter((message) => message.content === 'Also check empty input')).toHaveLength(1)
+    expect(test.state().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Checking empty input now', state: 'streaming' })
+    test.source.dispose()
+  })
+
   it('loads actual child history with the parent global scope and rich tool output', async () => {
     const test = setup()
     const session = saved()
@@ -50,6 +72,20 @@ describe('read-only sub-agent conversation source', () => {
     const test = setup()
     await test.select('child', 'E:\\Project\\SeekClaw')
     expect(test.request.mock.calls[1]?.[1]).toEqual({ workspace: 'E:\\Project\\SeekClaw', id: 'child-session' })
+    test.source.dispose()
+  })
+
+  it.each([
+    [{ workspace: 'E:\\legacy-child-worktree' }, { workspace: 'E:\\legacy-child-worktree' }],
+    [{ sessionWorkspace: 'E:\\Project\\SeekClaw', sessionGlobal: false }, { workspace: 'E:\\Project\\SeekClaw' }],
+    [{ sessionWorkspace: 'C:\\global', sessionGlobal: true }, { global: true }]
+  ])('uses the child record storage scope for history, including legacy worktrees: %j', async (fields, scope) => {
+    const test = setup()
+    test.request.mockImplementationOnce(async () => ({ data: JSON.stringify({
+      id: 'child', parent: 'parent', sessionId: 'child-session', status: 'running', ...fields
+    }) }))
+    await test.select('child', 'E:\\Project\\SeekClaw')
+    expect(test.request.mock.calls[1]?.[1]).toEqual({ ...scope, id: 'child-session' })
     test.source.dispose()
   })
 

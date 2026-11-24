@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Data;
+using SeekClaw.Runtime.Goals;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Workspaces;
 
@@ -15,7 +16,11 @@ public sealed class AgentSession
     public List<ChatMessage> Messages { get; } = [];
     public required string FilePath { get; init; }
     internal string Scope { get; init; } = "";
+    internal List<long> MessageIds { get; } = [];
+    internal SessionContextCheckpoint? ContextCheckpoint { get; set; }
 }
+
+internal sealed record SessionContextCheckpoint(int CoveredMessageCount, string Summary);
 
 public interface ISessionStore
 {
@@ -34,7 +39,9 @@ public interface ISessionStore
     AgentSession? LoadLatest(WorkspaceInfo workspace);
     IReadOnlyList<SessionHeader> List(WorkspaceInfo workspace, bool includeArchived = false);
     void Append(AgentSession session, ChatMessage message);
-    /// <summary>Rewrites a session's persisted history (used by context compaction).</summary>
+    /// <summary>Saves model context for a prefix whose last message still matches the transcript.</summary>
+    bool TrySaveContextCheckpoint(AgentSession session, int coveredMessageCount, ChatMessage coveredThrough, string summary);
+    /// <summary>Explicitly replaces the transcript and invalidates its saved model context.</summary>
     void ReplaceHistory(AgentSession session, IReadOnlyList<ChatMessage> messages);
     /// <summary>Drops persisted messages after the first N (used by "regenerate").</summary>
     void Truncate(WorkspaceInfo workspace, string sessionId, int keepMessageCount);
@@ -109,7 +116,8 @@ public sealed class SessionStore : ISessionStore
         lock (gate.Lock)
         {
             using var connection = _database.OpenConnection();
-            var sourceHeader = ReadHeader(connection, scope, sourceSessionId)
+            using var transaction = connection.BeginTransaction(deferred: false);
+            var sourceHeader = ReadHeader(connection, scope, sourceSessionId, transaction)
                 ?? throw new FileNotFoundException($"Session not found: {sourceSessionId}", _database.FilePath);
 
             var newId = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
@@ -132,7 +140,6 @@ public sealed class SessionStore : ISessionStore
                 UpdatedAt = now,
             };
 
-            using var transaction = connection.BeginTransaction(deferred: false);
             InsertSession(connection, transaction, scope, newHeader);
 
             using (var copyCmd = connection.CreateCommand())
@@ -166,28 +173,9 @@ public sealed class SessionStore : ISessionStore
                 copyCmd.ExecuteNonQuery();
             }
 
+            CopyContextCheckpoint(connection, transaction, scope, sourceSessionId, newId);
+            var session = ReadTranscript(connection, transaction, newHeader, scope);
             transaction.Commit();
-
-            var session = NewSession(newHeader, scope);
-            using var readCmd = connection.CreateCommand();
-            readCmd.CommandText = """
-                SELECT payload_json FROM messages
-                WHERE scope = $scope AND session_id = $sessionId
-                ORDER BY id;
-                """;
-            readCmd.Parameters.AddWithValue("$scope", scope);
-            readCmd.Parameters.AddWithValue("$sessionId", newId);
-            using var reader = readCmd.ExecuteReader();
-            while (reader.Read())
-            {
-                try
-                {
-                    var record = JsonSerializer.Deserialize(
-                        reader.GetString(0), SeekClawJsonContext.Compact.SessionMessage);
-                    if (record is not null) session.Messages.Add(ToMessage(record));
-                }
-                catch (JsonException) { }
-            }
             return session;
         }
     }
@@ -205,28 +193,7 @@ public sealed class SessionStore : ISessionStore
             var header = ReadHeader(connection, scope, sessionId, transaction);
             if (header is null) return null;
 
-            var session = NewSession(header, scope);
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = """
-                SELECT payload_json FROM messages
-                WHERE scope = $scope AND session_id = $sessionId
-                ORDER BY id;
-                """;
-            command.Parameters.AddWithValue("$scope", scope);
-            command.Parameters.AddWithValue("$sessionId", sessionId);
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                try
-                {
-                    var record = JsonSerializer.Deserialize(
-                        reader.GetString(0), SeekClawJsonContext.Compact.SessionMessage);
-                    if (record is not null) session.Messages.Add(ToMessage(record));
-                }
-                catch (JsonException) { }
-            }
-            return session;
+            return ReadTranscript(connection, transaction, header, scope);
         }
     }
 
@@ -289,19 +256,7 @@ public sealed class SessionStore : ISessionStore
         {
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(deferred: false);
-            using (var insert = connection.CreateCommand())
-            {
-                insert.Transaction = transaction;
-                insert.CommandText = """
-                    INSERT INTO messages(scope, session_id, payload_json, timestamp)
-                    VALUES($scope, $sessionId, $payload, $timestamp);
-                    """;
-                insert.Parameters.AddWithValue("$scope", session.Scope);
-                insert.Parameters.AddWithValue("$sessionId", session.Header.Id);
-                insert.Parameters.AddWithValue("$payload", payload);
-                insert.Parameters.AddWithValue("$timestamp", record.Timestamp.ToString("O"));
-                insert.ExecuteNonQuery();
-            }
+            var messageId = InsertMessage(connection, transaction, session, record, payload);
             using (var update = connection.CreateCommand())
             {
                 update.Transaction = transaction;
@@ -323,6 +278,7 @@ public sealed class SessionStore : ISessionStore
             }
             transaction.Commit();
             session.Messages.Add(message);
+            session.MessageIds.Add(messageId);
             session.Header.UpdatedAt = now;
             if (session.Header.Title is null && session.Header.TitleSource == "pending" && suggestedTitle is not null)
             {
@@ -342,49 +298,24 @@ public sealed class SessionStore : ISessionStore
         {
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(deferred: false);
-            if (keepMessageCount <= 0)
-            {
-                using (var deleteAll = connection.CreateCommand())
-                {
-                    deleteAll.Transaction = transaction;
-                    deleteAll.CommandText = "DELETE FROM messages WHERE scope = $scope AND session_id = $sessionId;";
-                    deleteAll.Parameters.AddWithValue("$scope", scope);
-                    deleteAll.Parameters.AddWithValue("$sessionId", sessionId);
-                    deleteAll.ExecuteNonQuery();
-                }
-            }
-            else
-            {
-                object? keepId;
-                using (var select = connection.CreateCommand())
-                {
-                    select.Transaction = transaction;
-                    select.CommandText = """
-                        SELECT id FROM messages
-                        WHERE scope = $scope AND session_id = $sessionId
-                        ORDER BY id LIMIT 1 OFFSET $offset;
-                        """;
-                    select.Parameters.AddWithValue("$scope", scope);
-                    select.Parameters.AddWithValue("$sessionId", sessionId);
-                    select.Parameters.AddWithValue("$offset", keepMessageCount - 1);
-                    keepId = select.ExecuteScalar();
-                }
-                if (keepId is null) return; // keep count beyond the history → no-op
+            var keepId = keepMessageCount <= 0
+                ? 0
+                : ReadMessageIdAt(connection, transaction, scope, sessionId, keepMessageCount - 1);
+            if (keepId is null) return;
 
-                using (var delete = connection.CreateCommand())
-                {
-                    delete.Transaction = transaction;
-                    delete.CommandText = """
-                        DELETE FROM messages
-                        WHERE scope = $scope AND session_id = $sessionId AND id > $keepId;
-                        """;
-                    delete.Parameters.AddWithValue("$scope", scope);
-                    delete.Parameters.AddWithValue("$sessionId", sessionId);
-                    delete.Parameters.AddWithValue("$keepId", Convert.ToInt64(keepId));
-                    delete.ExecuteNonQuery();
-                }
+            int removed;
+            using (var delete = connection.CreateCommand())
+            {
+                delete.Transaction = transaction;
+                delete.CommandText = "DELETE FROM messages WHERE scope = $scope AND session_id = $sessionId AND id > $keepId;";
+                delete.Parameters.AddWithValue("$scope", scope);
+                delete.Parameters.AddWithValue("$sessionId", sessionId);
+                delete.Parameters.AddWithValue("$keepId", keepId.Value);
+                removed = delete.ExecuteNonQuery();
             }
+            if (removed == 0) return;
 
+            PauseRewoundGoal(connection, transaction, scope, sessionId);
             using (var touch = connection.CreateCommand())
             {
                 touch.Transaction = transaction;
@@ -395,6 +326,26 @@ public sealed class SessionStore : ISessionStore
                 touch.ExecuteNonQuery();
             }
             transaction.Commit();
+        }
+    }
+
+    public bool TrySaveContextCheckpoint(AgentSession session, int coveredMessageCount, ChatMessage coveredThrough, string summary)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(summary);
+        using var gate = GateFor(session.Scope, session.Header.Id);
+        lock (gate.Lock)
+        {
+            var offset = coveredMessageCount - 1;
+            if (offset < 0 || offset >= session.Messages.Count || offset >= session.MessageIds.Count
+                || !ReferenceEquals(session.Messages[offset], coveredThrough)) return false;
+
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(deferred: false);
+            if (!WriteContextCheckpoint(connection, transaction, session.Scope, session.Header.Id,
+                    session.MessageIds[offset], summary)) return false;
+            transaction.Commit();
+            session.ContextCheckpoint = new(coveredMessageCount, summary);
+            return true;
         }
     }
 
@@ -419,21 +370,12 @@ public sealed class SessionStore : ISessionStore
                 delete.ExecuteNonQuery();
             }
 
+            var ids = new List<long>(snapshot.Count);
             foreach (var message in snapshot)
             {
                 var record = ToRecord(message);
                 var payload = JsonSerializer.Serialize(record, SeekClawJsonContext.Compact.SessionMessage);
-                using var insert = connection.CreateCommand();
-                insert.Transaction = transaction;
-                insert.CommandText = """
-                    INSERT INTO messages(scope, session_id, payload_json, timestamp)
-                    VALUES($scope, $sessionId, $payload, $timestamp);
-                    """;
-                insert.Parameters.AddWithValue("$scope", session.Scope);
-                insert.Parameters.AddWithValue("$sessionId", session.Header.Id);
-                insert.Parameters.AddWithValue("$payload", payload);
-                insert.Parameters.AddWithValue("$timestamp", record.Timestamp.ToString("O"));
-                insert.ExecuteNonQuery();
+                ids.Add(InsertMessage(connection, transaction, session, record, payload));
             }
 
             transaction.Commit();
@@ -442,6 +384,9 @@ public sealed class SessionStore : ISessionStore
             // Concurrent append/compaction can otherwise observe a half-rewritten list.
             session.Messages.Clear();
             session.Messages.AddRange(snapshot);
+            session.MessageIds.Clear();
+            session.MessageIds.AddRange(ids);
+            session.ContextCheckpoint = null;
         }
     }
 
@@ -627,6 +572,136 @@ public sealed class SessionStore : ISessionStore
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    private AgentSession ReadTranscript(SqliteConnection connection, SqliteTransaction transaction, SessionHeader header, string scope)
+    {
+        var session = NewSession(header, scope);
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT id, payload_json FROM messages
+                WHERE scope = $scope AND session_id = $sessionId ORDER BY id;
+                """;
+            command.Parameters.AddWithValue("$scope", scope);
+            command.Parameters.AddWithValue("$sessionId", header.Id);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                try
+                {
+                    var record = JsonSerializer.Deserialize(reader.GetString(1), SeekClawJsonContext.Compact.SessionMessage);
+                    if (record is null) continue;
+                    session.Messages.Add(ToMessage(record));
+                    session.MessageIds.Add(reader.GetInt64(0));
+                }
+                catch (JsonException) { }
+            }
+        }
+        if (ReadContextCheckpoint(connection, transaction, scope, header.Id) is { } checkpoint
+            && session.MessageIds.BinarySearch(checkpoint.ThroughId) is >= 0 and var index)
+            session.ContextCheckpoint = new(index + 1, checkpoint.Summary);
+        return session;
+    }
+
+    private static (long ThroughId, string Summary)? ReadContextCheckpoint(
+        SqliteConnection connection, SqliteTransaction transaction, string scope, string sessionId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT covered_through_id, summary FROM session_context_checkpoints
+            WHERE scope = $scope AND session_id = $sessionId;
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        command.Parameters.AddWithValue("$sessionId", sessionId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? (reader.GetInt64(0), reader.GetString(1)) : null;
+    }
+
+    private static long? ReadMessageIdAt(
+        SqliteConnection connection, SqliteTransaction transaction, string scope, string sessionId, int index)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id FROM messages WHERE scope = $scope AND session_id = $sessionId ORDER BY id LIMIT 1 OFFSET $offset;
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        command.Parameters.AddWithValue("$sessionId", sessionId);
+        command.Parameters.AddWithValue("$offset", index);
+        return command.ExecuteScalar() is long id ? id : null;
+    }
+
+    private static void CopyContextCheckpoint(
+        SqliteConnection connection, SqliteTransaction transaction, string scope, string sourceSessionId, string destinationSessionId)
+    {
+        if (ReadContextCheckpoint(connection, transaction, scope, sourceSessionId) is not { } checkpoint) return;
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT COUNT(*) FROM messages WHERE scope = $scope AND session_id = $sessionId AND id <= $throughId;
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        command.Parameters.AddWithValue("$sessionId", sourceSessionId);
+        command.Parameters.AddWithValue("$throughId", checkpoint.ThroughId);
+        var offset = Convert.ToInt32(command.ExecuteScalar()) - 1;
+        if (offset >= 0 && ReadMessageIdAt(connection, transaction, scope, destinationSessionId, offset) is { } throughId)
+            WriteContextCheckpoint(connection, transaction, scope, destinationSessionId, throughId, checkpoint.Summary);
+    }
+
+    private static bool WriteContextCheckpoint(
+        SqliteConnection connection, SqliteTransaction transaction, string scope, string sessionId, long throughId, string summary)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO session_context_checkpoints(scope, session_id, covered_through_id, summary)
+            SELECT scope, session_id, id, $summary FROM messages
+            WHERE scope = $scope AND session_id = $sessionId AND id = $throughId
+            ON CONFLICT(scope, session_id) DO UPDATE SET covered_through_id = excluded.covered_through_id,
+                summary = excluded.summary
+            WHERE excluded.covered_through_id > session_context_checkpoints.covered_through_id;
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        command.Parameters.AddWithValue("$sessionId", sessionId);
+        command.Parameters.AddWithValue("$throughId", throughId);
+        command.Parameters.AddWithValue("$summary", summary);
+        return command.ExecuteNonQuery() > 0;
+    }
+
+    private static long InsertMessage(SqliteConnection connection, SqliteTransaction transaction, AgentSession session,
+        SessionMessage record, string payload)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO messages(scope, session_id, payload_json, timestamp)
+            VALUES($scope, $sessionId, $payload, $timestamp) RETURNING id;
+            """;
+        command.Parameters.AddWithValue("$scope", session.Scope);
+        command.Parameters.AddWithValue("$sessionId", session.Header.Id);
+        command.Parameters.AddWithValue("$payload", payload);
+        command.Parameters.AddWithValue("$timestamp", record.Timestamp.ToString("O"));
+        return (long)command.ExecuteScalar()!;
+    }
+
+    private static void PauseRewoundGoal(SqliteConnection connection, SqliteTransaction transaction, string scope, string sessionId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE session_goals SET status = $paused, progress = NULL, pause_reason = $reason, updated_at = $updatedAt
+            WHERE scope = $scope AND session_id = $sessionId AND (status <> $paused OR progress IS NOT NULL);
+            """;
+        command.Parameters.AddWithValue("$scope", scope);
+        command.Parameters.AddWithValue("$sessionId", sessionId);
+        command.Parameters.AddWithValue("$paused", SessionGoal.Paused);
+        command.Parameters.AddWithValue("$reason", "Conversation was rewound. Review the retained history before resuming the goal.");
+        command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+        command.ExecuteNonQuery();
     }
 
     private AgentSession NewSession(SessionHeader header, string scope) => new()

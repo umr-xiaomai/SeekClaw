@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ArrowLeft, Bot, ChevronRight, CircleAlert, LoaderCircle, X } from '@lucide/vue'
+import { ArrowLeft, Bot, Check, ChevronRight, CircleAlert, LoaderCircle, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import type { SubAgentActivity } from '../types'
+import type { SubAgentActivity, ToolActivity } from '../types'
 import { formatModelName, formatRelativeTime } from '../app-helpers'
 import { buildConversationProjection } from '../conversation-process'
+import type { ToolDiffPreview } from '../conversation-diffs'
 import { subAgentName, subAgentStatusLabel, type ThreadSubAgentEntry } from '../subagent-activity'
 import { createSubAgentConversationSource, emptySubAgentConversation } from '../subagent-conversation'
 import { collectSubAgentEmblemIndices, subAgentEmblem } from '../subagent-emblems'
@@ -26,7 +27,9 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   close: []
+  openDiffPreview: [preview: ToolDiffPreview, trigger: HTMLButtonElement]
   openDiff: [path: string, diff: string]
+  openBrowserResult: [tool: ToolActivity, sessionId?: string]
   resize: [width: number]
   selectAgent: [agent: SubAgentActivity]
 }>()
@@ -51,6 +54,12 @@ const currentAgent = computed<SubAgentActivity>(() => ({
 const running = computed(() => ['starting', 'running'].includes(currentAgent.value.status))
 const output = computed(() => snapshot.value.task?.output || props.agent.output)
 const failure = computed(() => snapshot.value.task?.error)
+const childSessionId = computed(() => snapshot.value.task?.sessionId || currentAgent.value.childSessionId)
+const childWorkspace = computed(() => {
+  const task = snapshot.value.task
+  if (task?.sessionGlobal) return undefined
+  return task?.sessionWorkspace || (task?.workspace && props.workspace ? task.workspace : props.workspace)
+})
 const rawModel = computed(() => snapshot.value.model || currentAgent.value.model || '')
 const displayModel = computed(() => (rawModel.value ? formatModelName(rawModel.value) : ''))
 
@@ -319,11 +328,12 @@ onBeforeUnmount(() => {
           </svg>
           <h2 class="subagent-detail-name" :title="subAgentName(currentAgent)">{{ subAgentName(currentAgent) }}</h2>
           <span
-            v-if="running || currentAgent.status === 'failed' || currentAgent.status === 'cancelled' || currentAgent.status === 'interrupted'"
+            v-if="currentAgent.status !== 'unknown'"
             class="subagent-detail-status"
-            :class="{ failed: currentAgent.status === 'failed' }"
+            :class="{ failed: currentAgent.status === 'failed', completed: currentAgent.status === 'completed' }"
           >
             <LoaderCircle v-if="running" :size="12" class="child-spin" aria-hidden="true" />
+            <Check v-else-if="currentAgent.status === 'completed'" :size="12" aria-hidden="true" />
             <CircleAlert v-else :size="12" aria-hidden="true" />
             <span>{{ subAgentStatusLabel(currentAgent) }}</span>
           </span>
@@ -353,12 +363,14 @@ onBeforeUnmount(() => {
               :key="turn.id"
               :turn="turn"
               :image-sources="projection.imageSources"
-              :session-id="snapshot.task?.sessionId || currentAgent.childSessionId"
-              :workspace="workspace"
+              :session-id="childSessionId"
+              :workspace="childWorkspace"
               :assistant-id="streamingAssistantId"
               :read-only="true"
               :compact-task-prompt="true"
               @open-diff="(path, diff) => emit('openDiff', path, diff)"
+              @open-diff-preview="(preview, trigger) => emit('openDiffPreview', preview, trigger)"
+              @open-browser-result="emit('openBrowserResult', $event, childSessionId)"
               @open-sub-agent="openNestedSubAgent"
             />
           </template>
@@ -575,6 +587,10 @@ onBeforeUnmount(() => {
   flex: none;
   font-size: 11.5px;
   color: var(--text-muted);
+}
+
+.subagent-detail-status.completed {
+  color: var(--hl-addition-color);
 }
 
 .subagent-detail-status.failed {

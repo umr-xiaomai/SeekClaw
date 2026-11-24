@@ -19,6 +19,7 @@ export type DaemonEventName =
   | 'usage'
   | 'workflow'
   | 'plan_update'
+  | 'goal.updated'
   | 'approval_request'
   | 'question_request'
   | 'question_resolved'

@@ -6,6 +6,8 @@ namespace SeekClaw.Runtime.Configuration;
 internal sealed class TaskConfigStore : IConfigStore
 {
     private readonly IConfigStore _source;
+    /// <summary>Live authority for revocable service configuration; task behavior still uses its snapshot.</summary>
+    internal IConfigStore Source => _source is TaskConfigStore task ? task.Source : _source;
 
     public TaskConfigStore(IConfigStore source)
     {

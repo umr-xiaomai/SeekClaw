@@ -12,7 +12,7 @@ import {
   Telescope,
   Trash2
 } from '@lucide/vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, shallowRef, watch } from 'vue'
 import type { AppearanceTheme, AppInfo, DaemonMessage, DaemonState } from '../../shared/ipc'
 import { finishesQuestionTurn, parseQuestionRequest, parseQuestionResolved, type UserQuestion } from '../../shared/user-questions'
 import AppTitleBar from './components/AppTitleBar.vue'
@@ -30,11 +30,15 @@ import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationProcess from './components/ConversationProcess.vue'
 import SubAgentConversationPanel from './components/SubAgentConversationPanel.vue'
 import ConversationBrowserPanel from './components/ConversationBrowserPanel.vue'
+import BrowserResultPanel from './components/BrowserResultPanel.vue'
+import ArtifactPreviewDialog from './components/ArtifactPreviewDialog.vue'
+import { ARTIFACT_PREVIEW_REQUEST, type ArtifactPreviewRequest } from './artifact-preview'
 import ConversationToolbar from './components/ConversationToolbar.vue'
 import type { ConversationBrowserState } from '../../shared/browser'
 import CustomizationPage from './components/CustomizationPage.vue'
 import EditMessageDialog from './components/EditMessageDialog.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
+import { createToolDiffPreview, type ToolDiffPreview } from './conversation-diffs'
 import ConversationTimeline from './components/ConversationTimeline.vue'
 import { extractConversationTurns, type ConversationTurn } from './components/conversation-turns'
 
@@ -43,6 +47,9 @@ import SettingsDialog from './components/SettingsDialog.vue'
 import Sidebar from './components/Sidebar.vue'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import TaskStepList from './components/TaskStepList.vue'
+import { toolPlan } from './components/tool-presentation'
+import ConversationGoal from './components/ConversationGoal.vue'
+import { createSessionGoalSync, type SessionGoal } from './session-goal'
 import { computeTurnTaskSteps, type TaskStep } from './task-planner'
 import { confirmAction } from './confirmation'
 import { finalizeAssistantBubbles } from './conversation-state'
@@ -209,27 +216,38 @@ function resizeBrowserPanel(width: number): void {
 
 const selectedSubAgent = ref<{ agent: SubAgentActivity; threadId: string } | null>(null)
 const browserState = ref<ConversationBrowserState | null>(null)
+const browserResult = ref<{ tool: ToolActivity; sessionId?: string | null } | null>(null)
+const artifactPreview = shallowRef<ArtifactPreviewRequest | null>(null)
 const browserError = ref('')
 let unsubscribeBrowser: (() => void) | undefined
-const browserAutoOpened = new Set<string>()
 let browserStateSequence = 0
 function handleBrowserState(state: ConversationBrowserState): void {
   if (state.sessionId !== activeThread.value?.sessionId) return
+  ++browserStateSequence
   browserState.value = state
-  if (state.tabs.length === 0) {
-    browserAutoOpened.delete(state.scope)
-    if (browserPanelOpen.value && !state.busy) {
-      browserPanelOpen.value = false
-    }
-  }
-  if (state.busy && !browserAutoOpened.has(state.scope)) {
-    browserAutoOpened.add(state.scope)
-    window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
-    browserPanelOpen.value = true
-    gitPanelOpen.value = false
-    selectedSubAgent.value = null
-  }
+  if (!state.tabs.length && !state.busy) browserPanelOpen.value = false
 }
+
+function showConversationBrowser(state: ConversationBrowserState): void {
+  closeConversationSidePanels()
+  handleBrowserState(state)
+  browserPanelOpen.value = true
+}
+
+function openBrowserResult(tool: ToolActivity, sessionId: string | null | undefined = activeThread.value?.sessionId): void {
+  closeConversationSidePanels()
+  browserResult.value = { tool, sessionId }
+}
+
+const resultBrowserState = computed(() => {
+  const state = browserState.value
+  return state?.sessionId === browserResult.value?.sessionId && state?.tabs.length ? state : null
+})
+
+function openLiveBrowserFromResult(): void {
+  if (resultBrowserState.value) showConversationBrowser(resultBrowserState.value)
+}
+
 async function openConversationBrowser(): Promise<void> {
   const thread = activeThread.value
   if (!thread) return
@@ -249,12 +267,7 @@ async function openConversationBrowser(): Promise<void> {
     }
     const state = await window.seekclaw.browser.open({ ...scope, sessionId: thread.sessionId })
     if (thread !== activeThread.value) return
-    browserState.value = state
-    browserAutoOpened.add(state.scope)
-    window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
-    browserPanelOpen.value = true
-    gitPanelOpen.value = false
-    selectedSubAgent.value = null
+    showConversationBrowser(state)
   } catch (reason) { browserError.value = reason instanceof Error ? reason.message : String(reason) }
 }
 
@@ -280,7 +293,8 @@ function loadStoredGitPanelWidth(): number {
 }
 
 const gitPanelWidth = ref(loadStoredGitPanelWidth())
-const toolDiff = ref<{ path: string; diff: string } | null>(null)
+const toolDiff = shallowRef<ToolDiffPreview | null>(null)
+let diffPreviewTrigger: HTMLButtonElement | undefined
 
 const settingsSection = ref<'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'>('general')
 const extensionsSection = ref<'mcp' | 'skills'>('mcp')
@@ -335,9 +349,22 @@ const conversationLoadError = ref('')
 const conversationQuery = ref('')
 const turnHeights = shallowReactive(new Map<string, number>())
 const expandedProcesses = shallowReactive(new Map<string, boolean>())
+const emptyActivityDisclosures: ReadonlySet<string> = new Set()
+const turnActivityDisclosures = shallowReactive(new Map<string, ReadonlySet<string>>())
 
 function turnViewKey(turnId: string): string {
   return `${activeThreadId.value}:${turnId}`
+}
+
+function setTurnActivityDisclosure(turnId: string, id: string, expanded: boolean): void {
+  const key = turnViewKey(turnId)
+  const current = turnActivityDisclosures.get(key) ?? emptyActivityDisclosures
+  if (current.has(id) === expanded) return
+  const next = new Set(current)
+  if (expanded) next.add(id)
+  else next.delete(id)
+  if (next.size) turnActivityDisclosures.set(key, next)
+  else turnActivityDisclosures.delete(key)
 }
 const conversationScrollTop = ref(0)
 const conversationViewportHeight = ref(600)
@@ -385,14 +412,18 @@ function resizeSubagentPanel(width: number): void {
   localStorage.setItem(SUBAGENT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
 }
 
-watch(activeThreadId, () => { selectedSubAgent.value = null })
+watch(activeThreadId, () => {
+  selectedSubAgent.value = null
+  browserPanelOpen.value = false
+  browserResult.value = null
+  artifactPreview.value = null
+  if (toolDiff.value) closeGitPanel()
+})
 
 function openSubAgent(agent: SubAgentActivity): void {
   if (!activeThread.value?.sessionId) return
-  window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
+  closeConversationSidePanels()
   selectedSubAgent.value = { agent, threadId: activeThread.value.id }
-  gitPanelOpen.value = false
-  browserPanelOpen.value = false
 }
 watch(() => activeThread.value?.sessionId, async id => {
   const sequence = ++browserStateSequence
@@ -660,11 +691,8 @@ function showActiveProject(): void {
 
 function openGitPanel(tab: 'diff' | 'history'): void {
   if (!activeProject.value) return
-  window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
-  toolDiff.value = null
+  closeConversationSidePanels()
   gitPanelTab.value = tab
-  browserPanelOpen.value = false
-  selectedSubAgent.value = null
   gitPanelOpen.value = true
 }
 
@@ -672,18 +700,30 @@ function openDevTools(): void {
   void window.seekclaw.openDevTools()
 }
 
-function openToolDiff(path: string, diff: string): void {
-  window.dispatchEvent(new CustomEvent('seekclaw:side-panel-open'))
-  toolDiff.value = { path, diff }
+function openDiffPreview(preview: ToolDiffPreview, trigger?: HTMLButtonElement): void {
+  closeConversationSidePanels()
+  toolDiff.value = preview
+  diffPreviewTrigger = trigger
   gitPanelTab.value = 'diff'
-  browserPanelOpen.value = false
-  selectedSubAgent.value = null
   gitPanelOpen.value = true
+}
+
+function openToolDiff(path: string, diff: string): void {
+  openDiffPreview(createToolDiffPreview([{ path, diff }]))
 }
 
 function closeGitPanel(): void {
   gitPanelOpen.value = false
   toolDiff.value = null
+  diffPreviewTrigger = undefined
+}
+
+function dismissGitPanel(): void {
+  const trigger = diffPreviewTrigger
+  closeGitPanel()
+  if (trigger) void nextTick(() => {
+    if (trigger.isConnected) trigger.focus({ preventScroll: true })
+  })
 }
 
 function resizeGitPanel(width: number): void {
@@ -882,6 +922,11 @@ const conversationScroller = createConversationScroller({
   cancelFrame: (handle) => cancelAnimationFrame(handle)
 })
 const scrollToBottom = conversationScroller.scrollToBottom
+
+function jumpToLatest(): void {
+  autoFollowConversation.value = true
+  void scrollToBottom(false, true)
+}
 
 watch([scrollArea, conversationContent], () => {
   conversationResizeObserver?.disconnect()
@@ -1195,8 +1240,8 @@ async function branchFromMessage(message: ChatMessage): Promise<void> {
   let newSessionId: string | undefined
   if (currentThread.sessionId && daemonState.value.connected) {
     try {
-      const match = /^.*:(\d+)$/.exec(message.id)
-      const keepCount = match && match[1] ? parseInt(match[1], 10) + 1 : 0
+      const index = currentThread.messages[messageIndex]!.transcriptIndex
+      const keepCount = index === undefined ? 0 : index + 1
       const response = await window.seekclaw.daemon.request('session.fork', {
         id: currentThread.sessionId,
         ...sessionScope(currentThread, project),
@@ -1210,9 +1255,10 @@ async function branchFromMessage(message: ChatMessage): Promise<void> {
     }
   }
 
-  const clonedMessages: ChatMessage[] = slicedMessages.map((m, idx) => ({
+  const clonedMessages: ChatMessage[] = slicedMessages.map((m) => ({
     ...m,
-    id: newSessionId ? `${newSessionId}:${idx}` : makeId(),
+    id: newSessionId && m.transcriptIndex !== undefined ? `${newSessionId}:${m.transcriptIndex}` : makeId(),
+    transcriptIndex: newSessionId ? m.transcriptIndex : undefined,
     tools: m.tools?.map((t) => ({ ...t })),
     images: m.images ? [...m.images] : undefined,
     files: m.files ? [...m.files] : undefined,
@@ -1327,14 +1373,7 @@ async function handleEditConfirm(revertFiles: boolean): Promise<void> {
   }
 
   // Step 2: Truncate backend session in SQLite
-  let keepCount: number | null = null
-  if (message.id) {
-    const match = /^.*:(\d+)$/.exec(message.id)
-    if (match && match[1]) {
-      keepCount = parseInt(match[1], 10)
-    }
-  }
-  if (keepCount === null) keepCount = promptIndex
+  const keepCount = thread.messages[promptIndex]!.transcriptIndex ?? promptIndex
 
   if (thread.sessionId) {
     try {
@@ -1343,6 +1382,7 @@ async function handleEditConfirm(revertFiles: boolean): Promise<void> {
         ...sessionScope(thread, project),
         keepCount
       })
+      if (thread === activeThread.value) void refreshActiveGoal(thread)
     } catch (err) {
       console.error('Failed to truncate session:', err)
     }
@@ -1451,18 +1491,19 @@ const conversationItems = computed(() => {
   })
 })
 
-/**
- * The plan shown above the composer, straight from the Agent's own `update_plan`
- * calls. Turns where the Agent did not create a plan render nothing.
- */
-const activeThreadTurnSteps = computed<TaskStep[]>(() => {
+// Keep standalone plan events accessible when the associated tool call is missing.
+const fallbackTurnPlan = computed<TaskStep[]>(() => {
   const thread = activeThread.value
-  if (!thread) return []
+  if (!thread?.customPlan?.length) return []
 
   const messages = thread.messages ?? []
   const lastUserIndex = messages.findLastIndex((m) => m.role === 'user' && !isInternalUserMessage(m))
   const turnAssistants = (lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : messages)
     .filter((m) => m.role === 'assistant')
+
+  const planCall = turnAssistants.flatMap((message) => message.tools ?? [])
+    .findLast((tool) => tool.name === 'update_plan' && tool.state !== 'error')
+  if (planCall && toolPlan(planCall)) return []
 
   return computeTurnTaskSteps({
     turnAssistants,
@@ -1562,11 +1603,7 @@ async function regenerateMessage(message: ChatMessage): Promise<void> {
   }
   if (promptIndex < 0) return
   const promptMessage = thread.messages[promptIndex]!
-  let keepCount = promptIndex
-  const idMatch = /^.*:(\d+)$/.exec(promptMessage.id)
-  if (idMatch?.[1]) {
-    keepCount = parseInt(idMatch[1], 10)
-  }
+  const keepCount = promptMessage.transcriptIndex ?? promptIndex
   const project = projects.value.find((item) => item.id === thread.projectId)
   try {
     await window.seekclaw.daemon.request('session.truncate', {
@@ -1579,6 +1616,7 @@ async function regenerateMessage(message: ChatMessage): Promise<void> {
   }
   thread.messages = thread.messages.slice(0, promptIndex)
   thread.phase = undefined
+  if (thread === activeThread.value) void refreshActiveGoal(thread)
   await sendMessage(promptMessage.content, promptMessage.images ?? [], promptMessage.files)
 }
 
@@ -1641,6 +1679,7 @@ const activeThreadApprovals = computed(() =>
   pendingApprovals.value.filter((item) => item.threadId === activeThreadId.value)
 )
 const activePendingApproval = computed(() => activeThreadApprovals.value[0] ?? null)
+const approvalCallIds = computed(() => new Set(activeThreadApprovals.value.map((approval) => approval.callId)))
 const backgroundPendingApprovals = computed(() => {
   const counts = new Map<string, { threadId: string; title: string; count: number }>()
   for (const item of pendingApprovals.value) {
@@ -1841,10 +1880,12 @@ async function runMessageTurn(
   thread: ThreadItem,
   content: string,
   images: ImageAttachment[],
-  files?: FileAttachment[]
+  files?: FileAttachment[],
+  resumeGoal = false
 ): Promise<void> {
   const project = projects.value.find((item) => item.id === thread.projectId)
-  if ((thread.projectId && !project) || thread.archived || thread.running) return
+  if ((thread.projectId && !project) || thread.archived || thread.running
+    || (resumeGoal && !thread.sessionId)) return
   const reasoningLevel = thread.reasoningLevel
   const turnToken = makeId()
   const turnStartIndex = thread.messages.length
@@ -1852,7 +1893,7 @@ async function runMessageTurn(
   const userMessage: ChatMessage = {
     id: makeId(),
     role: 'user',
-    content,
+    content: resumeGoal ? '>>> [System Directive: Resumed the conversation goal.]' : content,
     images,
     files,
     createdAt: Date.now()
@@ -1862,8 +1903,8 @@ async function runMessageTurn(
   }
   thread.messages.push(userMessage, assistant)
   thread.updatedAt = Date.now()
-  if (thread.titleSource === 'pending' || thread.titleSource === 'input'
-    || (turnStartIndex === 0 && thread.title === '新任务')) {
+  if (!resumeGoal && (thread.titleSource === 'pending' || thread.titleSource === 'input'
+    || (turnStartIndex === 0 && thread.title === '新任务'))) {
     thread.titleSource = 'pending'
     thread.title = '未命名任务'
     thread.titleGenerating = true
@@ -1908,6 +1949,7 @@ async function runMessageTurn(
       sessionId: thread.sessionId,
       reasoningLevel,
       supportsUserQuestions: true,
+      ...(resumeGoal ? { resumeGoal: true } : {}),
       ...scope
     }, { timeoutMs: CHAT_FIRST_EVENT_TIMEOUT_MS })
     pendingQuestions.value = pendingQuestions.value.filter((question) => !finishesQuestionTurn(response, question))
@@ -1936,7 +1978,7 @@ async function runMessageTurn(
     failedAssistant.state = 'error'
     if (!failedAssistant.content && !failedAssistant.errorMessage) {
       const detail = error instanceof Error ? error.message : String(error)
-      failedAssistant.errorMessage = `无法连接 SeekClaw Daemon: ${detail}`
+      failedAssistant.errorMessage = resumeGoal ? `继续目标失败。${detail}` : `无法连接 SeekClaw Daemon: ${detail}`
     }
   } finally {
     // A terminal event may already have started the next queued turn. Do not let
@@ -1961,7 +2003,10 @@ async function runMessageTurn(
     if (thread.sessionId && terminalAssistant.state !== 'error') {
       await reloadThreadSession(thread, project).catch(() => undefined)
     }
-    if (thread.id === activeThreadId.value) await scrollToBottom()
+    if (thread.id === activeThreadId.value) {
+      if (resumeGoal) void refreshActiveGoal(thread)
+      await scrollToBottom()
+    }
     scheduleQueuedDrain(thread)
   }
 }
@@ -1984,10 +2029,6 @@ function openTaskSettings(thread: ThreadItem = activeThread.value!): void {
 
 const taskRenameOnly = ref(false)
 const sidebarActionError = ref('')
-
-function showProject(project: ProjectItem): void {
-  void runSidebarAction(() => window.seekclaw.showItemInFolder(project.path))
-}
 
 function renameTask(thread: ThreadItem): void {
   openTaskSettings(thread)
@@ -2148,7 +2189,61 @@ const handleDaemonEvent = createDaemonEventHandler({
   reloadBackgroundThreadIfIdle
 })
 
+const activeGoal = ref<SessionGoal | null>(null)
+const goalActionPending = ref(false)
+const goalSync = createSessionGoalSync<ThreadItem>({
+  activeOwner: () => daemonState.value.connected ? activeThread.value : undefined,
+  read: async (thread) => {
+    const project = projects.value.find((item) => item.id === thread.projectId)
+    const response = await window.seekclaw.daemon.request('goal.get', {
+      sessionId: thread.sessionId,
+      ...sessionScope(thread, project)
+    })
+    return JSON.parse(response.data)
+  },
+  changed: (goal) => { activeGoal.value = goal }
+})
+
+function refreshActiveGoal(thread = activeThread.value): Promise<void> {
+  return goalSync.refresh(thread)
+}
+
+watch([() => activeThread.value?.id, () => activeThread.value?.sessionId, () => daemonState.value.connected],
+  () => {
+    goalSync.clear()
+    void refreshActiveGoal()
+  })
+
+async function pauseActiveGoal(): Promise<void> {
+  const thread = activeThread.value
+  const goal = activeGoal.value
+  if (!thread?.sessionId || !goal || goalActionPending.value) return
+  goalActionPending.value = true
+  try {
+    const project = projects.value.find((item) => item.id === thread.projectId)
+    await goalSync.mutate(thread, () => window.seekclaw.daemon.request('goal.pause', {
+      sessionId: thread.sessionId,
+      goalId: goal.id,
+      ...sessionScope(thread, project)
+    }))
+  } catch (error) {
+    await window.seekclaw.notify('暂停目标失败', error instanceof Error ? error.message : String(error))
+  } finally {
+    goalActionPending.value = false
+  }
+}
+
+async function resumeActiveGoal(): Promise<void> {
+  const thread = activeThread.value
+  if (!thread?.sessionId || !activeGoal.value || goalActionPending.value || thread.running || conversationLoading.value) return
+  await runMessageTurn(thread, '', [], undefined, true)
+}
+
 function handleDaemonMessage(event: DaemonMessage): void {
+  if (event.event === 'goal.updated') {
+    void goalSync.changed(event.sessionId)
+    return
+  }
   if (event.event === 'question_request') {
     const question = parseQuestionRequest(event)
     if (!question || !daemonState.value.connected) return
@@ -2304,10 +2399,27 @@ function useStarterPrompt(prompt: string): void {
   composer.value?.setValue(prompt)
 }
 
-function handleArtifactPreviewOpen(): void {
-  gitPanelOpen.value = false
+function closeConversationSidePanels(): void {
+  closeGitPanel()
   browserPanelOpen.value = false
+  browserResult.value = null
   selectedSubAgent.value = null
+  artifactPreview.value = null
+}
+
+function onArtifactPreviewRequest(event: Event): void {
+  const request = (event as CustomEvent<ArtifactPreviewRequest>).detail
+  if (!request?.artifact || activePage.value !== 'main') return
+  closeConversationSidePanels()
+  artifactPreview.value = request
+}
+
+function closeArtifactPreview(): void {
+  const trigger = artifactPreview.value?.trigger
+  artifactPreview.value = null
+  if (trigger) void nextTick(() => {
+    if (trigger.isConnected) trigger.focus({ preventScroll: true })
+  })
 }
 
 onMounted(async () => {
@@ -2320,7 +2432,7 @@ onMounted(async () => {
   document.documentElement.dataset.platform = appInfo.value.platform
   document.documentElement.dataset.material = appInfo.value.supportsMica ? 'mica' : 'solid'
   projects.value = loadStoredProjects()
-  window.addEventListener('seekclaw:artifact-preview-open', handleArtifactPreviewOpen)
+  window.addEventListener(ARTIFACT_PREVIEW_REQUEST, onArtifactPreviewRequest)
   unsubscribeBrowser = window.seekclaw.browser.onChanged(handleBrowserState)
   unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonMessage)
   unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
@@ -2341,7 +2453,7 @@ onBeforeUnmount(() => {
   conversationScroller.dispose()
   conversationResizeObserver?.disconnect()
   window.removeEventListener('resize', scheduleConversationViewportMeasure)
-  window.removeEventListener('seekclaw:artifact-preview-open', handleArtifactPreviewOpen)
+  window.removeEventListener(ARTIFACT_PREVIEW_REQUEST, onArtifactPreviewRequest)
   unsubscribeBrowser?.()
   unsubscribeEvent?.()
   unsubscribeState?.()
@@ -2353,6 +2465,7 @@ watch(theme, applyTheme)
 <template>
   <div class="app-shell">
     <AppTitleBar :sidebar-open="sidebarOpen" :project-path="globalTaskActive ? undefined : activeProject?.path"
+      :zoom-factor="zoomFactor" @change-zoom-factor="applyZoomFactor"
       @toggle-sidebar="handleToggleSidebar" @new-task="newTask(selectedProjectId || undefined)"
       @open-workspace="openWorkspace" @show-project="showActiveProject" @open-settings="openSettings('general')"
       @focus-composer="composer?.focus()" @open-terminal="openProjectTerminal" @open-git-changes="openGitPanel('diff')"
@@ -2393,14 +2506,13 @@ watch(theme, applyTheme)
               @rename-task="renameTask"
               @copy-task="copyTask"
               @fork-task="forkTask"
-              @show-project="showProject"
               @archive-task="archiveTask"
               @restore-task="restoreTask"
               @delete-task="deleteTask"
-              @delete-project="deleteProject"
-              @archive-project-tasks="archiveProjectTasks"
+              @delete-project="runSidebarAction(() => deleteProject($event))"
+              @archive-project-tasks="runSidebarAction(() => archiveProjectTasks($event))"
               @open-project-properties="openProjectProperties"
-              @delete-project-tasks="deleteProjectTasks"
+              @delete-project-tasks="runSidebarAction(() => deleteProjectTasks($event))"
               @archive-global-tasks="archiveGlobalTasks"
               @delete-global-tasks="deleteGlobalTasks"
               @resize="handleSidebarResize"
@@ -2432,7 +2544,7 @@ watch(theme, applyTheme)
               :connection-label="runtimeConnectionLabel"
               :changes-open="gitPanelOpen && gitPanelTab === 'diff'"
               :history-open="gitPanelOpen && gitPanelTab === 'history'"
-              :browser-open="browserPanelOpen"
+              :browser-open="browserPanelOpen || Boolean(browserResult)"
               :sidebar-open="sidebarOpen"
               @show-project="showActiveProject"
               @open-terminal="openProjectTerminal"
@@ -2474,11 +2586,16 @@ watch(theme, applyTheme)
               <div v-for="turn in virtualWindow.items" :key="turnViewKey(turn.id)" v-measure="turnViewKey(turn.id)" class="virtual-message">
                 <ConversationProcess :turn="turn" :image-sources="activeImageSources"
                   :session-id="activeThread.sessionId" :workspace="activeProject?.path"
-                  :phase="activeThread.phase"
+                  :phase="activeThread.phase" :awaiting-user="Boolean(activeQuestion || activePendingApproval)"
+                  :approval-call-ids="approvalCallIds"
                   :assistant-id="activeThread.assistantId" :query="conversationQuery"
                   :expanded="expandedProcesses.get(turnViewKey(turn.id)) ?? false"
+                  :activity-disclosures="turnActivityDisclosures.get(turnViewKey(turn.id)) ?? emptyActivityDisclosures"
                   @update:expanded="expandedProcesses.set(turnViewKey(turn.id), $event)"
+                  @set-activity-disclosure="(id, expanded) => setTurnActivityDisclosure(turn.id, id, expanded)"
                   @open-sub-agent="openSubAgent"
+                  @open-browser-result="openBrowserResult"
+                  @open-diff-preview="openDiffPreview"
                   @open-diff="openToolDiff" @branch="branchFromMessage" @retry="regenerateMessage" @edit="onEditUserMessage" />
               </div>
               <div v-if="virtualWindow.active" class="virtual-pad" :style="{ height: `${virtualWindow.bottomPad}px` }" />
@@ -2504,6 +2621,11 @@ watch(theme, applyTheme)
           </section>
 
           <footer class="composer-region">
+            <button v-if="activeThread?.messages.length && !conversationLoading && !autoFollowConversation"
+              type="button" class="icon-button conversation-jump-latest" title="跳到最新消息" aria-label="跳到最新消息"
+              @click="jumpToLatest">
+              <ArrowDown :size="16" aria-hidden="true" />
+            </button>
             <div class="sr-only" role="status">{{ activeQuestion ? '有问题等待回答' : '' }}</div>
             <InlineApprovalCard
               :approval="activePendingApproval"
@@ -2574,7 +2696,10 @@ watch(theme, applyTheme)
               </div>
             </TransitionGroup>
 
-            <TaskStepList :steps="activeThreadTurnSteps" :running="activeThread?.running"
+            <ConversationGoal v-if="activeGoal" :key="activeGoal.id" :goal="activeGoal" :running="busy"
+              :disabled="goalActionPending || conversationLoading || !daemonState.connected || activeThread?.archived"
+              @pause="pauseActiveGoal" @resume="resumeActiveGoal" />
+            <TaskStepList :steps="fallbackTurnPlan" :running="activeThread?.running"
               :phase="activeThread?.phase" />
             <InlineQuestionCard
               v-if="activeQuestion"
@@ -2627,15 +2752,25 @@ watch(theme, applyTheme)
             @resize="resizeSubagentPanel"
             @select-agent="selectedSubAgent = { agent: $event, threadId: activeThread!.id }"
             @close="selectedSubAgent = null"
+            @open-browser-result="(tool, sessionId) => openBrowserResult(tool, sessionId ?? null)"
             @open-diff="openToolDiff"
+            @open-diff-preview="openDiffPreview"
           />
         </Transition>
         <Transition name="side-panel">
           <ConversationBrowserPanel v-if="activePage === 'main' && browserPanelOpen && browserState && browserState.sessionId === activeThread?.sessionId"
             :state="browserState" :width="browserPanelWidth" @changed="handleBrowserState" @resize="resizeBrowserPanel" @close="browserPanelOpen = false" />
         </Transition>
+        <Transition name="side-panel">
+          <BrowserResultPanel v-if="activePage === 'main' && browserResult"
+            :tool="browserResult.tool" :width="browserPanelWidth" :live-available="Boolean(resultBrowserState)"
+            @resize="resizeBrowserPanel" @close="browserResult = null" @open-live="openLiveBrowserFromResult" />
+        </Transition>
+        <ArtifactPreviewDialog v-if="activePage === 'main' && artifactPreview"
+          :key="`${artifactPreview.sessionId}:${artifactPreview.artifact.id}`" :artifact="artifactPreview.artifact"
+          :session-id="artifactPreview.sessionId" :workspace="artifactPreview.workspace" @close="closeArtifactPreview" />
         <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="gitPanelProject"
-          :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="gitPanelWidth" @close="closeGitPanel"
+          :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="gitPanelWidth" @close="dismissGitPanel"
           @resize="resizeGitPanel" @open-terminal="openProjectTerminal" />
       </div>
     </div>

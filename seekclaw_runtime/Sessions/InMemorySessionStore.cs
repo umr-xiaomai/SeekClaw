@@ -43,15 +43,36 @@ public sealed class InMemorySessionStore : ISessionStore
 
     public void Append(AgentSession session, ChatMessage message)
     {
-        session.Messages.Add(message);
-        session.Header.UpdatedAt = DateTimeOffset.UtcNow;
+        lock (session)
+        {
+            session.Messages.Add(message);
+            session.Header.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+    }
+
+    public bool TrySaveContextCheckpoint(AgentSession session, int coveredMessageCount, ChatMessage coveredThrough, string summary)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(summary);
+        lock (session)
+        {
+            if (coveredMessageCount <= (session.ContextCheckpoint?.CoveredMessageCount ?? 0)
+                || coveredMessageCount > session.Messages.Count
+                || !ReferenceEquals(session.Messages[coveredMessageCount - 1], coveredThrough)) return false;
+            session.ContextCheckpoint = new(coveredMessageCount, summary);
+            return true;
+        }
     }
 
     public void ReplaceHistory(AgentSession session, IReadOnlyList<ChatMessage> messages)
     {
-        session.Messages.Clear();
-        session.Messages.AddRange(messages);
-        session.Header.UpdatedAt = DateTimeOffset.UtcNow;
+        lock (session)
+        {
+            var snapshot = messages.ToArray();
+            session.Messages.Clear();
+            session.Messages.AddRange(snapshot);
+            session.ContextCheckpoint = null;
+            session.Header.UpdatedAt = DateTimeOffset.UtcNow;
+        }
     }
 
     public AgentSession Fork(WorkspaceInfo workspace, string sourceSessionId, int keepMessageCount = 0, string? title = null)
@@ -62,8 +83,13 @@ public sealed class InMemorySessionStore : ISessionStore
             modelRef: source.Header.ModelRef);
         forked.Header.Title = title ?? source.Header.Title;
         forked.Header.TitleSource = "manual";
-        var count = keepMessageCount > 0 ? Math.Min(keepMessageCount, source.Messages.Count) : source.Messages.Count;
-        forked.Messages.AddRange(source.Messages.Take(count));
+        lock (source)
+        {
+            var count = keepMessageCount > 0 ? Math.Min(keepMessageCount, source.Messages.Count) : source.Messages.Count;
+            forked.Messages.AddRange(source.Messages.Take(count));
+            if (source.ContextCheckpoint is { } checkpoint && checkpoint.CoveredMessageCount <= count)
+                forked.ContextCheckpoint = checkpoint;
+        }
         return forked;
     }
 
@@ -81,9 +107,15 @@ public sealed class InMemorySessionStore : ISessionStore
 
     public void Truncate(WorkspaceInfo workspace, string sessionId, int keepMessageCount)
     {
-        if (_sessions.TryGetValue(sessionId, out var session) && session.Messages.Count > keepMessageCount)
+        if (!_sessions.TryGetValue(sessionId, out var session)) return;
+        lock (session)
         {
-            session.Messages.RemoveRange(keepMessageCount, session.Messages.Count - keepMessageCount);
+            var count = Math.Max(0, keepMessageCount);
+            if (count >= session.Messages.Count) return;
+            session.Messages.RemoveRange(count, session.Messages.Count - count);
+            if (session.ContextCheckpoint is { } checkpoint && checkpoint.CoveredMessageCount > count)
+                session.ContextCheckpoint = null;
+            session.Header.UpdatedAt = DateTimeOffset.UtcNow;
         }
     }
 

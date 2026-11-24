@@ -7,6 +7,8 @@ import { parseConversationWidgets } from './conversation-widgets'
 import { countDiffLines } from './diff-parser'
 import { applySubAgentEvent, messageSubAgents } from './subagent-activity'
 
+const PROVIDER_RETRY_PHASE_PREFIX = '连接中断，正在重试（'
+
 export interface SubAgentStatusSnapshot {
   status: SubAgentActivity['status']
   output?: string
@@ -211,9 +213,14 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         ?? thread.messages.findLast((m) => m.role === 'assistant')?.tools?.findLast((tool) => tool.state === 'running')
     }
 
+    // Resume the live progress indicator as soon as a retry yields new output.
+    if ((event.event === 'thinking' || event.event === 'delta') && thread.phase?.startsWith(PROVIDER_RETRY_PHASE_PREFIX)) {
+      thread.phase = undefined
+    }
+
     switch (event.event) {
       case 'provider_retry':
-        thread.phase = `连接中断，正在重试（${Number(event.details?.attempt) || 1}）`
+        thread.phase = `${PROVIDER_RETRY_PHASE_PREFIX}${Number(event.details?.attempt) || 1}）`
         break
       case 'stream_reset': {
         if (!message) break

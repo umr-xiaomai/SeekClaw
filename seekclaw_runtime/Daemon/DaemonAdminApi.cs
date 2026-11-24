@@ -23,10 +23,14 @@ internal sealed partial class DaemonAdminApi(
     CancellationToken lifetime = default)
 {
     /// <summary>
-    /// Raised after a background MCP reconnect finishes so clients can refresh the
-    /// server list without polling.
+    /// Includes connections opened by foreground, scheduled and delegated runtimes,
+    /// so administration observes shared state without polling individual managers.
     /// </summary>
-    public event Action? McpStatusChanged;
+    public event Action? McpStatusChanged
+    {
+        add => runtime.TaskServices.McpConnections.StatusChanged += value;
+        remove => runtime.TaskServices.McpConnections.StatusChanged -= value;
+    }
 
     public string ListLocks()
     {
@@ -629,7 +633,7 @@ internal sealed partial class DaemonAdminApi(
         var merged = runtime.Mcp.LoadServerConfigs(runtime.Workspace);
         var workspaceFile = LoadWorkspaceMcpConfig();
         var workspaceInline = runtime.Workspace.Config?.Mcp?.Servers;
-        var statuses = runtime.Mcp.Status.ToDictionary(status => status.Name, StringComparer.OrdinalIgnoreCase);
+        var statuses = runtime.Mcp.GetStatus(runtime.Workspace).ToDictionary(status => status.Name, StringComparer.OrdinalIgnoreCase);
         var servers = new JsonArray();
 
         foreach (var (name, server) in merged.OrderBy(item => item.Key))
@@ -745,7 +749,7 @@ internal sealed partial class DaemonAdminApi(
             }
             finally
             {
-                if (announce) McpStatusChanged?.Invoke();
+                if (announce) runtime.TaskServices.McpConnections.NotifyStatusChanged();
             }
         }, CancellationToken.None);
     }
@@ -1051,9 +1055,7 @@ internal sealed partial class DaemonAdminApi(
                       ?? throw new DaemonRequestException($"Project not found: {id}");
         if (!keepSessions)
         {
-            var workspace = Directory.Exists(project.Path)
-                ? runtime.Workspaces.Detect(project.Path)
-                : new WorkspaceInfo { Root = Path.GetFullPath(project.Path), ProjectKinds = [] };
+            var workspace = ResolveSessionWorkspacePath(project.Path, allowMissingDirectory: true);
             foreach (var session in runtime.Sessions.List(workspace, includeArchived: true))
                 EnsureTaskCanBeDeleted(workspace, session.Id);
             runtime.Sessions.DeleteAll(workspace);
@@ -1065,7 +1067,7 @@ internal sealed partial class DaemonAdminApi(
 
     public string ListSessions(JsonObject parameters)
     {
-        var workspace = SessionWorkspace(parameters);
+        var workspace = SessionWorkspace(parameters, allowMissingDirectory: true);
         var includeArchived = parameters["includeArchived"]?.GetValue<bool?>() ?? false;
         return JsonSerializer.Serialize(
             runtime.Sessions.List(workspace, includeArchived).ToList(),
@@ -1515,21 +1517,25 @@ internal sealed partial class DaemonAdminApi(
         return string.IsNullOrEmpty(value) ? null : value;
     }
 
-    private SeekClaw.Runtime.Workspaces.WorkspaceInfo SessionWorkspace(JsonObject parameters)
+    private WorkspaceInfo SessionWorkspace(JsonObject parameters, bool allowMissingDirectory = false)
     {
         if (parameters["global"]?.GetValue<bool?>() == true) return globalWorkspace;
         var requested = OptionalString(parameters, "workspace");
-        if (requested is null) return runtime.Workspace;
+        return requested is null ? runtime.Workspace : ResolveSessionWorkspacePath(requested, allowMissingDirectory);
+    }
 
+    private WorkspaceInfo ResolveSessionWorkspacePath(string requested, bool allowMissingDirectory)
+    {
         string fullPath;
         try { fullPath = Path.GetFullPath(requested); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             throw new DaemonRequestException($"Invalid workspace path: {ex.Message}");
         }
-        if (!Directory.Exists(fullPath))
-            throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
-        return runtime.Workspaces.Detect(fullPath);
+        if (Directory.Exists(fullPath)) return runtime.Workspaces.Detect(fullPath);
+        if (allowMissingDirectory)
+            return new WorkspaceInfo { Root = fullPath, ProjectKinds = [] };
+        throw new DaemonRequestException($"Workspace directory not found: {fullPath}");
     }
 
     private static JsonArray Strings(IEnumerable<string> values) =>

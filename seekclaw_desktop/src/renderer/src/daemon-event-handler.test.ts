@@ -49,7 +49,7 @@ describe('createDaemonEventHandler', () => {
     expect(scrollToBottom).toHaveBeenCalledExactlyOnceWith()
   })
 
-  it('replaces only the interrupted stream and preserves completed tools when retrying', () => {
+  it.each(['thinking', 'delta'] as const)('keeps completed tools and clears the retry phase after %s resumes', (resumeEvent) => {
     const thread: ThreadItem = {
       id: 'thread', title: 'Retry', sessionId: 'session', requestId: 10, assistantId: 'current',
       running: true, updatedAt: 0,
@@ -74,8 +74,12 @@ describe('createDaemonEventHandler', () => {
     handler({ id: 10, event: 'stream_reset', data: 'test/model', requestMethod: 'chat', sessionId: 'session',
       details: { textLength: 7, thinkingLength: 12 } })
     expect(thread.messages[1]).toMatchObject({ content: 'prefix ', thinking: 'earlier thought', state: 'thinking' })
-    handler({ id: 10, event: 'delta', data: 'replacement', requestMethod: 'chat', sessionId: 'session' })
-    expect(thread.messages[1]!.content).toBe('prefix replacement')
+    expect(thread.phase).toContain('重试')
+    handler({ id: 10, event: resumeEvent, data: 'replacement', requestMethod: 'chat', sessionId: 'session' })
+    expect(thread.phase).toBeUndefined()
+    expect(thread.messages[1]).toMatchObject(resumeEvent === 'thinking'
+      ? { content: 'prefix ', thinking: 'earlier thoughtreplacement', thinkingActive: true }
+      : { content: 'prefix replacement', thinkingActive: false })
     expect(thread.messages[1]!.tools).toHaveLength(1)
     expect(thread.messages[0]).toMatchObject({ content: 'completed', state: 'done' })
     expect(thread.messages[0]!.tools).toHaveLength(1)

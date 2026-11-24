@@ -10,4 +10,4 @@ For Git commits: inspect with `git status` and `git diff`, stage specific files,
 
 Never run `git reset --hard`, `git checkout --`, force-push, or recursive deletion unless the user explicitly asks. Before any destructive command, state the risk and ask first.
 
-Output is truncated when huge; prefer quiet flags. Never run interactive commands that wait for input.
+Output is truncated when huge; prefer quiet flags. This tool closes stdin. Use exec_command with tty: true for interactive commands and write_stdin to respond to prompts.

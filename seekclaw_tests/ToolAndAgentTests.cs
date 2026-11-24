@@ -278,7 +278,7 @@ public sealed class ToolAndAgentTests
 
         var fitted = ContextPlanner.FitToWindow(messages, model, "system prompt");
 
-        // Oldest messages drop, but the most recent 6 are always kept (plus the trim notice).
+        // Oldest messages drop, and the most recent message is kept with the trim notice.
         Assert.True(fitted.Count < messages.Count);
         Assert.True(fitted.Count <= 7);
         // Newest messages survive.

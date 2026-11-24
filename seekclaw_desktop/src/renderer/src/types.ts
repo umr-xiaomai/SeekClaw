@@ -66,6 +66,8 @@ export interface SubAgentLifecycleEvent {
   agent: SubAgentActivity
   createdAt: number
   contentOffset: number
+  /** Most recent tool started in this message when the event was received. */
+  afterToolId?: string | null
 }
 
 export interface ImageAttachment {
@@ -92,6 +94,8 @@ export interface ImageReference {
 
 export interface ChatMessage {
   id: string
+  /** Zero-based position in the saved transcript, including tool and internal messages. */
+  transcriptIndex?: number
   role: 'user' | 'assistant'
   content: string
   images?: ImageAttachment[]

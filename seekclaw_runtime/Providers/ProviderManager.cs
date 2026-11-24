@@ -120,7 +120,7 @@ public sealed class ProviderManager(
         // Every candidate failure is remembered so the final error can explain each model
         // that was tried (the active model first) instead of surfacing only the last
         // fallback's error -- e.g. a default cloud provider that has no API key configured.
-        var failures = new List<(string Ref, string Error)>();
+        var failures = new List<(string Ref, LlmException Error)>();
 
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
@@ -251,7 +251,7 @@ public sealed class ProviderManager(
 
             // All retries for this candidate were exhausted; remember the failure too.
             if (lastError is not null && !failures.Exists(failure => failure.Ref == model.Ref))
-                failures.Add((model.Ref, lastError.Message));
+                failures.Add((model.Ref, lastError));
         }
 
         throw BuildFailoverException(failures, lastError);
@@ -263,13 +263,13 @@ public sealed class ProviderManager(
     /// first) so clients see the real cause instead of a confusing fallback error.
     /// </summary>
     private static LlmException BuildFailoverException(
-        IReadOnlyList<(string Ref, string Error)> failures,
+        IReadOnlyList<(string Ref, LlmException Error)> failures,
         LlmException? lastError)
     {
         if (failures.Count == 0)
             return lastError ?? new LlmException("All providers failed.", retryable: false);
         if (failures.Count == 1)
-            return lastError ?? new LlmException(failures[0].Error, retryable: false);
+            return failures[0].Error;
 
         var builder = new StringBuilder();
         builder.Append($"All candidate models failed after automatic failover ({failures.Count} tried):");
@@ -279,9 +279,13 @@ public sealed class ProviderManager(
             builder.Append("- ");
             builder.Append(refName);
             builder.Append(": ");
-            builder.Append(error);
+            builder.Append(error.Message);
         }
-        return new LlmException(builder.ToString(), lastError?.StatusCode, retryable: false, inner: lastError);
+        var transient = failures.Where(failure => failure.Error.Retryable).Select(failure => failure.Error).ToList();
+        return new LlmException(builder.ToString(), lastError?.StatusCode, retryable: transient.Count > 0, inner: lastError)
+        {
+            RetryAfter = transient.Select(error => error.RetryAfter).Max(),
+        };
     }
 
     public async Task<(bool Success, string Detail, double LatencyMs)> TestModelAsync(

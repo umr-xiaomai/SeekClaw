@@ -6,6 +6,7 @@ using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Execution;
 using SeekClaw.Runtime.Extensions;
+using SeekClaw.Runtime.Goals;
 using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Memory;
 using SeekClaw.Runtime.Prompts;
@@ -57,6 +58,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public CommandSessionManager Commands => _services.GetRequiredService<CommandSessionManager>();
     public WorktreeManager Worktrees => _services.GetRequiredService<WorktreeManager>();
     public SessionTurnCoordinator Turns => _services.GetRequiredService<SessionTurnCoordinator>();
+    public SessionGoalStore Goals => _services.GetRequiredService<SessionGoalStore>();
     public ExecutionRecordStore ExecutionRecords => _services.GetRequiredService<ExecutionRecordStore>();
     public McpAuthentication McpAuth => _services.GetRequiredService<McpAuthentication>();
     public RuntimeTaskServices TaskServices => _services.GetRequiredService<RuntimeTaskServices>();
@@ -275,11 +277,14 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
         foreach (var tool in new ITool[]
                  {
                      new PlanTool(prompts),
+                     new GoalTool(prompts, Goals),
                      new AskUserTool(prompts),
                      new LoadSkillTool(prompts, Skills),
                      new ScheduleTool(prompts, Schedules),
                      new SeekClaw.Runtime.Presentation.PresentArtifactTool(prompts),
                      new CommandSessionTool(prompts, Commands),
+                     new ExecCommandTool(prompts, Commands),
+                     new WriteStdinTool(prompts, Commands),
                      new ReadFileTool(prompts),
                      new WriteFileTool(prompts),
                      new EditFileTool(prompts),
@@ -346,6 +351,7 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IWorkspaceManager, WorkspaceManager>();
         services.AddSingleton<SeekClawDatabase>();
         services.AddSingleton<ExecutionRecordStore>();
+        services.AddSingleton<SessionGoalStore>();
         services.AddSingleton<SubAgentTaskManager>();
         services.AddSingleton<RuntimeTaskServices>();
         services.AddSingleton<WorktreeManager>();
@@ -353,6 +359,7 @@ public static class RuntimeServiceCollectionExtensions
             Path.GetDirectoryName(sp.GetRequiredService<SeekClawDatabase>().FilePath)!, "task-locks")));
         services.AddSingleton<McpCredentialStore>();
         services.AddSingleton<McpAuthentication>();
+        services.AddSingleton<McpConnectionPool>();
         services.AddSingleton<ISessionStore, SessionStore>();
         services.AddSingleton<ICrossSessionMemoryStore, CrossSessionMemoryStore>();
         services.AddSingleton<IProjectStore, ProjectStore>();

@@ -35,6 +35,7 @@ import {
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { GitBranchInfo, GitCommit, GitHistory, GitOverview } from '../../../shared/ipc'
 import type { ProjectItem } from '../types'
+import type { ToolDiffPreview } from '../conversation-diffs'
 import { parseUnifiedDiff, type ParsedFileDiff as FileDiff } from '../diff-parser'
 import { formatCommitDate, formatGitHistoryCommits, type FormattedGitCommit } from '../git-commit-format'
 
@@ -53,7 +54,7 @@ const props = withDefaults(defineProps<{
   open: boolean
   project?: ProjectItem
   initialTab: PanelTab
-  diffOverride?: { path: string; diff: string } | null
+  diffOverride?: ToolDiffPreview | null
   width?: number
 }>(), {
   width: 240
@@ -123,6 +124,7 @@ watch(showFileTree, (open) => {
 const fileFilterQuery = ref('')
 const activeFileId = ref('')
 const wrapLines = ref(false)
+const wrapToolDiff = ref(true)
 const wordDiffEnabled = ref(true)
 const menuOpen = ref(false)
 const copyToast = ref('')
@@ -184,7 +186,7 @@ const displayedDiff = computed(() => {
   if (tab.value === 'history' && commitDiff.value !== null) {
     return commitDiff.value
   }
-  return props.diffOverride?.diff ?? overview.value?.diff ?? ''
+  return overview.value?.diff ?? ''
 })
 const panelStyle = computed(() => ({
   '--git-panel-width': `${props.width}px`,
@@ -192,7 +194,7 @@ const panelStyle = computed(() => ({
 }))
 
 const parsedFiles = computed<FileDiff[]>(() =>
-  parseUnifiedDiff(displayedDiff.value, props.diffOverride?.path || 'unknown')
+  parseUnifiedDiff(displayedDiff.value)
 )
 const totalAdditions = computed(() => parsedFiles.value.reduce((sum, f) => sum + f.additions, 0))
 const totalDeletions = computed(() => parsedFiles.value.reduce((sum, f) => sum + f.deletions, 0))
@@ -567,7 +569,7 @@ function resetTreeWidth(): void {
   }
 }
 
-watch(() => [props.open, props.project?.path, props.initialTab, props.diffOverride?.path] as const, ([open, projectPath], oldValues) => {
+watch(() => [props.open, props.project?.path, props.initialTab, props.diffOverride] as const, ([open, projectPath], oldValues) => {
   if (!open) {
     requestId.value++
     return
@@ -610,7 +612,7 @@ onBeforeUnmount(() => {
       class="git-panel codex-git-workbench"
       :class="{ 'is-resizing': resizing || treeResizing }"
       :style="panelStyle"
-      aria-label="项目 Git 工具"
+      :aria-label="diffOverride ? '文件变更' : '项目 Git 工具'"
       @click="closeMenu(); closeBranchMenu()"
     >
       <div
@@ -624,11 +626,16 @@ onBeforeUnmount(() => {
 
       <header class="git-panel-header">
         <div class="git-panel-title">
-          <div class="git-header-title-badge">
+          <div v-if="diffOverride" class="git-header-title-badge">
+            <Braces :size="16" />
+            <span>文件变更</span>
+          </div>
+          <div v-else class="git-header-title-badge">
             <Braces :size="16" />
             <span>变更</span>
           </div>
           <button
+            v-if="!diffOverride"
             class="icon-button-mini"
             title="刷新 Git 状态"
             aria-label="刷新 Git 状态"
@@ -641,6 +648,7 @@ onBeforeUnmount(() => {
 
         <div class="git-panel-header-actions">
           <button
+            v-if="!diffOverride"
             class="icon-button-mini"
             :class="{ active: showFileTree }"
             :title="showFileTree ? '隐藏文件列表' : '展开文件列表'"
@@ -920,92 +928,49 @@ onBeforeUnmount(() => {
 
       <div class="git-panel-workbench-body">
         <template v-if="diffOverride">
-          <div class="git-diff-scrollable full-width">
-            <div class="git-repository-summary tool-diff-summary">
-              <span><Braces :size="15" />本次修改</span>
-              <small>{{ diffOverride.path }}</small>
-              <div class="tool-diff-actions" style="display:flex;align-items:center;gap:4px;margin-left:auto;">
-                <button
-                  type="button"
-                  class="git-tool-btn"
-                  :class="{ active: wrapLines }"
-                  :title="wrapLines ? '取消自动换行' : '切换自动换行'"
-                  :aria-label="wrapLines ? '取消自动换行' : '切换自动换行'"
-                  @click="wrapLines = !wrapLines"
-                >
+          <div class="tool-diff-view">
+            <div class="tool-diff-toolbar">
+              <span>{{ diffOverride.fileCount }} 个文件</span>
+              <div class="tool-diff-actions">
+                <button type="button" class="icon-button-mini" :aria-pressed="wrapToolDiff"
+                  title="自动换行" aria-label="自动换行" @click="wrapToolDiff = !wrapToolDiff">
                   <WrapText :size="14" />
                 </button>
-                <button
-                  type="button"
-                  class="git-tool-btn"
-                  title="复制完整 Patch"
-                  aria-label="复制完整 Patch"
-                  @click="copyToClipboard(displayedDiff, '已复制完整 Patch')"
-                >
+                <button type="button" class="icon-button-mini" title="复制差异" aria-label="复制差异"
+                  @click="copyToClipboard(diffOverride.rawDiff, '已复制差异')">
                   <Copy :size="14" />
                 </button>
               </div>
             </div>
-            <div
-              v-for="file in parsedFiles"
-              :key="file.id"
-              class="diff-file-card"
-              :class="{ 'is-collapsed': isFileCollapsed(file.id) }"
-            >
-              <div class="diff-file-card-header" @click="toggleFileCollapse(file.id)">
-                <div class="diff-file-card-title">
-                  <component :is="isFileCollapsed(file.id) ? ChevronRight : ChevronDown" :size="15" class="diff-arrow" />
-                  <svg v-if="file.fileName.endsWith('.vue')" width="14" height="14" viewBox="0 0 24 24" class="file-badge-icon vue-svg">
-                    <path d="M12 22L0 3h4.8L12 15.2 19.2 3H24z" fill="#42b883" />
-                    <path d="M12 22L4.8 3H9.6L12 7.2 14.4 3h4.8z" fill="#35495e" />
-                  </svg>
-                  <span v-else-if="file.fileName.endsWith('.css')" class="file-badge-icon code-tag css">css</span>
-                  <span v-else-if="file.fileName.endsWith('.ts')" class="file-badge-icon code-tag ts">TS</span>
-                  <FileCode v-else :size="14" class="diff-file-type-icon" />
-                  <span class="diff-card-filename">{{ file.fileName }}</span>
-                  <span class="diff-card-stats">
-                    <span v-if="file.additions > 0" class="stat-add">+{{ file.additions }}</span>
-                    <span v-if="file.deletions > 0" class="stat-del">-{{ file.deletions }}</span>
-                  </span>
-                </div>
-              </div>
-              <div v-show="!isFileCollapsed(file.id)" class="diff-file-card-body">
-                <div v-for="(hunk, hIdx) in file.hunks" :key="hIdx" class="diff-hunk-wrap">
-                  <div v-if="hunk.unmodifiedBefore > 0" class="diff-unmodified-pill">
-                    {{ hunk.unmodifiedBefore }} unmodified lines
-                  </div>
-                  <div class="diff-hunk-lines">
-                    <div
-                      v-for="(line, lIdx) in hunk.lines"
-                      :key="lIdx"
-                      class="diff-code-line"
-                      :class="['diff-type-' + line.type, { 'is-wrapped': wrapLines }]"
-                    >
-                      <div class="diff-line-gutter">
-                        <span class="line-num">{{ line.oldLineNumber || line.newLineNumber || '' }}</span>
-                        <span class="gutter-color-bar" />
-                      </div>
-                      <div class="diff-line-text">
-                        <template v-if="wordDiffEnabled && line.wordDiff && line.wordDiff.length">
-                          <span
-                            v-for="(part, pIdx) in line.wordDiff"
-                            :key="pIdx"
-                            :class="{
-                              'word-diff-highlight': part.changed,
-                              'word-add': part.changed && line.type === 'addition',
-                              'word-del': part.changed && line.type === 'deletion'
-                            }"
-                          >{{ part.text }}</span>
-                        </template>
-                        <template v-else>
-                          <span>{{ line.content }}</span>
-                        </template>
-                      </div>
+            <details v-for="file in diffOverride.files" :key="file.path" class="tool-diff-file" open>
+              <summary :title="file.path">
+                <ChevronRight :size="13" aria-hidden="true" />
+                <span class="tool-diff-filename">{{ file.path }}</span>
+                <span class="tool-diff-counts">
+                  <span v-if="file.additions" class="stat-add">+{{ file.additions }}</span>
+                  <span v-if="file.deletions" class="stat-del">−{{ file.deletions }}</span>
+                </span>
+              </summary>
+              <div class="tool-diff-code" :class="{ 'tool-diff-wrap': wrapToolDiff }">
+                <div v-for="(edit, editIndex) in file.edits" :key="editIndex">
+                  <div v-if="file.edits.length > 1" class="tool-diff-gap">第 {{ editIndex + 1 }} 次编辑</div>
+                  <div v-for="(hunk, hunkIndex) in edit.hunks" :key="hunkIndex">
+                    <div v-if="hunk.unmodifiedBefore > 0" class="tool-diff-gap">{{ hunk.unmodifiedBefore }} 行未修改</div>
+                    <div v-for="(line, lineIndex) in hunk.lines" :key="lineIndex" class="tool-diff-line" :class="`is-${line.type}`">
+                      <span class="tool-diff-line-no" aria-hidden="true">{{ line.newLineNumber ?? line.oldLineNumber }}</span>
+                      <span class="tool-diff-text"><span aria-hidden="true">{{ line.type === 'addition' ? '+' : line.type === 'deletion' ? '−' : ' ' }}</span> {{ line.content }}</span>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
+            </details>
+            <details v-for="(patch, index) in diffOverride.unparsed" :key="index" class="tool-diff-file" open>
+              <summary :title="patch.path">
+                <ChevronRight :size="13" aria-hidden="true" />
+                <span class="tool-diff-filename">{{ patch.path }}</span>
+              </summary>
+              <pre class="tool-diff-raw" :class="{ 'tool-diff-wrap': wrapToolDiff }">{{ patch.diff }}</pre>
+            </details>
           </div>
         </template>
 
@@ -1456,3 +1421,27 @@ onBeforeUnmount(() => {
     </aside>
   </Transition>
 </template>
+
+<style scoped>
+.tool-diff-view { flex: 1; min-height: 0; min-width: 0; padding: 10px 14px 20px; overflow: auto; overscroll-behavior: contain; }
+.tool-diff-toolbar { display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 6px; color: var(--text-muted); font-size: 12px; }
+.tool-diff-toolbar small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-diff-actions { display: flex; flex: none; align-items: center; gap: 3px; margin-inline-start: auto; }
+.tool-diff-file { min-width: 0; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.tool-diff-file > summary { display: flex; min-height: 32px; align-items: center; gap: 6px; padding: 4px 8px; color: var(--text-secondary); background: var(--surface-subtle); cursor: pointer; list-style: none; }
+.tool-diff-file > summary::-webkit-details-marker { display: none; }
+.tool-diff-file[open] > summary { border-bottom: 1px solid var(--border); }
+.tool-diff-file[open] > summary > svg { transform: rotate(90deg); }
+.tool-diff-filename { flex: 1; min-width: 0; overflow: hidden; font: 11px/1.5 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.tool-diff-counts { display: flex; flex: none; gap: 5px; font: 11px/1.5 var(--font-mono); }
+.tool-diff-code { overflow-x: auto; font: 11.5px/1.65 var(--font-mono); }
+.tool-diff-line { display: grid; grid-template-columns: 30px minmax(0, 1fr); width: max-content; min-width: 100%; color: var(--text-secondary); white-space: pre; }
+.tool-diff-wrap .tool-diff-line { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-diff-line.is-addition { background: color-mix(in srgb, var(--hl-addition-color) 12%, transparent); color: var(--hl-addition-color); }
+.tool-diff-line.is-deletion { background: color-mix(in srgb, var(--hl-deletion-color) 12%, transparent); color: var(--hl-deletion-color); }
+.tool-diff-line-no { color: var(--text-muted); font-size: 10px; text-align: center; user-select: none; }
+.tool-diff-text { padding-inline-end: 7px; }
+.tool-diff-gap { padding: 3px 8px; color: var(--text-muted); background: var(--surface-subtle); }
+.tool-diff-raw { margin: 0; padding: 8px; overflow: auto; color: var(--text-secondary); font: 11.5px/1.65 var(--font-mono); }
+.tool-diff-raw.tool-diff-wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>

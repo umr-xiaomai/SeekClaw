@@ -1,0 +1,5 @@
+Run a shell command in the workspace. On Windows x64, use PowerShell 7 syntax. The tool returns output and status when the command exits or its yield interval ends. A running process keeps the same sessionId across turns while the runtime stays running. The yield interval limits the wait for this tool call. Set timeout_seconds to control the lifetime of the process itself.
+
+Use tty: true from the start for an SSH session, password prompt, confirmation, or other command that needs terminal input. After observing a prompt, use write_stdin with the returned sessionId as session_id. Without a TTY this tool closes stdin, so the process cannot accept input later. Use command_session to list, terminate, or close sessions.
+
+Check status and exitCode, and report failures. If hasMore is true, poll with write_stdin and the returned cursor to read the next page, even after exit. Use quiet flags when possible. Run builds, tests, or installs when requested or when needed to verify changes. Inspect git status and diff before commits and only use destructive commands when explicitly authorized.

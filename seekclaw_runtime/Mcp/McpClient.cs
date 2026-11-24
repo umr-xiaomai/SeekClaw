@@ -19,8 +19,16 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
     private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonObject>> _pending = new();
     private long _nextId;
     private Task? _dispatchLoop;
+    private int _initialized;
+    private int _disposed;
 
     public string ServerName => serverName;
+    // The reader may already be closed while its dispatch continuation is still queued.
+    // Do not hand a completed pipe back to discovery during that scheduling window.
+    internal bool IsConnected => Volatile.Read(ref _initialized) != 0
+        && !transport.Incoming.Completion.IsCompleted && _dispatchLoop is { IsCompleted: false };
+    internal bool HasPendingRequests => !_pending.IsEmpty;
+    internal event Action? Disconnected;
 
     public async Task InitializeAsync(CancellationToken ct)
     {
@@ -45,15 +53,14 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
             ["jsonrpc"] = "2.0",
             ["method"] = "notifications/initialized",
         }, ct).ConfigureAwait(false);
+        Volatile.Write(ref _initialized, 1);
     }
 
     public async Task<IReadOnlyList<McpTool>> ListToolsAsync(CancellationToken ct)
     {
-        var result = await RequestAsync("tools/list", new JsonObject(), ct).ConfigureAwait(false);
         var tools = new List<McpTool>();
-        foreach (var node in result["tools"] as JsonArray ?? [])
+        foreach (var tool in await ListAsync("tools/list", "tools", ct).ConfigureAwait(false))
         {
-            if (node is not JsonObject tool) continue;
             tools.Add(new McpTool(
                 tool["name"]?.GetValue<string>() ?? "",
                 tool["description"]?.GetValue<string>(),
@@ -83,9 +90,7 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
     {
         try
         {
-            var result = await RequestAsync("prompts/list", new JsonObject(), ct).ConfigureAwait(false);
-            return (result["prompts"] as JsonArray ?? [])
-                .OfType<JsonObject>()
+            return (await ListAsync("prompts/list", "prompts", ct).ConfigureAwait(false))
                 .Select(p => new McpPrompt(
                     p["name"]?.GetValue<string>() ?? "",
                     p["description"]?.GetValue<string>()))
@@ -164,6 +169,27 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
         }
     }
 
+    private async Task<IReadOnlyList<JsonObject>> ListAsync(string method, string property, CancellationToken ct)
+    {
+        var items = new List<JsonObject>();
+        var cursors = new HashSet<string>(StringComparer.Ordinal);
+        string? cursor = null;
+        for (var page = 0; page < 100; page++)
+        {
+            var parameters = new JsonObject();
+            if (cursor is not null) parameters["cursor"] = cursor;
+            var response = await RequestAsync(method, parameters, ct).ConfigureAwait(false);
+            items.AddRange((response[property] as JsonArray ?? []).OfType<JsonObject>());
+            if (items.Count > 10_000)
+                throw new McpException($"MCP '{serverName}' returned an oversized {property} catalog.");
+            cursor = response["nextCursor"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(cursor)) return items;
+            if (!cursors.Add(cursor))
+                throw new McpException($"MCP '{serverName}' returned an invalid or oversized {property} catalog.");
+        }
+        throw new McpException($"MCP '{serverName}' exceeded the {property} catalog page limit.");
+    }
+
     private async Task DispatchLoopAsync()
     {
         try
@@ -198,6 +224,11 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
             _pending.Clear();
             return;
         }
+        finally
+        {
+            Volatile.Write(ref _initialized, 0);
+            Disconnected?.Invoke();
+        }
 
         foreach (var pending in _pending.Values)
             pending.TrySetException(new McpException($"MCP server '{serverName}' disconnected."));
@@ -206,6 +237,8 @@ public sealed class McpClient(string serverName, IMcpTransport transport) : IAsy
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        Volatile.Write(ref _initialized, 0);
         await transport.DisposeAsync().ConfigureAwait(false);
         if (_dispatchLoop is not null)
         {

@@ -43,6 +43,10 @@ describe('conversation process projection', () => {
     expect(initial.running).toBe(true)
 
     const finished = item('a1', 'assistant', 'Reading the source', { tools: [tool('read')], state: 'done' })
+    const betweenCalls = projectConversationTurns([user, finished], { running: true, assistantId: 'a1' })[0]!
+    expect(betweenCalls.process).toEqual([finished])
+    expect(betweenCalls.response).toBeNull()
+
     const answer = item('a2', 'assistant', 'The first finding is', { state: 'streaming' })
     const next = projectConversationTurns([user, finished, answer], { running: true, assistantId: 'a2' })[0]!
     expect(next.id).toBe(initial.id)
@@ -50,9 +54,9 @@ describe('conversation process projection', () => {
     expect(next.response).toBe(answer)
   })
 
-  it('shows a growing answer with completed tools while retaining tool-only or thinking tails in process', () => {
+  it('shows a growing answer while retaining tool-only or thinking tails in process', () => {
     const user = item('u1', 'user')
-    const answer = item('a1', 'assistant', 'Result', { tools: [tool('read')], state: 'streaming' })
+    const answer = item('a1', 'assistant', 'Result', { state: 'streaming' })
     expect(projectConversationTurns([user, answer], { running: true, assistantId: 'a1' })[0]?.response).toBe(answer)
     const thinking = item('a2', 'assistant', '', { thinking: 'Working through this', state: 'thinking' })
     expect(projectConversationTurns([user, thinking], { running: true })[0]?.process).toEqual([thinking])
@@ -99,8 +103,9 @@ describe('conversation process projection', () => {
     const draft = item('a1', 'assistant', '已重做完成')
     const verifyPrompt = item('u-verify', 'user', 'The automatic verification step reported errors:\nCommand: dotnet build')
     const directivePrompt = item('u-dir', 'user', '>>> [System Directive: 本回合已达上限]')
+    const delegatedContext = item('u-context', 'user', '>>> [Delegated context]\nSelected parent background')
     const afterVerify = item('a2', 'assistant', '结论：构建失败是因为锁文件。')
-    const turns = projectConversationTurns([user, draft, verifyPrompt, directivePrompt, afterVerify])
+    const turns = projectConversationTurns([delegatedContext, user, draft, verifyPrompt, directivePrompt, afterVerify])
 
     expect(turns).toHaveLength(1)
     expect(turns[0]?.user).toBe(user)

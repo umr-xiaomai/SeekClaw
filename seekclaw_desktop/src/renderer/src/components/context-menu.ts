@@ -39,6 +39,13 @@ export function contextMenuFocusIndex(
   return enabled[(position + step + enabled.length) % enabled.length]!
 }
 
+export function contextMenuShortcutIndex(items: readonly ContextMenuEntry[], key: string): number {
+  if (!/^[a-z]$/i.test(key)) return -1
+  const shortcut = key.toUpperCase()
+  return items.findIndex((item) =>
+    isContextMenuAction(item) && !item.disabled && item.shortcut?.toUpperCase() === shortcut)
+}
+
 interface MenuSize { width: number; height: number }
 interface Viewport { width: number; height: number }
 export interface ContextMenuPosition { left: number; top: number; width: number; maxHeight: number }

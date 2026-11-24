@@ -27,17 +27,18 @@ public sealed partial class Agent
         events.Publish(new VerificationCompletedEvent(result.Success, Firstline(result.Output), attempt));
         if (result.Success) return default;
 
+        var failureSignature = $"{result.Command}\n\0{result.Output}";
         var template = promptProvider.TryGet("builtin/repair");
         if (template is null)
         {
             events.Publish(new WarningEvent("Repair prompt 'builtin/repair' is missing; verification failure cannot be repaired automatically."));
-            return default;
+            return new VerificationAttempt(null, failureSignature);
         }
         var repairMessage = promptProvider.Render(template, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["command"] = result.Command,
             ["error"] = result.Output,
         });
-        return new VerificationAttempt(repairMessage, $"{result.Command}\n\0{result.Output}");
+        return new VerificationAttempt(repairMessage, failureSignature);
     }
 }

@@ -7,33 +7,33 @@ import {
   Copy,
   Image as ImageIcon,
   Layers,
-  LoaderCircle,
   Pencil,
   RotateCcw,
   Split
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { ChatMessage, ConversationWidget, SubAgentActivity } from '../types'
-import { fileBadgeText, fileExtClass, formatMessageTime } from '../app-helpers'
+import { formatMessageTime } from '../app-helpers'
+import type { ToolDiffPreview } from '../conversation-diffs'
 import ImagePreviewDialog from './ImagePreviewDialog.vue'
+import MessageAttachments from './MessageAttachments.vue'
 import ToolActivityList from './ToolActivityList.vue'
 import ConversationWidgets from './ConversationWidgets.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import SubAgentActivityList from './SubAgentActivityList.vue'
 import { messageSubAgents } from '../subagent-activity'
 import { isHiddenSystemUserMessage, isSystemBannerUserMessage } from '../internal-messages'
-import { preparingToolLabel, phaseStatusText } from './tool-presentation'
 
 const props = withDefaults(defineProps<{
   message: ChatMessage
   widgets?: ConversationWidget[]
+  turnDiff?: ToolDiffPreview | null
   sessionId?: string
   workspace?: string
-  phase?: string
   imageSources?: Record<string, string>
   /** Dimmed while the conversation search does not match this message. */
   dimmed?: boolean
-  /** True while this bubble belongs to the actively running turn. Gates the "..." placeholder. */
+  /** True while this message is receiving text. */
   streaming?: boolean
   /** Search reveals all received text immediately, even in a live response. */
   smoothOutput?: boolean
@@ -41,6 +41,8 @@ const props = withDefaults(defineProps<{
   showFooter?: boolean
   /** True when this assistant message is an intermediate step in a multi-step turn. */
   isIntermediate?: boolean
+  /** Compact message within the sequence of activities. */
+  progress?: boolean
   /** A parent process summary can render these activities outside its disclosure. */
   hideSubAgents?: boolean
   /** Control whether a fallback sub-agent summary row renders when events are absent. */
@@ -49,21 +51,22 @@ const props = withDefaults(defineProps<{
   readOnly?: boolean
   /** Render user message as a compact collapsible task prompt disclosure instead of a bubble. */
   compactTaskPrompt?: boolean
-  /** Hide thinking block when parent process summary folds all turn reasoning. */
-  hideThinking?: boolean
+  hideTools?: boolean
 }>(), {
   imageSources: () => ({}),
   widgets: () => [],
   showFooter: false,
   isIntermediate: false,
+  progress: false,
   smoothOutput: true,
   showSubAgentSummary: true,
   readOnly: false,
   compactTaskPrompt: false,
-  hideThinking: false
+  hideTools: false
 })
 
 const emit = defineEmits<{
+  openDiffPreview: [preview: ToolDiffPreview, trigger: HTMLButtonElement]
   openDiff: [filePath: string, diff: string]
   branch: [message: ChatMessage]
   retry: [message: ChatMessage]
@@ -71,7 +74,6 @@ const emit = defineEmits<{
   openSubAgent: [activity: SubAgentActivity]
 }>()
 
-const thinkingOpen = ref(false)
 const systemOpen = ref(false)
 const preview = ref<{ src: string; name: string } | null>(null)
 const isCopied = ref(false)
@@ -116,14 +118,6 @@ const systemBody = computed(() => {
   return marker >= 0 ? content.slice(marker + 1).trim() : ''
 })
 
-const isThinking = computed(() => Boolean(
-  props.streaming
-  && props.message.state === 'thinking'
-  && !props.message.preparingTool
-  && (props.message.thinkingActive ?? true)
-))
-const thinkingLabel = computed(() => isThinking.value ? '正在思考' : '已完成思考')
-
 function imageUrl(id: string): string | undefined {
   return props.imageSources[id]
 }
@@ -131,12 +125,6 @@ function imageUrl(id: string): string | undefined {
 function previewImage(id: string, name: string): void {
   const src = imageUrl(id)
   if (src) preview.value = { src, name }
-}
-
-function openFileLocation(path?: string): void {
-  if (path) {
-    window.seekclaw?.showItemInFolder?.(path)
-  }
 }
 
 interface TextPart {
@@ -224,10 +212,9 @@ const errorParts = computed(() => {
 
 const hasContent = computed(() => Boolean(displayContent.value?.trim()))
 const hasError = computed(() => Boolean(activeError.value))
-const hasThinking = computed(() => Boolean(props.message.thinking?.trim()))
-const hasTools = computed(() => (props.message.tools?.length ?? 0) > 0)
 const subAgents = computed(() => messageSubAgents(props.message))
 const visibleTools = computed(() => {
+  if (props.hideTools) return []
   const represented = new Set([...(props.message.subAgents ?? []), ...subAgents.value].map((agent) => agent.sourceToolId).filter(Boolean))
   return props.message.tools?.filter((tool) => !represented.has(tool.id)) ?? []
 })
@@ -247,45 +234,14 @@ const hasVisibleSubAgents = computed(() =>
 const isVisible = computed(() => {
   if (isHiddenSystemUserMessage(props.message)) return false
   if (props.message.role === 'user') return true
-  if (props.streaming) return true
-  return hasContent.value || hasThinking.value || visibleTools.value.length > 0 || hasVisibleSubAgents.value
-    || hasImages.value || hasError.value || props.widgets.length > 0
+  return hasContent.value || visibleTools.value.length > 0 || hasVisibleSubAgents.value
+    || hasImages.value || hasError.value || props.widgets.length > 0 || Boolean(props.turnDiff)
 })
-
-const isToolsOnly = computed(() => {
-  if (props.message.role !== 'assistant') return false
-  return visibleTools.value.length > 0 && !hasContent.value && !hasThinking.value && !hasError.value
-})
-
-const hasRunningTool = computed(() => (props.message.tools ?? []).some((tool) => tool.state === 'running'))
-const isPreparingTool = computed(() => Boolean(
-  props.streaming
-  && props.message.preparingTool
-  && !isThinking.value
-  && !hasRunningTool.value
-))
-const isWaitingResponse = computed(() => Boolean(
-  props.streaming
-  && (props.message.state === 'thinking' || props.message.state === 'streaming')
-  && !isThinking.value
-  && !isPreparingTool.value
-  && !hasRunningTool.value
-  && !hasContent.value
-  && !hasError.value
-  && !subAgents.value.length
-))
-const liveStatusLabel = computed(() => {
-  if (isPreparingTool.value) return preparingToolLabel(props.message.preparingTool)
-  const p = phaseStatusText(props.phase)
-  if (p) return p.endsWith('…') ? p : `${p}…`
-  return '正在等待模型响应…'
-})
-
 </script>
 
 <template>
   <article v-if="isVisible" :id="'message-' + message.id" class="message"
-    :class="[systemKind ? 'message-system' : `message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate, 'is-tools-only': isToolsOnly, 'is-compact-prompt': compactTaskPrompt && message.role === 'user' && !systemKind }]">
+    :class="[systemKind ? 'message-system' : `message-${message.role}`, { dimmed, 'is-intermediate': isIntermediate, 'is-progress': progress, 'is-compact-prompt': compactTaskPrompt && message.role === 'user' && !systemKind }]">
     <!-- user: either a real message or a system-injected card -->
     <template v-if="message.role === 'user'">
       <div v-if="systemKind" class="system-card" :class="`system-${systemKind}`">
@@ -309,40 +265,14 @@ const liveStatusLabel = computed(() => {
           <span>任务指令</span>
         </summary>
         <div class="task-prompt-body">
-          <div v-if="message.files?.length" class="user-files-grid">
-            <button v-for="file in message.files" :key="file.id" type="button" class="user-file-chip"
-              :title="`在文件夹中显示: ${file.path}`" @click="openFileLocation(file.path)">
-              <span class="file-ext-badge" :class="fileExtClass(file.extension)">
-                {{ fileBadgeText(file.extension) }}
-              </span>
-              <span class="file-chip-name">{{ file.name }}</span>
-            </button>
-          </div>
-          <div v-if="message.images?.length" class="user-image-grid">
-            <button v-for="image in message.images" :key="image.id" type="button" class="user-image-button"
-              :title="`预览 ${image.name}`" @click="previewImage(image.id, image.name)">
-              <img :src="imageUrl(image.id)" :alt="image.name">
-            </button>
-          </div>
+          <MessageAttachments :files="message.files" :images="message.images" :image-sources="imageSources"
+            @preview-image="previewImage" />
           <div v-if="message.content" class="task-prompt-text">{{ message.content }}</div>
         </div>
       </details>
       <div v-else class="user-message-stack">
-        <div v-if="message.files?.length" class="user-files-grid">
-          <button v-for="file in message.files" :key="file.id" type="button" class="user-file-chip"
-            :title="`在文件夹中显示: ${file.path}`" @click="openFileLocation(file.path)">
-            <span class="file-ext-badge" :class="fileExtClass(file.extension)">
-              {{ fileBadgeText(file.extension) }}
-            </span>
-            <span class="file-chip-name">{{ file.name }}</span>
-          </button>
-        </div>
-        <div v-if="message.images?.length" class="user-image-grid">
-          <button v-for="image in message.images" :key="image.id" type="button" class="user-image-button"
-            :title="`预览 ${image.name}`" @click="previewImage(image.id, image.name)">
-            <img :src="imageUrl(image.id)" :alt="image.name">
-          </button>
-        </div>
+        <MessageAttachments :files="message.files" :images="message.images" :image-sources="imageSources"
+          @preview-image="previewImage" />
         <div v-if="message.content" class="user-bubble">{{ message.content }}</div>
         <footer v-if="!streaming && !readOnly" class="user-footer" :class="{ active: isCopied }">
           <span v-if="message.createdAt" class="message-time">
@@ -362,9 +292,13 @@ const liveStatusLabel = computed(() => {
       </div>
     </template>
 
-    <div v-else class="assistant-message" :class="{ 'tools-only': isToolsOnly }">
+    <div v-else class="assistant-message">
       <details v-if="message.viewedImages?.length" class="image-activity">
-        <summary><ImageIcon :size="16" /> 已查看 {{ message.viewedImages.length }} 张图像 <ChevronDown :size="14" /></summary>
+        <summary>
+          <ImageIcon :size="15" aria-hidden="true" />
+          已查看 {{ message.viewedImages.length }} 张图像
+          <ChevronRight :size="13" class="image-activity-chevron" aria-hidden="true" />
+        </summary>
         <div class="image-activity-thumbnails">
           <button v-for="image in message.viewedImages" :key="image.id" type="button" :disabled="!imageUrl(image.id)"
             :title="image.name" @click="previewImage(image.id, image.name)">
@@ -374,15 +308,6 @@ const liveStatusLabel = computed(() => {
         </div>
       </details>
 
-      <div v-if="!hideThinking && (hasThinking || isThinking)" class="thinking-wrapper">
-        <button type="button" class="thinking-toggle" :class="{ active: isThinking }"
-          :disabled="!hasThinking" @click="hasThinking && (thinkingOpen = !thinkingOpen)">
-          <span :class="{ 'thinking-shimmer': isThinking }">{{ thinkingLabel }}</span>
-          <ChevronDown v-if="hasThinking && !isThinking" :size="14" :class="{ rotated: thinkingOpen }" />
-        </button>
-        <div v-if="thinkingOpen && message.thinking" class="thinking-content">{{ message.thinking }}</div>
-      </div>
-
       <MarkdownMessage v-if="hasContent" :key="message.id" :content="displayContent"
         :streaming="smoothOutput && streaming && message.state === 'streaming' && !hasError" />
       <SubAgentActivityList v-if="!hideSubAgents" :agents="subAgents" :events="message.subAgentEvents"
@@ -390,7 +315,8 @@ const liveStatusLabel = computed(() => {
       <div v-if="visibleTools.length" class="tool-list">
         <ToolActivityList :tools="visibleTools" :streaming="streaming" @open-diff="(path, diff) => emit('openDiff', path, diff)" />
       </div>
-      <ConversationWidgets :widgets="widgets" :session-id="sessionId" :workspace="workspace" />
+      <ConversationWidgets :widgets="widgets" :session-id="sessionId" :workspace="workspace" :diff="turnDiff"
+        @open-diff-preview="(preview, trigger) => emit('openDiffPreview', preview, trigger)" />
       <div v-if="activeError" class="model-error-card" role="alert">
         <CircleAlert :size="16" class="model-error-icon" />
         <div class="model-error-body">
@@ -401,12 +327,7 @@ const liveStatusLabel = computed(() => {
         </div>
       </div>
 
-      <div v-if="isPreparingTool || isWaitingResponse" class="live-status-row" role="status" aria-live="polite">
-        <LoaderCircle :size="14" class="spin live-status-icon" aria-hidden="true" />
-        <span>{{ liveStatusLabel }}</span>
-      </div>
-
-      <footer v-if="showFooter && !streaming && (displayContent || activeError)" class="assistant-footer" :class="{ active: isCopied, 'is-readonly': readOnly }">
+      <footer v-if="showFooter && !streaming && (displayContent || activeError)" class="assistant-footer">
         <div class="assistant-actions">
           <button type="button" class="action-btn" :class="{ success: isCopied }" :title="isCopied ? '已复制' : '复制回答'"
             aria-label="复制回答" @click="copyContent">
@@ -529,15 +450,6 @@ const liveStatusLabel = computed(() => {
   word-break: break-word;
 }
 
-.thinking-toggle>.lucide-chevron-down {
-  transition: transform 160ms ease;
-}
-
-.thinking-toggle>.lucide-chevron-down.rotated {
-  transform: rotate(180deg);
-}
-
-.assistant-footer,
 .user-footer {
   position: absolute;
   top: 100%;
@@ -553,17 +465,17 @@ const liveStatusLabel = computed(() => {
 }
 
 .assistant-footer {
-  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  user-select: none;
 }
 
 .user-footer {
   right: 0;
 }
 
-.message:hover .assistant-footer,
-.assistant-message:hover .assistant-footer,
-.assistant-footer:focus-within,
-.assistant-footer.active,
 .message:hover .user-footer,
 .user-message-stack:hover .user-footer,
 .user-footer:focus-within,
@@ -571,19 +483,6 @@ const liveStatusLabel = computed(() => {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
-}
-
-.assistant-footer.is-readonly {
-  position: static;
-  margin-top: 6px;
-  opacity: 0.78;
-  pointer-events: auto;
-  transform: none;
-}
-
-.assistant-footer.is-readonly:hover,
-.assistant-footer.is-readonly.active {
-  opacity: 1;
 }
 
 .task-prompt-disclosure {
@@ -682,10 +581,6 @@ const liveStatusLabel = computed(() => {
   margin-left: 2px;
 }
 
-.thinking-wrapper {
-  margin: 0 0 6px;
-}
-
 .tool-list {
   display: flex;
   flex-direction: column;
@@ -693,31 +588,51 @@ const liveStatusLabel = computed(() => {
   margin: 4px 0;
 }
 
-.live-status-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 26px;
-  margin: 4px 0 2px;
-  padding: 2px 0;
+.image-activity {
+  margin: 0;
   color: var(--text-muted);
   font-size: 13px;
-  line-height: 1.45;
 }
 
-.live-status-icon {
-  flex: none;
+.image-activity summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 27px;
+  list-style: none;
+  cursor: pointer;
 }
 
-.image-activity { margin: 4px 0 14px; color: var(--text-muted); font-size: 14px; }
-.image-activity summary { display: flex; align-items: center; gap: 8px; min-height: 32px; list-style: none; cursor: pointer; }
 .image-activity summary:hover { color: var(--text); }
 .image-activity summary::-webkit-details-marker { display: none; }
-.image-activity-thumbnails { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-.image-activity-thumbnails button { width: 96px; height: 96px; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: transparent; }
+.image-activity-chevron { transition: transform 130ms ease; }
+.image-activity[open] .image-activity-chevron { transform: rotate(90deg); }
+
+.image-activity-thumbnails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 6px 7px;
+  padding: 4px 0 4px 12px;
+  border-left: 1px solid var(--border);
+}
+
+.image-activity-thumbnails button {
+  width: min(96px, 100%);
+  aspect-ratio: 1;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+}
+
 .image-activity-thumbnails img { width: 100%; height: 100%; object-fit: cover; }
 .message.is-intermediate { margin-bottom: 16px; }
-.message.is-intermediate.is-tools-only { margin-bottom: 8px; }
+.message.is-progress { margin: 3px 0; }
+.message.is-progress:has(.markdown-body) { margin: 8px 0 4px; }
+.is-progress .assistant-message { font-size: 14px; line-height: 1.68; }
 
 .model-error-card {
   display: flex;

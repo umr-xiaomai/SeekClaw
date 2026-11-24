@@ -36,11 +36,37 @@ public sealed class VendoredPowerShellTests
     [InlineData(false)]
     public void ResolveExecutable_PrefersPackagedCopyThenSearchesAppAncestors(bool hasPackagedCopy)
     {
+        var systemDirectory = Path.Combine(Checkout, "system PowerShell");
+        var systemCopy = Path.Combine(systemDirectory, "pwsh.exe");
         var path = VendoredPowerShell.ResolveExecutable(AppDirectory,
-            candidate => candidate == RepoCopy || (hasPackagedCopy && candidate == Packaged));
+            candidate => candidate == RepoCopy || candidate == systemCopy || (hasPackagedCopy && candidate == Packaged),
+            systemDirectory);
 
         Assert.True(Path.IsPathFullyQualified(path));
         Assert.Equal(hasPackagedCopy ? Packaged : RepoCopy, path);
+    }
+
+    [Fact]
+    public void ResolveExecutable_FallsBackToFirstUsablePwshOnAbsolutePath()
+    {
+        var brokenDirectory = Path.Combine(Checkout, "broken PowerShell");
+        var systemDirectory = Path.Combine(Checkout, "system PowerShell");
+        var brokenCopy = Path.Combine(brokenDirectory, "pwsh.exe");
+        var systemCopy = Path.Combine(systemDirectory, "pwsh.exe");
+        var checkedPaths = new List<string>();
+        var searchPath = string.Join(Path.PathSeparator, "", "relative", brokenDirectory, $"\"{systemDirectory}\"");
+
+        var path = VendoredPowerShell.ResolveExecutable(AppDirectory, candidate =>
+        {
+            checkedPaths.Add(candidate);
+            return candidate == systemCopy;
+        }, searchPath);
+
+        Assert.Equal(systemCopy, path);
+        Assert.Equal(Packaged, checkedPaths[0]);
+        Assert.Contains(RepoCopy, checkedPaths);
+        Assert.Equal(new[] { brokenCopy, systemCopy }, checkedPaths.TakeLast(2));
+        Assert.All(checkedPaths, candidate => Assert.True(Path.IsPathFullyQualified(candidate)));
     }
 
     [Fact]

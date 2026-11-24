@@ -1,12 +1,9 @@
-<script lang="ts">
-let activeArtifactClose: (() => void) | null = null
-</script>
-
 <script setup lang="ts">
 import { Code2, LoaderCircle, Monitor, RefreshCw, Smartphone, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ArtifactWidget } from '../types'
 import { previewDocument } from '../conversation-widgets'
+import '../conversation-widgets.css'
 
 const ARTIFACT_PANEL_WIDTH_STORAGE_KEY = 'seekclaw-artifact-panel-width-v1'
 const DEFAULT_PANEL_WIDTH = 560
@@ -37,9 +34,8 @@ const props = withDefaults(defineProps<{
   open: true
 })
 const emit = defineEmits<{ close: [] }>()
+const filename = computed(() => props.artifact.path.split(/[\\/]/).pop() || props.artifact.path)
 
-const mounted = ref(false)
-const teleportTarget = ref<string | null>(null)
 const panelRef = ref<HTMLElement | null>(null)
 const html = ref<string | null>(null)
 const error = ref('')
@@ -56,10 +52,6 @@ let resizeStartX = 0
 let resizeStartWidth = 0
 let resizeRafId: number | null = null
 let pendingWidth = panelWidth.value
-
-function closeSelf(): void {
-  if (props.open) emit('close')
-}
 
 async function load(): Promise<void> {
   const version = ++generation
@@ -161,44 +153,17 @@ function handleKeydown(event: KeyboardEvent): void {
   }
 }
 
-function handleExternalSidePanelOpen(): void {
-  if (props.open) emit('close')
-}
-
-watch(
-  [() => props.open, () => props.artifact.id, () => props.artifact.path],
-  ([open]) => {
-    if (!mounted.value) return
-    if (open) {
-      if (activeArtifactClose && activeArtifactClose !== closeSelf) {
-        activeArtifactClose()
-      }
-      activeArtifactClose = closeSelf
-      window.dispatchEvent(new CustomEvent('seekclaw:artifact-preview-open'))
-      void load()
-    } else {
-      generation++
-      stopResize()
-      if (activeArtifactClose === closeSelf) {
-        activeArtifactClose = null
-      }
-    }
+watch([() => props.open, () => props.artifact.id, () => props.sessionId, () => props.workspace], ([open]) => {
+  if (open) void load()
+  else {
+    generation++
+    stopResize()
   }
-)
+})
 
 onMounted(() => {
-  mounted.value = true
-  teleportTarget.value = document.querySelector('.workspace-content') ? '.workspace-content' : 'body'
   window.addEventListener('keydown', handleKeydown)
-  window.addEventListener('seekclaw:side-panel-open', handleExternalSidePanelOpen)
-  if (props.open) {
-    if (activeArtifactClose && activeArtifactClose !== closeSelf) {
-      activeArtifactClose()
-    }
-    activeArtifactClose = closeSelf
-    window.dispatchEvent(new CustomEvent('seekclaw:artifact-preview-open'))
-    void load()
-  }
+  if (props.open) void load()
 })
 
 onBeforeUnmount(() => {
@@ -206,78 +171,72 @@ onBeforeUnmount(() => {
   generation++
   stopResize()
   window.removeEventListener('keydown', handleKeydown)
-  window.removeEventListener('seekclaw:side-panel-open', handleExternalSidePanelOpen)
-  if (activeArtifactClose === closeSelf) {
-    activeArtifactClose = null
-  }
 })
 </script>
 
 <template>
-  <Teleport v-if="mounted && teleportTarget" :to="teleportTarget">
-    <Transition name="side-panel">
-      <aside
-        v-if="open"
-        ref="panelRef"
-        class="artifact-preview-panel"
-        :class="{ 'is-resizing': resizing }"
-        :style="{ '--artifact-panel-width': `${panelWidth}px` }"
-        :aria-label="`预览 ${artifact.title}`"
-      >
-        <div
-          class="artifact-panel-resize-handle"
-          role="separator"
-          aria-label="调整预览面板宽度"
-          aria-orientation="vertical"
-          @pointerdown="startResize"
-          @dblclick="resetPanelWidth"
-        />
-        <header class="artifact-preview-toolbar">
-          <div class="artifact-preview-title">
-            <span class="artifact-title-badge">
-              <Code2 :size="15" />
-              <strong :title="artifact.title">{{ artifact.title }}</strong>
-            </span>
-            <small :title="artifact.path">{{ artifact.path }}</small>
-          </div>
-          <div class="artifact-toolbar-actions">
-            <div class="artifact-viewport-control" role="group" aria-label="预览宽度">
-              <button type="button" :aria-pressed="!mobile" title="桌面宽度" aria-label="桌面宽度" @click="mobile = false">
-                <Monitor :size="14" />
-              </button>
-              <button type="button" :aria-pressed="mobile" title="手机宽度 (390px)" aria-label="手机宽度" @click="mobile = true">
-                <Smartphone :size="14" />
-              </button>
-            </div>
-            <button type="button" class="icon-button-mini" :disabled="loading" title="重新读取文件" aria-label="重新读取文件" @click="load">
-              <RefreshCw :size="14" :class="{ spin: loading }" />
-            </button>
-            <button type="button" class="icon-button-mini" title="关闭预览 (Esc)" aria-label="关闭预览" @click="emit('close')">
-              <X :size="15" />
-            </button>
-          </div>
-        </header>
-        <div class="artifact-preview-canvas" :class="{ mobile }" :aria-busy="loading">
-          <div v-if="loading" class="artifact-preview-state" role="status">
-            <LoaderCircle :size="22" class="spin" />
-            <p>正在加载预览…</p>
-          </div>
-          <div v-else-if="error" class="artifact-preview-state" role="alert">
-            <Code2 :size="26" />
-            <strong>暂时无法预览</strong>
-            <p>{{ error }}</p>
-            <button type="button" class="widget-button" @click="load">重新加载</button>
-          </div>
-          <iframe
-            v-else-if="previewHtml"
-            :key="frameVersion"
-            :srcdoc="previewHtml"
-            :title="artifact.title"
-            sandbox="allow-scripts"
-            referrerpolicy="no-referrer"
-          />
+  <Transition name="side-panel">
+    <aside
+      v-if="open"
+      ref="panelRef"
+      class="artifact-preview-panel"
+      :class="{ 'is-resizing': resizing }"
+      :style="{ '--artifact-panel-width': `${panelWidth}px` }"
+      :aria-label="`预览 ${artifact.title}`"
+    >
+      <div
+        class="artifact-panel-resize-handle"
+        role="separator"
+        aria-label="调整预览面板宽度"
+        aria-orientation="vertical"
+        @pointerdown="startResize"
+        @dblclick="resetPanelWidth"
+      />
+      <header class="artifact-preview-toolbar">
+        <div class="artifact-preview-title">
+          <span class="artifact-title-badge">
+            <Code2 :size="15" />
+            <strong :title="artifact.path">{{ filename }}</strong>
+          </span>
+          <small v-if="artifact.title !== filename" :title="artifact.title">{{ artifact.title }}</small>
         </div>
-      </aside>
-    </Transition>
-  </Teleport>
+        <div class="artifact-toolbar-actions">
+          <div class="artifact-viewport-control" role="group" aria-label="预览宽度">
+            <button type="button" :aria-pressed="!mobile" title="桌面宽度" aria-label="桌面宽度" @click="mobile = false">
+              <Monitor :size="14" />
+            </button>
+            <button type="button" :aria-pressed="mobile" title="手机宽度 (390px)" aria-label="手机宽度" @click="mobile = true">
+              <Smartphone :size="14" />
+            </button>
+          </div>
+          <button type="button" class="icon-button-mini" :disabled="loading" title="重新读取文件" aria-label="重新读取文件" @click="load">
+            <RefreshCw :size="14" :class="{ spin: loading }" />
+          </button>
+          <button type="button" class="icon-button-mini" title="关闭预览 (Esc)" aria-label="关闭预览" @click="emit('close')">
+            <X :size="15" />
+          </button>
+        </div>
+      </header>
+      <div class="artifact-preview-canvas" :class="{ mobile }" :aria-busy="loading">
+        <div v-if="loading" class="artifact-preview-state" role="status">
+          <LoaderCircle :size="22" class="spin" />
+          <p>正在加载预览…</p>
+        </div>
+        <div v-else-if="error" class="artifact-preview-state" role="alert">
+          <Code2 :size="26" />
+          <strong>暂时无法预览</strong>
+          <p>{{ error }}</p>
+          <button type="button" class="widget-button" @click="load">重新加载</button>
+        </div>
+        <iframe
+          v-else-if="previewHtml"
+          :key="frameVersion"
+          :srcdoc="previewHtml"
+          :title="artifact.title"
+          sandbox="allow-scripts"
+          referrerpolicy="no-referrer"
+        />
+      </div>
+    </aside>
+  </Transition>
 </template>

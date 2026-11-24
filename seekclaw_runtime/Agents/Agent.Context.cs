@@ -1,11 +1,8 @@
 using SeekClaw.Runtime.Configuration;
-using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Sessions;
-using SeekClaw.Runtime.Tools;
-using SeekClaw.Runtime.Verification;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Agents;
@@ -44,169 +41,209 @@ public sealed partial class Agent
                     ToolFilePath = message.ToolFilePath,
                     ToolContent = message.ToolContent, ToolStructuredContent = message.ToolStructuredContent, ToolMetadata = message.ToolMetadata,
                     ToolWidgets = message.ToolWidgets,
+                    Timestamp = message.Timestamp,
                 })
             .ToList();
     }
 
-    private async Task<bool> CompactContextAsync(
+    private const int MaximumBatchesPerCompaction = 4;
+
+    private static IReadOnlyList<ChatMessage> BuildModelHistory(AgentSession session, bool includeImages,
+        IReadOnlySet<ChatMessage> turnInstructions)
+    {
+        IReadOnlyList<ChatMessage> history = session.Messages;
+        if (session.ContextCheckpoint is { } checkpoint)
+        {
+            var withSummary = new List<ChatMessage>(session.Messages.Count - checkpoint.CoveredMessageCount + 1)
+            {
+                ContextPlanner.CheckpointMessage(checkpoint.Summary),
+            };
+            // Replay the live request and guidance exactly while this turn continues.
+            // After the turn finishes, their summary is sufficient for later requests.
+            withSummary.AddRange(session.Messages.Take(checkpoint.CoveredMessageCount).Where(turnInstructions.Contains));
+            withSummary.AddRange(session.Messages.Skip(checkpoint.CoveredMessageCount));
+            history = withSummary;
+        }
+        return includeImages ? history : WithoutImages(history);
+    }
+
+    private async Task<IReadOnlyList<ChatMessage>> CompactContextAsync(
         AgentSession session,
         WorkspaceInfo workspace,
         ModelInfo model,
         string systemPrompt,
-        int currentTurnStartIndex,
+        IReadOnlyList<ChatMessage> source,
+        IReadOnlySet<ChatMessage> turnInstructions,
         int step,
-        bool requiresVision,
-        CancellationToken ct,
-        ModelInfo? pinnedModel)
+        CancellationToken ct)
     {
-        var source = session.Messages;
-        var (old, recent) = ContextPlanner.SplitForCompaction(source, model.Model, systemPrompt);
-        var stage1Pruned = false;
-        if (configStore.Config.Routing.DeepSeekOptimizationEnabled
-            && DeepSeekOptimizationPolicy.IsDeepSeek(model.Provider, model.Model)
-            && old.Count > 0)
+        var previouslyCovered = session.ContextCheckpoint?.CoveredMessageCount ?? 0;
+        var firstUncovered = source.Count - (session.Messages.Count - previouslyCovered);
+        var end = ContextPlanner.SplitForCompaction(source, model.Model, systemPrompt).Old.Count;
+        if (end <= firstUncovered) return source;
+
+        // The generation call can overlap with a rewind. Use the original
+        // transcript entries as proof of coverage when committing the summary.
+        var transcript = session.Messages.ToArray();
+        source = source.ToArray();
+
+        var optimizeDeepSeek = configStore.Config.Routing.DeepSeekOptimizationEnabled;
+        var deepSeekCompaction = optimizeDeepSeek && DeepSeekOptimizationPolicy.IsDeepSeek(model.Provider, model.Model);
+        if (deepSeekCompaction)
         {
-            var prunedHistory = new List<ChatMessage>(source);
-            var prunedCount = ContextPlanner.PruneToolResults(prunedHistory, old.Count);
-            if (prunedCount > 0)
+            var pruned = source.ToList();
+            if (ContextPlanner.PruneToolResults(pruned, end, preserve: turnInstructions) > 0)
             {
-                try
+                source = pruned;
+                if (source.Sum(ContextPlanner.EstimateTokens) <= ContextPlanner.WindowBudget(model.Model, systemPrompt))
                 {
-                    sessionStore.ReplaceHistory(session, prunedHistory);
-                    stage1Pruned = true;
-                    source = session.Messages;
+                    PublishWorkflow(step, "prune", "裁剪工具输出");
+                    events.Publish(new StatusEvent("Context pruned", "Oversized tool outputs trimmed"));
+                    return source;
                 }
-                catch (Exception ex)
-                {
-                    events.Publish(new WarningEvent($"Could not persist tool result pruning: {ex.Message}"));
-                }
-
-                if (stage1Pruned)
-                {
-                    var fitCandidate = requiresVision ? source : WithoutImages(source);
-                    var fitted = ContextPlanner.FitToWindow(fitCandidate, model.Model, systemPrompt);
-                    if (fitted.Count + 4 > source.Count)
-                    {
-                        PublishWorkflow(step, "prune", "裁剪工具输出");
-                        events.Publish(new StatusEvent("Context pruned", "Oversized tool outputs trimmed"));
-                        return true;
-                    }
-
-                    (old, recent) = ContextPlanner.SplitForCompaction(source, model.Model, systemPrompt);
-                }
+                end = ContextPlanner.SplitForCompaction(source, model.Model, systemPrompt).Old.Count;
+                if (end <= firstUncovered) return source;
             }
         }
 
-        if (currentTurnStartIndex >= 0 && old.Count > currentTurnStartIndex)
-        {
-            // Never summarize the user message or any tool exchange from the turn that
-            // is currently executing. Besides losing instructions, summarizing image
-            // payloads here would make them disappear from the persisted history.
-            old = source.Take(currentTurnStartIndex).ToList();
-            recent = source.Skip(currentTurnStartIndex).ToList();
-        }
-        if (old.Count == 0
-            || (old.Count == 1 && old[0].Text.StartsWith(">>> [Context compaction]", StringComparison.Ordinal)))
-            return stage1Pruned;
+        if (source.Skip(firstUncovered).Take(end - firstUncovered).All(turnInstructions.Contains))
+            return source;
 
-        PublishWorkflow(step, "compact", "压缩记忆");
-        events.Publish(new StatusEvent("Compacting context", $"{old.Count} earlier messages"));
-        string? summary;
-        try
-        {
-            summary = await SummarizeContextAsync(workspace, systemPrompt, old, ct, pinnedModel).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // Compaction must never break the turn: fall back to the plain window trim.
-            events.Publish(new WarningEvent($"Context compaction failed: {ex.Message}"));
-            return stage1Pruned;
-        }
-
-        if (string.IsNullOrWhiteSpace(summary)) return stage1Pruned;
-
-        var summaryMessage = ChatMessage.User(
-            ">>> [Context compaction] 之前的对话已被压缩以保持上下文可容纳，以下是阶段性总结：\n\n"
-            + summary.Trim());
-
-        if (configStore.Config.Routing.DeepSeekOptimizationEnabled
-            && DeepSeekOptimizationPolicy.IsDeepSeek(model.Provider, model.Model))
-        {
-            var compactedTokens = old.Sum(ContextPlanner.EstimateTokens);
-            var summaryTokens = ContextPlanner.EstimateTokens(summaryMessage);
-            if (summaryTokens >= compactedTokens)
-            {
-                events.Publish(new WarningEvent("Context summary did not shrink history; skipping compaction."));
-                return stage1Pruned;
-            }
-        }
-
-        var compacted = new List<ChatMessage>(recent.Count + 1) { summaryMessage };
-        compacted.AddRange(recent);
-
-        try
-        {
-            sessionStore.ReplaceHistory(session, compacted);
-        }
-        catch (Exception ex)
-        {
-            events.Publish(new WarningEvent($"Could not persist context compaction: {ex.Message}"));
-        }
-
-        events.Publish(new StatusEvent("Context compacted", $"{old.Count} earlier messages summarized"));
-        return true;
-    }
-
-    private async Task<string?> SummarizeContextAsync(
-        WorkspaceInfo workspace,
-        string systemPrompt,
-        IReadOnlyList<ChatMessage> old,
-        CancellationToken ct,
-        ModelInfo? pinnedModel)
-    {
-        // Image payloads are not needed for the summary; dropping them keeps the call small.
         var instruction = promptProvider.TryGet("builtin/summarize");
         if (instruction is null)
         {
             events.Publish(new WarningEvent("Compaction prompt 'builtin/summarize' is missing; falling back to plain history trimming."));
-            return null;
+            return source;
         }
-        var withoutImages = WithoutImages(old);
-        var completion = await CollectCompletionAsync(
-            candidate =>
+
+        var requestSystem = deepSeekCompaction ? systemPrompt : instruction;
+        var suffix = ChatMessage.User(deepSeekCompaction ? instruction : "请根据以上对话历史生成阶段性总结。");
+        var maxSummaryTokens = Math.Min(model.Model.EffectiveMaxOutput,
+            Math.Clamp(ContextPlanner.WindowBudget(model.Model, systemPrompt) / 4, 32, 4_096));
+        var inputBudget = ContextPlanner.WindowBudget(model.Model, requestSystem, maxSummaryTokens)
+                          - ContextPlanner.EstimateTokens(suffix);
+        var textOnly = WithoutImages(source);
+        var workingSummary = firstUncovered != 0 ? source[0] : null;
+        var savedSummary = workingSummary;
+        var replacedTokens = savedSummary is null ? 0 : ContextPlanner.EstimateTokens(savedSummary);
+        var next = firstUncovered;
+        var savedThrough = firstUncovered;
+        PublishWorkflow(step, "compact", "压缩记忆");
+        events.Publish(new StatusEvent("Compacting context", $"{end - firstUncovered} earlier messages"));
+
+        // Feed the oldest unsummarized entries in order. A request that does not
+        // fit may stop early, but can never skip ahead and claim older entries.
+        for (var batch = 0; batch < MaximumBatchesPerCompaction && next < end; batch++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (input, batchEnd) = BuildSummaryBatch(textOnly, next, end, workingSummary, inputBudget);
+            if (batchEnd == next) break;
+            input.Add(suffix);
+
+            try
             {
-                var optimizeDeepSeek = configStore.Config.Routing.DeepSeekOptimizationEnabled;
-                var applyDeepSeekCompaction = optimizeDeepSeek
-                    && DeepSeekOptimizationPolicy.IsDeepSeek(candidate.Provider, candidate.Model);
-                var requestSystem = applyDeepSeekCompaction ? systemPrompt : instruction;
-                var budgetSystem = applyDeepSeekCompaction ? $"{systemPrompt}\n\n{instruction}" : instruction;
-                var input = ContextPlanner.FitToWindow(withoutImages, candidate.Model, budgetSystem).ToList();
-                if (applyDeepSeekCompaction)
-                {
-                    input.Add(ChatMessage.User(instruction));
-                }
-                else if (input.Count == 0 || input[^1].Role != ChatRole.User)
-                {
-                    input.Add(ChatMessage.User("请根据以上对话历史生成阶段性总结。"));
-                }
-                return new LlmRequest
+                // Keep the selected model and budget together. If compaction fails,
+                // the regular request can still use fallback routing and window trimming.
+                var completion = await CollectCompletionAsync(candidate => new LlmRequest
                 {
                     Provider = candidate.Provider,
                     Model = candidate.Model,
                     Messages = input,
                     System = requestSystem,
-                    MaxTokens = Math.Min(4_096, candidate.Model.EffectiveMaxOutput),
+                    MaxTokens = maxSummaryTokens,
                     EnableThinking = false,
                     ReasoningLevel = ReasoningLevel.None,
                     OptimizeDeepSeek = optimizeDeepSeek,
-                    Purpose = applyDeepSeekCompaction ? "compaction" : null,
-                };
-            },
-            workspace, ct, pinnedModel).ConfigureAwait(false);
-        return completion?.Text;
+                    Purpose = deepSeekCompaction ? "compaction" : null,
+                }, workspace, ct, model).ConfigureAwait(false);
+
+                if (completion?.ErrorMessage is not null || IsOutputTruncated(completion?.FinishReason)
+                    || string.IsNullOrWhiteSpace(completion?.Text)) break;
+
+                var summary = completion.Text.Trim();
+                if (ContextPlanner.EstimateTokens(summary) > maxSummaryTokens) break;
+                workingSummary = ContextPlanner.CheckpointMessage(summary);
+                for (var index = next; index < batchEnd; index++)
+                    if (!turnInstructions.Contains(source[index]))
+                        replacedTokens += ContextPlanner.EstimateTokens(source[index]);
+                next = batchEnd;
+
+                // A batch containing live instructions cannot save space on its own.
+                // Carry its summary forward and persist only after completed work can be removed.
+                var summaryTokens = ContextPlanner.EstimateTokens(workingSummary);
+                if (summaryTokens >= replacedTokens) continue;
+
+                var covered = previouslyCovered + next - firstUncovered;
+                if (!sessionStore.TrySaveContextCheckpoint(session, covered, transcript[covered - 1], summary)) break;
+                savedSummary = workingSummary;
+                savedThrough = next;
+                replacedTokens = summaryTokens;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                events.Publish(new WarningEvent($"Context compaction failed: {ex.Message}"));
+                break;
+            }
+        }
+
+        if (savedThrough == firstUncovered || savedSummary is null) return source;
+        events.Publish(new StatusEvent("Context compacted", $"{savedThrough - firstUncovered} earlier messages summarized"));
+        var compacted = new List<ChatMessage>(source.Count - savedThrough + 1) { savedSummary };
+        compacted.AddRange(source.Take(savedThrough).Where(turnInstructions.Contains));
+        compacted.AddRange(source.Skip(savedThrough));
+        return compacted;
+    }
+
+    private static (List<ChatMessage> Input, int End) BuildSummaryBatch(IReadOnlyList<ChatMessage> source,
+        int start, int end, ChatMessage? summary, int budget)
+    {
+        var input = new List<ChatMessage>();
+        if (summary is not null)
+        {
+            input.Add(summary);
+            budget -= ContextPlanner.EstimateTokens(summary);
+        }
+        var index = start;
+        while (index < end && budget > 0)
+        {
+            var groupEnd = ContextPlanner.EndOfToolExchange(source, index, end);
+            var group = ContextPlanner.EnsureCompleteToolTurns(source.Skip(index).Take(groupEnd - index).ToList());
+            var tokens = group.Sum(ContextPlanner.EstimateTokens);
+            if (tokens > budget)
+            {
+                if (index != start) break;
+                var excerpt = OversizedHistoryExcerpt(group, budget);
+                if (excerpt is null) break;
+                input.Add(excerpt);
+                return (input, groupEnd);
+            }
+            input.AddRange(group);
+            budget -= tokens;
+            index = groupEnd;
+        }
+        return (input, index);
+    }
+
+    private static ChatMessage? OversizedHistoryExcerpt(IReadOnlyList<ChatMessage> group, int budget)
+    {
+        const string prefix = "[Excerpt from an oversized earlier history entry. The full record is saved in the conversation.]\n";
+        const int trimMarkerReserve = 32;
+        var textBudget = budget - ContextPlanner.EstimateTokens(ChatMessage.User(prefix)) - trimMarkerReserve;
+        if (textBudget <= 0) return null;
+
+        var parts = group.Select(message =>
+        {
+            var calls = message.ToolCalls is { Count: > 0 }
+                ? string.Join("\n", message.ToolCalls.Select(call => $"Tool call {call.Name} {call.ArgumentsJson}"))
+                : "";
+            var target = message.Role == ChatRole.Tool ? $" {message.ToolName} {message.ToolFilePath}" : "";
+            return $"[{message.Role}{target}]\n{calls}\n{message.Text}";
+        });
+        var excerpt = ChatMessage.User(prefix + ContextPlanner.FitInjectedText(string.Join("\n\n", parts), textBudget));
+        return ContextPlanner.EstimateTokens(excerpt) <= budget ? excerpt : null;
     }
 }

@@ -11,6 +11,7 @@ using SeekClaw.Runtime.Browser;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Goals;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
@@ -134,6 +135,7 @@ public sealed class DaemonServer : IAsyncDisposable
     /// <summary>Releases the scheduler and shared HTTP clients when the daemon host shuts down.</summary>
     public async ValueTask DisposeAsync()
     {
+        _admin.McpStatusChanged -= OnMcpStatusChanged;
         _shutdown.Cancel();
         try
         {
@@ -449,6 +451,13 @@ public sealed class DaemonServer : IAsyncDisposable
                         break;
                     }
 
+                    case "goal.get":
+                    case "goal.pause":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(HandleGoalRequest(Params(request), method == "goal.pause", context)),
+                            context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
                     case "chat":
                     case "agent.runTurn":
                     case "agent/runTurn":
@@ -464,14 +473,23 @@ public sealed class DaemonServer : IAsyncDisposable
                             await WriteAsync(context.Writer, context.WriterGate, id, "error", ex.Message, context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
-                        if (string.IsNullOrWhiteSpace(message) && images.Count == 0)
+                        var resumeGoal = parameters["resumeGoal"]?.GetValue<bool>() == true;
+                        var requestedSessionId = TryGetString(parameters, "sessionId");
+                        if (resumeGoal && (string.IsNullOrWhiteSpace(requestedSessionId)
+                            || !string.IsNullOrWhiteSpace(message) || images.Count != 0))
+                        {
+                            await WriteAsync(context.Writer, context.WriterGate, id, "error",
+                                "Goal resume requires an existing session and no new message or images.",
+                                context.ConnectionCt, requestedSessionId).ConfigureAwait(false);
+                            break;
+                        }
+                        if (!resumeGoal && string.IsNullOrWhiteSpace(message) && images.Count == 0)
                         {
                             await WriteAsync(context.Writer, context.WriterGate, id, "error", "params.message or params.images is required", context.ConnectionCt).ConfigureAwait(false);
                             break;
                         }
                         WorkspaceInfo workspace;
                         AgentSession turnSession;
-                        var requestedSessionId = TryGetString(parameters, "sessionId");
                         try
                         {
                             workspace = ResolveWorkspace(parameters);
@@ -512,7 +530,8 @@ public sealed class DaemonServer : IAsyncDisposable
                             turnCancellation.Token, context.ConnectionCt, turn.Steering, context.PendingApprovals, context.Browser,
                             parameters["supportsUserQuestions"] is JsonValue support && support.TryGetValue<bool>(out var enabled) && enabled
                                 ? (question, options, ct) => RequestUserAnswerAsync(context, id, turnSession.Header.Id, question, options, ct)
-                                : null);
+                                : null,
+                            resumeGoal);
                         break;
                     }
 
@@ -696,15 +715,6 @@ public sealed class DaemonServer : IAsyncDisposable
                             _adminGate.Release();
                         }
 
-                        // Background connect MCP without blocking the admin gate or connection!
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await _runtime.ConnectMcpAsync(_shutdown.Token).ConfigureAwait(false);
-                            }
-                            catch { }
-                        }, _shutdown.Token);
                         break;
                     }
 
@@ -1262,7 +1272,8 @@ public sealed class DaemonServer : IAsyncDisposable
         AgentSteeringQueue steering,
         ConcurrentDictionary<string, PendingApproval> pendingApprovals,
         DesktopBrowserBridge browser,
-        Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? askUser)
+        Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? askUser,
+        bool resumeGoal)
     {
         // Unique per-turn identity for file write-lock ownership; released when the
         // turn ends even if a tool was interrupted before its own finally ran.
@@ -1298,8 +1309,6 @@ public sealed class DaemonServer : IAsyncDisposable
 
                 runtime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
                 runtime.Skills.Attach(workspace);
-                if (_useIsolatedTurnRuntime && runtime.Mcp.LoadServerConfigs(workspace).Count > 0)
-                    await runtime.Mcp.ConnectAllAsync(workspace, turnCt).ConfigureAwait(false);
 
                 if (_runTurn is null)
                 {
@@ -1313,9 +1322,9 @@ public sealed class DaemonServer : IAsyncDisposable
                         turnRequestId: id.ToString(), pinSessionModel: true,
                         onModelRouteReady: pinnedModel =>
                         {
-                            if (session.Header.ParentSessionId is null && session.Header.TitleSource is "pending" or "input")
+                            if (!resumeGoal && session.Header.ParentSessionId is null && session.Header.TitleSource is "pending" or "input")
                                 titleTask = GenerateSessionTitleAsync(session, workspace, message, connectionCt, pinnedModel);
-                        }, askUser: askUser).ConfigureAwait(false)
+                        }, askUser: askUser, resumeGoal: resumeGoal).ConfigureAwait(false)
                     : await _runTurn(session, workspace, message, turnCt).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -1644,6 +1653,8 @@ public sealed class DaemonServer : IAsyncDisposable
                         ["label"] = workflow.Label,
                         ["detail"] = workflow.Detail,
                     }),
+                SessionGoalChangedEvent goal => (
+                    Name: (string?)"goal.updated", Data: "", Details: goal.Goal.ToJson()),
                 PlanUpdatedEvent plan => (
                     Name: (string?)"plan_update",
                     Data: plan.StepsJson,
@@ -1720,6 +1731,27 @@ public sealed class DaemonServer : IAsyncDisposable
                 usage.OutputElapsedMs += (long)token.Elapsed.TotalMilliseconds;
                 break;
         }
+    }
+
+    private string HandleGoalRequest(JsonObject parameters, bool pause, ConnectionContext context)
+    {
+        var sessionId = TryGetString(parameters, "sessionId");
+        if (string.IsNullOrWhiteSpace(sessionId)) throw new DaemonRequestException("params.sessionId is required");
+        var workspace = ResolveWorkspace(parameters);
+        var goal = _runtime.Goals.Get(workspace, sessionId);
+        if (!pause) return goal?.ToJson().ToJsonString() ?? "null";
+        if (goal is null || goal.Id != TryGetString(parameters, "goalId"))
+            throw new DaemonRequestException("The goal has changed. Reload it before pausing.");
+        if (goal.Status == SessionGoal.Paused) return goal.ToJson().ToJsonString();
+        var paused = _runtime.Goals.Pause(workspace, sessionId, goal.Id, "已由用户暂停。")
+            ?? throw new DaemonRequestException("The goal no longer has an active execution.");
+        var scope = Data.SeekClawDatabase.ScopeKey(workspace);
+        foreach (var turn in context.ActiveTurns.Values)
+        {
+            if (turn.Session.Header.Id == sessionId && turn.Session.Scope == scope)
+                turn.TryCancel();
+        }
+        return paused.ToJson().ToJsonString();
     }
 
     private WorkspaceInfo ResolveWorkspace(JsonObject parameters)
@@ -1919,7 +1951,7 @@ public sealed class DaemonServer : IAsyncDisposable
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.approval", "user-questions", "agent.mode", "workspace", "provider",
             "model", "mcp", "skill", "usage", "project", "session", "global-session", "memory", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild",
-            "worktree", "command-session", "lazy-skills", "mcp-auth", "mcp-content", "subagent-lifecycle", "schedule-context", "conversation-widgets", "desktop-browser"),
+            "worktree", "command-session", "lazy-skills", "mcp-auth", "mcp-content", "subagent-lifecycle", "schedule-context", "conversation-widgets", "desktop-browser", "session-goal", "mcp-tool-search"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel", "agent.approve", "agent.answer",
             "config.status", "config.rebuild",
@@ -1939,7 +1971,7 @@ public sealed class DaemonServer : IAsyncDisposable
             "skill.list", "skill.import", "skill.toggle", "usage.get", "usage.timeline", "doctor", "doctor.run",
             "project.list", "project.upsert", "project.remove",
             "session.list", "session.get", "session.update", "session.archive", "session.delete",
-            "session.resume", "session.new",
+            "session.resume", "session.new", "goal.get", "goal.pause",
             "lock.list", "factory.reset", "shutdown"),
     }.ToJsonString();
 

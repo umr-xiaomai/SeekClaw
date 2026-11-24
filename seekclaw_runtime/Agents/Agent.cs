@@ -7,6 +7,8 @@ using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Goals;
+using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Memory;
 using SeekClaw.Runtime.Prompts;
 using SeekClaw.Runtime.Providers;
@@ -48,7 +50,9 @@ public sealed partial class Agent(
     SeekClaw.Runtime.SubAgents.SubAgentScope? subAgentScope = null,
     SeekClaw.Runtime.Execution.SessionTurnCoordinator? turns = null,
     WorktreeManager? worktrees = null,
-    SeekClaw.Runtime.Skills.SkillManager? skills = null)
+    SeekClaw.Runtime.Skills.SkillManager? skills = null,
+    SessionGoalStore? goals = null,
+    IMcpManager? mcp = null)
 {
     public async Task<AgentTurnResult> RunTurnAsync(
         AgentSession session,
@@ -62,15 +66,23 @@ public sealed partial class Agent(
         bool captureCrossSessionMemory = true,
         bool pinSessionModel = false,
         Action<ModelInfo?>? onModelRouteReady = null,
-        Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? askUser = null)
+        Func<string, IReadOnlyList<string>, CancellationToken, Task<string>>? askUser = null,
+        bool allowGoalManagement = true,
+        bool resumeGoal = false,
+        WorkspaceInfo? sessionStorageWorkspace = null)
     {
+        var sessionWorkspace = sessionStorageWorkspace ?? workspace;
         using var turnLease = turns is null ? null : await turns.AcquireAsync(
             session.FilePath + "|" + session.Scope + "|" + session.Header.Id, ct).ConfigureAwait(false);
         // Load only after acquiring the lease: a scheduled turn may have updated the history while we waited.
-        if (turns is not null && sessionStore.Load(workspace, session.Header.Id) is { } latest
+        if (turns is not null && sessionStore.Load(sessionWorkspace, session.Header.Id) is { } latest
             && !ReferenceEquals(latest, session))
         {
-            session.Messages.Clear(); session.Messages.AddRange(latest.Messages);
+            session.Messages.Clear();
+            session.Messages.AddRange(latest.Messages);
+            session.MessageIds.Clear();
+            session.MessageIds.AddRange(latest.MessageIds);
+            session.ContextCheckpoint = latest.ContextCheckpoint;
             session.Header.NetworkEnabled &= latest.Header.NetworkEnabled;
             session.Header.Title = latest.Header.Title;
             session.Header.Archived = latest.Header.Archived;
@@ -84,18 +96,29 @@ public sealed partial class Agent(
             session.Header.OutputTokens = latest.Header.OutputTokens;
             session.Header.OutputElapsedMs = latest.Header.OutputElapsedMs;
         }
-        var sessionWorkspace = workspace;
         using var executionLease = worktrees is null ? null
             : await worktrees.AcquireExecutionAsync(workspace.Root, session.Header.Id, ct).ConfigureAwait(false);
         workspace = worktrees?.Resolve(workspace, session.Header.Id) ?? workspace;
         promptProvider.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
         skills?.Attach(workspace);
         var agentConfig = configStore.Config.Agent;
+        var canManageGoal = allowGoalManagement && subAgentScope?.Depth is null or 0
+            && !session.Header.Archived
+            && workspace.Config?.DisabledTools?.Contains(GoalTool.ToolName, StringComparer.OrdinalIgnoreCase) != true;
+        var goal = canManageGoal && goals is not null
+            ? new GoalExecution(goals, sessionWorkspace, session.Header.Id, events)
+            : null;
+        if (resumeGoal && goal is null)
+            throw new InvalidOperationException("Goal execution is disabled for this conversation.");
+        goal?.Start(resumeGoal);
         events.Publish(new TurnStartedEvent(session.Header.Id, userInput));
-        var userMessage = ChatMessage.User(userInput, images);
+        var userMessage = resumeGoal
+            ? ChatMessage.User(">>> [System Directive: The user resumed the stored conversation goal. Continue from the saved progress.]")
+            : ChatMessage.User(userInput, images);
         // Everything appended from here on belongs to this turn; earlier entries are history.
         sessionStore.Append(session, userMessage);
         var turnMessageIndex = session.Messages.Count - 1;
+        var turnInstructions = new HashSet<ChatMessage> { userMessage };
 
         var mutated = false;
         var repairAttempts = 0;
@@ -110,6 +133,11 @@ public sealed partial class Agent(
 
         try
         {
+            if (mcp is not null)
+            {
+                await mcp.PrepareAsync(sessionWorkspace, ct).ConfigureAwait(false);
+                mcp.BeginTurn(session.Header.Id);
+            }
             ModelInfo? pinnedModel = null;
             if (pinSessionModel)
             {
@@ -147,34 +175,34 @@ public sealed partial class Agent(
             events.Publish(new WorkflowEvent(0, "start", "开始任务"));
             while (true)
             {
+                ct.ThrowIfCancellationRequested();
+                goal?.Refresh();
+                if (goal?.IsPaused == true) break;
+                PublishSteering(AppendSteering(session, steering, turnInstructions, goal));
+                // Let a completion request get its tool-free final response at the step limit.
+                var finalizingGoal = goal?.HasCompletionRequest == true;
                 step++;
-                if (step > maxSteps)
+                if (step > maxSteps && !finalizingGoal)
                 {
-                    if (agentConfig.AutoExtendSteps && maxSteps < maxTotalSteps)
+                    var extension = agentConfig.AutoExtendSteps && maxSteps < maxTotalSteps
+                        ? Math.Min(agentConfig.MaxSteps, maxTotalSteps - maxSteps)
+                        : 0;
+                    if (extension <= 0 && goal?.ExtendAtStepLimit() == true)
                     {
-                        var extension = Math.Min(agentConfig.MaxSteps, maxTotalSteps - maxSteps);
-                        if (extension > 0)
-                        {
-                            maxSteps += extension;
-                            events.Publish(new StatusEvent("Auto-extending steps", $"任务步数已自动延展至 {maxSteps} 步，正在继续完成任务..."));
-                            PublishWorkflow(step, "think", "自动续步", $"已执行 {step - 1} 步，自动延展继续执行");
-                        }
-                        else
-                        {
-                            reachedMaxSteps = true;
-                            steering?.Complete();
-                            break;
-                        }
+                        extension = Math.Min(Math.Max(1, agentConfig.MaxSteps), int.MaxValue - maxSteps);
+                        events.Publish(new StatusEvent("Continuing goal", "已从保存的会话进度续步"));
                     }
-                    else
+                    if (extension <= 0)
                     {
                         reachedMaxSteps = true;
                         steering?.Complete();
                         break;
                     }
+                    maxSteps += extension;
+                    if (maxSteps <= maxTotalSteps)
+                        events.Publish(new StatusEvent("Auto-extending steps", $"任务步数已自动延展至 {maxSteps} 步，正在继续完成任务..."));
+                    PublishWorkflow(step, "think", "自动续步", $"已执行 {step - 1} 步，自动延展继续执行");
                 }
-                ct.ThrowIfCancellationRequested();
-                PublishSteering(AppendSteering(session, steering));
 
                 // Only messages appended by this turn decide whether vision is needed: the current
                 // input, steering guidance that arrives mid-turn (possibly with a screenshot), and
@@ -194,33 +222,30 @@ public sealed partial class Agent(
                     throw new LlmException($"Session model '{model.Ref}' does not support image understanding.", retryable: false);
                 var requiresVision = turnHasImages && model.Model.Capabilities.Vision;
                 var effectiveNetworkEnabled = session.Header.NetworkEnabled && agentConfig.NetworkEnabled;
-                var tools = ActiveTools(workspace, model, effectiveNetworkEnabled);
+                var tools = ActiveTools(workspace, model, effectiveNetworkEnabled, session.Header.Id);
+                if (finalizingGoal)
+                    tools = [];
+                else if (goal is null)
+                    tools = tools.Where(tool => tool.Name != GoalTool.ToolName).ToList();
                 if (askUser is null)
                     tools = tools.Where(tool => tool.Name != Tools.Builtin.AskUserTool.ToolName).ToList();
                 var systemPrompt = await ComposeSystemPromptAsync(
                     workspace, model, tools, effectiveNetworkEnabled, ct).ConfigureAwait(false);
+                systemPrompt = goal?.SupplementPrompt(systemPrompt) ?? systemPrompt;
 
                 activeModel = model;
                 activeSystemPrompt = systemPrompt;
                 activeRequiresVision = requiresVision;
-                var source = requiresVision ? session.Messages : WithoutImages(session.Messages);
-                var history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
-                // Context compaction: when plain trimming would have to drop history, summarize the
-                // older messages in-turn (MidTurn compaction) so long multi-step turns never lose their memory.
+                var source = BuildModelHistory(session, requiresVision, turnInstructions);
                 if (agentConfig.EnableContextCompaction
-                    && history.Count + 4 <= source.Count
-                    && source.Count != lastCompactedCount)
+                    && session.Messages.Count != lastCompactedCount
+                    && source.Sum(ContextPlanner.EstimateTokens) > ContextPlanner.WindowBudget(model.Model, systemPrompt))
                 {
-                    if (await CompactContextAsync(
-                            session, workspace, model, systemPrompt, turnMessageIndex, step, requiresVision, ct, pinnedModel).ConfigureAwait(false))
-                    {
-                        turnMessageIndex = session.Messages.FindIndex(message => ReferenceEquals(message, userMessage));
-                        if (turnMessageIndex < 0) turnMessageIndex = 0;
-                        source = requiresVision ? session.Messages : WithoutImages(session.Messages);
-                        history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt);
-                    }
+                    source = await CompactContextAsync(session, workspace, model, systemPrompt, source,
+                        turnInstructions, step, ct).ConfigureAwait(false);
                     lastCompactedCount = session.Messages.Count;
                 }
+                var history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt, turnInstructions);
 
                 events.Publish(new StatusEvent("Thinking"));
                 PublishWorkflow(step, "think", "思考");
@@ -229,9 +254,24 @@ public sealed partial class Agent(
                         events.Publish(new ImageViewedEvent(image.Id, image.Name, image.MediaType));
                 events.Publish(new ModelInvocationStartedEvent(model.Provider.Id, model.Model.Id, step));
 
-                var (completion, invokedModel) = await StreamOnceAsync(
+                var (completion, invokedModel, streamFailure) = await StreamOnceAsync(
                     model, workspace, systemPrompt, history, tools,
-                    reasoningLevel ?? agentConfig.ReasoningLevel, requiresVision, ct, pinnedModel).ConfigureAwait(false);
+                    reasoningLevel ?? agentConfig.ReasoningLevel, requiresVision, ct, pinnedModel, turnInstructions).ConfigureAwait(false);
+                if (streamFailure is { Retryable: true })
+                {
+                    goal?.Refresh();
+                    if (goal?.RecoveryDelay(streamFailure.RetryAfter) is { } delay)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        if (completion.Text.Length > 0 || completion.Thinking.Length > 0)
+                            events.Publish(new AssistantStreamResetEvent(invokedModel.Ref,
+                                completion.Text.Length, completion.Thinking.Length));
+                        events.Publish(new StatusEvent("Recovering goal", "模型连接中断，正在重试当前请求"));
+                        await Task.Delay(delay, ct).ConfigureAwait(false);
+                        step--;
+                        continue;
+                    }
+                }
                 var assistant = new ChatMessage
                 {
                     Role = ChatRole.Assistant,
@@ -252,7 +292,7 @@ public sealed partial class Agent(
                 if (completion.ErrorMessage is { } completionError)
                 {
                     finalText = isContinuation ? finalText + completion.Text : completion.Text;
-                    throw new LlmException(completionError, retryable: false);
+                    throw streamFailure ?? new LlmException(completionError, retryable: false);
                 }
 
                 // StreamOnceAsync preserves partial text on cancellation. Stop the turn after
@@ -263,6 +303,21 @@ public sealed partial class Agent(
                 {
                     finalText = isContinuation ? finalText + completion.Text : completion.Text;
                     events.Publish(new AssistantMessageCompletedEvent(completion.Text));
+                }
+
+                if (completion.ToolCalls.Count > 0 && goal is not null)
+                {
+                    goal.Refresh();
+                    if (goal.IsPaused || finalizingGoal)
+                    {
+                        var reason = goal.IsPaused
+                            ? "Tool execution was skipped because the conversation goal was paused."
+                            : "Tools are disabled for the goal's final summary.";
+                        foreach (var call in completion.ToolCalls)
+                            sessionStore.Append(session, ChatMessage.ToolResult(call.Id, call.Name, reason, false));
+                        if (finalizingGoal) goal.Pause("模型未能输出目标的最终总结，可继续执行目标。");
+                        break;
+                    }
                 }
 
                 if (completion.ToolCalls.Count > 0 && IsOutputTruncated(completion.FinishReason))
@@ -292,8 +347,13 @@ public sealed partial class Agent(
                         try
                         {
                             var answer = await ExecuteToolAsync(questionCall, workspace, sessionWorkspace, model,
-                                session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct).ConfigureAwait(false);
+                                session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct, goal, tools).ConfigureAwait(false);
                             sessionStore.Append(session, answer.Message);
+                            if (answer.Message.ToolSuccess)
+                            {
+                                turnInstructions.Add(assistant);
+                                turnInstructions.Add(answer.Message);
+                            }
                         }
                         catch (OperationCanceledException) when (ct.IsCancellationRequested)
                         {
@@ -301,7 +361,7 @@ public sealed partial class Agent(
                                 "The question was cancelled before the user answered.", false));
                             throw;
                         }
-                        PublishSteering(AppendSteering(session, steering));
+                        PublishSteering(AppendSteering(session, steering, turnInstructions, goal));
                         ResetRepeatToolTracking(ref lastRepeatToolName, ref lastRepeatToolArgs, ref consecutiveRepeatToolCount);
                         truncatedSteps = 0;
                         isContinuation = false;
@@ -316,7 +376,8 @@ public sealed partial class Agent(
                         if (resolved is not null
                             && !resolved.Mutating
                             && !resolved.Name.Equals("browser", StringComparison.OrdinalIgnoreCase)
-                            && !resolved.Name.Equals("subagent", StringComparison.OrdinalIgnoreCase))
+                            && !resolved.Name.Equals("subagent", StringComparison.OrdinalIgnoreCase)
+                            && resolved is not (GoalTool or McpToolSearchTool))
                         {
                             readOnlyBatch.Add(call);
                         }
@@ -326,7 +387,7 @@ public sealed partial class Agent(
                             {
                                 foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
                                 var batchResults = await Task.WhenAll(readOnlyBatch.Select(c =>
-                                    ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct))).ConfigureAwait(false);
+                                    ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct, goal, tools))).ConfigureAwait(false);
                                 for (var i = 0; i < batchResults.Length; i++)
                                 {
                                     var result = batchResults[i];
@@ -341,7 +402,7 @@ public sealed partial class Agent(
 
                             PublishWorkflow(step, "tool", call.Name);
                             var singleResult = await ExecuteToolAsync(
-                                call, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct).ConfigureAwait(false);
+                                call, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct, goal, tools).ConfigureAwait(false);
                             mutated |= singleResult.ToolMutated;
                             var singleMessage = AppendRepeatToolReminderIfNeeded(
                                 call, singleResult.Message, model,
@@ -354,7 +415,7 @@ public sealed partial class Agent(
                     {
                         foreach (var readOnly in readOnlyBatch) PublishWorkflow(step, "tool", readOnly.Name);
                         var batchResults = await Task.WhenAll(readOnlyBatch.Select(c =>
-                            ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct))).ConfigureAwait(false);
+                            ExecuteToolAsync(c, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct, goal, tools))).ConfigureAwait(false);
                         for (var i = 0; i < batchResults.Length; i++)
                         {
                             var result = batchResults[i];
@@ -368,7 +429,7 @@ public sealed partial class Agent(
                     // Steering must be appended only after every tool result for this
                     // assistant turn. A user message between assistant(tool_calls) and
                     // tool(result) breaks provider pairing and fails the next request.
-                    var toolSteering = AppendSteering(session, steering);
+                    var toolSteering = AppendSteering(session, steering, turnInstructions, goal);
                     PublishSteering(toolSteering);
                     if (toolSteering.Count > 0)
                         ResetRepeatToolTracking(ref lastRepeatToolName, ref lastRepeatToolArgs, ref consecutiveRepeatToolCount);
@@ -378,7 +439,7 @@ public sealed partial class Agent(
                 }
 
                 ResetRepeatToolTracking(ref lastRepeatToolName, ref lastRepeatToolArgs, ref consecutiveRepeatToolCount);
-                var guidance = AppendSteering(session, steering);
+                var guidance = AppendSteering(session, steering, turnInstructions, goal);
                 if (guidance.Count > 0)
                 {
                     PublishSteering(guidance);
@@ -395,6 +456,7 @@ public sealed partial class Agent(
                     truncatedSteps++;
                     if (truncatedSteps > agentConfig.MaxOutputContinuations)
                     {
+                        goal?.Pause("输出多次达到模型长度上限，可继续执行目标。");
                         events.Publish(new WarningEvent(
                             $"输出连续 {agentConfig.MaxOutputContinuations} 次达到长度上限，回合已停止。可在模型配置中调大 maxOutput 或拆分任务。"));
                         steering?.Complete();
@@ -442,49 +504,57 @@ public sealed partial class Agent(
                 }
 
                 // Model believes it is done. If it changed files, prove the project still builds.
-                if (mutated && ShouldVerify(workspace, agentConfig))
+                if ((mutated || (finalizingGoal && lastFailedVerifySignature is not null))
+                    && ShouldVerify(workspace, agentConfig))
                 {
                     PublishWorkflow(step, "verify", "构建验证");
                     var verification = await RunVerificationAsync(workspace, repairAttempts + 1, ct).ConfigureAwait(false);
-                    if (verification.RepairMessage is not null)
+                    var sameFailure = verification.FailureSignature is not null
+                        && string.Equals(verification.FailureSignature, lastFailedVerifySignature, StringComparison.Ordinal);
+                    lastFailedVerifySignature = verification.FailureSignature;
+                    if (lastFailedVerifySignature is not null)
                     {
                         mutated = false; // reset; the repair edits set it again
-                        if (repairAttempts >= agentConfig.MaxRepairAttempts)
+                        goal?.WithdrawCompletion();
+                        if (verification.RepairMessage is { } repairMessage)
                         {
-                            events.Publish(new WarningEvent("构建验证未通过，已达自动修复次数上限。"));
+                            if (repairAttempts >= agentConfig.MaxRepairAttempts)
+                                events.Publish(new WarningEvent("构建验证未通过，已达自动修复次数上限。"));
+                            else if (sameFailure)
+                                events.Publish(new StatusEvent("Verification unchanged; stopping auto-repair"));
+                            else
+                            {
+                                repairAttempts++;
+                                sessionStore.Append(session, ChatMessage.User(repairMessage));
+                                continue;
+                            }
                         }
-                        else if (lastFailedVerifySignature is not null
-                            && string.Equals(verification.FailureSignature, lastFailedVerifySignature, StringComparison.Ordinal))
-                        {
-                            // Verification failed identically (e.g. external file lock or non-code edits); avoid repeating the same repair prompt.
-                            events.Publish(new StatusEvent("Verification unchanged; stopping auto-repair"));
-                        }
-                        else
-                        {
-                            lastFailedVerifySignature = verification.FailureSignature;
-                            repairAttempts++;
-                            sessionStore.Append(session, ChatMessage.User(verification.RepairMessage));
-                            continue;
-                        }
-                    }
-                    else
-                    {
-                        lastFailedVerifySignature = null;
+                        goal?.Pause("构建验证未通过，修复后可继续执行目标。");
                     }
                 }
-                var lateGuidance = AppendSteering(session, steering);
+                var lateGuidance = AppendSteering(session, steering, turnInstructions, goal);
                 if (lateGuidance.Count > 0)
                 {
                     PublishSteering(lateGuidance);
                     continue;
                 }
+                goal?.Refresh();
+                if (goal?.HasCompletionRequest != true && goal?.ContinueAfterAnswer() == true)
+                {
+                    sessionStore.Append(session, ChatMessage.User(
+                        ">>> [System Directive: The goal still needs work. Execute the next step, record verified completion or save a concrete blocker.]"));
+                    continue;
+                }
                 if (steering is not null && !steering.TryCompleteIfEmpty()) continue;
+                ct.ThrowIfCancellationRequested();
+                goal?.CompleteRequestedGoal();
                 break;
             }
-            if (reachedMaxSteps && error is null && !cancelled)
+            if (reachedMaxSteps && goal?.IsPaused != true && error is null && !cancelled)
             {
-                events.Publish(new WarningEvent(
-                    $"已达到单回合最大步数上限（{maxSteps} 步），本回合执行暂停。可在 ~/.seekclaw/config.json 中调大 agent.maxTotalSteps。"));
+                if (goal?.IsCompleted != true)
+                    events.Publish(new WarningEvent(
+                        $"已达到单回合最大步数上限（{maxSteps} 步），本回合执行暂停。可在 ~/.seekclaw/config.json 中调大 agent.maxTotalSteps。"));
 
                 // Graceful wrap-up: if the turn ended after executing tools, allow the model one final
                 // completion with tools disabled so it can summarize completed work and remaining tasks
@@ -500,11 +570,11 @@ public sealed partial class Agent(
                             $">>> [System Directive: 本回合执行已达到允许的最大步数上限（{maxSteps} 步）。已禁用工具调用。请根据前面执行的所有操作与工具结果，详细总结你已经完成的改动、当前系统状态以及尚未完成的事项。]");
                         sessionStore.Append(session, wrapUpNotice);
 
-                        var source = activeRequiresVision ? session.Messages : WithoutImages(session.Messages);
-                        var history = ContextPlanner.FitToWindow(source, activeModel.Model, activeSystemPrompt);
-                        var (finalCompletion, wrapUpModel) = await StreamOnceAsync(
+                        var source = BuildModelHistory(session, activeRequiresVision, turnInstructions);
+                        var history = ContextPlanner.FitToWindow(source, activeModel.Model, activeSystemPrompt, turnInstructions);
+                        var (finalCompletion, wrapUpModel, _) = await StreamOnceAsync(
                             activeModel, workspace, activeSystemPrompt, history, [],
-                            reasoningLevel ?? agentConfig.ReasoningLevel, activeRequiresVision, ct, pinnedModel).ConfigureAwait(false);
+                            reasoningLevel ?? agentConfig.ReasoningLevel, activeRequiresVision, ct, pinnedModel, turnInstructions).ConfigureAwait(false);
                         if (finalCompletion.ErrorMessage is null && finalCompletion.FinishReason is not ("cancelled" or "incomplete"))
                             firstTurnModelRef = wrapUpModel.Ref;
 
@@ -552,6 +622,8 @@ public sealed partial class Agent(
                 && !cancelled
                 && error is null
                 && !reachedMaxSteps
+                && goal?.IsPaused != true
+                && !resumeGoal
                 && activeModel is not null
                 && subAgentScope?.Depth is null or 0)
             {
@@ -566,24 +638,32 @@ public sealed partial class Agent(
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             cancelled = true;
+            goal?.Refresh();
+            goal?.Pause("执行已中止，可在原会话继续。");
         }
         catch (LlmException ex)
         {
+            goal?.Refresh();
+            goal?.Pause(ex.Retryable ? "模型连接暂时不可用，自动重试已停止。" : "模型请求失败，处理错误后可继续。");
             error = ex.Message;
             events.Publish(new ErrorEvent("LLM request failed", ex.Message));
         }
         catch (Exception ex)
         {
+            goal?.Refresh();
+            goal?.Pause("执行发生错误，处理错误后可继续。");
             error = ex.Message;
             events.Publish(new ErrorEvent("Turn failed", ex.Message));
         }
 
-        events.Publish(new WorkflowEvent(
-            step,
-            error is null && !cancelled ? (reachedMaxSteps ? "paused" : "done") : "error",
-            error is null && !cancelled ? (reachedMaxSteps ? "达到步数上限已暂停" : "任务完成") : "任务失败"));
+        var paused = goal?.IsPaused == true || (reachedMaxSteps && goal?.IsCompleted != true);
+        events.Publish(error is not null || cancelled
+            ? new WorkflowEvent(step, "error", "任务失败")
+            : paused
+                ? new WorkflowEvent(step, "paused", goal?.IsPaused == true ? "任务已暂停" : "达到步数上限已暂停")
+                : new WorkflowEvent(step, "done", "任务完成"));
         if (!cancelled && error is null)
-            PublishSteering(AppendSteering(session, steering));
+            PublishSteering(AppendSteering(session, steering, turnInstructions, goal));
         steering?.Complete();
         events.Publish(new TurnCompletedEvent(session.Header.Id, cancelled, error));
         return new AgentTurnResult(finalText, cancelled, error, maintenance);
@@ -596,11 +676,18 @@ public sealed partial class Agent(
     private static bool IsOutputTruncated(string? finishReason) =>
         finishReason is "length" or "max_tokens" or "incomplete";
 
-    private IReadOnlyList<ChatMessage> AppendSteering(AgentSession session, AgentSteeringQueue? steering)
+    private IReadOnlyList<ChatMessage> AppendSteering(AgentSession session, AgentSteeringQueue? steering,
+        HashSet<ChatMessage> turnInstructions, GoalExecution? goal)
     {
         if (steering is null) return [];
         var messages = steering.Drain();
-        foreach (var message in messages) sessionStore.Append(session, message);
+        // New guidance may change the work that the completion evidence covers.
+        if (messages.Count > 0) goal?.WithdrawCompletion();
+        foreach (var message in messages)
+        {
+            sessionStore.Append(session, message);
+            turnInstructions.Add(message);
+        }
         return messages;
     }
 

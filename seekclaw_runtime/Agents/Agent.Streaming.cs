@@ -21,7 +21,7 @@ public sealed partial class Agent
         return completion;
     }
 
-    private async Task<(LlmCompletion Completion, ModelInfo Model)> StreamOnceAsync(
+    private async Task<(LlmCompletion Completion, ModelInfo Model, LlmException? Failure)> StreamOnceAsync(
         ModelInfo activeModel,
         WorkspaceInfo workspace,
         string systemPrompt,
@@ -30,7 +30,8 @@ public sealed partial class Agent
         ReasoningLevel reasoningLevel,
         bool requiresVision,
         CancellationToken ct,
-        ModelInfo? pinnedModel)
+        ModelInfo? pinnedModel,
+        IReadOnlySet<ChatMessage> turnInstructions)
     {
         var invokedModel = activeModel;
         var config = configStore.Config;
@@ -48,7 +49,7 @@ public sealed partial class Agent
                 Model = model.Model,
                 // Re-fit for the concrete candidate because automatic failover models can have
                 // a smaller user-declared context window than the initially selected model.
-                Messages = ContextPlanner.FitToWindow(history, model.Model, systemPrompt),
+                Messages = ContextPlanner.FitToWindow(history, model.Model, systemPrompt, turnInstructions),
                 System = systemPrompt,
                 Tools = definitions,
                 Temperature = temperature,
@@ -124,7 +125,7 @@ public sealed partial class Agent
                 Text = streamedText.ToString(),
                 Thinking = streamedThinking.ToString(),
                 FinishReason = "cancelled",
-            }, invokedModel);
+            }, invokedModel, null);
         }
         catch (LlmException ex)
         {
@@ -136,7 +137,7 @@ public sealed partial class Agent
                 Thinking = streamedThinking.ToString(),
                 FinishReason = "error",
                 ErrorMessage = ex.Message,
-            }, invokedModel);
+            }, invokedModel, ex);
         }
         finally
         {
@@ -148,6 +149,6 @@ public sealed partial class Agent
             Text = streamedText.ToString(),
             Thinking = streamedThinking.ToString(),
             FinishReason = "incomplete",
-        }, invokedModel);
+        }, invokedModel, null);
     }
 }

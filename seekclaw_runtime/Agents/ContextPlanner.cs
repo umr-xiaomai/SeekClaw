@@ -11,6 +11,11 @@ public static class ContextPlanner
 {
     private const double CharsPerToken = 4.0;
     private const int PerMessageOverheadTokens = 8;
+    private const string ContextCheckpointMarker = ">>> [Context compaction]";
+    private const string HistoryTrimNotice = "[Earlier conversation history was trimmed to fit the model's context window.]";
+
+    internal static ChatMessage CheckpointMessage(string summary) => ChatMessage.User(
+        $"{ContextCheckpointMarker} Summary of earlier conversation. Use it with the messages that follow.\n\n{summary}");
 
     /// <summary>
     /// Hard cap for any single repository fragment injected into model context
@@ -44,8 +49,11 @@ public static class ContextPlanner
         var budgetChars = Math.Max(1, (int)(maxTokens * CharsPerToken));
         var headChars = budgetChars / 2;
         var tailChars = budgetChars - headChars;
+        if (headChars > 0 && char.IsHighSurrogate(text[headChars - 1])) headChars--;
+        var tailStart = text.Length - tailChars;
+        if (tailStart < text.Length && char.IsLowSurrogate(text[tailStart])) tailStart++;
         var head = text[..headChars];
-        var tail = text[^tailChars..];
+        var tail = text[tailStart..];
         return head
                + "\n\n… [middle section trimmed: injected context exceeded the token budget] …\n\n"
                + tail;
@@ -63,12 +71,13 @@ public static class ContextPlanner
     /// Oldest messages drop first; tool results shrink before user/assistant text is touched.
     /// </summary>
     /// <summary>Token budget available for conversation history inside the active model window.</summary>
-    public static int WindowBudget(ModelConfig model, string systemPrompt)
+    public static int WindowBudget(ModelConfig model, string systemPrompt, int? reservedOutputTokens = null)
     {
         var available = model.EffectiveContextWindow
-                        - model.EffectiveMaxOutput
+                        - (reservedOutputTokens ?? model.EffectiveMaxOutput)
                         - EstimateTokens(systemPrompt);
-        var budget = available - 1_500; // safety reserve for wire format overhead
+        // Scale the wire overhead reserve for small context windows.
+        var budget = available - Math.Clamp(model.EffectiveContextWindow / 20, 64, 1_500);
         if (budget > 0) return budget;
         return available > 0
             ? Math.Max(256, Math.Min(available, model.EffectiveContextWindow / 2))
@@ -83,7 +92,7 @@ public static class ContextPlanner
     public static (IReadOnlyList<ChatMessage> Old, IReadOnlyList<ChatMessage> Recent) SplitForCompaction(
         IReadOnlyList<ChatMessage> messages, ModelConfig model, string systemPrompt)
     {
-        var tailBudget = Math.Max(1_024, WindowBudget(model, systemPrompt) / 2);
+        var tailBudget = WindowBudget(model, systemPrompt) / 2;
 
         var split = messages.Count;
         var total = 0;
@@ -119,7 +128,8 @@ public static class ContextPlanner
     }
 
     public static IReadOnlyList<ChatMessage> FitToWindow(
-        IReadOnlyList<ChatMessage> messages, ModelConfig model, string systemPrompt)
+        IReadOnlyList<ChatMessage> messages, ModelConfig model, string systemPrompt,
+        IReadOnlySet<ChatMessage>? preserve = null)
     {
         messages = EnsureCompleteToolTurns(messages);
         var budget = WindowBudget(model, systemPrompt);
@@ -128,23 +138,70 @@ public static class ContextPlanner
         if (total <= budget) return messages;
 
         var result = new List<ChatMessage>(messages);
-        while (total > budget && result.Count > 6)
+        var trimStart = messages[0].Role == ChatRole.User
+                        && messages[0].Text.StartsWith(ContextCheckpointMarker, StringComparison.Ordinal) ? 1 : 0;
+        var latestUser = result.LastOrDefault(message => message.Role == ChatRole.User
+            && message.Text != HistoryTrimNotice && !message.Text.StartsWith(ContextCheckpointMarker, StringComparison.Ordinal));
+        var trimNotice = ChatMessage.User(HistoryTrimNotice);
+        var noticeCost = EstimateTokens(trimNotice);
+        var cursor = trimStart;
+        var trimmed = false;
+        while (total + noticeCost > budget && cursor < result.Count - 1)
         {
-            var dropCount = 1;
-            while (dropCount < result.Count && result[dropCount].Role == ChatRole.Tool)
-                dropCount++;
-            if (result.Count - dropCount < 2) break;
+            var next = EndOfToolExchange(result, cursor, result.Count);
+            if (ReferenceEquals(result[cursor], latestUser) || ContainsPreservedMessage(result, cursor, next, preserve))
+            {
+                cursor = next;
+                continue;
+            }
+            // Keep the most recent message or complete tool exchange intact.
+            if (next == result.Count) break;
 
-            for (var i = 0; i < dropCount; i++)
-                total -= EstimateTokens(result[i]);
-            result.RemoveRange(0, dropCount);
+            for (var i = cursor; i < next; i++) total -= EstimateTokens(result[i]);
+            result.RemoveRange(cursor, next - cursor);
+            trimmed = true;
         }
 
-        if (result.Count < messages.Count)
-            result.Insert(0, ChatMessage.User(
-                "[Earlier conversation history was trimmed to fit the model's context window.]"));
+        // Large tool payloads can exceed a small window even after trimming old
+        // messages. Shorten only the model's copy and keep every required result.
+        var overflow = total + (trimmed ? noticeCost : 0) - budget;
+        var trimmableTools = result.Select((message, index) => (Message: message, Index: index))
+            .Where(entry => entry.Message.Role == ChatRole.Tool && preserve?.Contains(entry.Message) != true)
+            .OrderByDescending(entry => entry.Message.Text.Length);
+        foreach (var (message, index) in trimmableTools.ToArray())
+        {
+            if (overflow <= 0) break;
+            var original = EstimateTokens(message.Text);
+            var excerptBudget = original - overflow - 32; // reserve the excerpt marker
+            var text = excerptBudget > 0
+                ? FitInjectedText(message.Text, excerptBudget)
+                : "[Tool result shortened to fit the model's context window.]";
+            var trimmedCost = EstimateTokens(text);
+            if (trimmedCost >= original) continue;
+            result[index] = CloneWithText(message, text);
+            overflow -= original - trimmedCost;
+        }
+
+        if (trimmed && !result.Any(message => message.Role == ChatRole.User && message.Text == HistoryTrimNotice))
+            result.Insert(trimStart, trimNotice);
 
         return result;
+    }
+
+    private static bool ContainsPreservedMessage(IReadOnlyList<ChatMessage> messages, int start, int end,
+        IReadOnlySet<ChatMessage>? preserve)
+    {
+        if (preserve is null) return false;
+        for (var index = start; index < end; index++)
+            if (preserve.Contains(messages[index])) return true;
+        return false;
+    }
+
+    internal static int EndOfToolExchange(IReadOnlyList<ChatMessage> messages, int index, int limit)
+    {
+        var end = index + 1;
+        while (end < limit && messages[end].Role == ChatRole.Tool) end++;
+        return end;
     }
 
     /// <summary>
@@ -215,7 +272,8 @@ public static class ContextPlanner
         int endExclusive,
         int thresholdChars = 8_192,
         int headChars = 4_096,
-        int tailChars = 1_024)
+        int tailChars = 1_024,
+        IReadOnlySet<ChatMessage>? preserve = null)
     {
         ArgumentNullException.ThrowIfNull(messages);
         var limit = Math.Min(endExclusive, messages.Count);
@@ -224,7 +282,7 @@ public static class ContextPlanner
         for (var i = 0; i < limit; i++)
         {
             var message = messages[i];
-            if (message.Role != ChatRole.Tool) continue;
+            if (message.Role != ChatRole.Tool || preserve?.Contains(message) == true) continue;
             var text = message.Text;
             if (string.IsNullOrEmpty(text) || text.Length <= thresholdChars) continue;
             if (text.Contains(PrunedToolResultMarker, StringComparison.Ordinal)) continue;

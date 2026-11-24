@@ -2,6 +2,7 @@ import { ReasoningLevel } from './types'
 import type { ModelReasoningCapabilities } from './model-reasoning'
 import { parseConversationWidgets } from './conversation-widgets'
 import { countDiffLines } from './diff-parser'
+import { isInternalUserMessage } from './internal-messages'
 import type {
   ChatMessage,
   FileAttachment,
@@ -232,6 +233,24 @@ export function mergeSubAgentActivities(messages: ChatMessage[], previous: ChatM
   return messages
 }
 
+/** Retain the keys of matching live messages when the daemon saves a turn. */
+function retainLiveMessageIds(messages: ChatMessage[], previous: ChatMessage[], sessionId: string): void {
+  if (!previous.length) return
+  const oldMessages = previous.filter((message) => !isInternalUserMessage(message))
+  let visibleIndex = 0
+  for (const message of messages) {
+    if (isInternalUserMessage(message)) continue
+    const old = oldMessages[visibleIndex++]
+    // Stored ids use raw transcript positions. Only carry renderer ids across
+    // snapshots so a shifted stored id cannot collide with a different row.
+    if (!old || old.role !== message.role || old.id.startsWith(`${sessionId}:`)) continue
+    const sameCall = message.tools?.some((tool) => old.tools?.some((previousTool) => previousTool.id === tool.id))
+    const sameText = Boolean(message.content) && old.content === message.content
+    const sameAttachment = message.images?.some((image) => old.images?.some((previousImage) => previousImage.id === image.id))
+    if (sameCall || sameText || sameAttachment) message.id = old.id
+  }
+}
+
 export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] = []): ChatMessage[] {
   const messages: ChatMessage[] = []
   saved.messages.forEach((item, index) => {
@@ -281,6 +300,7 @@ export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] =
 
     messages.push({
       id: `${saved.id}:${index}`,
+      transcriptIndex: index,
       role: item.role,
       content: messageContent,
       images: item.images,
@@ -305,6 +325,7 @@ export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] =
         : new Date(saved.createdAt).getTime() + index
     })
   })
+  retainLiveMessageIds(messages, previous, saved.id)
   return mergeSubAgentActivities(messages, previous)
 }
 

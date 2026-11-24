@@ -29,9 +29,9 @@ function hasResponse(item: ConversationProcessItem, running: boolean): boolean {
   // Errors and result cards must stay reachable outside the collapsed history.
   if (message.errorMessage?.trim() || item.widgets.length > 0) return true
   if (!message.content.trim() && !message.images?.length && !message.files?.length && !message.viewedImages?.length) return false
-  // A tool-bearing commentary message is history while its operation is still active.
-  // Once all operations finish, a streamed answer remains visible as it grows.
-  return !running || !(message.tools ?? []).some((tool) => tool.state === 'running')
+  // A tool-bearing step remains in the progress stream even after its last call
+  // settles. The next model invocation will create its own message for the answer.
+  return !running || !message.tools?.length && !message.preparingTool
 }
 
 /**

@@ -13,7 +13,7 @@ describe('conversation widget rendering', () => {
       { version: 1, kind: 'artifact', id: 'artifact:report', title: '分析报告', path: 'E:\\report.pdf', mediaType: 'application/octet-stream' }
     ]
     const html = await renderToString(createSSRApp({ render: () => h(ConversationWidgets, { widgets, sessionId: 'session' }) }))
-    for (const text of ['每日进度', '每天 09:00', '延续此对话', '暂停', '立即运行', '编辑', '打开交互预览', '分析报告', '打开位置']) expect(html).toContain(text)
+    for (const text of ['每日进度', '每天 09:00', '延续此对话', '暂停', '立即运行', '编辑', '打开交互预览：页面演示', '分析报告', '打开位置']) expect(html).toContain(text)
     expect(html).not.toContain('"notificationPolicy"')
     expect(html).not.toContain('<iframe') // Previews load only after an explicit click.
     expect(html).not.toContain('独立沙箱')

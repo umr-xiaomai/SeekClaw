@@ -16,6 +16,30 @@ public sealed class CommandSessionManager(ExecutionRecordStore? records = null) 
     public async Task<JsonObject> StartAsync(string owner, string command, string directory, int timeoutSeconds,
         bool pty = false, CancellationToken ct = default)
     {
+        var session = await StartSessionAsync(owner, command, directory, timeoutSeconds, pty, keepInputOpen: true, ct)
+            .ConfigureAwait(false);
+        return session.Read(0);
+    }
+
+    internal async Task<JsonObject> ExecAsync(string owner, string command, string directory, int timeoutSeconds,
+        bool tty, int yieldMilliseconds, CancellationToken ct)
+    {
+        var session = await StartSessionAsync(owner, command, directory, timeoutSeconds, tty, keepInputOpen: tty, ct)
+            .ConfigureAwait(false);
+
+        // Yielding returns the same session. Its process lifetime is independent of this wait.
+        try
+        {
+            await session.Completion.WaitAsync(TimeSpan.FromMilliseconds(Math.Clamp(yieldMilliseconds, 0, 30_000)), ct)
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException) { }
+        return session.Read(0);
+    }
+
+    private async Task<CommandSession> StartSessionAsync(string owner, string command, string directory,
+        int timeoutSeconds, bool pty, bool keepInputOpen, CancellationToken ct)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(owner);
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
         await _starts.WaitAsync(ct).ConfigureAwait(false);
@@ -25,9 +49,16 @@ public sealed class CommandSessionManager(ExecutionRecordStore? records = null) 
             foreach (var item in _sessions.Where(x => x.Value.Completion.IsCompleted
                          && DateTimeOffset.UtcNow - x.Value.LastAccess > TimeSpan.FromMinutes(15)))
                 if (_sessions.TryRemove(item.Key, out var expired)) await expired.DisposeAsync().ConfigureAwait(false);
-            if (_sessions.Count >= MaximumSessions)
-                throw new InvalidOperationException("Command session limit reached; close a completed session first.");
-            var session = new CommandSession(owner, command, directory, Math.Clamp(timeoutSeconds, 1, 86_400), pty);
+            while (_sessions.Count >= MaximumSessions)
+            {
+                var oldest = _sessions.Values.Where(session => session.Completion.IsCompleted)
+                    .MinBy(session => session.LastAccess);
+                if (oldest is null)
+                    throw new InvalidOperationException("Command session limit reached; terminate an active session first.");
+                if (_sessions.TryRemove(oldest.Id, out var completed)) await completed.DisposeAsync().ConfigureAwait(false);
+            }
+            ct.ThrowIfCancellationRequested();
+            var session = new CommandSession(owner, command, directory, Math.Clamp(timeoutSeconds, 1, 86_400), pty, keepInputOpen);
             _sessions[session.Id] = session;
             if (records is not null)
             {
@@ -35,26 +66,32 @@ public sealed class CommandSessionManager(ExecutionRecordStore? records = null) 
                 catch { _sessions.TryRemove(session.Id, out _); await session.DisposeAsync().ConfigureAwait(false); throw; }
                 _ = RecordCompletionAsync(session);
             }
-            return session.Read(0);
+            return session;
         }
         finally { _starts.Release(); }
     }
 
     public async Task<JsonObject> ReadAsync(string owner, string id, long? cursor = null, int waitMilliseconds = 0,
-        CancellationToken ct = default)
+        CancellationToken ct = default) => await ReadAsync(Get(owner, id), cursor, waitMilliseconds, ct).ConfigureAwait(false);
+
+    private static async Task<JsonObject> ReadAsync(CommandSession session, long? cursor, int waitMilliseconds, CancellationToken ct)
     {
-        var session = Get(owner, id);
         if (waitMilliseconds > 0)
             await session.WaitForOutputAsync(cursor, Math.Clamp(waitMilliseconds, 0, 60_000), ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         return session.Read(cursor);
     }
 
-    public async Task<JsonObject> WriteAsync(string owner, string id, string text, bool closeInput, CancellationToken ct)
+    public Task<JsonObject> WriteAsync(string owner, string id, string text, bool closeInput, CancellationToken ct) =>
+        WriteAsync(owner, id, text, closeInput, ct, cursor: null, waitMilliseconds: 0);
+
+    internal async Task<JsonObject> WriteAsync(string owner, string id, string text, bool closeInput, CancellationToken ct,
+        long? cursor, int waitMilliseconds)
     {
         var session = Get(owner, id);
+        if (cursor is long position) session.ValidateCursor(position);
         await session.WriteAsync(text, closeInput, ct).ConfigureAwait(false);
-        return session.Read(null);
+        return await ReadAsync(session, cursor, waitMilliseconds, ct).ConfigureAwait(false);
     }
 
     public async Task<JsonObject> StopAsync(string owner, string id, bool remove, CancellationToken ct)
@@ -122,7 +159,7 @@ public sealed class CommandSessionManager(ExecutionRecordStore? records = null) 
         public DateTimeOffset LastAccess { get; private set; } = DateTimeOffset.UtcNow;
         public Task Completion { get; }
 
-        public CommandSession(string owner, string command, string directory, int timeout, bool pty)
+        public CommandSession(string owner, string command, string directory, int timeout, bool pty, bool keepInputOpen)
         {
             Owner = owner;
             Command = command;
@@ -133,6 +170,11 @@ public sealed class CommandSessionManager(ExecutionRecordStore? records = null) 
             _processStartedAt = _process.Process.StartTime.ToUniversalTime().ToString("O");
             _directory = Path.GetFullPath(directory);
             _job.AssignProcess(_process.Process, _process.IsProcessGroupLeader);
+            if (!keepInputOpen)
+            {
+                _process.Input.Close();
+                _inputClosed = true;
+            }
             _timeout = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
             _killRegistration = _timeout.Token.Register(() => _job.Terminate(_process.Process));
             Completion = ObserveAsync();
@@ -205,6 +247,12 @@ public sealed class CommandSessionManager(ExecutionRecordStore? records = null) 
                 if (close) { _process.Input.Close(); _inputClosed = true; }
             }
             finally { _input.Release(); }
+        }
+
+        public void ValidateCursor(long cursor)
+        {
+            lock (_gate)
+                if (cursor < 0 || cursor > _end) throw new ArgumentOutOfRangeException(nameof(cursor));
         }
 
         public JsonObject Read(long? cursor, bool includeOutput = true)

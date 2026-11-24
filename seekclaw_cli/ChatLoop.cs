@@ -25,6 +25,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
         new("/clear", "", "Start a new session", SubmitsOnSelect: true),
         new("/usage", "", "Token and latency statistics", SubmitsOnSelect: true),
         new("/session", "", "Current session info", SubmitsOnSelect: true),
+        new("/goal", "[resume]", "Show or resume the persistent conversation goal", SubmitsOnSelect: false),
         new("/copy", "", "Copy the last assistant answer to clipboard", SubmitsOnSelect: true),
         new("/print", "config", "Print configuration", SubmitsOnSelect: true),
         new("/help", "", "Show available commands", SubmitsOnSelect: true),
@@ -69,8 +70,6 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
             getContextWindow: GetActiveContextWindow);
         InstallCancelHandler();
 
-        await ConnectMcpQuietlyAsync(renderer);
-
         _turnCts = new CancellationTokenSource();
         var result = await runtime.Agent.RunTurnAsync(session, runtime.Workspace, prompt, _turnCts.Token);
         if (result.Maintenance is { } maintenance)
@@ -91,7 +90,6 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
         InstallCancelHandler();
 
         PrintBanner(renderer, session, continueLast || resumeId is not null);
-        await ConnectMcpQuietlyAsync(renderer);
         renderer.Flush();
         LoadHistory();
         var editor = new LineEditor(
@@ -197,7 +195,14 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
 
                 SaveHistory(input);
 
-                if (input.StartsWith('/'))
+                var resumeGoal = input.Equals("/goal resume", StringComparison.OrdinalIgnoreCase);
+                if (resumeGoal && activeTurnTask is { IsCompleted: false })
+                {
+                    renderer.WriteLine("Wait for the current turn to finish before resuming a goal.".Style(Ansi.Yellow));
+                    continue;
+                }
+
+                if (input.StartsWith('/') && !resumeGoal)
                 {
                     var shouldExit = await HandleSlashCommandAsync(input, sessionState, renderer).ConfigureAwait(false);
                     session = sessionState.Session;
@@ -222,7 +227,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                 // Start a new agent turn asynchronously so LineEditor remains responsive for user steering!
                 _turnCts = new CancellationTokenSource();
                 var currentCts = _turnCts;
-                var currentPrompt = input;
+                var currentPrompt = resumeGoal ? "" : input;
                 var currentSession = session;
                 var currentWorkspace = runtime.Workspace;
                 var steering = new AgentSteeringQueue();
@@ -234,7 +239,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                     {
                         var result = await runtime.Agent.RunTurnAsync(
                             currentSession, currentWorkspace, currentPrompt, currentCts.Token,
-                            steering: steering).ConfigureAwait(false);
+                            steering: steering, resumeGoal: resumeGoal).ConfigureAwait(false);
                         // Memory distillation runs after the turn is reported done; keep it
                         // inside the turn task so the next prompt sees fresh memory.
                         if (result.Maintenance is { } maintenance)
@@ -331,28 +336,6 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
             Resumed: resumed));
         foreach (var line in banner)
             renderer.WriteLine(line);
-    }
-
-    private async Task ConnectMcpQuietlyAsync (TerminalRenderer renderer)
-    {
-        await ConnectMcpQuietlyAsync(renderer, force: false).ConfigureAwait(false);
-    }
-
-    private async Task ConnectMcpQuietlyAsync (TerminalRenderer renderer, bool force)
-    {
-        if (!force && runtime.Mcp.LoadServerConfigs(runtime.Workspace).Count == 0) return;
-        try
-        {
-            var statuses = await runtime.ConnectMcpAsync(CancellationToken.None);
-            foreach (var status in statuses)
-                renderer.WriteLine(status.Connected
-                    ? $"  mcp {status.Name}: {status.ToolCount} tools".Style(Ansi.Gray)
-                    : $"  mcp {status.Name}: {status.Error}".Style(Ansi.Yellow));
-        }
-        catch (Exception ex)
-        {
-            renderer.WriteLine($"  mcp: {ex.Message}".Style(Ansi.Yellow));
-        }
     }
 
     /// <summary>Returns true when the REPL should exit.</summary>
@@ -455,7 +438,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                                 Directory.SetCurrentDirectory(previousDirectory);
                                 throw;
                             }
-                            await ConnectMcpQuietlyAsync(renderer, force: true).ConfigureAwait(false);
+                            await runtime.Mcp.PrepareAsync(runtime.Workspace, CancellationToken.None).ConfigureAwait(false);
                             renderer.WriteLine($"cd → {runtime.Workspace.Root}".Style(Ansi.Green));
                         }
                         else
@@ -548,6 +531,21 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                 renderer.WriteLine($"session {session.Header.Id} · {session.Messages.Count} messages · {session.FilePath}".Style(Ansi.Dim));
                 return false;
 
+            case "/goal":
+            {
+                var goal = runtime.Goals.Get(runtime.Workspace, session.Header.Id);
+                if (goal is null)
+                {
+                    renderer.WriteLine("No saved goal. Ask SeekClaw to start a persistent goal for this conversation.");
+                    return false;
+                }
+                renderer.WriteLine($"{goal.Objective} ({goal.Status})");
+                renderer.WriteLine($"Completion criteria: {goal.Criteria}");
+                if (goal.Progress is not null) renderer.WriteLine($"Progress: {goal.Progress}");
+                if (goal.PauseReason is not null) renderer.WriteLine($"Paused: {goal.PauseReason}");
+                return false;
+            }
+
             case "/help":
                 renderer.WriteLine("/model [ref]   show or switch the active model".Style(Ansi.Dim));
                 renderer.WriteLine("/cd <dir>      change working directory".Style(Ansi.Dim));
@@ -557,6 +555,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                 renderer.WriteLine("/clear         start a new session".Style(Ansi.Dim));
                 renderer.WriteLine("/usage         token/latency statistics".Style(Ansi.Dim));
                 renderer.WriteLine("/session       current session info".Style(Ansi.Dim));
+                renderer.WriteLine("/goal [resume] show or resume the conversation goal".Style(Ansi.Dim));
                 renderer.WriteLine("/copy          copy last assistant answer".Style(Ansi.Dim));
                 renderer.WriteLine("/print config  print configuration file path".Style(Ansi.Dim));
                 renderer.WriteLine("/exit          leave".Style(Ansi.Dim));

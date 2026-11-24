@@ -67,7 +67,8 @@ internal sealed partial class DaemonAdminApi
         if (action == "login") return (await runtime.McpAuth.BeginLoopbackAsync(name, server, ct).ConfigureAwait(false)).ToJsonString();
         if (action != "logout") throw new DaemonRequestException("Unknown MCP authentication operation.");
         await runtime.McpAuth.LogoutAsync(name, server, ct).ConfigureAwait(false);
-        ReconnectMcpInBackground();
+        await runtime.Mcp.PrepareAsync(runtime.Workspace, ct).ConfigureAwait(false);
+        runtime.TaskServices.McpConnections.NotifyStatusChanged();
         return "ok";
     }
 }

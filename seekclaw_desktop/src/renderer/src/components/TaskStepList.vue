@@ -128,7 +128,7 @@ function stepStateLabel(step: TaskStep): string {
 
 <style scoped>
 .task-step-list-card {
-  width: min(100%, 940px);
+  width: min(100%, var(--conversation-composer-width, 940px));
   margin: 0 auto 10px;
   overflow: hidden;
   background: var(--surface);

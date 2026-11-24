@@ -88,7 +88,9 @@ public sealed class SeekClawDatabase
             PRAGMA foreign_keys=OFF;
             PRAGMA busy_timeout=10000;
 
+            DROP TABLE IF EXISTS session_context_checkpoints;
             DROP TABLE IF EXISTS messages;
+            DROP TABLE IF EXISTS session_goals;
             DROP TABLE IF EXISTS execution_records;
             DROP TABLE IF EXISTS cross_session_memories;
             DROP TABLE IF EXISTS sessions;
@@ -165,6 +167,32 @@ public sealed class SeekClawDatabase
 
             CREATE INDEX IF NOT EXISTS ix_messages_session
                 ON messages(scope, session_id, id);
+
+            CREATE TABLE IF NOT EXISTS session_context_checkpoints (
+                scope TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                covered_through_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                summary TEXT NOT NULL,
+                PRIMARY KEY (scope, session_id),
+                FOREIGN KEY (scope, session_id) REFERENCES sessions(scope, id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS ix_session_context_checkpoints_message
+                ON session_context_checkpoints(covered_through_id);
+
+            CREATE TABLE IF NOT EXISTS session_goals (
+                scope TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                objective TEXT NOT NULL,
+                criteria TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'complete')),
+                progress TEXT NULL,
+                pause_reason TEXT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (scope, session_id),
+                FOREIGN KEY (scope, session_id)
+                    REFERENCES sessions(scope, id) ON DELETE CASCADE
+            );
 
             CREATE TABLE IF NOT EXISTS cross_session_memories (
                 id TEXT NOT NULL PRIMARY KEY,

@@ -110,6 +110,32 @@ describe('formatMessageTime', () => {
 })
 
 describe('hydrateMessages', () => {
+  it('keeps live turn keys and raw transcript positions after saving tool and internal records', () => {
+    const hydrated = hydrateMessages({
+      id: 'session', createdAt: '2026-11-24T00:00:00Z', updatedAt: '2026-11-24T00:00:03Z',
+      messages: [
+        { role: 'user', text: '检查项目' },
+        { role: 'user', text: '>>> [System Directive: continue working]' },
+        { role: 'assistant', text: '检查文件。', toolCalls: [{ id: 'read-1', name: 'read_file' }] },
+        { role: 'tool', text: 'Contents', toolCallId: 'read-1', toolName: 'read_file' },
+        { role: 'assistant', text: '已经核对。' },
+        { role: 'user', text: '再检查一次' },
+        { role: 'assistant', text: '再次核对完成。' }
+      ]
+    }, [
+      { id: 'live-user', role: 'user', content: '检查项目', createdAt: 1 },
+      { id: 'live-tool', role: 'assistant', content: '检查文件。', createdAt: 2,
+        tools: [{ id: 'read-1', name: 'read_file', state: 'done' }] },
+      { id: 'live-answer', role: 'assistant', content: '已经核对。', createdAt: 3 },
+      { id: 'live-followup', role: 'user', content: '再检查一次', createdAt: 4 },
+      { id: 'live-followup-answer', role: 'assistant', content: '再次核对完成。', createdAt: 5 }
+    ])
+    expect(hydrated.map(({ id, transcriptIndex }) => [id, transcriptIndex])).toEqual([
+      ['live-user', 0], ['session:1', 1], ['live-tool', 2], ['live-answer', 4],
+      ['live-followup', 5], ['live-followup-answer', 6]
+    ])
+  })
+
   it('preserves message timestamp from backend', async () => {
     const { hydrateMessages } = await import('./app-helpers')
     const ts1 = 1757890000000

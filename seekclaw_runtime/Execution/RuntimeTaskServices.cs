@@ -9,7 +9,7 @@ namespace SeekClaw.Runtime.Execution;
 /// <summary>Process-owned task infrastructure shared with short-lived agent runtimes.</summary>
 public sealed class RuntimeTaskServices(SeekClawDatabase database, ExecutionRecordStore records,
     CommandSessionManager commands, WorktreeManager worktrees, SessionTurnCoordinator turns,
-    SubAgentTaskManager subAgents, McpAuthentication authentication)
+    SubAgentTaskManager subAgents, McpAuthentication authentication, McpConnectionPool mcpConnections)
 {
     public SeekClawDatabase Database { get; } = database;
     public ExecutionRecordStore Records { get; } = records;
@@ -18,6 +18,7 @@ public sealed class RuntimeTaskServices(SeekClawDatabase database, ExecutionReco
     public SessionTurnCoordinator Turns { get; } = turns;
     public SubAgentTaskManager SubAgents { get; } = subAgents;
     public McpAuthentication Authentication { get; } = authentication;
+    public McpConnectionPool McpConnections { get; } = mcpConnections;
 
     internal void ShareWith(IServiceCollection services)
     {
@@ -25,5 +26,6 @@ public sealed class RuntimeTaskServices(SeekClawDatabase database, ExecutionReco
         services.AddSingleton(this); services.AddSingleton(Database); services.AddSingleton(Records);
         services.AddSingleton(Commands); services.AddSingleton(Worktrees); services.AddSingleton(Turns);
         services.AddSingleton(SubAgents); services.AddSingleton(Authentication);
+        services.AddSingleton(McpConnections);
     }
 }

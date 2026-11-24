@@ -7,7 +7,8 @@ namespace SeekClaw.Runtime.Execution;
 
 public sealed class CommandSessionTool(IPromptProvider prompts, CommandSessionManager sessions) : BuiltinTool(prompts)
 {
-    public override string Name => "command_session";
+    internal const string ToolName = "command_session";
+    public override string Name => ToolName;
     public override bool Mutating => true;
     public override JsonObject ParameterSchema => ToolSchema.Object(
         ("action", ToolSchema.String("start | read | write | terminate | close | list"), true),
@@ -46,19 +47,26 @@ public sealed class CommandSessionTool(IPromptProvider prompts, CommandSessionMa
         {
             return ToolResult.Fail(ex.Message);
         }
+        return FormatResult(result, context.MaxOutputChars, mutated: action is "start" or "write");
+    }
+
+    internal static ToolResult FormatResult(JsonNode result, int maxOutputChars, bool mutated)
+    {
         // Shorten output inside the envelope so JSON and the continuation cursor
         // remain valid even for small model context budgets or escape-heavy output.
         if (result is JsonObject item && item["output"]?.GetValue<string>() is { } output)
         {
             var from = item["cursor"]!.GetValue<long>() - output.Length;
-            while (output.Length > 0 && item.ToJsonString().Length > context.MaxOutputChars)
+            while (output.Length > 0 && item.ToJsonString().Length > maxOutputChars)
             {
-                output = output[..(output.Length / 2)];
+                var length = output.Length / 2;
+                if (length > 0 && char.IsHighSurrogate(output[length - 1])) length--;
+                output = output[..length];
                 item["output"] = output;
                 item["cursor"] = from + output.Length;
                 item["hasMore"] = true;
             }
         }
-        return ToolResult.Ok(result.ToJsonString(), mutated: action is "start" or "write");
+        return ToolResult.Ok(result.ToJsonString(), mutated: mutated);
     }
 }

@@ -88,8 +88,8 @@ export function createThreadActions(context: ThreadActionsContext) {
     const targets = threads.value.filter((thread) => thread.projectId === project.id && !thread.archived)
     if (targets.length === 0 || targets.some((thread) => thread.running)) return
     if (!await confirmAction({
-      title: '归档项目任务',
-      message: `归档项目“${project.name}”的全部 ${targets.length} 个任务？`,
+      title: '归档聊天',
+      message: `归档项目“${project.name}”的全部 ${targets.length} 个会话？`,
       confirmLabel: '全部归档'
     })) return
 
@@ -182,8 +182,8 @@ export function createThreadActions(context: ThreadActionsContext) {
     const targets = threads.value.filter((thread) => thread.projectId === project.id)
     if (targets.length === 0 || targets.some((thread) => thread.running)) return
     if (!await confirmAction({
-      title: '删除项目全部任务',
-      message: `永久删除项目“${project.name}”的全部 ${targets.length} 个任务？此操作无法撤销。`,
+      title: '删除所有会话',
+      message: `永久删除项目“${project.name}”的全部 ${targets.length} 个会话？此操作无法撤销。`,
       confirmLabel: '全部删除',
       danger: true
     })) return
@@ -234,39 +234,43 @@ export function createThreadActions(context: ThreadActionsContext) {
   }
 
   async function deleteProject(project: ProjectItem): Promise<void> {
-    if (threads.value.some((thread) => thread.projectId === project.id && thread.running)) return
+    const runningError = '请先停止该项目中正在运行的任务，再移除项目。'
+    if (threads.value.some((thread) => thread.projectId === project.id && thread.running)) {
+      throw new Error(runningError)
+    }
     if (!daemonState.value.connected) {
       await reconnectDaemon()
-      if (!daemonState.value.connected) return
+      if (!daemonState.value.connected) {
+        throw new Error(daemonState.value.error || '无法连接 SeekClaw Runtime，请重新连接后再移除项目。')
+      }
     }
-    try {
-      // Always refresh so sessions created or archived by another client are included.
-      await refreshProjectSessions(project)
-    } catch {
-      return
-    }
+    await refreshProjectSessions(project)
     const targets = threads.value.filter((thread) => thread.projectId === project.id)
-    if (targets.some((thread) => thread.running)) return
+    if (targets.some((thread) => thread.running)) {
+      throw new Error(runningError)
+    }
     if (!await confirmAction({
-      title: '删除项目',
-      message: `删除项目“${project.name}”并永久删除其下全部 ${targets.length} 个会话？本地项目文件不会删除，此操作无法撤销。`,
-      confirmLabel: '删除项目和会话',
+      title: '移除项目',
+      message: `从 SeekClaw 中移除项目“${project.name}”？本地项目文件、会话和记忆都会保留。`,
+      confirmLabel: '移除项目',
       danger: true
     })) return
-
-    try {
-      await window.seekclaw.daemon.request('project.remove', { id: project.id })
-      await window.seekclaw.daemon.request('memory.deleteByWorkspace', { workspace: project.path }).catch(() => undefined)
-    } catch {
-      await refreshProjectSessions(project).catch(() => undefined)
-      return
+    if (threads.value.some((thread) => thread.projectId === project.id && thread.running)) {
+      throw new Error(runningError)
     }
 
-    const activeAffected = targets.some((thread) => thread.id === activeThreadId.value)
-    targets.forEach((thread) => clearTaskDraft(thread.id))
+    try {
+      await window.seekclaw.daemon.request('project.remove', { id: project.id, keepSessions: true })
+    } catch (error) {
+      await refreshProjectSessions(project).catch(() => undefined)
+      throw error
+    }
+
+    const removedThreads = threads.value.filter((thread) => thread.projectId === project.id)
+    const activeAffected = removedThreads.some((thread) => thread.id === activeThreadId.value)
     projects.value = projects.value.filter((item) => item.id !== project.id)
     threads.value = threads.value.filter((thread) => thread.projectId !== project.id)
-    if (targets.some((thread) => thread.id === taskSettingsThreadId.value)) taskSettingsThreadId.value = ''
+    if (removedThreads.some((thread) => thread.id === taskSettingsThreadId.value)) taskSettingsThreadId.value = ''
     if (activeAffected) activeThreadId.value = ''
     if (selectedProjectId.value === project.id) selectedProjectId.value = projects.value[0]?.id ?? ''
     if (!threads.value.some((thread) => thread.id === activeThreadId.value)) {

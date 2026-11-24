@@ -9,6 +9,7 @@ using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Daemon;
 using SeekClaw.Runtime.Events;
+using SeekClaw.Runtime.Goals;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Presentation;
 using SeekClaw.Runtime.Sessions;
@@ -56,6 +57,50 @@ public sealed class DaemonServerTests : IAsyncDisposable
         Assert.Equal("error", message["finishReason"]!.GetValue<string>());
         Assert.Equal("ResponseEnded", message["errorMessage"]!.GetValue<string>());
         Assert.Equal("test/model", message["modelRef"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task PausingGoalThroughDaemonCancelsTurnAndKeepsSavedProgress()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connection = await StartServerAsync(async (_, _, _, ct) =>
+        {
+            started.SetResult();
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                cancelled.SetResult();
+                throw;
+            }
+            throw new InvalidOperationException("The turn should remain active until cancelled.");
+        });
+        var runtime = _runtime!;
+        var workspace = runtime.Workspace;
+        var session = runtime.Sessions.Create(workspace);
+        var goal = runtime.Goals.Create(workspace, session.Header.Id, "Verify work", "Tests pass")!;
+        runtime.Goals.RecordProgress(workspace, session.Header.Id, goal.Id, "Reviewed sources");
+        await connection.SendAsync(1, "chat", new JsonObject
+        {
+            ["sessionId"] = session.Header.Id,
+            ["message"] = "Continue work",
+        });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await connection.SendAsync(2, "goal.pause", new JsonObject
+        {
+            ["sessionId"] = session.Header.Id,
+            ["goalId"] = goal.Id,
+        });
+        var paused = ParseData(await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 2));
+        Assert.Equal(SessionGoal.Paused, paused["status"]!.GetValue<string>());
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await connection.SendAsync(3, "goal.get", new JsonObject { ["sessionId"] = session.Header.Id });
+        var saved = ParseData(await connection.ReadUntilAsync(item => item["id"]!.GetValue<int>() == 3));
+        Assert.Equal(goal.Id, saved["id"]!.GetValue<string>());
+        Assert.Equal(SessionGoal.Paused, saved["status"]!.GetValue<string>());
+        Assert.Equal("Reviewed sources", saved["progress"]!.GetValue<string>());
     }
 
     [Fact]
@@ -1359,6 +1404,41 @@ public sealed class DaemonServerTests : IAsyncDisposable
         var response = await connection.ReadAsync();
         Assert.Equal("result", response["event"]!.GetValue<string>());
         Assert.Equal(sessionId, ParseData(response)["id"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task RemoveProject_AfterMovingDirectory_CanListAndDeleteSavedSessions()
+    {
+        var workspace = CreateWorkspace("moved-project");
+        var connection = await StartServerAsync(
+            (_, _, _, _) => Task.FromResult(new AgentTurnResult("ok", false, null)), workspace);
+        JsonObject Scope() => new() { ["workspace"] = workspace, ["includeArchived"] = true };
+        var relocated = Path.Combine(_tempDir, "relocated-project");
+        File.WriteAllText(Path.Combine(workspace, "notes.txt"), "keep this file");
+
+        await connection.SendAsync(1, "project.upsert", new JsonObject { ["id"] = "moved", ["path"] = workspace });
+        Assert.Equal("result", (await connection.ReadAsync())["event"]!.GetValue<string>());
+        await connection.SendAsync(2, "session.new", Scope());
+        var sessionId = (await connection.ReadAsync())["data"]!.GetValue<string>();
+        Directory.Move(workspace, relocated);
+
+        await connection.SendAsync(3, "session.list", Scope());
+        var listed = await connection.ReadAsync();
+        Assert.Equal("result", listed["event"]!.GetValue<string>());
+        var saved = Assert.Single(JsonNode.Parse(listed["data"]!.GetValue<string>())!.AsArray());
+        Assert.Equal(sessionId, saved!["id"]!.GetValue<string>());
+
+        await connection.SendAsync(4, "project.remove", new JsonObject { ["id"] = "moved" });
+        var removed = await connection.ReadAsync();
+        Assert.Equal("result", removed["event"]!.GetValue<string>());
+        Assert.Equal("moved", removed["data"]!.GetValue<string>());
+        Assert.Null(_runtime!.Projects.Get("moved"));
+
+        await connection.SendAsync(5, "session.list", Scope());
+        var remaining = await connection.ReadAsync();
+        Assert.Equal("result", remaining["event"]!.GetValue<string>());
+        Assert.Empty(JsonNode.Parse(remaining["data"]!.GetValue<string>())!.AsArray());
+        Assert.Equal("keep this file", File.ReadAllText(Path.Combine(relocated, "notes.txt")));
     }
 
     [Fact]

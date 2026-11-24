@@ -62,7 +62,7 @@ internal sealed class WindowsPseudoConsole : IDisposable
                     }
                     // Native hosts can have redirected/invalid standard handles. Reopen the attached
                     // console devices in the child rather than inheriting those handles.
-                    var commandLine = new StringBuilder($"\"{launcher}\" {flags} \"\"{shell}\" -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded} <CONIN$ >CONOUT$ 2>&1\"");
+                    var commandLine = new StringBuilder($"\"{launcher}\" {flags} \"\"{shell}\" -NoLogo -NoProfile -EncodedCommand {encoded} <CONIN$ >CONOUT$ 2>&1\"");
                     if (!CreateProcess(launcher, commandLine, 0, 0, false, ExtendedStartupInfoPresent | CreateUnicodeEnvironment,
                             environment, directory, ref startup, out var info)) throw new Win32Exception();
                     using var processHandle = new SafeFileHandle(info.Process, true);

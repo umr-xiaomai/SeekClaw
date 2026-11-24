@@ -123,7 +123,6 @@ public static class ExecCommand
             AgentTurnResult result;
             try
             {
-                await runtime.ConnectMcpAsync(timeout.Token).ConfigureAwait(false);
                 result = await runtime.Agent.RunTurnAsync(session, workspace, prompt, timeout.Token).ConfigureAwait(false);
                 if (result.Maintenance is { } maintenance) await maintenance.ConfigureAwait(false);
             }

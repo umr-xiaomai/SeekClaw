@@ -260,10 +260,8 @@ public sealed class ScheduleService : IScheduleService, IAsyncDisposable
         });
         turnRuntime.Prompts.SetWorkspaceRoot(workspace.IsGlobal ? null : workspace.PromptsDir);
         turnRuntime.Skills.Attach(workspace);
-        if (turnRuntime.Mcp.LoadServerConfigs(workspace).Count > 0)
-            await turnRuntime.Mcp.ConnectAllAsync(workspace, ct).ConfigureAwait(false);
         return await turnRuntime.Agent.RunTurnAsync(
-            session, workspace, prompt, ct, captureCrossSessionMemory: false).ConfigureAwait(false);
+            session, workspace, prompt, ct, captureCrossSessionMemory: false, allowGoalManagement: false).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()

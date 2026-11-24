@@ -20,6 +20,7 @@ public sealed class McpAuthentication : IDisposable, IAsyncDisposable
     private readonly ConcurrentDictionary<string, PendingLogin> _pending = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _refresh = new();
     private readonly ConcurrentDictionary<string, LoginAttempt> _logins = new();
+    private readonly ConcurrentDictionary<string, long> _credentialRevisions = new();
     private readonly Lock _pendingGate = new();
     private readonly Dictionary<string, long> _logoutVersions = new();
     private readonly CancellationTokenSource _lifetime = new();
@@ -29,7 +30,18 @@ public sealed class McpAuthentication : IDisposable, IAsyncDisposable
         _credentialLocks = new SessionTurnCoordinator(credentials.LockDirectory);
         _http = http ?? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
     }
-    private static string Key(string name, McpServerConfig server) => name + "|" + server.Url;
+    internal static string Key(string name, McpServerConfig server) => name + "|" + server.Url;
+
+    internal event Func<string, ValueTask>? CredentialsChanged;
+
+    private async ValueTask NotifyCredentialsChangedAsync(string key)
+    {
+        if (CredentialsChanged is not { } handlers) return;
+        foreach (Func<string, ValueTask> handler in handlers.GetInvocationList())
+            await handler(key).ConfigureAwait(false);
+    }
+
+    internal long Revision(string name, McpServerConfig server) => _credentialRevisions.GetValueOrDefault(Key(name, server));
 
     public async Task<IReadOnlyDictionary<string, string>> HeadersAsync(string name, McpServerConfig server, CancellationToken ct)
     {
@@ -143,8 +155,10 @@ public sealed class McpAuthentication : IDisposable, IAsyncDisposable
                 new() { ["grant_type"] = "authorization_code", ["code"] = code, ["redirect_uri"] = login.Redirect,
                     ["code_verifier"] = login.Verifier }, ct).ConfigureAwait(false);
             _credentials.Put(login.Key, token);
+            _credentialRevisions.AddOrUpdate(login.Key, 1, (_, revision) => revision + 1);
         }
         finally { gate.Release(); }
+        await NotifyCredentialsChangedAsync(login.Key).ConfigureAwait(false);
     }
 
     public async Task LogoutAsync(string name, McpServerConfig server, CancellationToken ct = default)
@@ -162,8 +176,10 @@ public sealed class McpAuthentication : IDisposable, IAsyncDisposable
                 foreach (var attempt in _logins.Values.Where(x => x.Key == key && !x.Task.IsCompleted)) attempt.Cancellation.Cancel();
             }
             _credentials.Remove(key);
+            _credentialRevisions.AddOrUpdate(key, 1, (_, revision) => revision + 1);
         }
         finally { gate.Release(); }
+        await NotifyCredentialsChangedAsync(key).ConfigureAwait(false);
     }
 
     /// <summary>Starts a bounded loopback callback listener; no credentials cross the admin protocol.</summary>

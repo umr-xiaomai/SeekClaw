@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  contextMenuFocusIndex, positionContextMenu, positionContextSubmenu, type ContextMenuEntry
+  contextMenuFocusIndex, contextMenuShortcutIndex, positionContextMenu, positionContextSubmenu, type ContextMenuEntry
 } from './context-menu'
 
 describe('context menu keyboard navigation', () => {
@@ -30,6 +30,27 @@ describe('context menu keyboard navigation', () => {
   it('does not invent an actionable focus target for empty or disabled menus', () => {
     expect(contextMenuFocusIndex([], 0, 'next')).toBe(-1)
     expect(contextMenuFocusIndex(items.slice(0, 2), -1, 'first')).toBe(-1)
+  })
+})
+
+describe('context menu shortcuts', () => {
+  const items: ContextMenuEntry[] = [
+    { id: 'pin-project', label: '置顶', shortcut: 'P' },
+    { id: 'edit', label: '编辑', shortcut: 'E' },
+    { type: 'separator' },
+    { id: 'archive-all', label: '归档聊天', shortcut: 'A', disabled: true },
+    { id: 'rename', label: '重命名', shortcut: 'F2' }
+  ]
+
+  it('matches enabled letter shortcuts case-insensitively', () => {
+    expect(contextMenuShortcutIndex(items, 'p')).toBe(0)
+    expect(contextMenuShortcutIndex(items, 'E')).toBe(1)
+  })
+
+  it('leaves disabled actions and other keys alone', () => {
+    expect(contextMenuShortcutIndex(items, 'a')).toBe(-1)
+    expect(contextMenuShortcutIndex(items, 'F2')).toBe(-1)
+    expect(contextMenuShortcutIndex(items, 'ArrowDown')).toBe(-1)
   })
 })
 
