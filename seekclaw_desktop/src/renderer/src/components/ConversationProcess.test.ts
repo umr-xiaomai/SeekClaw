@@ -243,7 +243,7 @@ describe('conversation process presentation', () => {
 
     const { turns: [turn] } = buildConversationProjection(messages, { running: true, assistantId: message.id })
     const html = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn: turn! }) }))
-    const timeline = ['我先检查项目。', '读取并探索了 1 项', '检查员开始工作', '已编辑 1 个文件', '检查员已完成', 'pnpm test']
+    const timeline = ['我先检查项目。', '已读取', '检查员开始工作', '已编辑', '检查员已完成', 'pnpm test']
     const positions = timeline.map((text) => html.indexOf(text))
     expect(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1]!))).toBe(true)
   })
@@ -355,18 +355,60 @@ describe('conversation process presentation', () => {
     }))
     const active = await render(initial!)
     expect(active).not.toContain('process-title')
-    expect(active.indexOf('只在展开时挂载的详细工作记录')).toBeLessThan(active.indexOf('读取并探索了 1 项'))
-    expect(active.indexOf('读取并探索了 1 项')).toBeLessThan(active.indexOf('正在搜索'))
+    expect(active.match(/<details class="tool-group"/g)).toHaveLength(1)
+    expect(active).toContain('正在运行 pnpm test')
+    const groupStart = active.indexOf('class="tool-group-items"')
+    expect(groupStart).toBeGreaterThan(active.indexOf('只在展开时挂载的详细工作记录'))
+    const rows = active.slice(groupStart)
+    expect(rows).toContain('已读取')
+    expect(rows).toContain('正在搜索')
+    expect(rows).toContain('正在运行')
+    expect(rows.indexOf('已读取')).toBeLessThan(rows.indexOf('正在搜索'))
+    expect(rows.indexOf('正在搜索')).toBeLessThan(rows.indexOf('正在运行'))
     expect(active).not.toContain('process-tail-status')
 
     commentary.tools[1]!.state = 'error'
     const { turns: [updated] } = buildConversationProjection(messages, { running: true, assistantId: commentary.id })
     const failed = await render(updated!)
     expect(failed.match(/<details class="tool-group"/g)).toHaveLength(1)
-    expect(failed).toContain('读取并探索了 2 项')
     expect(failed).toContain('1 项失败')
+    expect(failed).toContain('搜索失败')
     expect(failed).toContain('search result')
-    expect(failed.indexOf('search result')).toBeLessThan(failed.indexOf('正在运行'))
+
+    commentary.tools[2]!.state = 'done'
+    const { turns: [settled] } = buildConversationProjection(messages, { running: true, assistantId: commentary.id })
+    const completed = await render(settled!)
+    expect(completed.match(/<details class="tool-group"/g)).toHaveLength(1)
+    expect(completed).toContain('读取并探索了 2 项')
+    expect(completed).toContain('运行了 1 条命令')
+    expect(completed).toContain('search result')
+  })
+
+  it('shows an unfinished operation after a turn stops without a tool result', async () => {
+    const source = items().slice(0, 2)
+    source[1]!.message.tools = [
+      { id: 'pending', name: 'exec_command', input: '{"cmd":"pnpm test"}', state: 'running' }
+    ]
+    const turn = projectConversationTurns(source)[0]!
+    const html = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn, expanded: true }) }))
+    expect(html).toContain('1 项未完成')
+    expect(html).not.toContain('正在运行')
+    expect(source[1]!.message.tools[0]!.state).toBe('running')
+  })
+
+  it('summarizes the visible approval request when several calls need approval', async () => {
+    const source = items().slice(0, 2)
+    source[1]!.message.tools = [
+      { id: 'first', name: 'exec_command', input: '{"cmd":"first command"}', state: 'running' },
+      { id: 'second', name: 'exec_command', input: '{"cmd":"second command"}', state: 'running' }
+    ]
+    const turn = projectConversationTurns(source, { running: true, assistantId: 'step-1' })[0]!
+    const html = await renderToString(createSSRApp({ render: () => h(ConversationProcess, {
+      turn, awaitingUser: true, approvalCallIds: new Set(['first', 'second']), activeApprovalCallId: 'first'
+    }) }))
+    expect(html).toContain('等待批准 first command')
+    expect(html).not.toContain('second command')
+    expect(html).not.toContain('process-tail-status')
   })
 
   it('coalesces consecutive tool-only steps and deduplicates repeated sub-agent wait polls when expanded', async () => {
@@ -488,6 +530,23 @@ describe('conversation process presentation', () => {
     const html = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn, assistantId: 'a1' }) }))
     expect(html).toContain('好的，我换一种做法')
     expect(html).toContain('正在准备编辑文件…')
+  })
+
+  it('keeps context compaction and viewed images between the preceding tools and the next reply', async () => {
+    const messages: ChatMessage[] = [
+      { id: 'user', role: 'user', content: '核对原图。', createdAt: 0 },
+      { id: 'earlier', role: 'assistant', content: '先检查项目。', createdAt: 1,
+        tools: [{ id: 'command', state: 'done', name: 'exec_command', input: '{"cmd":"Get-Location"}' }] },
+      { id: 'reply', role: 'assistant', content: '原图与项目一致。', createdAt: 2, state: 'streaming',
+        contextCompacted: true, viewedImages: [{ id: 'one', name: 'one.png' }, { id: 'two', name: 'two.png' }] }
+    ]
+    const { turns: [turn] } = buildConversationProjection(messages, { running: true, assistantId: 'reply' })
+    const html = await renderToString(createSSRApp({ render: () => h(ConversationProcess, { turn: turn! }) }))
+    const timeline = ['先检查项目。', 'Get-Location', '上下文已自动压缩', '已查看 2 张图像', '原图与项目一致。']
+    const positions = timeline.map((text) => html.indexOf(text))
+    expect(positions[0]).toBeGreaterThanOrEqual(0)
+    positions.slice(1).forEach((position, index) => expect(position).toBeGreaterThan(positions[index]!))
+    expect(html.match(/已查看 2 张图像/g)).toHaveLength(1)
   })
 
   it('renders context compaction as neutral system card and coalesces consecutive sub-agent launch steps', async () => {

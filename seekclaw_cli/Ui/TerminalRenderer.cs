@@ -1,436 +1,458 @@
+using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Events;
-using System.Collections.Concurrent;
-using System.Diagnostics;
+using System.Threading.Channels;
 using System.Text;
 
 namespace SeekClaw.Cli.Ui;
 
-/// <summary>
-/// The terminal render loop. Runs on its own thread at ~12 FPS:
-///   Agent (business thread) → EventBus → render queue → this renderer → console.
-/// High-frequency events are coalesced per frame; the live area is updated in place,
-/// finalized output scrolls above it. The runtime never writes to the console itself.
-/// </summary>
+/// <summary>Draws terminal updates after runtime events, input changes, and resize notifications.</summary>
 public sealed class TerminalRenderer : IDisposable
 {
-    private const int FrameMs = 80;
-    private const int ThinkingPreviewMs = 240;
-    private const int ThinkingPreviewRows = 2;
-    private static readonly string[] SpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
     private readonly IEventSubscription _subscription;
-    private readonly ConcurrentQueue<string> _externalLines = new();
+    private readonly Channel<UiChange> _uiChanges = Channel.CreateUnbounded<UiChange>(new() { SingleReader = true });
     private readonly LiveRegion _live;
+    private readonly TerminalHistory _history = new();
     private readonly MarkdownStreamRenderer _streamMarkdown = new();
     private readonly Func<string>? _getModeText;
     private readonly Func<int?>? _getContextWindow;
-    private LineEditorFrame? _inputFrame;
+    private readonly Func<string?>? _getActiveModel;
+    private readonly Func<string?>? _getWorkingDirectory;
     private readonly bool _showTurnDividers;
-    private readonly Thread _thread;
-    private volatile bool _disposed;
+    private readonly Timer _resizeMonitor;
+    private readonly Task _renderTask;
+    private TerminalSize _observedSize;
+    private CliPalette _requestedPalette;
+    private CliPalette _palette;
+    private LineEditorFrame? _inputFrame;
 
-    // Render-thread-only state (mutated exclusively inside the loop).
+    // Only the renderer mutates the turn state.
     private readonly StringBuilder _streamBuffer = new();
-    private readonly StringBuilder _thinkingBuffer = new();
-    private readonly StringBuilder _toolOutputBuffer = new();  // For ToolCallProgressEvent
-    private readonly List<string> _thinkingPreview = [];
     private IReadOnlyList<string> _streamRenderedLines = [];
-    private readonly Dictionary<string, (string Name, string Args, long StartedAt)> _activeTools = [];
-    private readonly Stopwatch _turnClock = new();
+    private readonly Dictionary<string, ActiveTool> _activeTools = [];
+    private readonly List<ToolDisplay.Presentation> _explored = [];
+    private int _streamWidth;
+    private string? _streamDirectory;
     private bool _turnActive;
     private bool _thinkingActive;
     private bool _streamDirty;
     private string _status = "";
     private string _statusDetail = "";
     private string _modelRef = "";
-    private long _sessionInputTokens;
-    private long _sessionOutputTokens;
-    private int _spinnerTick;
-    private long _thinkingStartedAt;
-    private long _nextThinkingPreviewAt;
+    private long _latestContextTokens;
+    private string _modelWithUsage = "";
+
+    private sealed record UiChange(
+        string? Line = null,
+        TaskCompletionSource? Drawn = null,
+        LineEditorFrame? Input = null,
+        bool SetInput = false,
+        bool SubmitInput = false)
+    {
+        public static readonly UiChange Redraw = new();
+    }
+
+    private sealed record ActiveTool(ToolDisplay.Presentation Display)
+    {
+        public StringBuilder Output { get; } = new();
+    }
 
     public TerminalRenderer (
         IEventBus bus,
         TextWriter? output = null,
         bool showTurnDividers = false,
         Func<string>? getModeText = null,
-        Func<int?>? getContextWindow = null)
+        Func<int?>? getContextWindow = null,
+        Func<string?>? getActiveModel = null,
+        Func<string?>? getWorkingDirectory = null,
+        CliPalette? palette = null)
     {
-        VirtualTerminal.Enable();
         _live = new LiveRegion(output ?? Console.Out);
         _showTurnDividers = showTurnDividers;
         _getModeText = getModeText;
         _getContextWindow = getContextWindow;
+        _getActiveModel = getActiveModel;
+        _getWorkingDirectory = getWorkingDirectory;
+        _requestedPalette = _palette = palette ?? CliPalette.Default;
         _subscription = bus.Subscribe();
-        _thread = new Thread(RenderLoop) { IsBackground = true, Name = "seekclaw-render" };
-        _thread.Start();
+        _observedSize = TerminalSize.Read();
+        _renderTask = Task.Run(RenderLoopAsync);
+        // System.Console does not expose a portable resize event. Measure periodically,
+        // but only request a draw when the terminal dimensions actually change.
+        _resizeMonitor = new Timer(CheckForResize, null, 200, 200);
     }
 
-    /// <summary>Thread-safe: queue plain lines into scrollback (user prompt echo, REPL notices).</summary>
-    public void WriteLine (string line = "") => _externalLines.Enqueue(line);
+    public CliPalette Palette => Volatile.Read(ref _requestedPalette);
 
-    /// <summary>Thread-safe: replaces the editable input area rendered below live agent output.</summary>
-    public void SetInputFrame (LineEditorFrame? frame) => Volatile.Write(ref _inputFrame, frame);
-
-    // ---------------------------------------------------------------- render loop
-
-    private void RenderLoop ()
+    /// <summary>Uses the palette for live content and subsequent transcript entries.</summary>
+    public void SetPalette(CliPalette palette)
     {
-        while (!_disposed)
+        ArgumentNullException.ThrowIfNull(palette);
+        if (Interlocked.Exchange(ref _requestedPalette, palette) != palette)
+            _uiChanges.Writer.TryWrite(UiChange.Redraw);
+    }
+
+    /// <summary>Queues an application notice or submitted input for scrollback.</summary>
+    public void WriteLine (string line = "") => _uiChanges.Writer.TryWrite(new UiChange(Line: line));
+
+    /// <summary>Replaces the editable input area below live agent output.</summary>
+    public void SetInputFrame (LineEditorFrame? frame) =>
+        _uiChanges.Writer.TryWrite(new UiChange(Input: frame, SetInput: true));
+
+    /// <summary>Moves the submitted editor line into scrollback in a single terminal update.</summary>
+    public void SubmitInput (string line) => _uiChanges.Writer.TryWrite(new UiChange(Line: line, SetInput: true, SubmitInput: true));
+
+    private void CheckForResize (object? state)
+    {
+        var size = TerminalSize.Read();
+        if (size == _observedSize) return;
+        _observedSize = size;
+        _uiChanges.Writer.TryWrite(UiChange.Redraw);
+    }
+
+    private async Task RenderLoopAsync ()
+    {
+        Task<bool>? nextRuntimeEvent = null;
+        Task<bool>? nextUiChange = null;
+        var runtimeClosed = false;
+        try
         {
-            var scrollback = new List<string>();
+            while (true)
+            {
+                var size = TerminalSize.Read();
+                var drawn = new List<TaskCompletionSource>();
+                while (_uiChanges.Reader.TryRead(out var change))
+                {
+                    UpdatePalette();
+                    if (change.SetInput) _inputFrame = change.Input;
+                    if (change.Line is { } line)
+                    {
+                        if (change.SubmitInput) _history.AddPrompt(line, AssistantWidth(size), _palette);
+                        else _history.Add(line);
+                    }
+                    if (change.Drawn is { } waiter) drawn.Add(waiter);
+                }
+                UpdatePalette();
+                while (_subscription.Reader.TryRead(out var evt))
+                    Apply(evt, size);
 
-            while (_externalLines.TryDequeue(out var line))
-                scrollback.Add(line);
+                var input = _inputFrame;
+                var footer = BuildFooterStatus();
+                if (input is { FooterRow: >= 0 })
+                {
+                    var mode = AgentModeExtensions.Parse(_getModeText?.Invoke() ?? "edit");
+                    input = input.WithFooter(LineEditor.FormatFooter(size.Width, $"{mode} · / for commands", footer));
+                }
+                var live = BuildLiveLines(size, input?.Lines.Count ?? 0, footer);
+                if (input is not null) live.AddRange(input.Lines);
+                var history = _history.TakeDraw(AssistantWidth(size), replay: !_live.CanEraseAfterResize(size), palette: _palette);
+                _live.Update(history.Rows, live, size, input?.CursorRowsBelow ?? 0, input?.CursorColumn ?? 0,
+                    replaceHistory: history.Replay, palette: _palette);
+                foreach (var waiter in drawn) waiter.TrySetResult();
 
-            while (_subscription.Reader.TryRead(out var evt))
-                Apply(evt, scrollback);
-
-            _spinnerTick++;
-            var live = BuildLiveLines();
-            var input = Volatile.Read(ref _inputFrame);
-            if (input is not null)
-                live.AddRange(input.Lines);
-            _live.Update(scrollback, live, input?.CursorRowsBelow ?? 0, input?.CursorColumn ?? 0);
-            Thread.Sleep(FrameMs);
+                // Dispose may close both writers after the drains above. Finish any
+                // runtime events produced in that interval before clearing the screen.
+                if (_uiChanges.Reader.Completion.IsCompleted && _subscription.Reader.Completion.IsCompleted) return;
+                nextUiChange ??= _uiChanges.Reader.WaitToReadAsync().AsTask();
+                if (runtimeClosed)
+                {
+                    await nextUiChange.ConfigureAwait(false);
+                }
+                else
+                {
+                    nextRuntimeEvent ??= _subscription.Reader.WaitToReadAsync().AsTask();
+                    await Task.WhenAny(nextUiChange, nextRuntimeEvent).ConfigureAwait(false);
+                    if (nextRuntimeEvent.IsCompleted)
+                    {
+                        runtimeClosed = !await nextRuntimeEvent.ConfigureAwait(false);
+                        nextRuntimeEvent = null;
+                    }
+                }
+                if (nextUiChange.IsCompleted) nextUiChange = null;
+            }
+        }
+        finally
+        {
+            _live.Clear();
         }
     }
 
-    private void Apply (RuntimeEvent evt, List<string> scrollback)
+    private void UpdatePalette()
+    {
+        var palette = Palette;
+        if (_palette == palette) return;
+        _palette = palette;
+        _streamDirty = true;
+    }
+
+    private void Apply (RuntimeEvent evt, TerminalSize size)
     {
         switch (evt)
         {
             case TurnStartedEvent:
                 _turnActive = true;
-                _turnClock.Restart();
-                _streamBuffer.Clear();
-                _streamMarkdown.Reset();
-                _streamRenderedLines = [];
-                _streamDirty = false;
-                _thinkingBuffer.Clear();
-                _toolOutputBuffer.Clear();
-                _thinkingPreview.Clear();
+                _modelRef = "";
+                ResetStream();
                 _activeTools.Clear();
-                _thinkingStartedAt = 0;
-                _nextThinkingPreviewAt = 0;
+                _explored.Clear();
                 _status = "Thinking";
                 _statusDetail = "";
                 break;
 
             case UserSteerEvent steer:
-                scrollback.Add("");
-                scrollback.Add($"↳ Steering Instruction: {steer.Instruction}".Style(Ansi.Cyan + Ansi.Bold));
-                scrollback.Add("");
+                _history.Add("");
+                _history.Add($"↳ Steering Instruction: {steer.Instruction}".Style(Ansi.Cyan + Ansi.Bold));
+                _history.Add("");
                 break;
 
             case SubAgentStartedEvent subStart:
-                scrollback.Add("");
-                scrollback.Add($"┌─► [SubAgent: {subStart.Role}] ({subStart.SubAgentId})".Style(Ansi.Magenta + Ansi.Bold));
-                scrollback.Add($"│   Task: {subStart.TaskPrompt}".Style(Ansi.Magenta + Ansi.Dim));
+                _history.Add("");
+                _history.Add($"┌─► [SubAgent: {subStart.Role}] ({subStart.SubAgentId})".Style(Ansi.Magenta + Ansi.Bold));
+                _history.Add($"│   Task: {subStart.TaskPrompt}".Style(Ansi.Magenta + Ansi.Dim));
                 break;
 
             case SubAgentProgressEvent subProg:
                 var subDetail = string.IsNullOrWhiteSpace(subProg.Detail) ? "" : $" ({subProg.Detail})";
-                scrollback.Add($"│   [{subProg.Role}] {subProg.Status}{subDetail}".Style(Ansi.Gray));
+                _history.Add($"│   [{subProg.Role}] {subProg.Status}{subDetail}".Style(Ansi.Gray));
                 break;
 
             case SubAgentCompletedEvent subDone:
                 var symbol = subDone.Success ? "✓" : "✗";
                 var color = subDone.Success ? Ansi.Green : Ansi.Red;
-                scrollback.Add($"└─► [SubAgent: {subDone.Role}] {symbol} ({subDone.Elapsed.TotalSeconds:0.1}s): {subDone.Summary}".Style(color + Ansi.Bold));
-                scrollback.Add("");
+                _history.Add($"└─► [SubAgent: {subDone.Role}] {symbol} ({subDone.Elapsed.TotalSeconds:0.1}s): {subDone.Summary}".Style(color + Ansi.Bold));
+                _history.Add("");
                 break;
 
             case StatusEvent status:
-                _status = status.Status;
-                _statusDetail = status.Detail ?? "";
+                _status = Ansi.StripControls(status.Status);
+                _statusDetail = Ansi.StripControls(status.Detail ?? "");
                 break;
 
             case ModelInvocationStartedEvent model:
                 _modelRef = $"{model.ProviderId}/{model.ModelId}";
                 break;
 
-            case ThinkingDeltaEvent thinking:
-                if (!_thinkingActive)
-                    _thinkingStartedAt = Environment.TickCount64;
+            case ThinkingDeltaEvent:
                 _thinkingActive = true;
-                _thinkingBuffer.Append(thinking.Delta);
                 break;
 
             case ThinkingCompletedEvent:
-                if (_thinkingActive && _thinkingBuffer.Length > 0)
-                {
-                    scrollback.Add("");
-                    var elapsed = Math.Max(0, Environment.TickCount64 - _thinkingStartedAt) / 1000.0;
-                    scrollback.Add($"✻ Thought for {Math.Max(0.1, elapsed):0.0}s".Style(Ansi.Cyan + Ansi.Dim));
-                    var thinkingLines = _thinkingBuffer.ToString().Split('\n');
-                    foreach (var line in thinkingLines.Where(l => l.Length > 0))
-                        scrollback.Add(("  " + line).Style(Ansi.Gray + Ansi.Italic));
-                }
                 _thinkingActive = false;
-                _thinkingBuffer.Clear();
-                _thinkingPreview.Clear();
                 break;
 
             case AssistantTextDeltaEvent delta:
+                if (_streamBuffer.Length == 0)
+                {
+                    CommitExploration(size.Width);
+                    _streamDirectory = _getWorkingDirectory?.Invoke();
+                }
                 _streamBuffer.Append(delta.Delta);
                 _streamDirty = true;
                 break;
 
             case AssistantStreamResetEvent:
-                _streamBuffer.Clear();
-                _streamMarkdown.Reset();
-                _streamRenderedLines = [];
-                _streamDirty = false;
-                _thinkingBuffer.Clear();
-                _thinkingPreview.Clear();
-                _thinkingActive = false;
+                ResetStream();
                 break;
 
             case AssistantMessageCompletedEvent message:
-                // Replace the streamed tail with the fully rendered markdown in scrollback.
-                _streamBuffer.Clear();
-                _streamMarkdown.Reset();
-                _streamRenderedLines = [];
-                _streamDirty = false;
-                scrollback.Add("");
-                scrollback.AddRange(MarkdownAnsi.Render(message.Text, SafeWidth() - 2));
+                CommitExploration(size.Width);
+                CompleteAssistant(message.Text, size);
+                ResetStream();
                 break;
 
             case ToolCallStartedEvent tool:
-                _activeTools[tool.CallId] = (tool.ToolName, tool.ArgumentSummary, Environment.TickCount64);
-                _toolOutputBuffer.Clear();
+            {
+                var display = ToolDisplay.Describe(tool);
+                if (!display.IsExploration) CommitExploration(size.Width);
+                _activeTools[tool.CallId] = new ActiveTool(display);
                 break;
+            }
 
             case ToolCallProgressEvent progress:
-                _toolOutputBuffer.Append(progress.Message);
+                if (_activeTools.TryGetValue(progress.CallId, out var activeTool))
+                    activeTool.Output.Append(progress.Message);
                 break;
 
             case ToolCallCompletedEvent done:
             {
-                _activeTools.Remove(done.CallId);
-
-                // If there's accumulated tool output, add it to scrollback as a formatted block
-                if (_toolOutputBuffer.Length > 0)
+                _activeTools.Remove(done.CallId, out var toolResult);
+                var display = toolResult?.Display ?? new ToolDisplay.Presentation("Running", "Ran", done.ToolName);
+                if (done.Success && display.IsExploration)
                 {
-                    scrollback.Add("");
-                    scrollback.Add(("► " + done.ToolName).Style(Ansi.Blue + Ansi.Bold));
-                    var toolLines = _toolOutputBuffer.ToString().Split('\n');
-                    foreach (var line in toolLines.Where(l => l.Length > 0))
-                    {
-                        if (line.Length > 100)
-                            scrollback.Add(("  " + line[..97] + "...").Style(Ansi.Dim));
-                        else
-                            scrollback.Add(("  " + line).Style(Ansi.Dim));
-                    }
-                    _toolOutputBuffer.Clear();
+                    _explored.Add(display);
+                    break;
+                }
+                if (display.IsExploration) CommitExploration(size.Width);
+                var detail = done.Success && toolResult?.Output.Length > 0
+                    ? toolResult.Output.ToString()
+                    : done.ResultSummary;
+                if ((display.Kind == ToolDisplay.ActivityKind.Command || display.IsTerminalInteraction) &&
+                    ToolDisplay.TryReadTerminalResult(done.Output, out var terminalOutput, out var running))
+                {
+                    if (done.Success && display.IsTerminalInteraction && running && string.IsNullOrWhiteSpace(terminalOutput)) break;
+                    if (!string.IsNullOrWhiteSpace(terminalOutput))
+                        detail = done.Success ? terminalOutput : done.ResultSummary + "\n" + terminalOutput;
+                }
+                else if (display.Kind == ToolDisplay.ActivityKind.LegacyCommand && !string.IsNullOrWhiteSpace(done.Output))
+                {
+                    detail = done.Output;
                 }
 
-                var mark = done.Success ? "✓".Style(Ansi.Green) : "✗".Style(Ansi.Red);
-                var duration = done.Duration.TotalSeconds >= 0.1 ? $" ({done.Duration.TotalSeconds:0.0}s)" : "";
-                scrollback.Add($"{mark} {done.ResultSummary.Style(Ansi.Dim)}{duration.Style(Ansi.Gray)}");
-                scrollback.Add("");
+                var activity = new List<string> { ToolDisplay.RenderHeading(display, done.Success, size.Width) };
+                ToolDisplay.AppendDetail(activity, detail, size.Width);
+                _history.AddRange(activity);
                 break;
             }
 
             case FileDiffEvent diff:
-                scrollback.AddRange(RenderDiff(diff.UnifiedDiff));
+                _history.AddRange(RenderDiff(diff.UnifiedDiff));
                 break;
 
             case ProviderRetryEvent retry:
-                scrollback.Add($"↻ retry #{retry.Attempt} on {retry.ModelRef}: {retry.Reason}".Style(Ansi.Yellow));
+                // The retry notice can arrive before the provider's reset event. Drop its
+                // failed draft before inserting the notice above the live rows.
+                ResetStream();
+                _history.Add($"↻ retry #{retry.Attempt} on {retry.ModelRef}: {retry.Reason}".Style(Ansi.Yellow));
                 break;
 
             case ProviderSwitchedEvent switched:
-                scrollback.Add($"⇄ failover {switched.FromRef} → {switched.ToRef} ({switched.Reason})".Style(Ansi.Yellow));
+                _history.Add($"⇄ failover {switched.FromRef} → {switched.ToRef} ({switched.Reason})".Style(Ansi.Yellow));
                 break;
 
             case UsageRecordedEvent usage:
-                _sessionInputTokens += usage.InputTokens;
-                _sessionOutputTokens += usage.OutputTokens;
+                _latestContextTokens = Math.Max(usage.TotalInputTokens, usage.InputTokens) + usage.OutputTokens;
+                _modelWithUsage = $"{usage.ProviderId}/{usage.ModelId}";
                 break;
 
             case VerificationStartedEvent verify:
-                scrollback.Add($"⚙ verify: {verify.Command}".Style(Ansi.Cyan));
+                _history.Add($"⚙ verify: {verify.Command}".Style(Ansi.Cyan));
                 break;
 
             case VerificationCompletedEvent verified:
-                scrollback.Add(verified.Success
+                _history.Add(verified.Success
                     ? "✓ verification passed".Style(Ansi.Green)
                     : $"✗ verification failed (attempt {verified.Attempt}) — repairing".Style(Ansi.Red));
                 break;
 
             case WarningEvent warning:
-                scrollback.Add(("⚠ " + warning.Message).Style(Ansi.Yellow));
+                _history.Add(("⚠ " + warning.Message).Style(Ansi.Yellow));
                 break;
 
             case ErrorEvent error:
-                scrollback.Add(("✗ " + error.Message + (error.Detail is null ? "" : $": {error.Detail}")).Style(Ansi.Red));
+                _history.Add(("✗ " + error.Message + (error.Detail is null ? "" : $": {error.Detail}")).Style(Ansi.Red));
                 break;
 
             case TurnCompletedEvent completed:
+                CommitExploration(size.Width);
                 if (_streamBuffer.Length > 0)
-                {
-                    // Model was cancelled mid-stream: keep what we have.
-                    scrollback.Add("");
-                    scrollback.AddRange(MarkdownAnsi.Render(_streamBuffer.ToString(), SafeWidth() - 2));
-                    _streamBuffer.Clear();
-                }
-                _streamMarkdown.Reset();
-                _streamRenderedLines = [];
-                _streamDirty = false;
+                    CompleteAssistant(_streamBuffer.ToString(), size);
+                ResetStream();
                 if (completed.Cancelled)
-                    scrollback.Add("— cancelled —".Style(Ansi.Yellow));
+                    _history.Add("• Interrupted".Style(Ansi.Yellow));
                 if (_showTurnDividers)
-                    scrollback.Add(TurnDivider());
+                    _history.Add(new string('─', Math.Max(0, size.Width - 1)).Style(Ansi.Gray));
                 _turnActive = false;
                 _activeTools.Clear();
-                _thinkingActive = false;
-                _turnClock.Stop();
                 break;
         }
     }
 
-    private List<string> BuildLiveLines ()
+    private List<string> BuildLiveLines (TerminalSize size, int inputRows, string footer)
     {
-        if (!_turnActive) return [];
-
         var lines = new List<string>();
+        if (!_turnActive) return lines;
 
-        foreach (var (_, (name, args, startedAt)) in _activeTools)
+        var preview = BuildStreamPreview(size);
+        var runningExploration = _activeTools.Values.Where(tool => tool.Display.IsExploration).Select(tool => tool.Display).ToArray();
+        if (runningExploration.Length > 0 || _explored.Count > 0)
+            lines.AddRange(ExplorationRows(runningExploration, size.Width));
+
+        var otherTools = _activeTools.Values.Where(tool => !tool.Display.IsExploration).ToArray();
+        if (otherTools.Length == 1)
         {
-            var elapsed = (Environment.TickCount64 - startedAt) / 1000.0;
-            var suffix = elapsed >= 1 ? $" {elapsed:0.0}s" : "";
-            lines.Add($"{Spinner()} {name.Style(Ansi.Bold)}({args.Style(Ansi.Dim)}){suffix.Style(Ansi.Gray)}");
+            lines.Add(ToolDisplay.RenderHeading(otherTools[0].Display, success: null, size.Width));
+        }
+        else if (otherTools.Length > 1)
+        {
+            lines.Add($"• Running {otherTools.Length} tools".Style(Ansi.Dim));
+        }
+        else if (preview.Count == 0 && runningExploration.Length == 0)
+        {
+            var status = _thinkingActive ? "Thinking" : _status;
+            var detail = !_thinkingActive && _statusDetail.Length > 0 ? $" {_statusDetail}" : "";
+            lines.Add("• ".Style(Ansi.Dim) + (status + detail).Style(Ansi.Bold) + " (Ctrl+C to interrupt)".Style(Ansi.Dim));
         }
 
-        if (_thinkingActive)
-        {
-            var now = Environment.TickCount64;
-            var elapsed = now - _thinkingStartedAt >= 1000 ? $" · {(now - _thinkingStartedAt) / 1000.0:0}s" : "";
-            lines.Add($"{Spinner().Style(Ansi.Cyan)} {"Thinking…".Style(Ansi.Cyan)}{elapsed.Style(Ansi.Gray)}");
-
-            if (_thinkingPreview.Count == 0 || now >= _nextThinkingPreviewAt)
-            {
-                _thinkingPreview.Clear();
-                _thinkingPreview.AddRange(BuildStableTail(
-                    _thinkingBuffer.ToString(), Math.Max(20, SafeWidth() - 5), ThinkingPreviewRows));
-                while (_thinkingPreview.Count < ThinkingPreviewRows)
-                    _thinkingPreview.Add("");
-                _nextThinkingPreviewAt = now + ThinkingPreviewMs;
-            }
-
-            foreach (var line in _thinkingPreview)
-                lines.Add(("  " + line).Style(Ansi.Gray + Ansi.Italic));
-        }
-
-        foreach (var line in BuildStreamPreview())
-            lines.Add(line);
-
-        // Show tool output if any tool is active
-        if (_toolOutputBuffer.Length > 0)
-        {
-            lines.Add("» Tool Output".Style(Ansi.Blue + Ansi.Dim));
-            foreach (var line in BuildStableTail(_toolOutputBuffer.ToString(), Math.Max(20, SafeWidth() - 3), 4))
-                lines.Add(("  " + line).Style(Ansi.Dim));
-        }
-
-        if (!_thinkingActive)
-        {
-            var elapsedText = _turnClock.Elapsed.TotalSeconds >= 1 ? $" · {_turnClock.Elapsed.TotalSeconds:0}s" : "";
-            var detail = _statusDetail.Length > 0 ? $" {_statusDetail}" : "";
-            lines.Add($"{Spinner().Style(Ansi.Cyan)} {_status.Style(Ansi.Cyan)}{detail.Style(Ansi.Dim)}{elapsedText.Style(Ansi.Gray)}"
-                      + " (ctrl+c to cancel)".Style(Ansi.Gray));
-        }
-
-        var tokens = _sessionInputTokens + _sessionOutputTokens;
-        var mode = _getModeText?.Invoke();
-        var contextWindow = _getContextWindow?.Invoke();
-        var contextText = contextWindow is > 0 && tokens > 0
-            ? $" · {(double)tokens / contextWindow.Value:P0} ctx"
-            : "";
-
-        if (_modelRef.Length > 0 || !string.IsNullOrWhiteSpace(mode) || tokens > 0)
-        {
-            var status = new StringBuilder(_modelRef);
-            if (!string.IsNullOrWhiteSpace(mode)) status.Append($" · {mode}");
-            if (tokens > 0) status.Append($" · {tokens:N0} tokens");
-            status.Append(contextText);
-            lines.Add(status.ToString().Style(Ansi.Gray));
-        }
-
+        var rowBeforeFooter = lines.Count;
+        if (inputRows == 0 && footer.Length > 0) lines.Add(footer.Style(Ansi.Dim));
+        var available = Math.Max(0, size.Height - 1 - lines.Count - inputRows);
+        // The leading cell spacer only goes to history together with some content.
+        static int WithSpacer(int count) => count > 0 ? count + 1 : 0;
+        var emitted = _history.ShowDraft(preview, available, WithSpacer(_streamMarkdown.SpillableRows),
+            WithSpacer(_streamMarkdown.StableRows), palette: _palette);
+        lines.InsertRange(rowBeforeFooter, preview.Skip(emitted).Take(available));
         return lines;
     }
 
-    private string Spinner () => SpinnerFrames[_spinnerTick % SpinnerFrames.Length];
+    private void CommitExploration (int width)
+    {
+        if (_explored.Count == 0) return;
+        _history.AddRange(ExplorationRows([], width));
+        _explored.Clear();
+    }
 
-    private IReadOnlyList<string> BuildStreamPreview ()
+    private List<string> ExplorationRows (IReadOnlyList<ToolDisplay.Presentation> running, int width)
+    {
+        var label = running.Count > 0 ? "Exploring" : "Explored";
+        var lines = new List<string> { "• ".Style(Ansi.Dim) + label.Style(Ansi.Bold) };
+        var items = _explored.Concat(running).GroupBy(tool => tool.CompletedLabel);
+        var detail = string.Join('\n', items.Select(group => group.Key + " " + string.Join(", ", group.Select(tool => tool.Target))));
+        ToolDisplay.AppendDetail(lines, detail, width);
+        return lines;
+    }
+
+    private string BuildFooterStatus ()
+    {
+        var model = _turnActive && _modelRef.Length > 0 ? _modelRef : _getActiveModel?.Invoke() ?? _modelRef;
+        var context = model == _modelWithUsage && _latestContextTokens > 0 ? _getContextWindow?.Invoke() : null;
+        var separator = model.IndexOf('/');
+        var name = Ansi.StripControls(separator >= 0 ? model[(separator + 1)..] : model);
+        if (context is not > 0) return name;
+        var remaining = 1 - Math.Clamp((double)_latestContextTokens / context.Value, 0, 1);
+        return $"{name} · {remaining:P0} context left";
+    }
+
+    private void CompleteAssistant (string source, TerminalSize size)
+    {
+        var directory = _streamDirectory ?? _getWorkingDirectory?.Invoke();
+        _history.CompleteAssistant(source, AssistantCell.Render(source, AssistantWidth(size), directory, _palette), directory, _palette);
+    }
+
+    private void ResetStream ()
+    {
+        _history.DiscardDraft();
+        _streamBuffer.Clear();
+        _streamDirectory = null;
+        _streamMarkdown.Reset();
+        _streamRenderedLines = [];
+        _streamDirty = false;
+        _thinkingActive = false;
+    }
+
+    private static int AssistantWidth (TerminalSize size) => Math.Max(1, size.Width - 3);
+
+    private IReadOnlyList<string> BuildStreamPreview (TerminalSize size)
     {
         if (_streamBuffer.Length == 0) return [];
 
-        if (_streamDirty || _streamRenderedLines.Count == 0)
+        var width = AssistantWidth(size);
+        if (_streamDirty || width != _streamWidth)
         {
-            _streamRenderedLines = _streamMarkdown.Render(
-                _streamBuffer.ToString(),
-                Math.Max(20, SafeWidth() - 2),
-                StreamPreviewRows());
+            _streamRenderedLines = AssistantCell.Format(_streamMarkdown.RenderAll(_streamBuffer.ToString(), width, _streamDirectory, _palette));
+            _streamWidth = width;
             _streamDirty = false;
         }
 
         return _streamRenderedLines;
-    }
-
-    private static int StreamPreviewRows ()
-    {
-        try { return Math.Clamp(Console.WindowHeight - 12, 6, 18); }
-        catch (IOException) { return 10; }
-    }
-
-    internal static IReadOnlyList<string> BuildStableTail (string text, int lineWidth, int maxLines)
-    {
-        if (string.IsNullOrWhiteSpace(text) || lineWidth <= 0 || maxLines <= 0) return [];
-
-        // Streams can be very long. Only shape enough recent text to fill the live preview.
-        var sampleLength = Math.Min(text.Length, Math.Max(256, lineWidth * maxLines * 4));
-        var start = text.Length - sampleLength;
-        if (start > 0 && char.IsLowSurrogate(text[start])) start--;
-
-        var lines = new List<string>();
-        var line = new StringBuilder();
-        var width = 0;
-        var pendingSpace = false;
-
-        foreach (var rune in text.AsSpan(start).EnumerateRunes())
-        {
-            if (Rune.IsWhiteSpace(rune))
-            {
-                pendingSpace = line.Length > 0;
-                continue;
-            }
-
-            var glyph = rune.ToString();
-            var glyphWidth = TextWidth.Of(glyph);
-            var spaceWidth = pendingSpace && line.Length > 0 ? 1 : 0;
-            if (line.Length > 0 && width + spaceWidth + glyphWidth > lineWidth)
-            {
-                lines.Add(line.ToString());
-                line.Clear();
-                width = 0;
-                spaceWidth = 0;
-            }
-
-            if (spaceWidth > 0)
-            {
-                line.Append(' ');
-                width++;
-            }
-            line.Append(glyph);
-            width += glyphWidth;
-            pendingSpace = false;
-        }
-
-        if (line.Length > 0) lines.Add(line.ToString());
-        return lines.TakeLast(maxLines).ToList();
     }
 
     private static IEnumerable<string> RenderDiff (string unifiedDiff)
@@ -456,32 +478,19 @@ public sealed class TerminalRenderer : IDisposable
         }
     }
 
-    private static int SafeWidth ()
-    {
-        try { return Math.Max(40, Console.WindowWidth); }
-        catch (IOException) { return 100; }
-    }
-
-    private static string TurnDivider () =>
-        new string('─', Math.Max(20, SafeWidth() - 1)).Style(Ansi.Gray);
-
-    /// <summary>Blocks briefly so queued frames land before the prompt is shown again.</summary>
+    /// <summary>Waits for the renderer to draw all output queued before this call.</summary>
     public void Flush ()
     {
-        var deadline = Environment.TickCount64 + 500;
-        while (Environment.TickCount64 < deadline
-               && (!_externalLines.IsEmpty || _subscription.Reader.TryPeek(out _)))
-            Thread.Sleep(FrameMs);
-        Thread.Sleep(FrameMs * 2);
+        var drawn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_uiChanges.Writer.TryWrite(new UiChange(Drawn: drawn))) return;
+        Task.WhenAny(drawn.Task, _renderTask).GetAwaiter().GetResult().GetAwaiter().GetResult();
     }
 
     public void Dispose ()
     {
-        if (_disposed) return;
-        Flush();
-        _disposed = true;
-        _thread.Join(1000);
-        _live.Clear();
+        _resizeMonitor.Dispose();
         _subscription.Dispose();
+        _uiChanges.Writer.TryComplete();
+        _renderTask.GetAwaiter().GetResult();
     }
 }

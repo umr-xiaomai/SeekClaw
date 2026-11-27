@@ -131,6 +131,8 @@ seekclaw --version
 seekclaw
 ```
 
+When you first enter interactive CLI mode, choose Auto, Light, or Dark. SeekClaw remembers your choice. Use `/theme` to reopen the picker or switch directly with `/theme auto`, `/theme light`, or `/theme dark`. Auto adjusts colors to your terminal background.
+
 You can also run one-shot tasks or resume sessions:
 
 ```powershell

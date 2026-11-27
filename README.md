@@ -140,6 +140,8 @@ seekclaw --version
 seekclaw
 ```
 
+首次进入 CLI 交互模式时可以选择自动、浅色或深色主题。选择会保存，之后可输入 `/theme` 重新选择，也可以直接用 `/theme auto`、`/theme light` 或 `/theme dark`。自动模式按终端背景选配色。
+
 也可以执行单次任务或恢复会话：
 
 ```powershell

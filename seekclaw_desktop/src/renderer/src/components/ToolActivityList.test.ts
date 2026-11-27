@@ -65,6 +65,15 @@ describe('conversation activities', () => {
     expect(html).not.toContain('run-dot')
   })
 
+  it('labels an unfinished call without leaving an approval or running indicator', async () => {
+    const tool: ToolActivity = { id: 'shell', name: 'exec_command', detail: 'pnpm test', state: 'interrupted' }
+    const html = await renderToString(createSSRApp({ render: () => h(ToolCallRow, { tool, awaitingApproval: true }) }))
+    expect(html).toContain('is-interrupted')
+    expect(html).toContain('未完成')
+    expect(html).not.toContain('等待批准')
+    expect(html).not.toContain('run-dot')
+  })
+
   it('shows named plan steps and their status when the plan update is expanded', async () => {
     const tool: ToolActivity = {
       id: 'plan', name: 'update_plan', state: 'done',

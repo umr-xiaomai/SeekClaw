@@ -127,6 +127,7 @@ public sealed partial class Agent(
         var error = (string?)null;
         var cancelled = false;
         var reachedMaxSteps = false;
+        var commandLoop = new CommandLoopGuard();
         var step = 0;
         Task? maintenance = null;
         string? firstTurnModelRef = null;
@@ -163,6 +164,7 @@ public sealed partial class Agent(
             var maxSteps = agentConfig.MaxSteps + Math.Clamp(agentConfig.MaxRepairAttempts, 0, 128);
             var maxTotalSteps = Math.Max(maxSteps, agentConfig.MaxTotalSteps);
             var lastCompactedCount = 0;
+            var pendingContextCompaction = false;
             var isContinuation = false;
             var truncatedSteps = 0;
             var preambleNudges = 0;
@@ -178,7 +180,9 @@ public sealed partial class Agent(
                 ct.ThrowIfCancellationRequested();
                 goal?.Refresh();
                 if (goal?.IsPaused == true) break;
-                PublishSteering(AppendSteering(session, steering, turnInstructions, goal));
+                var nextGuidance = AppendSteering(session, steering, turnInstructions, goal);
+                PublishSteering(nextGuidance);
+                if (nextGuidance.Count > 0) commandLoop.Reset();
                 // Let a completion request get its tool-free final response at the step limit.
                 var finalizingGoal = goal?.HasCompletionRequest == true;
                 step++;
@@ -241,8 +245,10 @@ public sealed partial class Agent(
                     && session.Messages.Count != lastCompactedCount
                     && source.Sum(ContextPlanner.EstimateTokens) > ContextPlanner.WindowBudget(model.Model, systemPrompt))
                 {
+                    var previouslyCovered = session.ContextCheckpoint?.CoveredMessageCount ?? 0;
                     source = await CompactContextAsync(session, workspace, model, systemPrompt, source,
                         turnInstructions, step, ct).ConfigureAwait(false);
+                    pendingContextCompaction |= session.ContextCheckpoint?.CoveredMessageCount > previouslyCovered;
                     lastCompactedCount = session.Messages.Count;
                 }
                 var history = ContextPlanner.FitToWindow(source, model.Model, systemPrompt, turnInstructions);
@@ -282,11 +288,13 @@ public sealed partial class Agent(
                     FinishReason = completion.FinishReason,
                     ErrorMessage = completion.ErrorMessage,
                     ToolCalls = completion.ToolCalls.Count > 0 ? completion.ToolCalls : null,
+                    ContextCompacted = pendingContextCompaction,
                     ViewedImages = step == 1
                         ? userMessage.Images?.Select(image => new ChatImageReference(image.Id, image.Name)).ToList()
                         : null,
                 };
                 sessionStore.Append(session, assistant);
+                pendingContextCompaction = false;
                 if (completion.ErrorMessage is null && completion.FinishReason is not ("cancelled" or "incomplete"))
                     firstTurnModelRef = invokedModel.Ref;
                 if (completion.ErrorMessage is { } completionError)
@@ -353,6 +361,7 @@ public sealed partial class Agent(
                             {
                                 turnInstructions.Add(assistant);
                                 turnInstructions.Add(answer.Message);
+                                commandLoop.Reset();
                             }
                         }
                         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -361,7 +370,9 @@ public sealed partial class Agent(
                                 "The question was cancelled before the user answered.", false));
                             throw;
                         }
-                        PublishSteering(AppendSteering(session, steering, turnInstructions, goal));
+                        var questionGuidance = AppendSteering(session, steering, turnInstructions, goal);
+                        PublishSteering(questionGuidance);
+                        if (questionGuidance.Count > 0) commandLoop.Reset();
                         ResetRepeatToolTracking(ref lastRepeatToolName, ref lastRepeatToolArgs, ref consecutiveRepeatToolCount);
                         truncatedSteps = 0;
                         isContinuation = false;
@@ -372,6 +383,13 @@ public sealed partial class Agent(
                     foreach (var call in completion.ToolCalls)
                     {
                         ct.ThrowIfCancellationRequested();
+                        if (commandLoop.StopReason is not null)
+                        {
+                            // Supply a result for every requested ID, including calls
+                            // skipped when an earlier call in this batch stopped the turn.
+                            SkipToolCall(session, call, "Tool not executed because this turn stopped after repeated command attempts without progress.");
+                            continue;
+                        }
                         var resolved = toolRegistry.Resolve(call.Name);
                         if (resolved is not null
                             && !resolved.Mutating
@@ -400,14 +418,26 @@ public sealed partial class Agent(
                                 readOnlyBatch.Clear();
                             }
 
+                            var preparedCall = commandLoop.Prepare(call, out var rejection);
+                            if (rejection is not null)
+                            {
+                                SkipToolCall(session, call, rejection);
+                                continue;
+                            }
                             PublishWorkflow(step, "tool", call.Name);
+                            var started = Stopwatch.GetTimestamp();
                             var singleResult = await ExecuteToolAsync(
-                                call, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct, goal, tools).ConfigureAwait(false);
+                                preparedCall, workspace, sessionWorkspace, model, session.Header.Id, effectiveNetworkEnabled, turnRequestId, askUser, ct, goal, tools).ConfigureAwait(false);
+                            var elapsed = Stopwatch.GetElapsedTime(started);
                             mutated |= singleResult.ToolMutated;
                             var singleMessage = AppendRepeatToolReminderIfNeeded(
                                 call, singleResult.Message, model,
                                 ref lastRepeatToolName, ref lastRepeatToolArgs, ref consecutiveRepeatToolCount);
                             sessionStore.Append(session, singleMessage);
+                            commandLoop.Observe(preparedCall, singleResult.Message, elapsed);
+                            if (singleResult.ToolMutated && singleResult.Message.ToolFilePath is not null
+                                && !string.IsNullOrEmpty(singleResult.Message.ToolDiff))
+                                commandLoop.RecordWorkspaceChange();
                         }
                     }
 
@@ -432,7 +462,18 @@ public sealed partial class Agent(
                     var toolSteering = AppendSteering(session, steering, turnInstructions, goal);
                     PublishSteering(toolSteering);
                     if (toolSteering.Count > 0)
+                    {
+                        commandLoop.Reset();
                         ResetRepeatToolTracking(ref lastRepeatToolName, ref lastRepeatToolArgs, ref consecutiveRepeatToolCount);
+                    }
+                    else if (commandLoop.StopReason is { } stopReason)
+                    {
+                        goal?.Pause(stopReason);
+                        finalText = error = stopReason;
+                        sessionStore.Append(session, ChatMessage.Assistant(stopReason));
+                        events.Publish(new AssistantMessageCompletedEvent(stopReason));
+                        break;
+                    }
                     truncatedSteps = 0;
                     isContinuation = false;
                     continue;
@@ -443,6 +484,7 @@ public sealed partial class Agent(
                 if (guidance.Count > 0)
                 {
                     PublishSteering(guidance);
+                    commandLoop.Reset();
                     truncatedSteps = 0;
                     isContinuation = false;
                     continue;
@@ -536,6 +578,7 @@ public sealed partial class Agent(
                 if (lateGuidance.Count > 0)
                 {
                     PublishSteering(lateGuidance);
+                    commandLoop.Reset();
                     continue;
                 }
                 goal?.Refresh();
@@ -587,6 +630,7 @@ public sealed partial class Agent(
                             ModelRef = wrapUpModel.Ref,
                             FinishReason = finalCompletion.FinishReason,
                             ErrorMessage = finalCompletion.ErrorMessage,
+                            ContextCompacted = pendingContextCompaction,
                         };
                         sessionStore.Append(session, assistantSummary);
                         ct.ThrowIfCancellationRequested();
@@ -667,6 +711,13 @@ public sealed partial class Agent(
         steering?.Complete();
         events.Publish(new TurnCompletedEvent(session.Header.Id, cancelled, error));
         return new AgentTurnResult(finalText, cancelled, error, maintenance);
+    }
+
+    private void SkipToolCall(AgentSession session, ToolCallRequest call, string reason)
+    {
+        events.Publish(new ToolCallStartedEvent(call.Id, call.Name, ""));
+        events.Publish(new ToolCallCompletedEvent(call.Id, call.Name, false, reason, TimeSpan.Zero));
+        sessionStore.Append(session, ChatMessage.ToolResult(call.Id, call.Name, reason, false));
     }
 
     private void PublishWorkflow(int step, string kind, string label, string? detail = null) =>

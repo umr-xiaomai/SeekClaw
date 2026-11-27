@@ -2587,7 +2587,7 @@ watch(theme, applyTheme)
                 <ConversationProcess :turn="turn" :image-sources="activeImageSources"
                   :session-id="activeThread.sessionId" :workspace="activeProject?.path"
                   :phase="activeThread.phase" :awaiting-user="Boolean(activeQuestion || activePendingApproval)"
-                  :approval-call-ids="approvalCallIds"
+                  :approval-call-ids="approvalCallIds" :active-approval-call-id="activePendingApproval?.callId"
                   :assistant-id="activeThread.assistantId" :query="conversationQuery"
                   :expanded="expandedProcesses.get(turnViewKey(turn.id)) ?? false"
                   :activity-disclosures="turnActivityDisclosures.get(turnViewKey(turn.id)) ?? emptyActivityDisclosures"

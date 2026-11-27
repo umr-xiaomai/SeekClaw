@@ -27,7 +27,7 @@ export interface ToolActivity {
   diff?: string
   addedLines?: number
   removedLines?: number
-  state: 'running' | 'done' | 'error'
+  state: 'running' | 'done' | 'error' | 'interrupted'
   content?: Array<Record<string, unknown>>
   structuredContent?: unknown
   metadata?: Record<string, unknown>
@@ -104,6 +104,8 @@ export interface ChatMessage {
   /** "provider/model" that produced this assistant message. */
   modelRef?: string
   viewedImages?: ImageReference[]
+  /** A context checkpoint was saved before this assistant message. */
+  contextCompacted?: boolean
   state?: 'thinking' | 'streaming' | 'done' | 'error'
   /** Transient runtime flag while thinking deltas are actively arriving on this step. */
   thinkingActive?: boolean

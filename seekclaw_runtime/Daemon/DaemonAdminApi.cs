@@ -1111,7 +1111,7 @@ internal sealed partial class DaemonAdminApi(
                     ["input"] = call.ArgumentsJson,
                 });
             }
-            messages.Add((JsonNode)new JsonObject
+            var payload = new JsonObject
             {
                 ["role"] = message.Role.ToString().ToLowerInvariant(),
                 ["text"] = message.Text,
@@ -1133,7 +1133,9 @@ internal sealed partial class DaemonAdminApi(
                 ["toolMetadata"] = message.ToolMetadata?.DeepClone(),
                 ["toolWidgets"] = message.ToolWidgets is null ? null : JsonSerializer.SerializeToNode(message.ToolWidgets,
                     SeekClawJsonContext.Compact.IReadOnlyListConversationWidget),
-            });
+            };
+            if (message.ContextCompacted) payload["contextCompacted"] = true;
+            messages.Add((JsonNode)payload);
         }
         return new JsonObject
         {

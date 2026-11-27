@@ -20,7 +20,7 @@ public sealed class CommandSessionTool(IPromptProvider prompts, CommandSessionMa
         ("text", ToolSchema.String("Exact stdin text, including any required newline"), false),
         ("eof", ToolSchema.Boolean("Close stdin after writing"), false),
         ("cursor", ToolSchema.Integer("Output cursor returned by the previous read"), false),
-        ("wait_ms", ToolSchema.Integer("Wait up to 60000 ms for completion"), false),
+        ("wait_ms", ToolSchema.Integer("Wait up to 60000 ms for new output or exit when reading or writing"), false),
         ("timeout_seconds", ToolSchema.Integer("Maximum lifetime, default 1800 seconds"), false));
 
     public override async Task<ToolResult> ExecuteAsync(JsonObject args, ToolContext context, CancellationToken ct)
@@ -28,6 +28,9 @@ public sealed class CommandSessionTool(IPromptProvider prompts, CommandSessionMa
         var owner = context.SessionId;
         var id = GetString(args, "session_id") ?? "";
         var action = GetString(args, "action");
+        if (!TryReadCursor(args, out var cursor)) return ToolResult.Fail("cursor must be an integer.");
+        var wait = GetInt(args, "wait_ms") ?? 0;
+        var budget = context.MaxOutputChars;
         JsonNode result;
         try
         {
@@ -35,38 +38,53 @@ public sealed class CommandSessionTool(IPromptProvider prompts, CommandSessionMa
             {
                 "start" => await sessions.StartAsync(owner, GetString(args, "command") ?? "",
                     context.ResolvePath(GetString(args, "cwd") ?? "."), GetInt(args, "timeout_seconds") ?? 1800,
-                    GetBool(args, "pty"), ct).ConfigureAwait(false),
-                "read" => await sessions.ReadAsync(owner, id, args["cursor"]?.GetValue<long>(), GetInt(args, "wait_ms") ?? 0, ct).ConfigureAwait(false),
-                "write" => await sessions.WriteAsync(owner, id, GetString(args, "text") ?? "", GetBool(args, "eof"), ct).ConfigureAwait(false),
-                "terminate" or "close" => await sessions.StopAsync(owner, id, action == "close", ct).ConfigureAwait(false),
-                "list" => sessions.List(owner),
+                    GetBool(args, "pty"), ct, budget).ConfigureAwait(false),
+                "read" => await sessions.ReadAsync(owner, id, cursor, wait, ct, budget).ConfigureAwait(false),
+                "write" => await sessions.WriteAsync(owner, id, GetString(args, "text") ?? "", GetBool(args, "eof"),
+                    ct, cursor, wait, budget).ConfigureAwait(false),
+                "terminate" or "close" => await sessions.StopAsync(owner, id, action == "close", ct, budget).ConfigureAwait(false),
+                "list" => sessions.List(owner, budget),
                 _ => throw new ArgumentException("Unknown command session action."),
             };
         }
-        catch (FileNotFoundException ex) when (action == "start" && VendoredPowerShell.IsRequired)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException
+            or KeyNotFoundException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
             return ToolResult.Fail(ex.Message);
         }
-        return FormatResult(result, context.MaxOutputChars, mutated: action is "start" or "write");
+        return FormatResult(result, mutated: action is "start" or "write",
+            stopping: action is "terminate" or "close");
     }
 
-    internal static ToolResult FormatResult(JsonNode result, int maxOutputChars, bool mutated)
+    internal static bool TryReadCursor(JsonObject args, out long? cursor)
     {
-        // Shorten output inside the envelope so JSON and the continuation cursor
-        // remain valid even for small model context budgets or escape-heavy output.
-        if (result is JsonObject item && item["output"]?.GetValue<string>() is { } output)
+        cursor = null;
+        if (args["cursor"] is not { } value) return true;
+        if (value is not JsonValue number) return false;
+        if (number.TryGetValue<long>(out var position)) cursor = position;
+        else if (number.TryGetValue<int>(out var integer)) cursor = integer;
+        return cursor.HasValue;
+    }
+
+    internal static ToolResult FormatResult(JsonNode result, bool mutated, bool stopping = false)
+    {
+        if (result is JsonArray sessions)
+            return ToolResult.Ok(sessions.ToJsonString(), $"Command sessions: {sessions.Count}", mutated: mutated);
+
+        var status = result["status"]?.GetValue<string>();
+        var exitCode = result["exitCode"]?.GetValue<int>();
+        var (success, summary) = status switch
         {
-            var from = item["cursor"]!.GetValue<long>() - output.Length;
-            while (output.Length > 0 && item.ToJsonString().Length > maxOutputChars)
-            {
-                var length = output.Length / 2;
-                if (length > 0 && char.IsHighSurrogate(output[length - 1])) length--;
-                output = output[..length];
-                item["output"] = output;
-                item["cursor"] = from + output.Length;
-                item["hasMore"] = true;
-            }
-        }
-        return ToolResult.Ok(result.ToJsonString(), mutated: mutated);
+            "running" when string.IsNullOrWhiteSpace(result["output"]?.GetValue<string>())
+                => (true, "Command still running (no new output)"),
+            "running" => (true, "Command still running"),
+            "exited" when exitCode is int code => (code == 0, $"Command exited with code {code}"),
+            "cancelled" when stopping => (true, "Command stopped"),
+            "cancelled" => (false, "Command was cancelled"),
+            "timed_out" => (false, "Command timed out"),
+            "error" => (false, "Command session failed"),
+            _ => (false, "Command state could not be determined"),
+        };
+        return new ToolResult { Success = success, Output = result.ToJsonString(), Summary = summary, Mutated = mutated };
     }
 }

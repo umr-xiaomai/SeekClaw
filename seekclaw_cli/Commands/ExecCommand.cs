@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json.Nodes;
 using Json.Schema;
+using SeekClaw.Cli.Ui;
 using SeekClaw.Runtime;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Events;
@@ -64,7 +65,7 @@ public static class ExecCommand
             var prompt = options.Prompt == "-" ? "" : options.Prompt;
             if (input is not null)
             {
-                var context = await ReadInputAsync(input, ct).ConfigureAwait(false);
+                var context = await CliIo.ReadPipedInputAsync(input, ct).ConfigureAwait(false);
                 prompt = string.IsNullOrWhiteSpace(prompt) ? context : prompt + "\n\n<piped_context>\n" + context + "\n</piped_context>";
             }
             if (string.IsNullOrWhiteSpace(prompt)) throw new ArgumentException("A prompt or piped input is required.");
@@ -113,7 +114,9 @@ public static class ExecCommand
             if (options.Json) await WriteJsonAsync(output, new JsonObject
             { ["type"] = "thread.started", ["sessionId"] = session.Header.Id,
                 ["workspace"] = runtime.Worktrees.Resolve(workspace, session.Header.Id).Root }).ConfigureAwait(false);
-            var pump = PumpEventsAsync(subscription, output, error, options.Json);
+            var pump = options.Json
+                ? WriteEventsAsync(subscription, output)
+                : CliIo.WriteProgressAsync(subscription, error);
             var approvalDenied = 0;
             runtime.Approvals.SetHandler((_, _) =>
             {
@@ -148,8 +151,12 @@ public static class ExecCommand
             if (options.Json) await WriteJsonAsync(output, new JsonObject
             { ["type"] = code == 0 ? "turn.completed" : "turn.failed", ["sessionId"] = session.Header.Id,
                 ["output"] = final, ["exitCode"] = code, ["error"] = executionError }).ConfigureAwait(false);
-            else if (code == 0) await output.WriteLineAsync(final).ConfigureAwait(false);
-            else await error.WriteLineAsync(executionError ?? (result.Cancelled ? "Task cancelled or timed out." : "Output validation failed.")).ConfigureAwait(false);
+            else if (code == 0) await output.WriteLineAsync(Ansi.StripControls(final)).ConfigureAwait(false);
+            else
+            {
+                var failure = executionError ?? (result.Cancelled ? "Task cancelled or timed out." : "Output validation failed.");
+                await error.WriteLineAsync(Ansi.StripControls(failure)).ConfigureAwait(false);
+            }
             return code;
         }
         catch (OperationCanceledException)
@@ -164,22 +171,9 @@ public static class ExecCommand
             var code = ex is ArgumentException ? 2 : 1;
             if (options.Json) await WriteJsonAsync(output, new JsonObject
             { ["type"] = "turn.failed", ["sessionId"] = sessionId, ["exitCode"] = code, ["error"] = ex.Message }).ConfigureAwait(false);
-            await error.WriteLineAsync(ex.Message).ConfigureAwait(false);
+            await error.WriteLineAsync(Ansi.StripControls(ex.Message)).ConfigureAwait(false);
             return code;
         }
-    }
-
-    private static async Task<string> ReadInputAsync(TextReader input, CancellationToken ct)
-    {
-        var result = new System.Text.StringBuilder();
-        var buffer = new char[8192];
-        int count;
-        while ((count = await input.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
-        {
-            if (result.Length + count > 4 * 1024 * 1024) throw new ArgumentException("Piped input exceeds 4 MiB of text.");
-            result.Append(buffer, 0, count);
-        }
-        return result.ToString();
     }
 
     private static async Task WriteOutputAsync(string path, string text, CancellationToken ct)
@@ -190,15 +184,12 @@ public static class ExecCommand
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
-    private static async Task PumpEventsAsync(IEventSubscription subscription, TextWriter output, TextWriter error, bool json)
+    private static async Task WriteEventsAsync(IEventSubscription subscription, TextWriter output)
     {
         await foreach (var evt in subscription.Reader.ReadAllAsync().ConfigureAwait(false))
         {
-            var item = ProjectEvent(evt);
-            if (json) { if (item is not null) await WriteJsonAsync(output, item).ConfigureAwait(false); }
-            else if (evt is ToolCallStartedEvent tool) await error.WriteLineAsync($"> {tool.ToolName}: {tool.ArgumentSummary}").ConfigureAwait(false);
-            else if (evt is StatusEvent status) await error.WriteLineAsync(status.Status).ConfigureAwait(false);
-            else if (evt is WarningEvent warning) await error.WriteLineAsync(warning.Message).ConfigureAwait(false);
+            if (ProjectEvent(evt) is { } item)
+                await WriteJsonAsync(output, item).ConfigureAwait(false);
         }
     }
 

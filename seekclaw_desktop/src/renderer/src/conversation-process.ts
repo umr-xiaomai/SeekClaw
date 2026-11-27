@@ -28,7 +28,7 @@ function hasResponse(item: ConversationProcessItem, running: boolean): boolean {
   const message = item.message
   // Errors and result cards must stay reachable outside the collapsed history.
   if (message.errorMessage?.trim() || item.widgets.length > 0) return true
-  if (!message.content.trim() && !message.images?.length && !message.files?.length && !message.viewedImages?.length) return false
+  if (!message.content.trim() && !message.images?.length && !message.files?.length) return false
   // A tool-bearing step remains in the progress stream even after its last call
   // settles. The next model invocation will create its own message for the answer.
   return !running || !message.tools?.length && !message.preparingTool

@@ -1,6 +1,7 @@
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Presentation;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace SeekClaw.Runtime.Sessions;
 
@@ -56,6 +57,8 @@ public sealed class SessionMessage
     public string? FinishReason { get; set; }
     public string? ErrorMessage { get; set; }
     public List<SessionImageReference>? ViewedImages { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ContextCompacted { get; set; }
     public List<SessionToolCall>? ToolCalls { get; set; }
     /// <summary>Set when Role == "tool".</summary>
     public string? ToolCallId { get; set; }

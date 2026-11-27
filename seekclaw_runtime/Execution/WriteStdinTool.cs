@@ -24,21 +24,14 @@ internal sealed class WriteStdinTool(IPromptProvider prompts, CommandSessionMana
         var id = GetString(args, "session_id");
         if (string.IsNullOrWhiteSpace(id)) return ToolResult.Fail("session_id is required.");
         var chars = GetString(args, "chars") ?? "";
-        long? cursor = null;
-        if (args["cursor"] is { } cursorArgument)
-        {
-            if (cursorArgument is not JsonValue number
-                || !long.TryParse(number.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture, out var position))
-                return ToolResult.Fail("cursor must be an integer.");
-            cursor = position;
-        }
+        if (!CommandSessionTool.TryReadCursor(args, out var cursor)) return ToolResult.Fail("cursor must be an integer.");
         var wait = GetInt(args, "yield_time_ms") ?? 250;
         try
         {
             var result = chars.Length == 0
-                ? await sessions.ReadAsync(context.SessionId, id, cursor, wait, ct).ConfigureAwait(false)
-                : await sessions.WriteAsync(context.SessionId, id, chars, closeInput: false, ct, cursor, wait).ConfigureAwait(false);
-            return CommandSessionTool.FormatResult(result, context.MaxOutputChars, mutated: chars.Length > 0);
+                ? await sessions.ReadAsync(context.SessionId, id, cursor, wait, ct, context.MaxOutputChars).ConfigureAwait(false)
+                : await sessions.WriteAsync(context.SessionId, id, chars, closeInput: false, ct, cursor, wait, context.MaxOutputChars).ConfigureAwait(false);
+            return CommandSessionTool.FormatResult(result, mutated: chars.Length > 0);
         }
         catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or IOException or ArgumentOutOfRangeException)
         {

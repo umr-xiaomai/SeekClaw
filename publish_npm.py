@@ -374,6 +374,7 @@ def stage_platform_package(rid: str, version: str) -> Path:
     shutil.copytree(prompts_source, package_dir / "prompts", dirs_exist_ok=True)
 
     copy_license_and_readme(package_dir)
+    shutil.copy2(REPO_ROOT / "seekclaw_cli" / "ThirdPartyNotices.txt", package_dir / "ThirdPartyNotices.txt")
     write_json(
         package_dir / "package.json",
         {
@@ -387,6 +388,7 @@ def stage_platform_package(rid: str, version: str) -> Path:
                 "bin/**/*",
                 "prompts/**/*",
                 "LICENSE",
+                "ThirdPartyNotices.txt",
                 "README.md",
             ],
             "keywords": ["seekclaw", "cli", "ai", "coding-agent", "dotnet"],
@@ -461,6 +463,59 @@ def pack_packages(npm: str, package_dirs: Sequence[Path], env: dict[str, str], v
     return outputs
 
 
+def _is_npm_auth_error(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "code e401",
+            "401 unauthorized",
+            "code eneedauth",
+            "eneedauth",
+            "requires you to be logged in",
+            "need auth",
+        )
+    )
+
+
+def ensure_npm_auth(
+    npm: str,
+    env: dict[str, str],
+    registry: str | None,
+    interactive_auth: bool,
+) -> str:
+    whoami_args = ["whoami"]
+    login_args = ["login"]
+    if registry:
+        whoami_args += ["--registry", registry]
+        login_args += ["--registry", registry]
+
+    try:
+        with console.status("[bold blue]正在校验 npm 登录状态...[/bold blue]", spinner="dots"):
+            identity = capture(npm, whoami_args, NPM_ROOT, env)
+    except BuildError as error:
+        if not _is_npm_auth_error(str(error)):
+            raise
+
+        if not interactive_auth:
+            login_hint = f"npm login --registry {registry}" if registry else "npm login"
+            raise BuildError(
+                "npm 登录凭证缺失或已过期 (401 Unauthorized)。\n"
+                f"请先运行 `{login_hint}` 重新登录，或添加 `--interactive-auth` 参数自动触发交互式登录。\n"
+                f"{error}"
+            ) from error
+
+        console.print(
+            "[bold yellow]![/bold yellow] npm 登录凭证缺失或已过期，正在启动 [cyan]npm login[/cyan] 进行交互式登录..."
+        )
+        run_foreground(npm, login_args, NPM_ROOT, env)
+        with console.status("[bold blue]正在重新校验 npm 登录状态...[/bold blue]", spinner="dots"):
+            identity = capture(npm, whoami_args, NPM_ROOT, env)
+
+    console.print(f"[bold green]✓[/bold green] npm 登录身份: [cyan]{identity}[/cyan]")
+    return identity
+
+
 def publish_packages(
     npm: str,
     package_dirs: Sequence[Path],
@@ -470,9 +525,6 @@ def publish_packages(
     interactive_auth: bool,
     verbose: bool,
 ) -> None:
-    identity = capture(npm, ["whoami"], NPM_ROOT, env)
-    console.print(f"[bold green]✓[/bold green] npm 登录身份: [cyan]{identity}[/cyan]")
-
     for package_dir in package_dirs:
         arguments = ["publish", str(package_dir)]
         if registry:
@@ -515,7 +567,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--interactive-auth",
         action="store_true",
-        help="Run npm publish with an attached terminal so npm can complete web/OTP authentication.",
+        help="Run npm login (if needed) and npm publish with an attached terminal so npm can complete web/OTP authentication.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Show full stdout from subcommands.")
     return parser.parse_args()
@@ -554,6 +606,8 @@ def main() -> int:
 
     NPM_ROOT.mkdir(parents=True, exist_ok=True)
     STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    if args.publish:
+        ensure_npm_auth(npm, env, args.registry, args.interactive_auth)
     if not args.skip_build:
         reset_directory(BUILD_ROOT)
     reset_directory(PACKAGES_ROOT)

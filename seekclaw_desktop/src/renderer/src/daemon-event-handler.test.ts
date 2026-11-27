@@ -285,6 +285,50 @@ describe('createDaemonEventHandler', () => {
     expect(assistant?.content).not.toContain('```text')
   })
 
+  it.each([1, 2])('places completed compaction before model step %i', (step) => {
+    const thread: ThreadItem = {
+      id: 'thread', title: 'Compaction', sessionId: 'session', requestId: 10, assistantId: 'current',
+      running: true, updatedAt: 0,
+      messages: [
+        { id: 'user', role: 'user', content: 'Check the diagram.', createdAt: 0 },
+        { id: 'current', role: 'assistant', content: '', state: 'thinking', createdAt: 0 }
+      ]
+    }
+    const handler = createDaemonEventHandler({
+      threads: ref([thread]), activeThreadId: ref(thread.id), projects: ref([]),
+      handleScheduleUpdated: vi.fn(), scrollToBottom: vi.fn().mockResolvedValue(undefined),
+      reloadThreadSession: vi.fn(), rememberFinishedRequest: vi.fn(), isFinishedRequest: () => false,
+      scheduleQueuedDrain: vi.fn(), reloadBackgroundThreadIfIdle: vi.fn()
+    })
+    function emit(event: DaemonMessage['event'], data: string, details?: DaemonMessage['details']): void {
+      handler({ id: 10, event, data, details, requestMethod: 'chat', sessionId: 'session' })
+    }
+    if (step > 1) {
+      emit('tool_start', 'read_file', { callId: 'read' })
+      emit('tool_done', 'read_file', { callId: 'read', success: true })
+    }
+    emit('status', 'Compacting context')
+    expect(thread.messages).toHaveLength(2)
+    expect(thread.messages[1]?.contextCompacted).toBeUndefined()
+
+    emit('status', 'Context compacted')
+    const assistantId = thread.assistantId
+    if (step === 1) emit('image_view', 'diagram.png', { imageId: 'diagram' })
+    emit('status', 'Thinking')
+    emit('model_start', 'openai/model', { step })
+    emit('delta', 'The diagram matches.')
+
+    expect(thread.messages).toHaveLength(step + 1)
+    expect(thread.assistantId).toBe(assistantId)
+    expect(thread.messages.at(-1)).toMatchObject({ contextCompacted: true, content: 'The diagram matches.' })
+    if (step > 1) {
+      expect(thread.messages[1]).toMatchObject({ state: 'done', tools: [{ id: 'read', state: 'done' }] })
+      expect(thread.messages[1]?.contextCompacted).toBeUndefined()
+    } else {
+      expect(thread.messages[1]?.viewedImages).toEqual([{ id: 'diagram', name: 'diagram.png' }])
+    }
+  })
+
   it('tracks preparing tool call details and thinking_done transitions cleanly', () => {
     const thread: ThreadItem = {
       id: 'thread-prep',

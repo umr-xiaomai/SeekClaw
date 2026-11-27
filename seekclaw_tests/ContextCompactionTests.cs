@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using SeekClaw.Runtime;
 using SeekClaw.Runtime.Agents;
 using SeekClaw.Runtime.Configuration;
+using SeekClaw.Runtime.Coordination;
+using SeekClaw.Runtime.Daemon;
 using SeekClaw.Runtime.Data;
 using SeekClaw.Runtime.Goals;
 using SeekClaw.Runtime.Sessions;
@@ -175,7 +177,16 @@ public sealed class ContextCompactionTests
             var disk = new SessionStore(Path.Combine(dir, "state.db"));
             var reloaded = disk.Load(globalWorkspace, session.Header.Id)!;
             Assert.Equal(session.Messages.Select(m => m.Text), reloaded.Messages.Select(m => m.Text));
+            Assert.Same(reloaded.Messages[^1], Assert.Single(reloaded.Messages, message => message.ContextCompacted));
+            Assert.Equal(ChatRole.Assistant, reloaded.Messages[^1].Role);
             Assert.Equal(toolOutput, Assert.Single(reloaded.Messages, m => m.ToolCallId == toolId).Text);
+
+            var api = new DaemonAdminApi(runtime, globalWorkspace, new FileLockCoordinator());
+            var saved = JsonNode.Parse(api.GetSession(new JsonObject { ["id"] = session.Header.Id }))!["messages"]!.AsArray();
+            Assert.Equal(reloaded.Messages.Count, saved.Count);
+            var compacted = Assert.Single(saved, item => item?["contextCompacted"] is not null);
+            Assert.Same(saved[^1], compacted);
+            Assert.True(compacted!["contextCompacted"]!.GetValue<bool>());
 
             var fullBranch = disk.Fork(globalWorkspace, session.Header.Id);
             var beforeBoundary = disk.Fork(globalWorkspace, session.Header.Id, keepMessageCount: 3);
@@ -294,6 +305,9 @@ public sealed class ContextCompactionTests
             var persisted = new SessionStore(databasePath).Load(workspace, session.Header.Id)!;
             Assert.Equal(summary, persisted.ContextCheckpoint?.Summary);
             Assert.Equal(earlyOutput, Assert.Single(persisted.Messages, message => message.ToolCallId == "early").Text);
+            Assert.Equal("latest", persisted.Messages[^2].ToolCallId);
+            Assert.Same(persisted.Messages[^1], Assert.Single(persisted.Messages, message => message.ContextCompacted));
+            Assert.Equal("Audit complete.", persisted.Messages[^1].Text);
         }
         finally
         {
@@ -352,6 +366,7 @@ public sealed class ContextCompactionTests
             Assert.Null(result.Error);
             Assert.Equal(2, capture.Requests.Count); // failed summary + main turn
             Assert.DoesNotContain("[Context compaction]", session.Messages[0].Text);
+            Assert.DoesNotContain(session.Messages, message => message.ContextCompacted);
         }
         finally
         {

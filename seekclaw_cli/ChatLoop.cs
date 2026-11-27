@@ -18,6 +18,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
     [
         new("/model", "[provider/model]", "Show or switch the active model", SubmitsOnSelect: false),
         new("/mode", "[plan|auto|readonly|edit]", "Show or switch agent execution mode", SubmitsOnSelect: false),
+        new("/theme", "[auto|light|dark]", "Change the terminal theme", SubmitsOnSelect: true),
         new("/cd", "<directory>", "Change working directory", SubmitsOnSelect: false),
         new("/mcp", "", "List connected MCP servers and tools", SubmitsOnSelect: true),
         new("/skills", "", "List available skills", SubmitsOnSelect: true),
@@ -36,6 +37,8 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
     private long _lastCancelPress;
     private volatile bool _exitRequested;
     private readonly List<string> _history = [];
+    private readonly CliThemeSettings _themeSettings = new();
+    private CliTheme _theme = CliTheme.Auto;
 
     private string HistoryFile => Path.Combine(runtime.Workspace.SeekClawDir, "history.txt");
 
@@ -61,34 +64,111 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
         catch (IOException) { }
     }
 
-    public async Task<int> RunOneShotAsync (string prompt, bool continueLast)
-    {
-        var session = ResolveSession(continueLast, null);
-        using var renderer = new TerminalRenderer(
-            runtime.Events,
-            getModeText: GetModeDisplay,
-            getContextWindow: GetActiveContextWindow);
-        InstallCancelHandler();
-
-        _turnCts = new CancellationTokenSource();
-        var result = await runtime.Agent.RunTurnAsync(session, runtime.Workspace, prompt, _turnCts.Token);
-        if (result.Maintenance is { } maintenance)
-            await maintenance.ConfigureAwait(false);
-        renderer.Flush();
-        return result.Error is null ? 0 : 1;
-    }
-
-    public async Task<int> RunInteractiveAsync (bool continueLast, string? resumeId)
+    public async Task<int> RunOneShotAsync (
+        string prompt, bool continueLast, string? resumeId = null, CancellationToken ct = default)
     {
         var session = ResolveSession(continueLast, resumeId);
-        var sessionState = new InteractiveSessionState(session);
         using var renderer = new TerminalRenderer(
             runtime.Events,
-            showTurnDividers: true,
             getModeText: GetModeDisplay,
-            getContextWindow: GetActiveContextWindow);
-        InstallCancelHandler();
+            getContextWindow: GetActiveContextWindow,
+            getActiveModel: GetActiveModelRef,
+            getWorkingDirectory: () => runtime.Workspace.Root,
+            palette: ResolvePalette(_themeSettings.Load() ?? CliTheme.Auto));
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        ConsoleCancelEventHandler onCancel = (_, e) => { e.Cancel = true; cancel.Cancel(); };
+        Console.CancelKeyPress += onCancel;
+        try
+        {
+            var result = await runtime.Agent.RunTurnAsync(session, runtime.Workspace, prompt, cancel.Token);
+            if (result.Maintenance is { } maintenance)
+                await maintenance.ConfigureAwait(false);
+            return result.Cancelled ? 130 : result.Error is null ? 0 : 1;
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            return 130;
+        }
+        finally { Console.CancelKeyPress -= onCancel; }
+    }
 
+    internal async Task<int> RunPlainAsync (
+        string prompt, bool continueLast, string? resumeId, TextReader? input,
+        TextWriter output, TextWriter error, CancellationToken ct)
+    {
+        try
+        {
+            // All piped lines form one prompt. A positional prompt takes precedence.
+            if (prompt.Length == 0 && input is not null)
+                prompt = await CliIo.ReadPipedInputAsync(input, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(prompt))
+            {
+                await error.WriteLineAsync("A prompt or piped input is required.").ConfigureAwait(false);
+                return 2;
+            }
+
+            var session = ResolveSession(continueLast, resumeId);
+            using var subscription = runtime.Events.Subscribe();
+            var pump = CliIo.WriteProgressAsync(subscription, error);
+            AgentTurnResult result;
+            try
+            {
+                result = await runtime.Agent.RunTurnAsync(session, runtime.Workspace, prompt, ct).ConfigureAwait(false);
+                if (result.Maintenance is { } maintenance)
+                    await maintenance.ConfigureAwait(false);
+            }
+            finally
+            {
+                subscription.Dispose();
+                await pump.ConfigureAwait(false);
+            }
+
+            if (result.Cancelled) return 130;
+            if (result.Error is { } failure)
+            {
+                await error.WriteLineAsync(Ansi.StripControls(failure)).ConfigureAwait(false);
+                return 1;
+            }
+
+            await output.WriteLineAsync(Ansi.StripControls(result.Text)).ConfigureAwait(false);
+            return 0;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return 130;
+        }
+        catch (ArgumentException ex)
+        {
+            await error.WriteLineAsync(Ansi.StripControls(ex.Message)).ConfigureAwait(false);
+            return 2;
+        }
+        catch (Exception ex)
+        {
+            await error.WriteLineAsync(Ansi.StripControls(ex.Message)).ConfigureAwait(false);
+            return 1;
+        }
+    }
+
+    public async Task<int> RunInteractiveAsync (bool continueLast, string? resumeId, CancellationToken ct = default)
+    {
+        var savedTheme = _themeSettings.Load();
+        _theme = savedTheme ?? CliTheme.Auto;
+        using var renderer = new TerminalRenderer(
+            runtime.Events,
+            getModeText: GetModeDisplay,
+            getContextWindow: GetActiveContextWindow,
+            getActiveModel: GetActiveModelRef,
+            getWorkingDirectory: () => runtime.Workspace.Root,
+            palette: ResolvePalette(_theme));
+        if (savedTheme is null)
+        {
+            var selected = ThemePicker.Read(renderer, CliTheme.Auto, firstRun: true, cancellationToken: ct);
+            if (selected is not { } theme) return 130;
+            SaveTheme(theme, renderer);
+        }
+
+        var session = ResolveSession(continueLast, resumeId);
+        var sessionState = new InteractiveSessionState(session);
         PrintBanner(renderer, session, continueLast || resumeId is not null);
         renderer.Flush();
         LoadHistory();
@@ -97,7 +177,8 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
             _history,
             () => runtime.Workspace.Config?.Mode ?? runtime.ConfigStore.Config.Agent.Mode,
             renderer.SetInputFrame,
-            renderer.WriteLine);
+            renderer.SubmitInput,
+            getPalette: () => renderer.Palette);
 
         var pendingApprovals = new ConcurrentDictionary<string, PendingCliApproval>(StringComparer.Ordinal);
         runtime.Approvals.SetHandler(async (request, ct) =>
@@ -138,6 +219,8 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
             catch (Exception ex) { renderer.WriteLine($"error: {ex.Message}".Style(Ansi.Red)); }
         }
 
+        var onCancel = CreateCancelHandler();
+        Console.CancelKeyPress += onCancel;
         try
         {
             while (!_exitRequested)
@@ -164,7 +247,6 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                         activeSteering = null;
                         _turnCts?.Dispose();
                         _turnCts = null;
-                        renderer.WriteLine("turn cancelled.".Style(Ansi.Gray));
                         continue;
                     }
                     break;
@@ -254,6 +336,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
         }
         finally
         {
+            Console.CancelKeyPress -= onCancel;
             runtime.Approvals.ClearHandler();
             if (activeTurnTask is not null)
             {
@@ -288,15 +371,19 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
         AgentModeExtensions.Parse(runtime.Workspace.Config?.Mode ?? runtime.ConfigStore.Config.Agent.Mode)
             .ToDisplayString();
 
+    private string? GetActiveModelRef ()
+    {
+        try { return runtime.Providers.ResolveActive(runtime.Workspace.Config).Ref; }
+        catch (Exception) { return null; }
+    }
+
     private int? GetActiveContextWindow ()
     {
         try { return runtime.Providers.ResolveActive(runtime.Workspace.Config).Model.EffectiveContextWindow; }
         catch (Exception) { return null; }
     }
 
-    private void InstallCancelHandler ()
-    {
-        Console.CancelKeyPress += (_, e) =>
+    private ConsoleCancelEventHandler CreateCancelHandler () => (_, e) =>
         {
             e.Cancel = true;
             var now = Environment.TickCount64;
@@ -313,25 +400,26 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                 e.Cancel = false;
             }
         };
+
+    private static CliPalette ResolvePalette(CliTheme theme) => theme switch
+    {
+        CliTheme.Light => CliPalette.Light,
+        CliTheme.Dark => CliPalette.Dark,
+        _ => TerminalBackground.Detect(),
+    };
+
+    private void SaveTheme(CliTheme theme, TerminalRenderer renderer)
+    {
+        _theme = theme;
+        renderer.SetPalette(ResolvePalette(theme));
+        if (!_themeSettings.TrySave(theme))
+            renderer.WriteLine("Could not save the theme. It applies to this run.".Style(Ansi.Yellow));
     }
 
     private void PrintBanner (TerminalRenderer renderer, AgentSession session, bool resumed)
     {
-        var workspace = runtime.Workspace;
-        string activeModel;
-        try
-        {
-            activeModel = runtime.Providers.ResolveActive(workspace.Config).Ref;
-        }
-        catch (Exception)
-        {
-            activeModel = "not configured — run 'seekclaw switch'".Style(Ansi.Yellow);
-        }
-
         var banner = Banner.Build(new Banner.Info(
-            Model: activeModel,
-            Workspace: workspace.Root,
-            ProjectKinds: string.Join(", ", workspace.ProjectKinds),
+            Workspace: runtime.Workspace.Root,
             Session: session.Header.Id + (resumed ? $" · {session.Messages.Count} messages" : ""),
             Resumed: resumed));
         foreach (var line in banner)
@@ -391,6 +479,22 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
                     catch (Exception ex) { renderer.WriteLine(ex.Message.Style(Ansi.Red)); }
                 }
                 return false;
+
+            case "/theme":
+            {
+                var hasArgument = parts.Length > 1 && parts[1].Length > 0;
+                var choice = hasArgument ? CliThemeSettings.Parse(parts[1]) : ThemePicker.Read(renderer, _theme);
+                if (choice is { } theme)
+                {
+                    SaveTheme(theme, renderer);
+                    renderer.WriteLine($"Theme set to {theme}.");
+                }
+                else if (hasArgument)
+                {
+                    renderer.WriteLine("Usage: /theme [auto|light|dark]".Style(Ansi.Yellow));
+                }
+                return false;
+            }
 
             case "/mode":
                 if (parts.Length > 1 && parts[1].Length > 0)
@@ -548,6 +652,7 @@ public sealed class ChatLoop (SeekClawRuntime runtime)
 
             case "/help":
                 renderer.WriteLine("/model [ref]   show or switch the active model".Style(Ansi.Dim));
+                renderer.WriteLine("/theme         choose Auto, Light, or Dark".Style(Ansi.Dim));
                 renderer.WriteLine("/cd <dir>      change working directory".Style(Ansi.Dim));
                 renderer.WriteLine("/mcp           list connected MCP servers and tools".Style(Ansi.Dim));
                 renderer.WriteLine("/skills        list available skills".Style(Ansi.Dim));

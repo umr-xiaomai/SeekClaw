@@ -966,6 +966,7 @@ public sealed class SessionStore : ISessionStore
         ModelRef = message.ModelRef,
         FinishReason = message.FinishReason,
         ErrorMessage = message.ErrorMessage,
+        ContextCompacted = message.ContextCompacted,
         ViewedImages = message.ViewedImages?.Select(image => new SessionImageReference
         {
             Id = image.Id,
@@ -1007,6 +1008,7 @@ public sealed class SessionStore : ISessionStore
             ModelRef = record.ModelRef,
             FinishReason = record.FinishReason,
             ErrorMessage = record.ErrorMessage,
+            ContextCompacted = record.ContextCompacted,
             ViewedImages = record.ViewedImages?.Select(image => new ChatImageReference(
                 image.Id, image.Name)).ToList(),
             ToolCalls = record.ToolCalls?.Select(call =>

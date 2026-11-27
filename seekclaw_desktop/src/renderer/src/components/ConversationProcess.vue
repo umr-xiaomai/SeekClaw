@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronRight, CircleAlert } from '@lucide/vue'
+import { Check, ChevronRight, CircleAlert, ScrollText } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { messageMatches } from '../app-helpers'
 import { collectTurnDiff, type ToolDiffPreview } from '../conversation-diffs'
@@ -7,12 +7,13 @@ import { type ConversationProcessItem, type ConversationTurnProjection } from '.
 import { animateReverseLineCollapse, captureCollapseSnapshot, type CollapseSnapshot, type ReverseCollapseController } from '../reverse-collapse'
 import { messageSubAgents } from '../subagent-activity'
 import { extractThinkingHeading } from '../thinking-status'
-import type { ChatMessage, SubAgentActivity, SubAgentLifecycleEvent, ToolActivity } from '../types'
+import type { ChatMessage, ImageReference, SubAgentActivity, SubAgentLifecycleEvent, ToolActivity } from '../types'
 import ConversationMessage from './ConversationMessage.vue'
 import ConversationWidgets from './ConversationWidgets.vue'
 import ProcessActivityGroup from './ProcessActivityGroup.vue'
 import SubAgentActivityList from './SubAgentActivityList.vue'
 import ToolCallRow from './ToolCallRow.vue'
+import ViewedImagesActivity from './ViewedImagesActivity.vue'
 import { phaseStatusText, preparingToolLabel, toolDisplayState } from './tool-presentation'
 
 const props = withDefaults(defineProps<{
@@ -24,6 +25,7 @@ const props = withDefaults(defineProps<{
   /** Approval and clarification panels already indicate that the turn is paused. */
   awaitingUser?: boolean
   approvalCallIds?: ReadonlySet<string>
+  activeApprovalCallId?: string
   imageSources?: Record<string, string>
   query?: string
   /** Optional controlled state, retained by the virtualized conversation view. */
@@ -93,7 +95,7 @@ const hasProcessError = computed(() => props.turn.process.some(({ message }) =>
 
 function hasVisibleMessage(item: ConversationProcessItem): boolean {
   const message = item.message
-  return Boolean(message.content.trim() || message.errorMessage?.trim() || message.viewedImages?.length
+  return Boolean(message.content.trim() || message.errorMessage?.trim()
     || message.images?.length || message.files?.length || item.widgets.length)
 }
 
@@ -127,7 +129,9 @@ const allEvents = computed(() => {
 type ActivityStep = { kind: 'activity'; id: string; tools: ToolActivity[]; reasoning: string[] }
 type MessageStep = { kind: 'message'; id: string; item: ConversationProcessItem }
 type LifecycleStep = { kind: 'lifecycle'; id: string; events: SubAgentLifecycleEvent[] }
-type ProcessStep = ActivityStep | MessageStep | LifecycleStep | { kind: 'tool'; id: string; tool: ToolActivity }
+type ProcessStep = ActivityStep | MessageStep | LifecycleStep
+  | { kind: 'viewed-images'; id: string; images: ImageReference[] }
+  | { kind: 'context-compacted'; id: string }
 
 const processSteps = computed(() => {
   const steps: ProcessStep[] = []
@@ -150,22 +154,20 @@ const processSteps = computed(() => {
   }
 
   function addTool(tool: ToolActivity): void {
-    if (props.turn.running && tool.state === 'running') {
-      const id = `tool:${tool.id}`
-      steps.push({ kind: 'tool', id, tool })
-      return
-    }
     if (!activity) {
-      // Key the disclosure by the boundary, so late reasoning or additional
-      // tool results don't reset an already expanded group.
+      // Use the section boundary as the key. Updates to a call's result and
+      // additional calls in this section keep the same disclosure state.
       activity = { kind: 'activity', id: `activity:${anchor}`, tools: [], reasoning: pendingReasoning }
       pendingReasoning = []
       lastActivity = activity
-      // A completed-call summary comes before any calls still in progress in this segment.
-      const firstRunning = steps.findLastIndex((step) => step.kind === 'message' || step.kind === 'lifecycle') + 1
-      steps.splice(firstRunning, 0, activity)
+      steps.push(activity)
     }
-    activity.tools.push(tool)
+    if (!props.turn.running && tool.state === 'running') {
+      // A stopped turn can end without a corresponding tool_done event.
+      activity.tools.push({ ...tool, state: 'interrupted' })
+    } else {
+      activity.tools.push(tool)
+    }
   }
 
   function addLifecycle(events: SubAgentLifecycleEvent[] | undefined): void {
@@ -211,7 +213,22 @@ const processSteps = computed(() => {
     })
   }
 
+  // The runtime records these events immediately before invoking the model.
+  function addModelNotices(message: ChatMessage): void {
+    if (message.contextCompacted) {
+      const id = `context-compacted:${message.id}`
+      steps.push({ kind: 'context-compacted', id })
+      startSegmentAfter(id)
+    }
+    if (message.viewedImages?.length) {
+      const id = `viewed-images:${message.id}`
+      steps.push({ kind: 'viewed-images', id, images: message.viewedImages })
+      startSegmentAfter(id)
+    }
+  }
+
   for (const item of props.turn.process) {
+    addModelNotices(item.message)
     if (hasVisibleMessage(item)) {
       const id = `message:${item.message.id}`
       steps.push({ kind: 'message', id, item })
@@ -220,8 +237,12 @@ const processSteps = computed(() => {
     addMessageActivities(item.message, visibleNonSubAgentTools(item.message))
   }
 
-  // Older sessions can persist a final answer in a message that also has tools.
-  if (props.turn.response) addMessageActivities(props.turn.response.message, responseTools.value, true)
+  if (props.turn.response) {
+    const message = props.turn.response.message
+    addModelNotices(message)
+    // Older sessions can persist a final answer in a message that also has tools.
+    addMessageActivities(message, responseTools.value, true)
+  }
 
   if (!props.turn.running && pendingReasoning.length) {
     if (lastActivity) {
@@ -232,6 +253,16 @@ const processSteps = computed(() => {
   }
   return steps
 })
+function awaitsApproval(tool: ToolActivity): boolean {
+  return props.approvalCallIds?.has(tool.callId ?? tool.id) === true
+}
+
+function setSingleToolDisclosure(step: ActivityStep, tool: ToolActivity, expanded: boolean): void {
+  // Opening a standalone tool also opens its group if another tool joins.
+  setActivityDisclosure(step.id, expanded)
+  setActivityDisclosure(`tool:${tool.id}`, expanded)
+}
+
 const hasHistory = computed(() => processSteps.value.length > 0 || agents.value.length > 0)
 const hasLiveSubAgents = computed(() =>
   agents.value.some((agent) => agent.status === 'starting' || (agent.status === 'running' && agent.live))
@@ -269,7 +300,8 @@ const liveStatus = computed(() => {
   const current = messages.findLast((message) => message.id === props.assistantId) ?? messages.at(-1)
   if (current?.errorMessage?.trim()) return null
   // Active operations already have dedicated rows.
-  if (processSteps.value.some((step) => step.kind === 'tool')) return null
+  if (processSteps.value.some((step) => step.kind === 'activity'
+    && step.tools.some((tool) => tool.state === 'running'))) return null
   const p = phaseStatusText(props.phase)
   if (p) return { label: p, thinking: false }
   if (current?.preparingTool) return { label: preparingToolLabel(current.preparingTool), thinking: false }
@@ -398,16 +430,26 @@ function onToggle(event: Event): void {
       <div v-if="turn.running || isExpanded" ref="liveProcessRef" class="process-timeline"
         :class="{ 'process-history': !turn.running }">
         <div v-for="step in processSteps" :key="step.id" class="process-step">
-          <ProcessActivityGroup v-if="step.kind === 'activity'" :tools="step.tools" :reasoning="step.reasoning"
-            :expanded="activityDisclosures.has(step.id)" :activity-disclosures="activityDisclosures"
-            @update:expanded="setActivityDisclosure(step.id, $event)" @set-activity-disclosure="setActivityDisclosure"
-            @open-diff="(path, diff) => emit('openDiff', path, diff)" @open-browser-result="emit('openBrowserResult', $event)"
-            @open-sub-agent="emit('openSubAgent', $event)" />
-          <ToolCallRow v-else-if="step.kind === 'tool'" :tool="step.tool"
-            :awaiting-approval="approvalCallIds?.has(step.tool.callId ?? step.tool.id)"
-            :expanded="activityDisclosures.has(step.id)" @update:expanded="setActivityDisclosure(step.id, $event)"
-            @open-diff="(path, diff) => emit('openDiff', path, diff)" @open-browser-result="emit('openBrowserResult', $event)"
-            @open-sub-agent="emit('openSubAgent', $event)" />
+          <template v-if="step.kind === 'activity'">
+            <ToolCallRow v-if="turn.running && step.tools.length === 1" :tool="step.tools[0]!"
+              :awaiting-approval="awaitsApproval(step.tools[0]!)"
+              :expanded="activityDisclosures.has(`tool:${step.tools[0]!.id}`)"
+              @update:expanded="setSingleToolDisclosure(step, step.tools[0]!, $event)"
+              @open-diff="(path, diff) => emit('openDiff', path, diff)" @open-browser-result="emit('openBrowserResult', $event)"
+              @open-sub-agent="emit('openSubAgent', $event)" />
+            <ProcessActivityGroup v-else :tools="step.tools" :reasoning="turn.running ? undefined : step.reasoning"
+              :expanded="activityDisclosures.has(step.id)" :activity-disclosures="activityDisclosures"
+              :approval-call-ids="turn.running ? approvalCallIds : undefined" :active-approval-call-id="activeApprovalCallId"
+              @update:expanded="setActivityDisclosure(step.id, $event)" @set-activity-disclosure="setActivityDisclosure"
+              @open-diff="(path, diff) => emit('openDiff', path, diff)" @open-browser-result="emit('openBrowserResult', $event)"
+              @open-sub-agent="emit('openSubAgent', $event)" />
+          </template>
+          <ViewedImagesActivity v-else-if="step.kind === 'viewed-images'" :images="step.images" :image-sources="imageSources"
+            :expanded="activityDisclosures.has(step.id)" @update:expanded="setActivityDisclosure(step.id, $event)" />
+          <div v-else-if="step.kind === 'context-compacted'" class="process-notice">
+            <ScrollText :size="14" aria-hidden="true" />
+            <span>上下文已自动压缩</span>
+          </div>
           <SubAgentActivityList v-else-if="step.kind === 'lifecycle'" :agents="agents" :events="step.events"
             :show-summary="false" @open-sub-agent="emit('openSubAgent', $event)" />
           <ConversationMessage v-else :message="step.item.message" :image-sources="imageSources" :widgets="step.item.widgets"
@@ -469,6 +511,7 @@ function onToggle(event: Event): void {
 .process-history { gap: 2px; margin: 4px 0 8px 6px; padding: 2px 0 2px 14px; border-left: 1px solid var(--border); overflow: clip; block-size: auto; opacity: 1; transition: block-size 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease; }
 @starting-style { .conversation-process[open] > .process-history { block-size: 0; opacity: 0; } }
 .process-step { display: flow-root; min-width: 0; }
+.process-notice { display: flex; align-items: center; gap: 8px; min-height: 27px; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
 .process-tail-status { display: flex; align-items: center; min-height: 27px; padding: 1px 0; margin: 4px 0; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
 .process-thinking-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .turn-response-host { display: flow-root; min-width: 0; }

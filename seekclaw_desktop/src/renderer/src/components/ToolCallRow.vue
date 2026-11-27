@@ -26,10 +26,15 @@ const state = computed(() => toolDisplayState(props.tool))
 const kind = computed(() => toolKind(props.tool))
 const subAgents = computed(() => subAgentsFromTool(props.tool))
 const icons = { shell: SquareTerminal, edit: Pencil, read: FileText, search: Search, image: Image, browser: PanelTop, plan: ListChecks, mcp: Plug, artifact: FileOutput, other: Wrench }
-const icon = computed(() => props.awaitingApproval ? ShieldAlert : state.value === 'error' ? CircleAlert : icons[kind.value])
+const isWaiting = computed(() => props.awaitingApproval && state.value === 'running')
+const icon = computed(() => {
+  if (isWaiting.value) return ShieldAlert
+  if (state.value === 'error' || state.value === 'interrupted') return CircleAlert
+  return icons[kind.value]
+})
 const target = computed(() => toolTarget(props.tool) || (kind.value === 'other' ? props.tool.name : ''))
 const summaryTarget = computed(() => target.value.replace(/\s+/g, ' '))
-const label = computed(() => props.awaitingApproval ? '等待批准' : toolLabel(props.tool, state.value))
+const label = computed(() => isWaiting.value ? '等待批准' : toolLabel(props.tool, state.value))
 const input = computed(() => toolInput(props.tool))
 const plan = computed(() => toolPlan(props.tool))
 const planStatus = {
@@ -75,7 +80,10 @@ function openFullDiff(): void {
 
 <template>
   <SubAgentActivityList v-if="subAgents.length" :agents="subAgents" @open-sub-agent="emit('openSubAgent', $event)" />
-  <details v-else class="tool-call" :class="{ 'is-running': state === 'running', 'is-error': state === 'error', 'is-waiting': awaitingApproval }"
+  <details v-else class="tool-call" :class="{
+    'is-running': state === 'running', 'is-error': state === 'error',
+    'is-interrupted': state === 'interrupted', 'is-waiting': isWaiting
+  }"
     :open="isExpanded" @toggle="onToggle">
     <summary :title="target || tool.name">
       <component :is="icon" :size="14" class="activity-icon" aria-hidden="true" />
@@ -88,7 +96,7 @@ function openFullDiff(): void {
         <span class="stat-add">+{{ diffStats.addedLines }}</span>
         <span class="stat-del">-{{ diffStats.removedLines }}</span>
       </span>
-      <span v-if="state === 'running' && !awaitingApproval" class="run-dot" aria-hidden="true" />
+      <span v-if="state === 'running' && !isWaiting" class="run-dot" aria-hidden="true" />
       <ChevronRight :size="12" class="activity-chevron" aria-hidden="true" />
     </summary>
     <div v-if="isExpanded" class="tool-call-body">
@@ -165,7 +173,7 @@ function openFullDiff(): void {
 .stat-del, .is-error > summary, .is-error .activity-command, .is-error .activity-target, .command-error { color: var(--danger); }
 .is-running > summary { color: var(--text-secondary); }
 .is-running .activity-command { color: var(--text); }
-.is-waiting > summary { color: var(--warning); }
+.is-waiting > summary, .is-interrupted > summary { color: var(--warning); }
 .run-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: tool-pulse 1.7s ease-in-out infinite; }
 @keyframes tool-pulse { 50% { opacity: .35; } }
 .tool-call-body { min-width: 0; margin: 2px 0 3px 7px; padding: 4px 0 7px 13px; border-left: 1px solid var(--border); }

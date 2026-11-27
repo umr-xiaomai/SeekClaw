@@ -30,9 +30,9 @@ internal sealed class ExecCommandTool(IPromptProvider prompts, CommandSessionMan
 
             var tty = GetBool(args, "tty");
             var result = await sessions.ExecAsync(context.SessionId, command, directory,
-                GetInt(args, "timeout_seconds") ?? 1_800, tty, GetInt(args, "yield_time_ms") ?? 10_000, ct)
+                GetInt(args, "timeout_seconds") ?? 1_800, tty, GetInt(args, "yield_time_ms") ?? 10_000, ct, context.MaxOutputChars)
                 .ConfigureAwait(false);
-            return CommandSessionTool.FormatResult(result, context.MaxOutputChars,
+            return CommandSessionTool.FormatResult(result,
                 mutated: tty || !BashTool.IsReadOnlyCommand(command));
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException

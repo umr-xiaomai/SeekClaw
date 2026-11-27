@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <None Include="prompts\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="ThirdPartyNotices.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">

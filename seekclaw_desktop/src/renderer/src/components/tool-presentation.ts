@@ -163,12 +163,16 @@ const labels: Record<ToolKind, readonly [string, string, string]> = {
 }
 
 export function toolLabel(tool: ToolActivity, state = toolDisplayState(tool)): string {
+  if (state === 'interrupted') return '未完成'
   const name = tool.name.toLowerCase()
   const args = jsonObject(tool.input) ?? jsonObject(tool.detail)
   if (name === 'write_stdin' || name === 'command_session' && args?.action === 'write') {
     const writing = typeof args?.chars === 'string' && args.chars.length > 0 || args?.action === 'write'
     if (writing) return state === 'running' ? '正在发送终端输入' : state === 'error' ? '终端输入失败' : '已发送终端输入'
     return state === 'running' ? '正在读取终端输出' : state === 'error' ? '命令失败' : '已读取终端输出'
+  }
+  if (name === 'web_search') {
+    return state === 'running' ? '正在搜索网页' : state === 'error' ? '网页搜索失败' : '已搜索网页'
   }
   if (name === 'command_session') {
     if (args?.action === 'read') return state === 'running' ? '正在读取终端输出' : state === 'error' ? '命令失败' : '已读取终端输出'

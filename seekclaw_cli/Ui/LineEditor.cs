@@ -1,4 +1,5 @@
 using SeekClaw.Runtime.Agents;
+using System.Globalization;
 using System.Text;
 
 namespace SeekClaw.Cli.Ui;
@@ -7,12 +8,21 @@ namespace SeekClaw.Cli.Ui;
 public sealed record SlashCommand (string Name, string ArgsHint, string Description, bool SubmitsOnSelect);
 
 /// <summary>Immutable snapshot of the editable input area for the shared terminal renderer.</summary>
-public sealed record LineEditorFrame (IReadOnlyList<string> Lines, int CursorRowsBelow, int CursorColumn);
+public sealed record LineEditorFrame (IReadOnlyList<string> Lines, int CursorRowsBelow, int CursorColumn)
+{
+    internal int FooterRow { get; init; } = -1;
+
+    internal LineEditorFrame WithFooter (string footer)
+    {
+        if (FooterRow < 0 || Lines[FooterRow] == footer) return this;
+        var lines = Lines.ToArray();
+        lines[FooterRow] = footer;
+        return this with { Lines = lines };
+    }
+}
 
 /// <summary>
-/// Interactive line editor with a Claude-Code-style slash command menu:
-/// typing "/" opens a filtered command list under the input line
-/// (↑/↓ select · tab complete · enter run · esc dismiss), plus input history.
+/// Interactive line editor with input history and a filtered slash command menu.
 /// CJK-aware cursor math; long input scrolls horizontally within one row.
 /// </summary>
 public sealed class LineEditor (
@@ -20,14 +30,14 @@ public sealed class LineEditor (
     List<string> history,
     Func<string>? getModeText = null,
     Action<LineEditorFrame?>? setFrame = null,
-    Action<string>? submitLine = null)
+    Action<string>? submitLine = null,
+    Func<CliPalette>? getPalette = null)
 {
     private const int MaxMenuRows = 8;
-    private const string Prompt = "❯ ";
-    private const string Continuation = "  ";
-    private const string Placeholder = "type a message · / for commands · ctrl+j newline";
+    private const string Placeholder = "Ask SeekClaw to do anything";
 
     private readonly StringBuilder _buffer = new();
+    private LiveRegion? _standaloneRegion;
     private int _cursor;               // char index into _buffer
     private int _selected;
     private bool _menuSuppressed;
@@ -39,12 +49,6 @@ public sealed class LineEditor (
     /// <summary>Reads one line; returns null on Ctrl+C/Ctrl+D with an empty buffer (caller exits).</summary>
     public string? ReadLine ()
     {
-        if (Console.IsInputRedirected)
-        {
-            Console.Write(Prompt);
-            return Console.In.ReadLine();
-        }
-
         _buffer.Clear();
         _cursor = 0;
         _selected = 0;
@@ -57,17 +61,33 @@ public sealed class LineEditor (
         Console.TreatControlCAsInput = true;
         try
         {
-            Render();
+            var width = TerminalSize.Read().Width;
+            var palette = getPalette?.Invoke() ?? CliPalette.Default;
+            Render(width, palette);
             while (true)
             {
+                var currentWidth = TerminalSize.Read().Width;
+                var currentPalette = getPalette?.Invoke() ?? palette;
+                if (width != currentWidth || palette != currentPalette)
+                {
+                    width = currentWidth;
+                    palette = currentPalette;
+                    Render(width, palette);
+                }
+                if (!Console.KeyAvailable)
+                {
+                    Thread.Sleep(40);
+                    continue;
+                }
+
                 var key = Console.ReadKey(intercept: true);
                 var submitted = HandleKey(key, out var result);
                 if (submitted)
                 {
-                    Finish();
+                    Finish(result);
                     return result;
                 }
-                Render();
+                Render(width, palette);
             }
         }
         finally
@@ -321,45 +341,28 @@ public sealed class LineEditor (
 
     // ---------------------------------------------------------------- rendering
 
-    private void Render ()
+    private void Render (int width, CliPalette palette)
     {
-        var view = BuildFrame();
+        var view = BuildFrame(width, palette);
         if (setFrame is not null)
         {
             setFrame(view);
             return;
         }
 
-        var frame = new StringBuilder("\r\x1b[0J");
-        frame.Append(string.Join('\n', view.Lines));
-        if (view.CursorRowsBelow > 0) frame.Append("\x1b[").Append(view.CursorRowsBelow).Append('A');
-        frame.Append('\r');
-        if (view.CursorColumn > 0) frame.Append("\x1b[").Append(view.CursorColumn).Append('C');
-
-        Console.Out.Write(frame.ToString());
-        Console.Out.Flush();
+        var region = _standaloneRegion ??= new LiveRegion(Console.Out);
+        region.Update(null, view.Lines, TerminalSize.Read(), view.CursorRowsBelow, view.CursorColumn, palette: palette);
     }
 
-    private LineEditorFrame BuildFrame ()
+    private LineEditorFrame BuildFrame (int width, CliPalette palette)
     {
-        var width = SafeWidth();
-        var lines = new List<string>();
-
-        // 1. Input lines (single-line horizontal scroll, multi-line soft wrap via explicit newlines).
-        var (inputLines, cursorLine, cursorColumn) = RenderInputLines(width);
+        var padding = PromptSurface.EditorPadding(width, palette);
+        var lines = new List<string> { padding };
+        var (inputLines, cursorLine, cursorColumn) = RenderInputLines(width, palette);
         lines.AddRange(inputLines);
-
-        // 2. Status Bar
-        var modeStr = getModeText?.Invoke() ?? "edit";
-        var modeDisplay = AgentModeExtensions.Parse(modeStr).ToDisplayString();
-        var statusLeft = $"  {modeDisplay} · /mode switch · / for commands".Style(Ansi.Gray);
-        var statusRight = "❖ SeekClaw ".Style(Ansi.Gray);
-        var statusPadding = Math.Max(1, width - TextWidth.Of(Ansi.StripStyles(statusLeft)) - TextWidth.Of(Ansi.StripStyles(statusRight)) - 1);
-        var statusBar = statusLeft + new string(' ', statusPadding) + statusRight;
-        lines.Add(Ansi.TruncateVisible(statusBar, width - 1));
+        lines.Add(padding);
 
         var menu = CurrentMenu();
-        var menuRows = 0;
         if (menu.Count > 0)
         {
             _selected = Math.Clamp(_selected, 0, menu.Count - 1);
@@ -370,88 +373,98 @@ public sealed class LineEditor (
             {
                 var left = command.Name + (command.ArgsHint.Length > 0 ? " " + command.ArgsHint : "");
                 var line = index == _selected
-                    ? ("❯ " + left.PadRight(nameWidth) + "  " + command.Description).Style(Ansi.Cyan + Ansi.Bold)
-                    : "  " + left.PadRight(nameWidth).Style(Ansi.Bold) + "  " + command.Description.Style(Ansi.Gray);
+                    ? "  " + "› ".Style(Ansi.Cyan) + left.PadRight(nameWidth).Style(Ansi.Bold) + "  " + command.Description
+                    : "    " + left.PadRight(nameWidth) + "  " + command.Description.Style(Ansi.Dim);
                 lines.Add(Ansi.TruncateVisible(line, width - 1));
-                menuRows++;
             }
 
-            lines.Add(Ansi.TruncateVisible(
-                "  ↑/↓ select · tab complete · enter run · esc dismiss".Style(Ansi.Gray), width - 1));
-            menuRows++;
+            lines.Add(FormatFooter(width, "↑/↓ select · Tab complete · Enter run · Esc dismiss"));
+            return new LineEditorFrame(lines, lines.Count - cursorLine - 2, cursorColumn);
         }
 
-        var rowsBelowCursor = inputLines.Count - cursorLine + menuRows;
-        return new LineEditorFrame(lines, rowsBelowCursor, cursorColumn);
+        var mode = AgentModeExtensions.Parse(getModeText?.Invoke() ?? "edit");
+        lines.Add(FormatFooter(width, $"{mode} · / for commands"));
+        return new LineEditorFrame(lines, lines.Count - cursorLine - 2, cursorColumn) { FooterRow = lines.Count - 1 };
     }
 
-    private (List<string> Lines, int CursorLine, int CursorColumn) RenderInputLines (int width)
+    internal static string FormatFooter (int width, string label, string? status = null)
+    {
+        var available = Math.Max(0, width - 1);
+        var left = "  " + InlineFooterText(label);
+        if (string.IsNullOrWhiteSpace(status)) return Ansi.TruncateVisible(left, available).Style(Ansi.Dim);
+
+        status = InlineFooterText(status);
+        var statusWidth = TextWidth.Of(status);
+        var leftWidth = available - statusWidth - 2;
+        if (leftWidth < 12) return Ansi.TruncateVisible(left, available).Style(Ansi.Dim);
+
+        var clipped = Ansi.StripStyles(Ansi.TruncateVisible(left, leftWidth));
+        var padding = new string(' ', available - statusWidth - Ansi.VisibleLength(clipped));
+        return (clipped + padding + status).Style(Ansi.Dim);
+    }
+
+    private static string InlineFooterText (string text) =>
+        Ansi.StripControls(text).Replace('\n', ' ').Replace('\t', ' ');
+
+    private (List<string> Lines, int CursorLine, int CursorColumn) RenderInputLines (int width, CliPalette palette)
     {
         var raw = _buffer.ToString();
         if (raw.Length == 0)
         {
-            var empty = new List<string> { Prompt.Style(Ansi.Cyan + Ansi.Bold) + Placeholder.Style(Ansi.Gray) };
-            return (empty, 0, TextWidth.Of(Prompt));
+            var empty = new List<string> { PromptSurface.EditorRow(Placeholder, width, first: true, palette, placeholder: true) };
+            return (empty, 0, PromptSurface.Marker.Length);
         }
 
         var lines = new List<string>();
         var logicalLines = raw.Replace("\r\n", "\n").Split('\n');
         var cursorLine = 0;
-        var cursorColumn = TextWidth.Of(Prompt);
+        var cursorColumn = PromptSurface.Marker.Length;
+        var lineStart = 0;
 
         for (var index = 0; index < logicalLines.Length; index++)
         {
             var logical = logicalLines[index];
-            var prefix = index == 0 ? Prompt : Continuation;
-            var prefixWidth = TextWidth.Of(prefix);
-            var available = Math.Max(10, width - prefixWidth - 1);
-            var viewport = Viewport(logical, _cursorLineCursor(index, logicalLines), available);
-            var visible = viewport.Visible;
-            lines.Add((index == 0 ? prefix.Style(Ansi.Cyan + Ansi.Bold) : prefix) + visible);
+            var prefixWidth = PromptSurface.Marker.Length;
+            var available = Math.Max(0, width - prefixWidth - 2);
+            var localCursor = _cursor - lineStart;
+            var viewport = Viewport(logical, Math.Clamp(localCursor, 0, logical.Length), available);
+            lines.Add(PromptSurface.EditorRow(viewport.Visible, width, first: index == 0, palette));
 
-            if (_cursor >= LineStart(index, logicalLines) && _cursor <= LineStart(index, logicalLines) + logical.Length)
+            if (localCursor >= 0 && localCursor <= logical.Length)
             {
                 cursorLine = index;
                 cursorColumn = prefixWidth + viewport.CursorColumn;
             }
+            lineStart += logical.Length + 1;
         }
 
         return (lines, cursorLine, cursorColumn);
     }
 
-    private int _cursorLineCursor (int lineIndex, string[] logicalLines)
-    {
-        if (lineIndex < 0 || lineIndex >= logicalLines.Length) return 0;
-        var start = LineStart(lineIndex, logicalLines);
-        return Math.Clamp(_cursor - start, 0, logicalLines[lineIndex].Length);
-    }
-
-    private int LineStart (int lineIndex, string[] logicalLines)
-    {
-        var start = 0;
-        for (var i = 0; i < lineIndex; i++)
-            start += logicalLines[i].Length + 1;
-        return start;
-    }
-
-    private void Finish ()
+    private void Finish (string? result)
     {
         if (setFrame is not null)
         {
-            submitLine?.Invoke(Prompt.Style(Ansi.Cyan + Ansi.Bold) + _buffer);
-            setFrame(null);
+            if (submitLine is not null && !string.IsNullOrWhiteSpace(result))
+                submitLine(result);
+            else
+                setFrame(null);
             return;
         }
 
-        // Clear status bar and menus, leave clean submitted input line
-        var final = "\r\x1b[0J" + Prompt.Style(Ansi.Cyan + Ansi.Bold) + _buffer + "\n";
-        Console.Out.Write(final);
-        Console.Out.Flush();
+        if (string.IsNullOrWhiteSpace(result)) _standaloneRegion?.Clear();
+        else
+        {
+            var palette = getPalette?.Invoke() ?? CliPalette.Default;
+            var size = TerminalSize.Read();
+            _standaloneRegion?.Update(PromptSurface.HistoryRows(result, Math.Max(1, size.Width - 3), palette), [], size, palette: palette);
+        }
     }
 
     /// <summary>Slice of one logical input line that fits one row, plus the cursor's display column.</summary>
     private (string Visible, int CursorColumn) Viewport (string text, int cursor, int available)
     {
+        if (available <= 0) return ("", 0);
         if (TextWidth.Of(text) <= available)
             return (text, TextWidth.Of(text[..cursor]));
 
@@ -468,7 +481,7 @@ public sealed class LineEditor (
         }
 
         var end = start;
-        var total = 0;
+        var total = start > 0 ? 1 : 0; // reserve room for the left ellipsis
         while (end < text.Length)
         {
             var next = NextLogicalIndex(text, end);
@@ -507,11 +520,6 @@ public sealed class LineEditor (
         return index + 1;
     }
 
-    private static int SafeWidth ()
-    {
-        try { return Math.Max(30, Console.WindowWidth); }
-        catch (IOException) { return 100; }
-    }
 }
 
 /// <summary>Terminal display width (CJK and emoji count as two columns).</summary>
@@ -520,14 +528,31 @@ public static class TextWidth
     public static int Of (string text)
     {
         var width = 0;
-        foreach (var rune in text.EnumerateRunes())
-            width += RuneWidth(rune.Value);
+        var remaining = text.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            var next = StringInfo.GetNextTextElementLength(remaining);
+            width += OfElement(remaining[..next]);
+            remaining = remaining[next..];
+        }
+        return width;
+    }
+
+    internal static int OfElement (ReadOnlySpan<char> element)
+    {
+        var width = 0;
+        foreach (var rune in element.EnumerateRunes())
+        {
+            if (Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format
+                or UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark or UnicodeCategory.SpacingCombiningMark)
+                continue;
+            width = Math.Max(width, RuneWidth(rune.Value));
+        }
         return width;
     }
 
     private static int RuneWidth (int cp) => cp switch
     {
-        < 0x20 => 0,
         >= 0x1100 and <= 0x115F => 2,   // Hangul Jamo
         >= 0x2E80 and <= 0x303E => 2,   // CJK radicals, punctuation
         >= 0x3041 and <= 0x33FF => 2,   // Kana, CJK symbols
@@ -539,6 +564,7 @@ public static class TextWidth
         >= 0xFE30 and <= 0xFE4F => 2,   // CJK compat forms
         >= 0xFF00 and <= 0xFF60 => 2,   // fullwidth forms
         >= 0xFFE0 and <= 0xFFE6 => 2,
+        >= 0x1F1E6 and <= 0x1F1FF => 2, // regional indicators
         >= 0x1F300 and <= 0x1FAFF => 2, // emoji
         >= 0x20000 and <= 0x3FFFD => 2, // CJK ext B+
         _ => 1,

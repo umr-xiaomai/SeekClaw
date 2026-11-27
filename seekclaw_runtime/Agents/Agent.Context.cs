@@ -33,6 +33,7 @@ public sealed partial class Agent
                     Thinking = message.Thinking,
                     ThinkingSignature = message.ThinkingSignature,
                     ViewedImages = message.ViewedImages,
+                    ContextCompacted = message.ContextCompacted,
                     ToolCalls = message.ToolCalls,
                     ToolCallId = message.ToolCallId,
                     ToolName = message.ToolName,

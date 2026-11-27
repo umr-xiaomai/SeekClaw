@@ -30,6 +30,31 @@ export interface DaemonEventContext {
   readSubAgentStatus?: (thread: ThreadItem, taskId: string) => Promise<SubAgentStatusSnapshot>
 }
 
+function assistantStepHasOutput(message: ChatMessage): boolean {
+  return Boolean(message.content || message.thinking || message.errorMessage || message.tools?.length
+    || message.viewedImages?.length || message.subAgentEvents?.length || message.subAgents?.length)
+}
+
+function appendAssistantStep(thread: ThreadItem, previous: ChatMessage,
+  nextMetadata: Pick<ChatMessage, 'modelRef' | 'contextCompacted'> = {}): void {
+  previous.state = 'done'
+  previous.thinkingActive = false
+  previous.preparingTool = undefined
+  const next: ChatMessage = {
+    id: makeId(),
+    role: 'assistant',
+    content: '',
+    thinking: '',
+    tools: [],
+    state: 'thinking',
+    thinkingActive: false,
+    createdAt: Date.now(),
+    ...nextMetadata
+  }
+  thread.messages.push(next)
+  thread.assistantId = next.id
+}
+
 export function createDaemonEventHandler(context: DaemonEventContext): (event: DaemonMessage) => void {
   const {
     threads,
@@ -151,21 +176,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
       thread.pendingGuidance = Math.max(0, (thread.pendingGuidance ?? 1) - 1)
       const currentAssistant = thread.messages.find((item) => item.id === thread.assistantId)
       if (currentAssistant) {
-        currentAssistant.state = 'done'
-        currentAssistant.thinkingActive = false
-        currentAssistant.preparingTool = undefined
-        const nextAssistant: ChatMessage = {
-          id: makeId(),
-          role: 'assistant',
-          content: '',
-          thinking: '',
-          tools: [],
-          state: 'thinking',
-          thinkingActive: false,
-          createdAt: Date.now()
-        }
-        thread.messages.push(nextAssistant)
-        thread.assistantId = nextAssistant.id
+        appendAssistantStep(thread, currentAssistant)
         // The user may have scrolled away since submitting the guidance.
         if (thread.id === activeThreadId.value) void scrollToBottom()
       } else if (!thread.running && thread.sessionId) {
@@ -257,6 +268,15 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         break
       case 'status': {
         const lower = event.data.toLocaleLowerCase()
+        if (lower === 'context compacted') {
+          if (message) {
+            // Keep the marker after any prior output and before the resumed model step.
+            if (assistantStepHasOutput(message)) appendAssistantStep(thread, message, { contextCompacted: true })
+            else message.contextCompacted = true
+          }
+          thread.phase = undefined
+          break
+        }
         if (lower.includes('preparing tool call')) {
           if (message) {
             const detail = typeof event.details?.detail === 'string' && event.details.detail.trim()
@@ -342,26 +362,7 @@ export function createDaemonEventHandler(context: DaemonEventContext): (event: D
         const step = Number(event.details?.step) || 0
         const modelRef = event.data || (event.details?.provider && event.details?.model ? `${event.details.provider}/${event.details.model}` : undefined)
         if (message && modelRef && !message.modelRef) message.modelRef = modelRef
-        const previousHasOutput = Boolean(
-          message?.content || message?.thinking || (message?.tools?.length ?? 0))
-        if (message && step > 1 && previousHasOutput) {
-          message.state = 'done'
-          message.thinkingActive = false
-          message.preparingTool = undefined
-          const nextAssistant: ChatMessage = {
-            id: makeId(),
-            role: 'assistant',
-            content: '',
-            thinking: '',
-            tools: [],
-            modelRef,
-            state: 'thinking',
-            thinkingActive: false,
-            createdAt: Date.now()
-          }
-          thread.messages.push(nextAssistant)
-          thread.assistantId = nextAssistant.id
-        }
+        if (message && step > 1 && assistantStepHasOutput(message)) appendAssistantStep(thread, message, { modelRef })
         break
       }
       case 'usage': {

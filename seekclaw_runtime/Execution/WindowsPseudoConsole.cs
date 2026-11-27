@@ -10,9 +10,10 @@ namespace SeekClaw.Runtime.Execution;
 /// <summary>Windows 10+ ConPTY. Native handles are owned here; command sessions own the streams.</summary>
 internal sealed class WindowsPseudoConsole : IDisposable
 {
-    private const string PowerShellPathVariable = "SEEKCLAW_CONPTY_PWSH";
     private const uint ExtendedStartupInfoPresent = 0x00080000;
     private const uint CreateUnicodeEnvironment = 0x00000400;
+    private const int StartfUseStdHandles = 0x00000100;
+    private static readonly nint InvalidHandle = -1;
     private nint _handle;
     private WindowsPseudoConsole(nint handle) => _handle = handle;
 
@@ -44,26 +45,23 @@ internal sealed class WindowsPseudoConsole : IDisposable
                         throw new Win32Exception();
                     var startup = new StartupInfoEx
                     {
-                        StartupInfo = new StartupInfo { Size = Marshal.SizeOf<StartupInfoEx>() },
+                        StartupInfo = new StartupInfo
+                        {
+                            Size = Marshal.SizeOf<StartupInfoEx>(), Flags = StartfUseStdHandles,
+                            // Let ConPTY supply its console handles. Reopening CONOUT$ via cmd
+                            // can disable end-of-line wrapping and lose text wider than the viewport.
+                            StdInput = InvalidHandle, StdOutput = InvalidHandle, StdError = InvalidHandle,
+                        },
                         Attributes = attributes,
                     };
-                    // EncodedCommand avoids Windows command-line quoting ambiguity for arbitrary scripts.
                     var script = vendoredShell is null ? command : VendoredPowerShell.WithUtf8Output(command);
                     var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-                    var system = Environment.GetFolderPath(Environment.SpecialFolder.System);
-                    var launcher = Path.Combine(system, "cmd.exe");
-                    var shell = Path.Combine(system, "WindowsPowerShell", "v1.0", "powershell.exe");
-                    var flags = "/d /s /c";
-                    if (vendoredShell is not null)
-                    {
-                        environment = CreatePowerShellEnvironment(vendoredShell);
-                        shell = $"%{PowerShellPathVariable}%";
-                        flags = "/d /s /v:off /c";
-                    }
-                    // Native hosts can have redirected/invalid standard handles. Reopen the attached
-                    // console devices in the child rather than inheriting those handles.
-                    var commandLine = new StringBuilder($"\"{launcher}\" {flags} \"\"{shell}\" -NoLogo -NoProfile -EncodedCommand {encoded} <CONIN$ >CONOUT$ 2>&1\"");
-                    if (!CreateProcess(launcher, commandLine, 0, 0, false, ExtendedStartupInfoPresent | CreateUnicodeEnvironment,
+                    var shell = vendoredShell ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+                        "WindowsPowerShell", "v1.0", "powershell.exe");
+                    if (vendoredShell is not null) environment = CreatePowerShellEnvironment();
+                    // Pass the script as one argument without a second shell's quoting or length limit.
+                    var commandLine = new StringBuilder($"\"{shell}\" -NoLogo -NoProfile -EncodedCommand {encoded}");
+                    if (!CreateProcess(shell, commandLine, 0, 0, false, ExtendedStartupInfoPresent | CreateUnicodeEnvironment,
                             environment, directory, ref startup, out var info)) throw new Win32Exception();
                     using var processHandle = new SafeFileHandle(info.Process, true);
                     using var threadHandle = new SafeFileHandle(info.Thread, true);
@@ -94,14 +92,13 @@ internal sealed class WindowsPseudoConsole : IDisposable
         }
     }
 
-    private static nint CreatePowerShellEnvironment(string shell)
+    private static nint CreatePowerShellEnvironment()
     {
         var variables = new SortedDictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
             variables[(string)entry.Key] = (string?)entry.Value;
         foreach (var (name, value) in VendoredPowerShell.ChildEnvironment)
             variables[name] = value;
-        variables[PowerShellPathVariable] = shell;
 
         var block = new StringBuilder();
         foreach (var (name, value) in variables)

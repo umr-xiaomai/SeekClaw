@@ -50,6 +50,39 @@ public sealed class ExecCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task PlainChat_CompletesAllPipedLinesInOneTurnAndPrintsTheAnswerOnce()
+    {
+        var factory = new ClientFactory("\x1b[36mFINAL\x1b[0m\x1b[2J", streamText: true);
+        await using var runtime = Runtime(factory);
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var code = await new ChatLoop(runtime).RunPlainAsync("", false, null,
+            new StringReader("first line\nsecond line"), stdout, stderr, CancellationToken.None);
+
+        Assert.Equal(0, code);
+        Assert.Equal("FINAL" + stdout.NewLine, stdout.ToString());
+        Assert.DoesNotContain('\x1b', stderr.ToString());
+        Assert.Contains(Assert.Single(factory.Requests).Messages,
+            message => message.Text == "first line\nsecond line");
+    }
+
+    [Fact]
+    public async Task PlainChat_UsesPositionalPromptWithRedirectedInput()
+    {
+        var factory = new ClientFactory("answer");
+        await using var runtime = Runtime(factory);
+        var input = new StringReader("piped data");
+
+        var code = await new ChatLoop(runtime).RunPlainAsync("prompt text", false, null,
+            input, new StringWriter(), new StringWriter(), CancellationToken.None);
+
+        Assert.Equal(0, code);
+        Assert.Contains(Assert.Single(factory.Requests).Messages, message => message.Text == "prompt text");
+        Assert.Equal("piped data", input.ReadToEnd());
+    }
+
+    [Fact]
     public async Task InvalidStructuredOutput_ReturnsThree_AndPreservesExistingOutputFile()
     {
         await using var runtime = Runtime(new ClientFactory("not JSON"));
@@ -148,7 +181,7 @@ public sealed class ExecCommandTests : IDisposable
         });
     }
 
-    private sealed class ClientFactory(string text, bool toolFirst = false) : ILlmClientFactory, ILlmClient
+    private sealed class ClientFactory(string text, bool toolFirst = false, bool streamText = false) : ILlmClientFactory, ILlmClient
     {
         public string Kind => "openai";
         public List<LlmRequest> Requests { get; } = [];
@@ -157,6 +190,7 @@ public sealed class ExecCommandTests : IDisposable
         {
             Requests.Add(request);
             await Task.Yield();
+            if (streamText) yield return new LlmTextDelta(text);
             yield return new LlmCompleted(toolFirst && Requests.Count == 1
                 ? new LlmCompletion { ToolCalls = [new ToolCallRequest("call", "write_file", """{"path":"should-not-exist.txt","content":"blocked"}""")] }
                 : new LlmCompletion { Text = text, FinishReason = "stop" });

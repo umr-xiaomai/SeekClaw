@@ -54,14 +54,16 @@ public sealed class InteractiveCommandToolTests : IDisposable
         await using (var launchTurn = SeekClawRuntime.CreateIsolated(workspace, configureServices: runtime.ShareTaskServices))
         {
             var start = Assert.IsAssignableFrom<ITool>(launchTurn.Tools.Resolve("exec_command"));
-            page = ReadResult(await start.ExecuteAsync(new JsonObject
+            var started = await start.ExecuteAsync(new JsonObject
             {
                 ["cmd"] = command,
                 ["workdir"] = workdir,
                 ["tty"] = true,
                 ["yield_time_ms"] = 250,
                 ["timeout_seconds"] = 30,
-            }, Context(launchTurn, "owner"), deadline.Token));
+            }, Context(launchTurn, "owner"), deadline.Token);
+            Assert.True(started.Success, started.Output);
+            page = Assert.IsType<JsonObject>(JsonNode.Parse(started.Output));
             id = page["sessionId"]!.GetValue<string>();
             Assert.False(string.IsNullOrWhiteSpace(id));
             Assert.Equal("running", page["status"]!.GetValue<string>());
@@ -105,7 +107,12 @@ public sealed class InteractiveCommandToolTests : IDisposable
 
         async Task ReadNextPage(string chars = "")
         {
-            page = ReadResult(await input.ExecuteAsync(InputArgs(chars), Context(resumeTurn, "owner"), deadline.Token));
+            var result = await input.ExecuteAsync(InputArgs(chars), Context(resumeTurn, "owner"), deadline.Token);
+            page = Assert.IsType<JsonObject>(JsonNode.Parse(result.Output));
+            if (page["status"]!.GetValue<string>() == "running")
+                Assert.True(result.Success, result.Output);
+            else
+                Assert.False(result.Success, result.Output);
             AppendPage();
         }
     }
@@ -117,10 +124,4 @@ public sealed class InteractiveCommandToolTests : IDisposable
         Agent = runtime.ConfigStore.Config.Agent,
         SessionId = sessionId,
     };
-
-    private static JsonObject ReadResult(ToolResult result)
-    {
-        Assert.True(result.Success, result.Output);
-        return Assert.IsType<JsonObject>(JsonNode.Parse(result.Output));
-    }
 }

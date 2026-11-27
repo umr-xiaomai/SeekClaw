@@ -136,6 +136,67 @@ describe('hydrateMessages', () => {
     ])
   })
 
+  it('restores the position of a context compaction after the preceding tool result', () => {
+    const messages = hydrateMessages({
+      id: 'session', createdAt: '2026-11-24T00:00:00Z', updatedAt: '2026-11-24T00:00:03Z',
+      messages: [
+        { role: 'user', text: '核对原图。' },
+        { role: 'assistant', text: '', toolCalls: [{ id: 'read', name: 'read_file' }] },
+        { role: 'tool', text: 'Contents', toolCallId: 'read', toolName: 'read_file' },
+        { role: 'assistant', text: '已核对。', contextCompacted: true }
+      ]
+    })
+    expect(messages).toHaveLength(3)
+    expect(messages[1]?.tools).toMatchObject([{ id: 'read', output: 'Contents' }])
+    expect(messages[1]?.contextCompacted).toBeUndefined()
+    expect(messages[2]).toMatchObject({ content: '已核对。', contextCompacted: true })
+  })
+
+  it('marks calls without results as unfinished while pairing legacy tool results', () => {
+    const [assistant] = hydrateMessages({
+      id: 'session', createdAt: '2026-11-24T00:00:00Z', updatedAt: '2026-11-24T00:00:03Z',
+      messages: [
+        {
+          role: 'assistant', text: '', toolCalls: [
+            { id: 'unfinished', name: 'exec_command' },
+            { id: 'finished', name: 'exec_command' },
+            { id: 'legacy-result', name: 'read_file' },
+            { name: 'edit_file' }
+          ]
+        },
+        { role: 'tool', text: 'build finished', toolCallId: 'finished', toolSuccess: true },
+        { role: 'tool', text: 'file contents', toolName: 'READ_FILE' },
+        { role: 'tool', text: 'operation denied', toolName: 'edit_file', toolCallId: 'legacy-call', toolSuccess: false }
+      ]
+    })
+    expect(assistant?.tools).toMatchObject([
+      { id: 'unfinished', state: 'interrupted' },
+      { id: 'finished', state: 'done', output: 'build finished' },
+      { id: 'legacy-result', state: 'done', output: 'file contents' },
+      { id: 'session:tool-call:0:3', callId: 'legacy-call', state: 'error', output: 'operation denied' }
+    ])
+  })
+
+  it('reserves exact tool call matches before pairing earlier results without an id', () => {
+    const [assistant] = hydrateMessages({
+      id: 'session', createdAt: '2026-11-24T00:00:00Z', updatedAt: '2026-11-24T00:00:03Z',
+      messages: [
+        {
+          role: 'assistant', text: '', toolCalls: [
+            { id: 'first', name: 'read_file' },
+            { id: 'second', name: 'read_file' }
+          ]
+        },
+        { role: 'tool', text: 'second file contents', toolName: 'read_file' },
+        { role: 'tool', text: 'first file contents', toolName: 'read_file', toolCallId: 'first' }
+      ]
+    })
+    expect(assistant?.tools).toMatchObject([
+      { id: 'first', state: 'done', output: 'first file contents' },
+      { id: 'second', state: 'done', output: 'second file contents' }
+    ])
+  })
+
   it('preserves message timestamp from backend', async () => {
     const { hydrateMessages } = await import('./app-helpers')
     const ts1 = 1757890000000

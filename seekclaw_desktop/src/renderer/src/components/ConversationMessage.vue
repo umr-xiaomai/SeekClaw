@@ -5,7 +5,6 @@ import {
   ChevronRight,
   CircleAlert,
   Copy,
-  Image as ImageIcon,
   Layers,
   Pencil,
   RotateCcw,
@@ -219,7 +218,6 @@ const visibleTools = computed(() => {
   return props.message.tools?.filter((tool) => !represented.has(tool.id)) ?? []
 })
 const hasImages = computed(() =>
-  (props.message.viewedImages?.length ?? 0) > 0 ||
   (props.message.images?.length ?? 0) > 0 ||
   (props.message.files?.length ?? 0) > 0
 )
@@ -293,21 +291,6 @@ const isVisible = computed(() => {
     </template>
 
     <div v-else class="assistant-message">
-      <details v-if="message.viewedImages?.length" class="image-activity">
-        <summary>
-          <ImageIcon :size="15" aria-hidden="true" />
-          已查看 {{ message.viewedImages.length }} 张图像
-          <ChevronRight :size="13" class="image-activity-chevron" aria-hidden="true" />
-        </summary>
-        <div class="image-activity-thumbnails">
-          <button v-for="image in message.viewedImages" :key="image.id" type="button" :disabled="!imageUrl(image.id)"
-            :title="image.name" @click="previewImage(image.id, image.name)">
-            <img v-if="imageUrl(image.id)" :src="imageUrl(image.id)" :alt="image.name" loading="lazy">
-            <span v-else>{{ image.name }}</span>
-          </button>
-        </div>
-      </details>
-
       <MarkdownMessage v-if="hasContent" :key="message.id" :content="displayContent"
         :streaming="smoothOutput && streaming && message.state === 'streaming' && !hasError" />
       <SubAgentActivityList v-if="!hideSubAgents" :agents="subAgents" :events="message.subAgentEvents"
@@ -588,47 +571,6 @@ const isVisible = computed(() => {
   margin: 4px 0;
 }
 
-.image-activity {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.image-activity summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: fit-content;
-  min-height: 27px;
-  list-style: none;
-  cursor: pointer;
-}
-
-.image-activity summary:hover { color: var(--text); }
-.image-activity summary::-webkit-details-marker { display: none; }
-.image-activity-chevron { transition: transform 130ms ease; }
-.image-activity[open] .image-activity-chevron { transform: rotate(90deg); }
-
-.image-activity-thumbnails {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 2px 0 6px 7px;
-  padding: 4px 0 4px 12px;
-  border-left: 1px solid var(--border);
-}
-
-.image-activity-thumbnails button {
-  width: min(96px, 100%);
-  aspect-ratio: 1;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
-}
-
-.image-activity-thumbnails img { width: 100%; height: 100%; object-fit: cover; }
 .message.is-intermediate { margin-bottom: 16px; }
 .message.is-progress { margin: 3px 0; }
 .message.is-progress:has(.markdown-body) { margin: 8px 0 4px; }

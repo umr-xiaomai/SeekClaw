@@ -66,7 +66,8 @@ export interface RuntimeSession extends RuntimeSessionHeader {
     finishReason?: string | null
     errorMessage?: string | null
     viewedImages?: Array<{ id: string; name: string }>
-    toolCalls?: Array<{ id: string; name: string; detail?: string; input?: string }>
+    contextCompacted?: boolean
+    toolCalls?: Array<{ id?: string; name: string; detail?: string; input?: string }>
     toolCallId?: string
     toolName?: string
     toolSuccess?: boolean
@@ -253,19 +254,29 @@ function retainLiveMessageIds(messages: ChatMessage[], previous: ChatMessage[], 
 
 export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] = []): ChatMessage[] {
   const messages: ChatMessage[] = []
+  const resultCallIds = new Set<string>()
+  let assistant: ChatMessage | undefined
   saved.messages.forEach((item, index) => {
     if (item.role === 'tool') {
-      const assistant = messages.findLast((message) => message.role === 'assistant')
-      if (assistant && item.toolName) {
+      if (assistant) {
         assistant.tools ??= []
-        const tool = assistant.tools.find((activity) =>
-          Boolean(item.toolCallId) && (activity.callId === item.toolCallId || activity.id === item.toolCallId))
+        const callId = item.toolCallId?.trim() ? item.toolCallId : undefined
+        const toolName = item.toolName
+        const matchedById = callId ? assistant.tools.find((activity) => activity.callId === callId) : undefined
+        // Legacy results can match by name when either side lacks an id.
+        const tool = matchedById ?? (toolName ? assistant.tools.find((activity) =>
+          activity.state === 'interrupted'
+          && (!activity.callId || (!callId && !resultCallIds.has(activity.callId)))
+          && activity.name.toLowerCase() === toolName.toLowerCase()) : undefined)
+        const name = tool?.name || toolName
+        if (!name) return
         const hydrated: ToolActivity = tool ?? {
-          id: item.toolCallId ?? `${saved.id}:tool:${index}`,
-          callId: item.toolCallId,
-          name: item.toolName,
+          id: callId ?? `${saved.id}:tool:${index}`,
+          callId,
+          name,
           state: 'done'
         }
+        hydrated.callId ??= callId
         hydrated.state = item.toolSuccess === false ? 'error' : 'done'
         hydrated.output = item.text
         hydrated.content = item.toolContent ?? undefined
@@ -298,7 +309,7 @@ export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] =
       if (parsed.files.length > 0) messageFiles = parsed.files
     }
 
-    messages.push({
+    const message: ChatMessage = {
       id: `${saved.id}:${index}`,
       transcriptIndex: index,
       role: item.role,
@@ -308,14 +319,19 @@ export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] =
       thinking: item.thinking,
       modelRef: item.modelRef,
       viewedImages: item.viewedImages,
-      tools: item.toolCalls?.map((call) => ({
-        id: call.id,
-        callId: call.id,
-        name: call.name,
-        detail: call.detail,
-        input: call.input,
-        state: 'done'
-      })),
+      contextCompacted: item.contextCompacted,
+      tools: item.toolCalls?.map((call, callIndex) => {
+        const callId = call.id?.trim() ? call.id : undefined
+        return {
+          id: callId ?? `${saved.id}:tool-call:${index}:${callIndex}`,
+          callId,
+          name: call.name,
+          detail: call.detail,
+          input: call.input,
+          // The assistant requested this call. Only a tool result confirms that it settled.
+          state: 'interrupted'
+        }
+      }),
       state: item.role === 'assistant'
         ? (item.errorMessage || item.finishReason === 'error' ? 'error' : 'done')
         : undefined,
@@ -323,7 +339,19 @@ export function hydrateMessages(saved: RuntimeSession, previous: ChatMessage[] =
       createdAt: typeof item.timestamp === 'number' && item.timestamp > 0
         ? item.timestamp
         : new Date(saved.createdAt).getTime() + index
-    })
+    }
+    messages.push(message)
+
+    if (item.role !== 'assistant') return
+    assistant = message
+    resultCallIds.clear()
+    if (!item.toolCalls?.length) return
+    // Reserve the calls with exact matches before handling an earlier result without an id.
+    for (let next = index + 1; next < saved.messages.length; next++) {
+      const following = saved.messages[next]!
+      if (following.role === 'assistant') break
+      if (following.role === 'tool' && following.toolCallId) resultCallIds.add(following.toolCallId)
+    }
   })
   retainLiveMessageIds(messages, previous, saved.id)
   return mergeSubAgentActivities(messages, previous)

@@ -32,6 +32,8 @@ public sealed class ChatMessage
     public string? FinishReason { get; set; }
     public string? ErrorMessage { get; set; }
     public IReadOnlyList<ChatImageReference>? ViewedImages { get; init; }
+    /// <summary>A context checkpoint was saved before this assistant message.</summary>
+    public bool ContextCompacted { get; init; }
     public IReadOnlyList<ToolCallRequest>? ToolCalls { get; set; }
     /// <summary>Set when Role == Tool.</summary>
     public string? ToolCallId { get; init; }
