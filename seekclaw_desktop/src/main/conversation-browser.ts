@@ -1,11 +1,21 @@
 import { BrowserWindow, WebContentsView, session } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { BrowserCommand, BrowserPanelLayout, ConversationBrowserState } from '../shared/browser.js'
+import type { RemoteBrowserFrame, RemoteBrowserInput } from '../shared/web-server.js'
 import { browserBounds, browserUrl } from './browser-policy.js'
 import { browserPageScript } from './browser-page.js'
 
-interface Tab { id: string; view: WebContentsView; error?: string; targetUrl?: string; ready: Promise<void> }
+interface Tab {
+  id: string
+  view: WebContentsView
+  error?: string
+  targetUrl?: string
+  ready: Promise<void>
+  hostWindow?: 'main' | 'remote'
+  screencastKey?: string
+}
 interface BrowserSession { scope: string; sessionId: string; tabs: Map<string, Tab>; activeTabId?: string; paused: boolean; busy: boolean; queue: Promise<unknown> }
+interface RemoteViewer { id: string; width: number; height: number; onFrame: (frame: RemoteBrowserFrame) => void }
 
 function isBlankOrErrorUrl(url?: string): boolean {
   return !url || url === 'about:blank' || url.startsWith('chrome-error://')
@@ -24,6 +34,8 @@ function fallbackTitleForUrl(url: string): string {
 export class ConversationBrowser {
   private readonly sessions = new Map<string, BrowserSession>()
   private readonly requests = new Map<string, { scope: string; controller: AbortController; agent: boolean }>()
+  private readonly remoteStreams = new Map<string, Map<string, RemoteViewer>>()
+  private remoteBackingWindow: BrowserWindow | null = null
   private layout: BrowserPanelLayout | null = null
   private disposed = false
   private modalVisible = false
@@ -31,6 +43,90 @@ export class ConversationBrowser {
   constructor(private readonly window: BrowserWindow, private readonly changed: (state: ConversationBrowserState) => void) {
     window.on('resize', () => this.applyLayout())
     window.webContents.on('zoom-changed', () => this.applyLayout())
+  }
+
+  startRemoteStream(
+    scope: string,
+    viewport: { width: number; height: number },
+    onFrame: (frame: RemoteBrowserFrame) => void
+  ): () => void {
+    const viewerId = randomUUID()
+    let viewers = this.remoteStreams.get(scope)
+    if (!viewers) {
+      viewers = new Map()
+      this.remoteStreams.set(scope, viewers)
+    }
+    viewers.set(viewerId, {
+      id: viewerId,
+      width: Math.max(280, Math.min(1920, Math.round(viewport.width) || 520)),
+      height: Math.max(220, Math.min(1440, Math.round(viewport.height) || 680)),
+      onFrame
+    })
+    this.applyLayout()
+    this.syncRemoteScreencasts()
+    return () => {
+      const current = this.remoteStreams.get(scope)
+      if (!current) return
+      current.delete(viewerId)
+      if (current.size === 0) this.remoteStreams.delete(scope)
+      this.applyLayout()
+      this.syncRemoteScreencasts()
+    }
+  }
+
+  async dispatchRemoteInput(scope: string, input: RemoteBrowserInput): Promise<void> {
+    if (this.disposed) return
+    const owner = this.sessions.get(scope)
+    if (!owner) return
+    const tab = owner.tabs.get(owner.activeTabId || '')
+    if (!tab) return
+    await tab.ready
+    if (this.disposed || tab.view.webContents.isDestroyed()) return
+    const debuggerApi = tab.view.webContents.debugger
+    if (!debuggerApi.isAttached()) debuggerApi.attach('1.3')
+
+    const clampCoord = (value: number): number =>
+      Number.isFinite(value) ? Math.max(0, Math.min(10000, Math.round(value))) : 0
+
+    switch (input.type) {
+      case 'mousePressed':
+      case 'mouseReleased':
+      case 'mouseMoved':
+        await debuggerApi.sendCommand('Input.dispatchMouseEvent', {
+          type: input.type,
+          x: clampCoord(input.x),
+          y: clampCoord(input.y),
+          button: input.button ?? 'none',
+          clickCount: input.type === 'mouseMoved' ? undefined : (input.clickCount ?? 1),
+          buttons: input.button === 'left' ? 1 : input.button === 'right' ? 2 : input.button === 'middle' ? 4 : 0
+        })
+        break
+      case 'mouseWheel':
+        await debuggerApi.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mouseWheel',
+          x: clampCoord(input.x),
+          y: clampCoord(input.y),
+          deltaX: Math.max(-3000, Math.min(3000, Math.round(input.deltaX || 0))),
+          deltaY: Math.max(-3000, Math.min(3000, Math.round(input.deltaY || 0)))
+        })
+        break
+      case 'keyDown':
+      case 'keyUp':
+        await debuggerApi.sendCommand('Input.dispatchKeyEvent', {
+          type: input.type,
+          key: input.key,
+          code: input.code,
+          windowsVirtualKeyCode: input.keyCode,
+          modifiers: input.modifiers ?? 0,
+          ...(input.type === 'keyDown' && input.text ? { text: input.text, unmodifiedText: input.text } : {})
+        })
+        break
+      case 'insertText':
+        if (input.text) {
+          await debuggerApi.sendCommand('Input.insertText', { text: input.text })
+        }
+        break
+    }
   }
 
   state(scope: string): ConversationBrowserState {
@@ -115,14 +211,131 @@ export class ConversationBrowser {
     this.publish(owner)
   }
 
+  private ensureRemoteBackingWindow(width: number, height: number): BrowserWindow {
+    if (this.remoteBackingWindow && !this.remoteBackingWindow.isDestroyed()) {
+      const [curW, curH] = this.remoteBackingWindow.getContentSize()
+      if (Math.abs((curW ?? 0) - width) > 4 || Math.abs((curH ?? 0) - height) > 4) {
+        this.remoteBackingWindow.setContentSize(width, height)
+      }
+      return this.remoteBackingWindow
+    }
+    const backing = new BrowserWindow({
+      show: false,
+      width,
+      height,
+      frame: false,
+      skipTaskbar: true,
+      focusable: false,
+      paintWhenInitiallyHidden: true,
+      enableLargerThanScreen: true,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+    })
+    this.remoteBackingWindow = backing
+    return backing
+  }
+
+  private remoteViewportFor(scope: string): { width: number; height: number } | null {
+    const viewers = this.remoteStreams.get(scope)
+    if (!viewers || viewers.size === 0) return null
+    let width = 0
+    let height = 0
+    for (const viewer of viewers.values()) {
+      width = Math.max(width, viewer.width)
+      height = Math.max(height, viewer.height)
+    }
+    return { width: Math.max(280, width), height: Math.max(220, height) }
+  }
+
+  private attachViewToHost(tab: Tab, host: 'main' | 'remote', backingWindow?: BrowserWindow): void {
+    if (tab.hostWindow === host) return
+    try {
+      if (!this.window.isDestroyed()) this.window.contentView.removeChildView(tab.view)
+    } catch {}
+    try {
+      if (this.remoteBackingWindow && !this.remoteBackingWindow.isDestroyed()) {
+        this.remoteBackingWindow.contentView.removeChildView(tab.view)
+      }
+    } catch {}
+
+    if (host === 'main' && !this.window.isDestroyed()) {
+      this.window.contentView.addChildView(tab.view)
+      tab.hostWindow = 'main'
+    } else if (host === 'remote' && backingWindow && !backingWindow.isDestroyed()) {
+      backingWindow.contentView.addChildView(tab.view)
+      tab.hostWindow = 'remote'
+    }
+  }
+
   private applyLayout(): void {
     if (this.disposed || this.window.isDestroyed()) return
-    for (const owner of this.sessions.values()) for (const tab of owner.tabs.values()) {
-      const show = this.layout?.visible && this.layout.bounds.width > 0 && this.layout.bounds.height > 0 && !this.modalVisible && this.layout.scope === owner.scope && owner.activeTabId === tab.id && !tab.error
-      if (show && this.layout) {
-        tab.view.setBounds(browserBounds(this.layout.bounds, this.window.webContents.getZoomFactor(), this.window.getContentBounds()))
+    for (const owner of this.sessions.values()) {
+      const remoteViewport = this.remoteViewportFor(owner.scope)
+      for (const tab of owner.tabs.values()) {
+        const showDesktop = Boolean(
+          this.layout?.visible
+          && this.layout.bounds.width > 0
+          && this.layout.bounds.height > 0
+          && !this.modalVisible
+          && this.layout.scope === owner.scope
+          && owner.activeTabId === tab.id
+          && !tab.error
+        )
+        const showRemote = Boolean(
+          !showDesktop
+          && remoteViewport
+          && owner.activeTabId === tab.id
+          && !tab.error
+        )
+        if (showDesktop && this.layout) {
+          this.attachViewToHost(tab, 'main')
+          tab.view.setBounds(browserBounds(this.layout.bounds, this.window.webContents.getZoomFactor(), this.window.getContentBounds()))
+          tab.view.setVisible(true)
+        } else if (showRemote && remoteViewport) {
+          const backing = this.ensureRemoteBackingWindow(remoteViewport.width, remoteViewport.height)
+          this.attachViewToHost(tab, 'remote', backing)
+          tab.view.setBounds({ x: 0, y: 0, width: remoteViewport.width, height: remoteViewport.height })
+          tab.view.setVisible(true)
+        } else {
+          this.attachViewToHost(tab, 'main')
+          tab.view.setVisible(false)
+        }
       }
-      tab.view.setVisible(!!show)
+    }
+  }
+
+  private syncRemoteScreencasts(): void {
+    if (this.disposed) return
+    for (const owner of this.sessions.values()) {
+      const viewport = this.remoteViewportFor(owner.scope)
+      for (const tab of owner.tabs.values()) {
+        const currentUrl = tab.view.webContents.isDestroyed() ? 'about:blank' : tab.view.webContents.getURL()
+        const shouldStream = Boolean(
+          viewport
+          && owner.activeTabId === tab.id
+          && !tab.error
+          && (!isBlankOrErrorUrl(currentUrl) || (tab.targetUrl && tab.targetUrl !== 'about:blank'))
+        )
+        const desiredKey = shouldStream && viewport ? `${viewport.width}x${viewport.height}` : undefined
+        if (tab.screencastKey === desiredKey) continue
+        tab.screencastKey = desiredKey
+        void tab.ready.then(async () => {
+          if (this.disposed || tab.view.webContents.isDestroyed()) return
+          const debuggerApi = tab.view.webContents.debugger
+          if (!debuggerApi.isAttached()) debuggerApi.attach('1.3')
+          if (!desiredKey || !viewport) {
+            await debuggerApi.sendCommand('Page.stopScreencast').catch(() => undefined)
+            return
+          }
+          if (tab.screencastKey !== desiredKey) return
+          await debuggerApi.sendCommand('Page.startScreencast', {
+            format: 'jpeg',
+            quality: 80,
+            maxWidth: viewport.width,
+            maxHeight: viewport.height,
+            everyNthFrame: 1
+          }).catch(() => undefined)
+        }).catch(() => undefined)
+      }
     }
   }
 
@@ -135,7 +348,12 @@ export class ConversationBrowser {
     if (this.disposed || signal.aborted) throw new Error('浏览器操作已取消；请读取页面后再继续')
     if (agent && owner.paused) throw new Error('用户已暂停 Agent 浏览器操作，请等待用户恢复')
   }
-  private publish(owner: BrowserSession): void { if (!this.disposed && !this.window.isDestroyed()) this.changed(this.state(owner.scope)) }
+  private publish(owner: BrowserSession): void {
+    if (!this.disposed && !this.window.isDestroyed()) {
+      this.changed(this.state(owner.scope))
+      this.syncRemoteScreencasts()
+    }
+  }
 
   private newTab(owner: BrowserSession): Tab {
     if (owner.tabs.size >= 6) throw new Error('每个会话最多打开 6 个标签页')
@@ -151,7 +369,7 @@ export class ConversationBrowser {
       partition, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true,
       allowRunningInsecureContent: false, backgroundThrottling: false, navigateOnDragDrop: false, disableDialogs: true,
     } })
-    const tab: Tab = { id: randomUUID(), view, ready: Promise.resolve() }
+    const tab: Tab = { id: randomUUID(), view, ready: Promise.resolve(), hostWindow: 'main' }
     owner.tabs.set(tab.id, tab); owner.activeTabId = tab.id
     this.window.contentView.addChildView(view); view.setBounds({ x: 0, y: 48, width: 1000, height: 700 }); view.setVisible(false)
     const page = view.webContents
@@ -192,6 +410,27 @@ export class ConversationBrowser {
     })
     page.on('render-process-gone', () => { tab.error = '页面进程已退出，请刷新重试'; this.publish(owner) })
     page.on('will-prevent-unload', event => event.preventDefault())
+    if (typeof page.debugger?.on === 'function') {
+      page.debugger.on('message', (_event, method, params) => {
+        if (method !== 'Page.screencastFrame' || this.disposed || page.isDestroyed()) return
+        const frameParams = params as { sessionId?: number; data?: string; metadata?: { deviceWidth?: number; deviceHeight?: number } }
+        if (typeof frameParams.sessionId === 'number') {
+          void page.debugger.sendCommand('Page.screencastFrameAck', { sessionId: frameParams.sessionId }).catch(() => undefined)
+        }
+        const viewers = this.remoteStreams.get(owner.scope)
+        if (!viewers || viewers.size === 0 || owner.activeTabId !== tab.id || !frameParams.data) return
+        const payload: RemoteBrowserFrame = {
+          scope: owner.scope,
+          tabId: tab.id,
+          data: frameParams.data,
+          width: Math.max(1, Math.round(frameParams.metadata?.deviceWidth ?? 520)),
+          height: Math.max(1, Math.round(frameParams.metadata?.deviceHeight ?? 680))
+        }
+        for (const viewer of viewers.values()) {
+          viewer.onFrame(payload)
+        }
+      })
+    }
     // Chromium's debugger needs an initialized renderer. Sending commands before the
     // first load can wait indefinitely; initialize a trusted blank page before guards.
     tab.ready = page.loadURL('about:blank').then(async () => {
@@ -360,7 +599,21 @@ export class ConversationBrowser {
 
   private closeTab(owner: BrowserSession, tab: Tab): void {
     owner.tabs.delete(tab.id)
-    if (!this.window.isDestroyed()) this.window.contentView.removeChildView(tab.view)
+    if (!this.window.isDestroyed()) {
+      try {
+        this.window.contentView.removeChildView(tab.view)
+      } catch {
+        // Ignore if view was attached to the remote backing window.
+      }
+    }
+    if (this.remoteBackingWindow && !this.remoteBackingWindow.isDestroyed()) {
+      try {
+        this.remoteBackingWindow.contentView.removeChildView(tab.view)
+      } catch {
+        // Ignore if view was not attached here.
+      }
+    }
+    tab.screencastKey = undefined
     const page = tab.view.webContents
     if (page && !page.isDestroyed()) page.close({ waitForBeforeUnload: false })
     if (owner.activeTabId === tab.id) owner.activeTabId = [...owner.tabs.keys()].at(-1)
@@ -372,5 +625,10 @@ export class ConversationBrowser {
     for (const request of this.requests.values()) request.controller.abort()
     for (const owner of this.sessions.values()) for (const tab of [...owner.tabs.values()]) this.closeTab(owner, tab)
     this.sessions.clear()
+    this.remoteStreams.clear()
+    if (this.remoteBackingWindow && !this.remoteBackingWindow.isDestroyed()) {
+      this.remoteBackingWindow.close()
+    }
+    this.remoteBackingWindow = null
   }
 }

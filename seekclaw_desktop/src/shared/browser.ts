@@ -1,3 +1,5 @@
+import type { RemoteBrowserFrame, RemoteBrowserInput } from './web-server.js'
+
 export interface BrowserCommand {
   action: string
   tab_id?: string
@@ -44,4 +46,10 @@ export interface ConversationBrowserApi {
   layout(layout: BrowserPanelLayout | null): Promise<void>
   overlay(visible: boolean): Promise<void>
   onChanged(listener: (state: ConversationBrowserState) => void): () => void
+  subscribeStream?(
+    scope: string,
+    viewport: { width: number; height: number },
+    listener: (frame: RemoteBrowserFrame) => void
+  ): () => void
+  sendRemoteInput?(scope: string, input: RemoteBrowserInput): Promise<void>
 }
