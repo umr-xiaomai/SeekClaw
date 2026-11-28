@@ -61,7 +61,13 @@ const api: DesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, state: import('../shared/browser.js').ConversationBrowserState) => listener(state)
       ipcRenderer.on('browser:changed', handler)
       return () => ipcRenderer.removeListener('browser:changed', handler)
-    }
+    },
+    onApprovalRequest: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, req: import('../shared/browser.js').BrowserApprovalRequest) => listener(req)
+      ipcRenderer.on('browser:approval-request', handler)
+      return () => ipcRenderer.removeListener('browser:approval-request', handler)
+    },
+    decideApproval: decision => ipcRenderer.invoke('browser:approval-decide', toIpcPayload(decision))
   },
   daemon: {
     connect: () => ipcRenderer.invoke('daemon:connect'),

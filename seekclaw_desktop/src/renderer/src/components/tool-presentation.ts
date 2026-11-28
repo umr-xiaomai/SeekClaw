@@ -10,8 +10,12 @@ const readToolNames = new Set(['read_file', 'cat', 'view_file'])
 const searchToolNames = new Set(['glob', 'grep', 'list_dir', 'search', 'search_code', 'find', 'web_search'])
 const browserActions: Record<string, string> = {
   open: '打开标签页', tabs: '查看标签页', select: '切换标签页', navigate: '打开页面',
-  snapshot: '读取页面', screenshot: '截取页面', click: '点击元素', fill: '填写字段', press: '按键',
-  scroll: '滚动页面', back: '返回上一页', forward: '前进', reload: '刷新页面', close: '关闭标签页'
+  snapshot: '读取页面', screenshot: '截取页面', click: '点击元素',
+  right_click: '右键点击', double_click: '双击元素', hover: '悬停元素', drag: '拖拽元素',
+  fill: '填写字段', select_option: '选择下拉项', press: '按键',
+  scroll: '滚动页面', evaluate: '执行页面脚本', console: '读取控制台日志', network: '读取网络请求',
+  request_permission: '申请浏览器权限', download: '下载文件', downloads: '查看下载记录',
+  back: '返回上一页', forward: '前进', reload: '刷新页面', close: '关闭标签页'
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

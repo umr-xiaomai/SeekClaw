@@ -6,11 +6,50 @@ export interface BrowserCommand {
   url?: string
   snapshot_id?: string
   element_id?: string
+  target_element_id?: string
   text?: string
+  value?: string
   key?: string
+  modifiers?: string[]
+  button?: 'left' | 'right' | 'middle'
+  click_count?: number
   x?: number
   y?: number
+  to_x?: number
+  to_y?: number
+  steps?: number
   delta_y?: number
+  script?: string
+  level?: string
+  filter?: string
+  status_filter?: 'all' | 'error'
+  clear?: boolean
+  limit?: number
+  permission?: string
+  reason?: string
+  filename?: string
+}
+
+export interface BrowserApprovalRequest {
+  id: string
+  kind: 'permission' | 'download'
+  scope: string
+  sessionId: string
+  origin: string
+  url: string
+  permission?: string
+  permissionLabel?: string
+  filename?: string
+  totalBytes?: number
+  savePath?: string
+  reason?: string
+  allowRememberSession?: boolean
+}
+
+export interface BrowserApprovalDecision {
+  id: string
+  approved: boolean
+  rememberSession?: boolean
 }
 
 export interface BrowserTabState {
@@ -46,6 +85,8 @@ export interface ConversationBrowserApi {
   layout(layout: BrowserPanelLayout | null): Promise<void>
   overlay(visible: boolean): Promise<void>
   onChanged(listener: (state: ConversationBrowserState) => void): () => void
+  onApprovalRequest?(listener: (req: BrowserApprovalRequest) => void): () => void
+  decideApproval?(decision: BrowserApprovalDecision): Promise<void>
   subscribeStream?(
     scope: string,
     viewport: { width: number; height: number },

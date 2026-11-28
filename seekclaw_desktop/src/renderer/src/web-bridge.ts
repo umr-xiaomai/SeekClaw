@@ -339,6 +339,8 @@ export function installWebBridge(): DesktopApi {
         hub.browserChangedListeners.add(listener)
         return () => hub.browserChangedListeners.delete(listener)
       },
+      onApprovalRequest: () => () => undefined,
+      decideApproval: async () => undefined,
       subscribeStream: (scope, viewport, listener) => hub.subscribeStream(scope, viewport, listener),
       sendRemoteInput: async (scope: string, input: RemoteBrowserInput) => {
         hub.send({ type: 'browser:input', scope, input })

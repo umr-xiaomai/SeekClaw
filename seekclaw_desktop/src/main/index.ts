@@ -10,7 +10,7 @@ import type { AppInfo, DaemonMessage, DaemonRequestOptions, OpenLinkResult, Reve
 import { isExecutableLinkPath, resolveMarkdownLinkTarget } from '../shared/markdown-links.js'
 import { readLocalLinkPreview } from './file-preview.js'
 import { ConversationBrowser } from './conversation-browser.js'
-import type { BrowserCommand, BrowserPanelLayout } from '../shared/browser.js'
+import type { BrowserApprovalDecision, BrowserApprovalRequest, BrowserCommand, BrowserPanelLayout } from '../shared/browser.js'
 import { DaemonClient } from './daemon-client.js'
 import { configureDesktopPaths } from './desktop-paths.js'
 import { PendingApprovalCache } from './pending-approval-cache.js'
@@ -29,6 +29,7 @@ import {
 const desktopPaths = configureDesktopPaths(app)
 const daemon = new DaemonClient(desktopPaths.daemonEndpoint)
 const pendingApprovals = new PendingApprovalCache()
+const pendingBrowserApprovals = new Map<string, (decision: BrowserApprovalDecision) => void>()
 let mainWindow: BrowserWindow | null = null
 let conversationBrowser: ConversationBrowser | null = null
 let browserAttachment: Promise<void> | null = null
@@ -323,10 +324,35 @@ function createWindow(): void {
     }
   })
 
-  conversationBrowser = new ConversationBrowser(mainWindow, state => {
-    mainWindow?.webContents.send('browser:changed', state)
-    lanWebServer.broadcastBrowserState(state)
-  })
+  conversationBrowser = new ConversationBrowser(
+    mainWindow,
+    state => {
+      mainWindow?.webContents.send('browser:changed', state)
+      lanWebServer.broadcastBrowserState(state)
+    },
+    (req: BrowserApprovalRequest) => {
+      const targetWindow = mainWindow
+      if (!targetWindow || targetWindow.isDestroyed()) {
+        return Promise.resolve({ id: req.id, approved: false })
+      }
+      conversationBrowser?.setModalVisible(true)
+      return new Promise<BrowserApprovalDecision>((resolve) => {
+        const timer = setTimeout(() => {
+          finish({ id: req.id, approved: false })
+        }, 120_000)
+        const finish = (decision: BrowserApprovalDecision) => {
+          clearTimeout(timer)
+          pendingBrowserApprovals.delete(req.id)
+          if (pendingBrowserApprovals.size === 0) {
+            conversationBrowser?.setModalVisible(false)
+          }
+          resolve(decision)
+        }
+        pendingBrowserApprovals.set(req.id, finish)
+        targetWindow.webContents.send('browser:approval-request', req)
+      })
+    }
+  )
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   mainWindow.on('close', (event) => {
@@ -335,7 +361,15 @@ function createWindow(): void {
       mainWindow?.hide()
     }
   })
-  mainWindow.on('closed', () => { conversationBrowser?.dispose(); conversationBrowser = null; mainWindow = null })
+  mainWindow.on('closed', () => {
+    for (const [id, finish] of [...pendingBrowserApprovals.entries()]) {
+      finish({ id, approved: false })
+    }
+    pendingBrowserApprovals.clear()
+    conversationBrowser?.dispose()
+    conversationBrowser = null
+    mainWindow = null
+  })
   // Artifact previews have an opaque sandbox origin. Keep them on srcdoc/blank,
   // including attempts to navigate via links, forms or script-assigned locations.
   mainWindow.webContents.on('will-frame-navigate', (event) => {
@@ -598,6 +632,13 @@ function registerIpc(): void {
   ipcMain.handle('browser:pause', (event, scope: string, paused: boolean) => browserFor(event).pause(scope, !!paused))
   ipcMain.handle('browser:layout', (event, layout: BrowserPanelLayout | null) => browserFor(event).setLayout(layout))
   ipcMain.handle('browser:overlay', (event, visible: boolean) => browserFor(event).setModalVisible(!!visible))
+  ipcMain.handle('browser:approval-decide', (_event, decision: BrowserApprovalDecision) => {
+    if (!decision || typeof decision.id !== 'string') return
+    const finish = pendingBrowserApprovals.get(decision.id)
+    if (finish) {
+      finish({ id: decision.id, approved: Boolean(decision.approved), rememberSession: Boolean(decision.rememberSession) })
+    }
+  })
 
   ipcMain.handle('daemon:connect', async () => {
     const state = await daemon.connect()

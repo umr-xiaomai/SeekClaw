@@ -64,11 +64,22 @@ public sealed class BrowserTests
         Assert.NotNull(JsonNode.Parse(result.Output));
         Assert.Single(result.Images!);
         Assert.DoesNotContain("base64", result.Output);
-        var denied = await tool.ExecuteAsync(new JsonObject { ["action"] = "click" }, new ToolContext
+        foreach (var blocked in new[] { "click", "right_click", "double_click", "drag", "fill", "select_option", "evaluate", "download" })
         {
-            Workspace = workspace, SessionId = "session", Events = new EventBus(), Agent = new AgentConfig { Mode = "readonly" },
-        }, CancellationToken.None);
-        Assert.False(denied.Success);
+            var denied = await tool.ExecuteAsync(new JsonObject { ["action"] = blocked }, new ToolContext
+            {
+                Workspace = workspace, SessionId = "session", Events = new EventBus(), Agent = new AgentConfig { Mode = "readonly" },
+            }, CancellationToken.None);
+            Assert.False(denied.Success);
+        }
+        foreach (var allowedRead in new[] { "console", "network", "downloads" })
+        {
+            var allowed = await tool.ExecuteAsync(new JsonObject { ["action"] = allowedRead }, new ToolContext
+            {
+                Workspace = workspace, SessionId = "session", Events = new EventBus(), Agent = new AgentConfig { Mode = "readonly" },
+            }, CancellationToken.None);
+            Assert.True(allowed.Success);
+        }
     }
 
     private sealed class StubBridge : IBrowserBridge

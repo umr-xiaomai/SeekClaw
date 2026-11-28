@@ -31,6 +31,7 @@ import ConfirmDialog from './components/ConfirmDialog.vue'
 import ConversationProcess from './components/ConversationProcess.vue'
 import SubAgentConversationPanel from './components/SubAgentConversationPanel.vue'
 import ConversationBrowserPanel from './components/ConversationBrowserPanel.vue'
+import BrowserApprovalDialog from './components/BrowserApprovalDialog.vue'
 import BrowserResultPanel from './components/BrowserResultPanel.vue'
 import ArtifactPreviewDialog from './components/ArtifactPreviewDialog.vue'
 import { ARTIFACT_PREVIEW_REQUEST, type ArtifactPreviewRequest } from './artifact-preview'
@@ -39,7 +40,7 @@ import { SIDE_LINK_OPEN_REQUEST, type SideLinkOpenRequest } from './side-link-pr
 import { resolveMarkdownLinkTarget } from '../../shared/markdown-links'
 import { computeThreePaneLayout } from './three-pane-layout'
 import ConversationToolbar from './components/ConversationToolbar.vue'
-import type { ConversationBrowserState } from '../../shared/browser'
+import type { BrowserApprovalDecision, BrowserApprovalRequest, ConversationBrowserState } from '../../shared/browser'
 import CustomizationPage from './components/CustomizationPage.vue'
 import EditMessageDialog from './components/EditMessageDialog.vue'
 import GitWorkspacePanel from './components/GitWorkspacePanel.vue'
@@ -276,8 +277,20 @@ function resizeArtifactPanel(width: number): void {
   localStorage.setItem(ARTIFACT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
 }
 const browserError = ref('')
+const browserApprovalQueue = ref<BrowserApprovalRequest[]>([])
+const activeBrowserApproval = computed(() => browserApprovalQueue.value[0] ?? null)
 let unsubscribeBrowser: (() => void) | undefined
+let unsubscribeBrowserApproval: (() => void) | undefined
 let browserStateSequence = 0
+
+function handleBrowserApprovalRequest(req: BrowserApprovalRequest): void {
+  browserApprovalQueue.value = [...browserApprovalQueue.value, req]
+}
+
+async function decideBrowserApproval(decision: BrowserApprovalDecision): Promise<void> {
+  browserApprovalQueue.value = browserApprovalQueue.value.filter((item) => item.id !== decision.id)
+  await window.seekclaw.browser.decideApproval?.(decision).catch(() => undefined)
+}
 function handleBrowserState(state: ConversationBrowserState): void {
   if (state.sessionId !== activeThread.value?.sessionId) return
   ++browserStateSequence
@@ -2766,6 +2779,7 @@ onMounted(async () => {
   window.addEventListener(ARTIFACT_PREVIEW_REQUEST, onArtifactPreviewRequest)
   window.addEventListener(SIDE_LINK_OPEN_REQUEST, onSideLinkOpenRequest)
   unsubscribeBrowser = window.seekclaw.browser.onChanged(handleBrowserState)
+  unsubscribeBrowserApproval = window.seekclaw.browser.onApprovalRequest?.(handleBrowserApprovalRequest)
   unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonMessage)
   unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
   unsubscribeSyncRefresh = window.seekclaw.onSyncRefresh?.(() => {
@@ -2815,6 +2829,7 @@ onBeforeUnmount(() => {
   window.removeEventListener(ARTIFACT_PREVIEW_REQUEST, onArtifactPreviewRequest)
   window.removeEventListener(SIDE_LINK_OPEN_REQUEST, onSideLinkOpenRequest)
   unsubscribeBrowser?.()
+  unsubscribeBrowserApproval?.()
   unsubscribeEvent?.()
   unsubscribeState?.()
   unsubscribeSyncRefresh?.()
@@ -3234,6 +3249,12 @@ watch(theme, applyTheme)
     />
 
     <ServerFilePickerDialog :projects="projects" />
+
+    <BrowserApprovalDialog
+      :request="activeBrowserApproval"
+      :queue-count="browserApprovalQueue.length"
+      @decide="decideBrowserApproval"
+    />
 
     <ConfirmDialog />
   </div>
