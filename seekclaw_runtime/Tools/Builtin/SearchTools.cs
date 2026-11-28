@@ -18,11 +18,15 @@ public sealed class ListDirTool(IPromptProvider prompts) : BuiltinTool(prompts)
 
     public override Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
-        var path = context.ResolvePath(GetString(arguments, "path") ?? ".");
+        var rawPath = GetString(arguments, "path");
+        var depth = Math.Clamp(GetInt(arguments, "depth") ?? 2, 1, 6);
+        if (context.Workspace.SshTarget is { } sshTarget)
+            return SeekClaw.Runtime.Ssh.SshRemoteToolExecutor.ListDirAsync(sshTarget, rawPath, depth, context, ct);
+
+        var path = context.ResolvePath(rawPath ?? ".");
         if (!Directory.Exists(path))
             return Task.FromResult(ToolResult.Fail($"Directory not found: {path}"));
 
-        var depth = Math.Clamp(GetInt(arguments, "depth") ?? 2, 1, 6);
         var sb = new StringBuilder();
         var entries = 0;
         AppendTree(path, "", depth, sb, ref entries, context);
@@ -86,7 +90,11 @@ public sealed class GlobTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (string.IsNullOrWhiteSpace(pattern))
             return Task.FromResult(ToolResult.Fail("pattern is required."));
 
-        var root = context.ResolvePath(GetString(arguments, "path") ?? ".");
+        var rawPath = GetString(arguments, "path");
+        if (context.Workspace.SshTarget is { } sshTarget)
+            return SeekClaw.Runtime.Ssh.SshRemoteToolExecutor.GlobAsync(sshTarget, rawPath, pattern, context, ct);
+
+        var root = context.ResolvePath(rawPath ?? ".");
         if (!Directory.Exists(root))
             return Task.FromResult(ToolResult.Fail($"Directory not found: {root}"));
 
@@ -123,6 +131,12 @@ public sealed class GrepTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (string.IsNullOrWhiteSpace(patternText))
             return Task.FromResult(ToolResult.Fail("pattern is required."));
 
+        var rawTarget = GetString(arguments, "path");
+        var maxResults = Math.Clamp(GetInt(arguments, "max_results") ?? 100, 1, 1000);
+        var globPattern = GetString(arguments, "glob");
+        if (context.Workspace.SshTarget is { } sshTarget)
+            return SeekClaw.Runtime.Ssh.SshRemoteToolExecutor.GrepAsync(sshTarget, rawTarget, patternText, globPattern, maxResults, context, ct);
+
         Regex pattern;
         try
         {
@@ -133,9 +147,7 @@ public sealed class GrepTool(IPromptProvider prompts) : BuiltinTool(prompts)
             return Task.FromResult(ToolResult.Fail($"Invalid regex: {ex.Message}"));
         }
 
-        var target = context.ResolvePath(GetString(arguments, "path") ?? ".");
-        var maxResults = Math.Clamp(GetInt(arguments, "max_results") ?? 100, 1, 1000);
-        var globPattern = GetString(arguments, "glob");
+        var target = context.ResolvePath(rawTarget ?? ".");
         Matcher? matcher = null;
         if (!string.IsNullOrWhiteSpace(globPattern))
             matcher = new Matcher(StringComparison.OrdinalIgnoreCase).AddInclude(

@@ -26,6 +26,7 @@ public sealed class BuildVerifier : IVerifier
 {
     public string? ResolveCommand(WorkspaceInfo workspace)
     {
+        if (workspace.IsSsh) return null;
         if (!string.IsNullOrWhiteSpace(workspace.Config?.VerifyCommand))
             return workspace.Config.VerifyCommand;
 

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text;
 using SeekClaw.Runtime.Configuration;
 using SeekClaw.Runtime.Data;
+using SeekClaw.Runtime.Ssh;
 
 namespace SeekClaw.Runtime.Workspaces;
 
@@ -13,12 +14,16 @@ public sealed class WorkspaceInfo
     public required IReadOnlyList<string> ProjectKinds { get; init; }
     public WorkspaceConfig? Config { get; init; }
     public bool IsGlobal { get; init; }
+    public SshWorkspaceTarget? SshTarget { get; init; }
+    public bool IsSsh => SshTarget is not null;
     /// <summary>File execution root; a global workspace's Root stores settings, not user artifacts.</summary>
-    public string WorkingDirectory => IsGlobal ? Directory.GetCurrentDirectory() : Root;
+    public string WorkingDirectory => IsSsh ? SshTarget!.RemotePath : (IsGlobal ? Directory.GetCurrentDirectory() : Root);
     public string? ConfigurationRoot { get; init; }
     internal string? ProjectStateDirectory { get; init; }
 
-    public string Name => IsGlobal ? "Global" : Path.GetFileName(Root.TrimEnd(Path.DirectorySeparatorChar, '/'));
+    public string Name => IsSsh
+        ? SshPath.GetDisplayName(SshTarget!.RemotePath, SshTarget.DisplayName)
+        : IsGlobal ? "Global" : Path.GetFileName(Root.TrimEnd(Path.DirectorySeparatorChar, '/'));
 
     public string SeekClawDir => IsGlobal ? Root
         : ProjectStateDirectory ?? WorkspaceManager.GetStateDirectory(SeekClawPaths.Home, ConfigurationRoot ?? Root);
@@ -41,6 +46,8 @@ public interface IWorkspaceManager
 
     /// <summary>Creates the directory-free context used by daemon clients for global tasks.</summary>
     WorkspaceInfo CreateGlobal(string? stateRoot = null);
+
+    WorkspaceInfo CreateSsh(SshConnectionProfile profile, string remotePath) => throw new NotSupportedException();
 
     /// <summary>Creates the workspace state directories in the user profile (seekclaw init).</summary>
     IReadOnlyList<string> Bootstrap(WorkspaceInfo workspace);
@@ -86,6 +93,32 @@ public sealed class WorkspaceManager : IWorkspaceManager
         Config = null,
         IsGlobal = true,
     };
+
+    public WorkspaceInfo CreateSsh(SshConnectionProfile profile, string remotePath)
+    {
+        var normalized = SshPath.NormalizeRemotePath(remotePath);
+        var uriRoot = SshPath.Format(profile.Id, normalized);
+        var stateDirectory = GetStateDirectory(_seekClawHome, uriRoot);
+        return new WorkspaceInfo
+        {
+            Root = uriRoot,
+            ProjectKinds = [],
+            ProjectStateDirectory = stateDirectory,
+            Config = LoadWorkspaceConfig(Path.Combine(stateDirectory, "config.json")),
+            SshTarget = new SshWorkspaceTarget
+            {
+                ConnectionId = profile.Id,
+                DisplayName = string.IsNullOrWhiteSpace(profile.Name) ? profile.Host : profile.Name,
+                Host = profile.Host,
+                Port = profile.Port,
+                AuthMode = profile.AuthMode,
+                IdentityFile = profile.IdentityFile,
+                Password = profile.Password,
+                ConfigFile = profile.ConfigFile,
+                RemotePath = normalized,
+            },
+        };
+    }
 
     private string? FindRoot(string start)
     {
@@ -202,7 +235,7 @@ public sealed class WorkspaceManager : IWorkspaceManager
 
     public string? LoadAgentInstructions(WorkspaceInfo workspace)
     {
-        if (workspace.IsGlobal) return null;
+        if (workspace.IsGlobal || workspace.IsSsh) return null;
 
         var rootPath = Path.GetFullPath(workspace.Root);
         var rootInstructions = Path.Combine(rootPath, "AGENTS.md");

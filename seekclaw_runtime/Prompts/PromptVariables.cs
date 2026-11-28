@@ -19,17 +19,21 @@ public static class PromptVariables
         string? approvalPolicy = null)
     {
         var hasWorkspace = workspace is { IsGlobal: false };
+        var isSsh = workspace?.SshTarget is not null;
         var languageKinds = hasWorkspace
             ? workspace!.ProjectKinds.Where(kind => !kind.Equals("git", StringComparison.OrdinalIgnoreCase)).ToList()
             : new List<string>();
         var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["cwd"] = hasWorkspace ? workspace!.Root : Directory.GetCurrentDirectory(),
+            ["cwd"] = isSsh ? workspace!.SshTarget!.RemotePath : (hasWorkspace ? workspace!.Root : Directory.GetCurrentDirectory()),
             ["datetime"] = DateTimeOffset.Now.ToString("yyyy-MM-dd zzz"),
-            ["os"] = RuntimeInformation.OSDescription,
-            ["platform"] = RuntimeInformation.RuntimeIdentifier,
+            ["os"] = isSsh
+                ? $"Remote SSH ({workspace!.SshTarget!.DisplayName} · {workspace.SshTarget.Host})"
+                : RuntimeInformation.OSDescription,
+            ["platform"] = isSsh ? "ssh-remote" : RuntimeInformation.RuntimeIdentifier,
             ["workspace"] = hasWorkspace ? workspace!.Root : "",
             ["project"] = hasWorkspace ? workspace!.Name : "",
+            ["ssh_host"] = isSsh ? $"{workspace!.SshTarget!.DisplayName} ({workspace.SshTarget.Host})" : "",
             // "git" is a repository marker, not a language; keep it out of the
             // {{language}} variable so prompts read "Project: x (dotnet)" not "… (git)".
             ["language"] = hasWorkspace

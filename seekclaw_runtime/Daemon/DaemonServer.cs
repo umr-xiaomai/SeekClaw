@@ -15,6 +15,7 @@ using SeekClaw.Runtime.Goals;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
+using SeekClaw.Runtime.Ssh;
 using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Workspaces;
 
@@ -957,6 +958,41 @@ public sealed class DaemonServer : IAsyncDisposable
                             _ => Task.FromResult(_admin.RemoveProject(Params(request))), context.ConnectionCt).ConfigureAwait(false);
                         break;
 
+                    case "ssh.list":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListSshConnections()), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "ssh.upsert":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.UpsertSshConnection(Params(request))), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "ssh.remove":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, true,
+                            _ => Task.FromResult(_admin.RemoveSshConnection(Params(request))), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "ssh.test":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.TestSshConnectionAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "ssh.config.hosts":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            _ => Task.FromResult(_admin.ListSshConfigHosts(Params(request))), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "ssh.fs.list":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.ListSshDirectoryAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
+                    case "ssh.fs.mkdir":
+                        await RunAdminAsync(context.Writer, context.WriterGate, id, false,
+                            token => _admin.CreateSshDirectoryAsync(Params(request), token), context.ConnectionCt).ConfigureAwait(false);
+                        break;
+
                     case "session.list":
                         await RunAdminAsync(context.Writer, context.WriterGate, id, false,
                             _ => Task.FromResult(_admin.ListSessions(Params(request))), context.ConnectionCt).ConfigureAwait(false);
@@ -1762,6 +1798,13 @@ public sealed class DaemonServer : IAsyncDisposable
         var path = parameters["workspace"]?.GetValue<string>();
         if (string.IsNullOrWhiteSpace(path)) return _runtime.Workspace;
 
+        if (SshPath.TryParse(path, out var connId, out var remotePath))
+        {
+            var profile = _runtime.SshConnections.Get(connId)
+                          ?? throw new DaemonRequestException($"未找到对应的 SSH 连接配置: {connId}");
+            return _runtime.Workspaces.CreateSsh(profile, remotePath);
+        }
+
         string fullPath;
         try { fullPath = Path.GetFullPath(path); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
@@ -1951,7 +1994,7 @@ public sealed class DaemonServer : IAsyncDisposable
         ["capabilities"] = new JsonArray(
             "chat", "image-input", "concurrent-turns", "reasoning-level", "agent.steer", "agent.cancel", "agent.approval", "user-questions", "agent.mode", "workspace", "provider",
             "model", "mcp", "skill", "usage", "project", "session", "global-session", "memory", "doctor", "file-locks", "routing", "schedule", "factory-reset", "prompt-optimize", "config-status", "config-rebuild",
-            "worktree", "command-session", "lazy-skills", "mcp-auth", "mcp-content", "subagent-lifecycle", "schedule-context", "conversation-widgets", "desktop-browser", "session-goal", "mcp-tool-search"),
+            "worktree", "command-session", "lazy-skills", "mcp-auth", "mcp-content", "subagent-lifecycle", "schedule-context", "conversation-widgets", "desktop-browser", "session-goal", "mcp-tool-search", "ssh"),
         ["methods"] = new JsonArray(
             "ping", "protocol.info", "chat", "agent.runTurn", "agent.steer", "agent.cancel", "agent.approve", "agent.answer",
             "config.status", "config.rebuild",
@@ -1970,6 +2013,7 @@ public sealed class DaemonServer : IAsyncDisposable
             "subagent.list", "subagent.status", "subagent.wait", "subagent.cancel",
             "skill.list", "skill.import", "skill.toggle", "usage.get", "usage.timeline", "doctor", "doctor.run",
             "project.list", "project.upsert", "project.remove",
+            "ssh.list", "ssh.upsert", "ssh.remove", "ssh.test", "ssh.config.hosts", "ssh.fs.list", "ssh.fs.mkdir",
             "session.list", "session.get", "session.update", "session.archive", "session.delete",
             "session.resume", "session.new", "goal.get", "goal.pause",
             "lock.list", "factory.reset", "shutdown"),

@@ -8,6 +8,7 @@ using SeekClaw.Runtime.Coordination;
 using SeekClaw.Runtime.Mcp;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Scheduling;
+using SeekClaw.Runtime.Ssh;
 using SeekClaw.Runtime.Workspaces;
 
 namespace SeekClaw.Runtime.Daemon;
@@ -64,7 +65,7 @@ internal sealed partial class DaemonAdminApi(
 
         foreach (var project in runtime.Projects.List())
         {
-            if (!Directory.Exists(project.Path)) continue;
+            if (SshPath.IsSshPath(project.Path) || !Directory.Exists(project.Path)) continue;
             try
             {
                 legacySessionDirs.Add(runtime.Workspaces.Detect(project.Path).SessionsDir);
@@ -1528,6 +1529,16 @@ internal sealed partial class DaemonAdminApi(
 
     private WorkspaceInfo ResolveSessionWorkspacePath(string requested, bool allowMissingDirectory)
     {
+        if (SshPath.TryParse(requested, out var connId, out var remotePath))
+        {
+            var profile = runtime.SshConnections.Get(connId);
+            if (profile is not null)
+                return runtime.Workspaces.CreateSsh(profile, remotePath);
+            if (allowMissingDirectory)
+                return new WorkspaceInfo { Root = SshPath.Format(connId, remotePath), ProjectKinds = [] };
+            throw new DaemonRequestException($"未找到对应的 SSH 连接配置: {connId}");
+        }
+
         string fullPath;
         try { fullPath = Path.GetFullPath(requested); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
@@ -1605,4 +1616,192 @@ internal sealed partial class DaemonAdminApi(
                && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                && !Path.IsPathRooted(relative);
     }
+
+    public string ListSshConnections()
+    {
+        var list = new JsonArray();
+        foreach (var item in runtime.SshConnections.List())
+            list.Add((JsonNode)SerializeSshConnection(item));
+
+        return new JsonObject
+        {
+            ["defaultConfigPath"] = SshConnectionStore.DefaultSshConfigPath,
+            ["connections"] = list,
+        }.ToJsonString();
+    }
+
+    public string UpsertSshConnection(JsonObject parameters)
+    {
+        var host = RequiredString(parameters, "host");
+        var port = parameters["port"]?.GetValue<int?>() ?? 22;
+        if (port is < 1 or > 65535) port = 22;
+
+        var profile = new SshConnectionProfile
+        {
+            Id = OptionalString(parameters, "id") ?? "",
+            Name = OptionalString(parameters, "name") ?? host,
+            Host = host,
+            Port = port,
+            AuthMode = SshAuthMode.Normalize(OptionalString(parameters, "authMode")),
+            IdentityFile = OptionalString(parameters, "identityFile"),
+            Password = parameters["password"]?.GetValue<string?>(),
+            ConfigFile = OptionalString(parameters, "configFile"),
+        };
+
+        var saved = runtime.SshConnections.Upsert(profile, preserveExistingPassword: true);
+        return new JsonObject
+        {
+            ["connection"] = SerializeSshConnection(saved),
+            ["connections"] = SerializeSshConnectionsArray(runtime.SshConnections.List()),
+        }.ToJsonString();
+    }
+
+    public string RemoveSshConnection(JsonObject parameters)
+    {
+        var id = RequiredString(parameters, "id");
+        runtime.SshConnections.Remove(id);
+        return new JsonObject
+        {
+            ["id"] = id,
+            ["connections"] = SerializeSshConnectionsArray(runtime.SshConnections.List()),
+        }.ToJsonString();
+    }
+
+    public async Task<string> TestSshConnectionAsync(JsonObject parameters, CancellationToken ct)
+    {
+        var id = OptionalString(parameters, "id");
+        var existing = id is not null ? runtime.SshConnections.Get(id) : null;
+        var host = OptionalString(parameters, "host") ?? existing?.Host;
+        if (string.IsNullOrWhiteSpace(host))
+            throw new DaemonRequestException("SSH 主机名不能为空。");
+
+        var authMode = SshAuthMode.Normalize(OptionalString(parameters, "authMode") ?? existing?.AuthMode);
+        var password = parameters["password"]?.GetValue<string?>();
+        if (string.IsNullOrEmpty(password) && authMode == SshAuthMode.Password)
+            password = existing?.Password;
+
+        var profile = new SshConnectionProfile
+        {
+            Id = existing?.Id ?? id ?? "",
+            Name = OptionalString(parameters, "name") ?? existing?.Name ?? host,
+            Host = host,
+            Port = parameters["port"]?.GetValue<int?>() ?? existing?.Port ?? 22,
+            AuthMode = authMode,
+            IdentityFile = OptionalString(parameters, "identityFile") ?? existing?.IdentityFile,
+            Password = password,
+            ConfigFile = OptionalString(parameters, "configFile") ?? existing?.ConfigFile,
+        };
+
+        var res = await SshRunner.TestAsync(profile, ct).ConfigureAwait(false);
+        return new JsonObject
+        {
+            ["ok"] = res.Ok,
+            ["message"] = res.Message,
+            ["remoteOs"] = res.RemoteOs,
+            ["remoteHome"] = res.RemoteHome,
+        }.ToJsonString();
+    }
+
+    public string ListSshConfigHosts(JsonObject parameters)
+    {
+        var configFile = OptionalString(parameters, "configFile");
+        var resolved = string.IsNullOrWhiteSpace(configFile) ? SshConnectionStore.DefaultSshConfigPath : configFile;
+        var hosts = new JsonArray();
+        foreach (var h in SshConnectionStore.ParseSshConfigHosts(configFile))
+        {
+            hosts.Add((JsonNode)new JsonObject
+            {
+                ["alias"] = h.Alias,
+                ["hostName"] = h.HostName,
+                ["user"] = h.User,
+                ["port"] = h.Port,
+                ["identityFile"] = h.IdentityFile,
+            });
+        }
+        return new JsonObject
+        {
+            ["configFile"] = resolved,
+            ["hosts"] = hosts,
+        }.ToJsonString();
+    }
+
+    public async Task<string> ListSshDirectoryAsync(JsonObject parameters, CancellationToken ct)
+    {
+        var connectionId = RequiredString(parameters, "connectionId");
+        var profile = runtime.SshConnections.Get(connectionId)
+                      ?? throw new DaemonRequestException($"未找到 SSH 连接: {connectionId}");
+        var path = OptionalString(parameters, "path");
+        var showHidden = parameters["showHidden"]?.GetValue<bool?>() ?? false;
+
+        try
+        {
+            var result = await SshRunner.ListDirectoryAsync(profile, path, showHidden, ct).ConfigureAwait(false);
+            var entries = new JsonArray();
+            foreach (var entry in result.Entries)
+            {
+                entries.Add((JsonNode)new JsonObject
+                {
+                    ["name"] = entry.Name,
+                    ["path"] = entry.Path,
+                    ["isDirectory"] = entry.IsDirectory,
+                    ["sizeBytes"] = entry.SizeBytes,
+                });
+            }
+            return new JsonObject
+            {
+                ["path"] = result.Path,
+                ["parentPath"] = result.ParentPath,
+                ["entries"] = entries,
+            }.ToJsonString();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not DaemonRequestException)
+        {
+            throw new DaemonRequestException(ex.Message);
+        }
+    }
+
+    public async Task<string> CreateSshDirectoryAsync(JsonObject parameters, CancellationToken ct)
+    {
+        var connectionId = RequiredString(parameters, "connectionId");
+        var profile = runtime.SshConnections.Get(connectionId)
+                      ?? throw new DaemonRequestException($"未找到 SSH 连接: {connectionId}");
+        var parentPath = RequiredString(parameters, "parentPath");
+        var name = RequiredString(parameters, "name");
+
+        try
+        {
+            var createdPath = await SshRunner.CreateDirectoryAsync(profile, parentPath, name, ct).ConfigureAwait(false);
+            return new JsonObject
+            {
+                ["path"] = createdPath,
+                ["name"] = name,
+            }.ToJsonString();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not DaemonRequestException)
+        {
+            throw new DaemonRequestException(ex.Message);
+        }
+    }
+
+    private static JsonArray SerializeSshConnectionsArray(IReadOnlyList<SshConnectionProfile> items)
+    {
+        var arr = new JsonArray();
+        foreach (var item in items)
+            arr.Add((JsonNode)SerializeSshConnection(item));
+        return arr;
+    }
+
+    private static JsonObject SerializeSshConnection(SshConnectionProfile item) => new()
+    {
+        ["id"] = item.Id,
+        ["name"] = item.Name,
+        ["host"] = item.Host,
+        ["port"] = item.Port,
+        ["authMode"] = item.AuthMode,
+        ["identityFile"] = item.IdentityFile,
+        ["passwordConfigured"] = !string.IsNullOrEmpty(item.Password),
+        ["configFile"] = item.ConfigFile,
+        ["createdAt"] = item.CreatedAt,
+        ["updatedAt"] = item.UpdatedAt,
+    };
 }

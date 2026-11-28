@@ -17,6 +17,7 @@ public static class SeekClawPaths
     public static string Home => Path.Combine(HomeDir, ".seekclaw");
 
     public static string ConfigFile => Path.Combine(Home, "config.json");
+    public static string SshConnectionsFile => Path.Combine(Home, "ssh-connections.json");
     public static string StateFile => Path.Combine(Home, "state.json");
     /// <summary>SQLite database for sessions and Desktop project metadata.</summary>
     public static string DatabaseFile => Path.Combine(Home, "seekclaw.db");
@@ -42,6 +43,8 @@ public static class SeekClawPaths
     /// </summary>
     public static bool IsForbiddenProjectPath(string path)
     {
+        if (SeekClaw.Runtime.Ssh.SshPath.IsSshPath(path))
+            return false;
         string full;
         try { full = Path.GetFullPath(path); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)

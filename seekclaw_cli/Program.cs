@@ -3,6 +3,12 @@ using SeekClaw.Cli;
 using SeekClaw.Cli.Commands;
 using SeekClaw.Cli.Ui;
 
+if (args.Length == 1 && args[0] == "--ssh-askpass")
+{
+    Console.Out.Write(Environment.GetEnvironmentVariable("SEEKCLAW_SSH_SECRET") ?? "");
+    return 0;
+}
+
 try { Console.OutputEncoding = System.Text.Encoding.UTF8; }
 catch (IOException) { /* redirected or headless output */ }
 

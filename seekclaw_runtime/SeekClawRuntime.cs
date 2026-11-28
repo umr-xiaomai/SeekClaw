@@ -15,6 +15,7 @@ using SeekClaw.Runtime.Projects;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
 using SeekClaw.Runtime.Skills;
+using SeekClaw.Runtime.Ssh;
 using SeekClaw.Runtime.SubAgents;
 using SeekClaw.Runtime.Tools;
 using SeekClaw.Runtime.Tools.Builtin;
@@ -46,6 +47,7 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
     public ISessionStore Sessions => _services.GetRequiredService<ISessionStore>();
     public ICrossSessionMemoryStore Memories => _services.GetRequiredService<ICrossSessionMemoryStore>();
     public IProjectStore Projects => _services.GetRequiredService<IProjectStore>();
+    public ISshConnectionStore SshConnections => _services.GetRequiredService<ISshConnectionStore>();
     public IScheduleStore Schedules => _services.GetRequiredService<IScheduleStore>();
     public SeekClawDatabase Database => _services.GetRequiredService<SeekClawDatabase>();
     public SkillManager Skills => _services.GetRequiredService<SkillManager>();
@@ -267,6 +269,19 @@ public sealed class SeekClawRuntime : IAsyncDisposable, IDisposable
                 return ValueTask.FromResult<string?>(null);
             return ValueTask.FromResult<string?>(prompts.TryGet("builtin/cross_session_memory") ?? memory);
         }));
+
+        // Explicit guidance when operating on a remote SSH server workspace.
+        registry.Register(new PromptContribution("ssh-environment", PromptSlot.Workspace, (ctx, _) =>
+        {
+            if (!SshPath.IsSshPath(ctx.WorkspaceRoot))
+                return ValueTask.FromResult<string?>(null);
+            ctx.Variables.TryGetValue("ssh_host", out var hostLabel);
+            ctx.Variables.TryGetValue("cwd", out var remoteCwd);
+            return ValueTask.FromResult<string?>(
+                $"[REMOTE SSH ENVIRONMENT]\n" +
+                $"You are operating directly on the remote SSH server ({hostLabel ?? "SSH"}) at working directory `{remoteCwd ?? "~"}`.\n" +
+                $"All file tools (read_file, write_file, edit_file, list_dir, glob, grep) and shell execution tools (bash, exec_command) execute remotely on this server over SSH. Use POSIX paths and remote shell commands.");
+        }));
     }
 
     private void RegisterBuiltinTools()
@@ -363,6 +378,7 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<ISessionStore, SessionStore>();
         services.AddSingleton<ICrossSessionMemoryStore, CrossSessionMemoryStore>();
         services.AddSingleton<IProjectStore, ProjectStore>();
+        services.AddSingleton<ISshConnectionStore>(_ => new SshConnectionStore());
         services.AddSingleton<IScheduleStore, ScheduleStore>();
         services.AddSingleton<IVerifier, BuildVerifier>();
         services.AddSingleton(sp => new SkillManager(

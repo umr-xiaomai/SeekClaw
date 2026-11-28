@@ -38,6 +38,13 @@ public sealed class BashTool(IPromptProvider prompts) : BuiltinTool(prompts)
         if (string.IsNullOrWhiteSpace(command))
             return ToolResult.Fail("command is required.");
 
+        if (context.Workspace.SshTarget is { } sshTarget)
+        {
+            var sshTimeout = GetInt(arguments, "timeout_seconds") ?? context.Agent.BashTimeoutSeconds;
+            return await SeekClaw.Runtime.Ssh.SshRemoteToolExecutor.ExecShellAsync(
+                sshTarget, command, GetString(arguments, "cwd"), sshTimeout, context, ct).ConfigureAwait(false);
+        }
+
         var cwd = context.ResolvePath(GetString(arguments, "cwd") ?? ".");
         if (!Directory.Exists(cwd))
             return ToolResult.Fail($"Working directory not found: {cwd}");

@@ -54,11 +54,23 @@ public sealed class ProjectStore(SeekClawDatabase database) : IProjectStore
     public StoredProject Upsert(string? id, string path, string? name)
     {
         if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Project path is required.", nameof(path));
-        var fullPath = Path.GetFullPath(path);
-        var projectName = string.IsNullOrWhiteSpace(name)
-            ? Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-            : name.Trim();
-        if (string.IsNullOrWhiteSpace(projectName)) projectName = fullPath;
+        string fullPath;
+        string projectName;
+        if (SeekClaw.Runtime.Ssh.SshPath.TryParse(path, out var connId, out var remotePath))
+        {
+            fullPath = SeekClaw.Runtime.Ssh.SshPath.Format(connId, remotePath);
+            projectName = string.IsNullOrWhiteSpace(name)
+                ? SeekClaw.Runtime.Ssh.SshPath.GetDisplayName(remotePath, connId)
+                : name.Trim();
+        }
+        else
+        {
+            fullPath = Path.GetFullPath(path);
+            projectName = string.IsNullOrWhiteSpace(name)
+                ? Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                : name.Trim();
+            if (string.IsNullOrWhiteSpace(projectName)) projectName = fullPath;
+        }
 
         // The SELECT-then-INSERT pattern can race with another process (CLI + daemon
         // run side by side) inserting the same path_key with a different id. Retry a

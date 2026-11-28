@@ -4,6 +4,7 @@ using SeekClaw.Runtime.Memory;
 using SeekClaw.Runtime.Providers;
 using SeekClaw.Runtime.Scheduling;
 using SeekClaw.Runtime.Sessions;
+using SeekClaw.Runtime.Ssh;
 using SeekClaw.Runtime.Presentation;
 
 namespace SeekClaw.Runtime.Configuration;
@@ -25,6 +26,8 @@ namespace SeekClaw.Runtime.Configuration;
 [JsonSerializable(typeof(List<ScheduledTask>))]
 [JsonSerializable(typeof(CrossSessionMemory))]
 [JsonSerializable(typeof(List<CrossSessionMemory>))]
+[JsonSerializable(typeof(SshConnectionProfile))]
+[JsonSerializable(typeof(List<SshConnectionProfile>))]
 [JsonSerializable(typeof(UsageEntry))]
 [JsonSerializable(typeof(McpConfig))]
 [JsonSerializable(typeof(McpOAuthConfig))]

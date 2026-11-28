@@ -63,6 +63,8 @@ public sealed class SeekClawDatabase
 
     public static string PathKey(string path)
     {
+        if (SeekClaw.Runtime.Ssh.SshPath.TryParse(path, out var connId, out var remotePath))
+            return SeekClaw.Runtime.Ssh.SshPath.Format(connId, remotePath);
         var fullPath = Path.GetFullPath(path)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         return OperatingSystem.IsWindows() ? fullPath.ToUpperInvariant() : fullPath;

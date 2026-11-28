@@ -102,12 +102,15 @@ public sealed class ReadFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
 
     public override Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
-        var path = context.ResolvePath(GetString(arguments, "path") ?? "");
-        if (!File.Exists(path))
-            return Task.FromResult(ToolResult.Fail($"File not found: {path}"));
-
+        var rawPath = GetString(arguments, "path") ?? "";
         var offset = Math.Max(1, GetInt(arguments, "offset") ?? 1);
         var limit = Math.Max(1, GetInt(arguments, "limit") ?? 2000);
+        if (context.Workspace.SshTarget is { } sshTarget)
+            return SeekClaw.Runtime.Ssh.SshRemoteToolExecutor.ReadFileAsync(sshTarget, rawPath, offset, limit, context, ct);
+
+        var path = context.ResolvePath(rawPath);
+        if (!File.Exists(path))
+            return Task.FromResult(ToolResult.Fail($"File not found: {path}"));
 
         var lines = File.ReadLines(path).Skip(offset - 1).Take(limit).ToList();
         var sb = new StringBuilder();
@@ -157,10 +160,14 @@ public sealed class WriteFileTool(IPromptProvider prompts) : BuiltinTool(prompts
 
     public override Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
-        var path = context.ResolvePath(GetString(arguments, "path") ?? "");
+        var rawPath = GetString(arguments, "path") ?? "";
+        var content = GetString(arguments, "content") ?? "";
+        if (context.Workspace.SshTarget is { } sshTarget)
+            return SeekClaw.Runtime.Ssh.SshRemoteToolExecutor.WriteFileAsync(sshTarget, rawPath, content, context, ct);
+
+        var path = context.ResolvePath(rawPath);
         if (Directory.Exists(path))
             return Task.FromResult(ToolResult.Fail($"Cannot write to '{path}' because it is a directory."));
-        var content = GetString(arguments, "content") ?? "";
         return WithFileWriteLockAsync(context, path, _ => WriteCoreAsync(path, content, context, ct), ct);
     }
 
@@ -209,7 +216,7 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
 
     public override Task<ToolResult> ExecuteAsync(JsonObject arguments, ToolContext context, CancellationToken ct)
     {
-        var path = context.ResolvePath(GetString(arguments, "path") ?? "");
+        var rawPath = GetString(arguments, "path") ?? "";
         var oldString = GetString(arguments, "old_string") ?? "";
         var newString = GetString(arguments, "new_string") ?? "";
         if (oldString.Length == 0)
@@ -218,6 +225,10 @@ public sealed class EditFileTool(IPromptProvider prompts) : BuiltinTool(prompts)
             return Task.FromResult(ToolResult.Fail("old_string and new_string are identical."));
 
         var replaceAll = GetBool(arguments, "replace_all");
+        if (context.Workspace.SshTarget is { } sshTarget)
+            return SeekClaw.Runtime.Ssh.SshRemoteToolExecutor.EditFileAsync(sshTarget, rawPath, oldString, newString, replaceAll, context, ct);
+
+        var path = context.ResolvePath(rawPath);
         return WithFileWriteLockAsync(context, path, _ => EditCoreAsync(path, oldString, newString, replaceAll, context, ct), ct);
     }
 

@@ -25,6 +25,13 @@ internal sealed class ExecCommandTool(IPromptProvider prompts, CommandSessionMan
 
         try
         {
+            if (context.Workspace.SshTarget is { } sshTarget)
+            {
+                return await SeekClaw.Runtime.Ssh.SshRemoteToolExecutor.ExecShellAsync(
+                    sshTarget, command, GetString(args, "workdir"), GetInt(args, "timeout_seconds") ?? 1_800, context, ct)
+                    .ConfigureAwait(false);
+            }
+
             var directory = context.ResolvePath(GetString(args, "workdir") ?? ".");
             if (!Directory.Exists(directory)) return ToolResult.Fail($"Working directory not found: {directory}");
 
