@@ -5,8 +5,11 @@
  * which combined with the runtime's workspace walk-up made every plain folder
  * under the profile resolve to the profile and share one session scope.
  */
+import { isSshWorkspacePath } from '../../shared/ssh'
+
 export function isForbiddenProjectPath(path: string, homePath: string | undefined): boolean {
-  if (!path || !homePath) return false
+  if (!path || isSshWorkspacePath(path)) return false
+  if (!homePath) return false
 
   const normalized = normalizePath(path)
   const home = normalizePath(homePath)

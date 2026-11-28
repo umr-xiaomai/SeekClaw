@@ -14,7 +14,7 @@ import ProcessActivityGroup from './ProcessActivityGroup.vue'
 import SubAgentActivityList from './SubAgentActivityList.vue'
 import ToolCallRow from './ToolCallRow.vue'
 import ViewedImagesActivity from './ViewedImagesActivity.vue'
-import { phaseStatusText, preparingToolLabel, toolDisplayState } from './tool-presentation'
+import { phaseStatusText, preparingToolLabel } from './tool-presentation'
 
 const props = withDefaults(defineProps<{
   turn: ConversationTurnProjection
@@ -90,8 +90,8 @@ const turnDiff = computed(() => {
 
 const responseTools = computed(() => props.turn.response ? visibleNonSubAgentTools(props.turn.response.message) : [])
 const hasProcessError = computed(() => props.turn.process.some(({ message }) =>
-  Boolean(message.errorMessage?.trim()) || message.tools?.some((tool) => toolDisplayState(tool) === 'error')
-) || responseTools.value.some((tool) => toolDisplayState(tool) === 'error'))
+  Boolean(message.errorMessage?.trim())
+))
 
 function hasVisibleMessage(item: ConversationProcessItem): boolean {
   const message = item.message

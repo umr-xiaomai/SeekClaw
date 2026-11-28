@@ -8,9 +8,13 @@ import {
   ChevronRight,
   Circle,
   Clock,
+  Copy,
+  Eye,
+  EyeOff,
   Folder,
   FolderOpen,
   Gauge,
+  Globe,
   Globe2,
   GripVertical,
   KeyRound,
@@ -19,7 +23,10 @@ import {
   Monitor,
   Moon,
   Palette,
+  Pencil,
+  PlugZap,
   Plus,
+  QrCode,
   RefreshCw,
   RotateCcw,
   Save,
@@ -28,7 +35,9 @@ import {
   SlidersHorizontal,
   Sun,
   Trash2,
+  Unplug,
   Upload,
+  Wifi,
   Wrench,
   X,
   Zap,
@@ -60,8 +69,12 @@ import type { ProjectItem } from '../types'
 import TwoPaneLayout from './TwoPaneLayout.vue'
 import UsageTrendChart, { type TimelinePoint } from './UsageTrendChart.vue'
 import UsageModelBarChart from './UsageModelBarChart.vue'
+import type { WebServerConfig, WebServerHost, WebServerStatus } from '@shared/web-server'
+import type { SshConnectionInfo, SshTestResult } from '../../../shared/ssh'
+import { renderQrData } from '../qr-svg'
+import SshConnectionDialog from './SshConnectionDialog.vue'
 
-type SettingsSection = 'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'
+type SettingsSection = 'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'connections' | 'remote' | 'advanced'
 
 interface ProviderInfo {
   id: string
@@ -174,6 +187,7 @@ const emit = defineEmits<{
   changeZoomFactor: [factor: number]
   openWorkspace: []
   runtimeChanged: []
+  sshChanged: []
 }>()
 
 const section = ref<SettingsSection>('general')
@@ -269,8 +283,212 @@ const sections: Array<{ id: SettingsSection; label: string; icon: typeof Setting
   { id: 'mcp', label: 'MCP', icon: Blocks },
   { id: 'skills', label: '技能', icon: Wrench },
   { id: 'diagnostics', label: '诊断与用量', icon: Activity },
+  { id: 'connections', label: '连接', icon: Globe },
+  { id: 'remote', label: '局域网访问', icon: Wifi },
   { id: 'advanced', label: '高级设置', icon: SlidersHorizontal }
 ]
+
+// --- SSH Connections State & Logic ---
+const sshConnections = ref<SshConnectionInfo[]>([])
+const sshEditorOpen = ref(false)
+const editingSshConnection = ref<SshConnectionInfo | null>(null)
+const testingSshId = ref('')
+const sshTestFeedback = reactive<Record<string, SshTestResult>>({})
+
+async function loadConnectionsSection(): Promise<void> {
+  const data = await requestJson<{ connections: SshConnectionInfo[] }>('ssh.list')
+  sshConnections.value = Array.isArray(data.connections) ? data.connections : []
+}
+
+function openAddSshDialog(): void {
+  editingSshConnection.value = null
+  sshEditorOpen.value = true
+}
+
+function openEditSshDialog(conn: SshConnectionInfo): void {
+  editingSshConnection.value = conn
+  sshEditorOpen.value = true
+}
+
+function handleSshEditorSaved(_saved: SshConnectionInfo, allConnections: SshConnectionInfo[]): void {
+  sshConnections.value = allConnections
+  sshEditorOpen.value = false
+  notice.value = '已保存 SSH 连接配置'
+  emit('sshChanged')
+}
+
+async function testSavedSshConnection(conn: SshConnectionInfo): Promise<void> {
+  testingSshId.value = conn.id
+  error.value = ''
+  try {
+    const res = await requestJson<SshTestResult>('ssh.test', { id: conn.id }, 25_000)
+    sshTestFeedback[conn.id] = res
+    if (res.ok) notice.value = `${conn.name} 连接正常`
+    else error.value = res.message
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    testingSshId.value = ''
+  }
+}
+
+async function deleteSshConnection(conn: SshConnectionInfo): Promise<void> {
+  if (!(await confirmAction({
+    title: '删除 SSH 连接',
+    message: `确定删除 SSH 连接「${conn.name || conn.host}」吗？关联的远程项目不会自动删除，但无法再访问远端目录。`,
+    confirmLabel: '删除'
+  }))) return
+  beginAction(`ssh.remove:${conn.id}`)
+  try {
+    const data = await requestJson<{ connections: SshConnectionInfo[] }>('ssh.remove', { id: conn.id })
+    sshConnections.value = Array.isArray(data.connections) ? data.connections : []
+    delete sshTestFeedback[conn.id]
+    notice.value = '已删除 SSH 连接'
+    emit('sshChanged')
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
+}
+
+function sshAuthLabel(conn: SshConnectionInfo): string {
+  if (conn.authMode === 'identityFile') return '身份文件'
+  if (conn.authMode === 'password') return '密码登录'
+  return '无身份验证 / 默认密钥'
+}
+
+// --- LAN Web Server State & Logic ---
+const webStatus = ref<WebServerStatus | null>(null)
+const webEnabled = ref(false)
+const webAutoStart = ref(false)
+const webHost = ref<WebServerHost>('0.0.0.0')
+const webPort = ref(19420)
+const webToken = ref('')
+const showWebToken = ref(false)
+const showWebQr = ref(true)
+const copiedWebKey = ref('')
+
+const webDirectUrl = computed(() => {
+  if (!webStatus.value) return ''
+  return `${webStatus.value.primaryUrl}/?token=${encodeURIComponent(webStatus.value.config.token)}`
+})
+
+const webQrData = computed(() => {
+  if (!webStatus.value?.running || !webDirectUrl.value) return null
+  try {
+    return renderQrData(webDirectUrl.value, 2)
+  } catch {
+    return null
+  }
+})
+
+function syncWebStatusFields(status: WebServerStatus): void {
+  webStatus.value = status
+  webEnabled.value = status.running
+  webAutoStart.value = status.config.autoStart
+  webHost.value = status.config.host
+  webPort.value = status.config.port
+  webToken.value = status.config.token
+}
+
+async function loadRemoteSection(): Promise<void> {
+  const status = await window.seekclaw.webServer.status()
+  syncWebStatusFields(status)
+  if (status.error) {
+    error.value = status.error
+  }
+}
+
+async function applyWebServerPatch(
+  patch: Partial<WebServerConfig>,
+  successNotice: string,
+  actionName: string
+): Promise<void> {
+  beginAction(actionName)
+  try {
+    const status = await window.seekclaw.webServer.update(patch)
+    syncWebStatusFields(status)
+    if (status.error) {
+      error.value = status.error
+    } else {
+      notice.value = successNotice
+    }
+  } catch (reason) {
+    fail(reason)
+    await loadRemoteSection().catch(() => undefined)
+  } finally {
+    endAction()
+  }
+}
+
+async function toggleWebEnabled(): Promise<void> {
+  await applyWebServerPatch(
+    { enabled: webEnabled.value },
+    webEnabled.value ? '已启动局域网 Web 服务' : '已关闭局域网 Web 服务',
+    'webServer.enabled'
+  )
+}
+
+async function toggleWebAutoStart(): Promise<void> {
+  await applyWebServerPatch(
+    { autoStart: webAutoStart.value },
+    webAutoStart.value ? '已开启随桌面端自动启动' : '已关闭自动启动',
+    'webServer.autoStart'
+  )
+}
+
+async function changeWebHost(host: WebServerHost): Promise<void> {
+  webHost.value = host
+  await applyWebServerPatch({ host }, '监听范围已更新', 'webServer.host')
+}
+
+async function saveWebPort(): Promise<void> {
+  await applyWebServerPatch({ port: Number(webPort.value) }, '服务端口已更新', 'webServer.port')
+}
+
+async function saveWebToken(): Promise<void> {
+  await applyWebServerPatch({ token: webToken.value }, '访问口令已更新（旧设备需重新登录）', 'webServer.token')
+}
+
+async function regenerateWebToken(): Promise<void> {
+  beginAction('webServer.regenerateToken')
+  try {
+    const status = await window.seekclaw.webServer.regenerateToken()
+    syncWebStatusFields(status)
+    notice.value = '已重置访问口令，所有外部设备需重新验证'
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
+}
+
+async function disconnectWebClients(): Promise<void> {
+  beginAction('webServer.disconnectClients')
+  try {
+    const status = await window.seekclaw.webServer.disconnectClients()
+    syncWebStatusFields(status)
+    notice.value = '已断开所有已连接的远程设备'
+  } catch (reason) {
+    fail(reason)
+  } finally {
+    endAction()
+  }
+}
+
+async function copyWebValue(text: string, key: string, message: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedWebKey.value = key
+    notice.value = message
+    window.setTimeout(() => {
+      if (copiedWebKey.value === key) copiedWebKey.value = ''
+    }, 1800)
+  } catch {
+    error.value = '复制到剪贴板失败'
+  }
+}
 
 
 // --- Appearance Section State & Logic ---
@@ -454,7 +672,21 @@ function showPath(path: string): void {
 }
 
 async function loadCurrentSection(): Promise<void> {
-  if (!props.open || !props.daemonConnected) return
+  if (!props.open) return
+  if (section.value === 'remote') {
+    loading.value = true
+    error.value = ''
+    notice.value = ''
+    try {
+      await loadRemoteSection()
+    } catch (reason) {
+      fail(reason)
+    } finally {
+      loading.value = false
+    }
+    return
+  }
+  if (!props.daemonConnected) return
   loading.value = true
   error.value = ''
   notice.value = ''
@@ -464,6 +696,7 @@ async function loadCurrentSection(): Promise<void> {
     if (section.value === 'mcp') mcpServers.value = await requestJson<McpServerInfo[]>('mcp.list')
     if (section.value === 'skills') skills.value = await requestJson<SkillInfo[]>('skill.list')
     if (section.value === 'diagnostics') await loadDiagnostics()
+    if (section.value === 'connections') await loadConnectionsSection()
     if (section.value === 'advanced') await loadAdvanced()
   } catch (reason) {
     fail(reason)
@@ -1147,17 +1380,23 @@ async function refreshMcpServers(): Promise<void> {
 }
 
 let unsubscribeMcpEvents: (() => void) | null = null
+let unsubscribeWebServerStatus: (() => void) | null = null
 
 onMounted(() => {
   unsubscribeMcpEvents = window.seekclaw.daemon.onEvent((message) => {
     if (message.event !== 'mcp.updated') return
     void refreshMcpServers()
   })
+  unsubscribeWebServerStatus = window.seekclaw.webServer.onStatus((status) => {
+    syncWebStatusFields(status)
+  })
 })
 
 onBeforeUnmount(() => {
   unsubscribeMcpEvents?.()
   unsubscribeMcpEvents = null
+  unsubscribeWebServerStatus?.()
+  unsubscribeWebServerStatus = null
 })
 </script>
 
@@ -1816,6 +2055,290 @@ onBeforeUnmount(() => {
           </template>
         </template>
 
+        <template v-else-if="section === 'connections'">
+          <div class="settings-section-heading">
+            <div>
+              <h3>连接</h3>
+            </div>
+            <button type="button" class="secondary-button compact-button" @click="openAddSshDialog">
+              <Plus :size="14" />
+              添加 SSH 连接
+            </button>
+          </div>
+
+          <section class="settings-group">
+            <div class="ssh-settings-subtitle">来自此电脑的 SSH 连接</div>
+
+            <div v-if="sshConnections.length === 0" class="ssh-settings-empty">
+              <Globe :size="24" />
+              <strong>尚未添加 SSH 远程连接</strong>
+              <p>添加服务器后，可在输入框上方「工作位置」或「创建项目」中直接选择远程服务器目录并在远端执行命令和编辑代码，无需在服务器安装任何程序。</p>
+              <button type="button" class="ssh-dark-primary-btn" @click="openAddSshDialog">
+                + 添加 SSH 连接
+              </button>
+            </div>
+
+            <div v-else class="ssh-connection-list">
+              <article v-for="conn in sshConnections" :key="conn.id" class="ssh-connection-card">
+                <div class="ssh-connection-icon">
+                  <Globe :size="18" />
+                </div>
+                <div class="ssh-connection-main">
+                  <div class="ssh-connection-title-row">
+                    <strong>{{ conn.name || conn.host }}</strong>
+                    <span class="ssh-connection-auth-tag">{{ sshAuthLabel(conn) }}</span>
+                  </div>
+                  <div class="ssh-connection-meta">
+                    <code>{{ conn.host }}{{ conn.port && conn.port !== 22 ? `:${conn.port}` : '' }}</code>
+                    <span v-if="conn.identityFile" class="ssh-connection-sub">{{ conn.identityFile }}</span>
+                  </div>
+                  <div
+                    v-if="sshTestFeedback[conn.id]"
+                    class="ssh-connection-test-note"
+                    :class="{ ok: sshTestFeedback[conn.id]!.ok, err: !sshTestFeedback[conn.id]!.ok }"
+                  >
+                    {{ sshTestFeedback[conn.id]!.ok ? `连接正常 · ${sshTestFeedback[conn.id]!.remoteOs || ''}` : sshTestFeedback[conn.id]!.message }}
+                  </div>
+                </div>
+                <div class="ssh-connection-actions">
+                  <button
+                    type="button"
+                    class="secondary-button compact-button"
+                    :disabled="testingSshId === conn.id"
+                    @click="testSavedSshConnection(conn)"
+                  >
+                    <LoaderCircle v-if="testingSshId === conn.id" :size="13" class="spin" />
+                    <PlugZap v-else :size="13" />
+                    测试
+                  </button>
+                  <button
+                    type="button"
+                    class="secondary-button compact-button"
+                    @click="openEditSshDialog(conn)"
+                  >
+                    <Pencil :size="13" />
+                    编辑
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-button-subtle danger-hover"
+                    title="删除连接"
+                    :disabled="action === `ssh.remove:${conn.id}`"
+                    @click="deleteSshConnection(conn)"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                </div>
+              </article>
+            </div>
+          </section>
+        </template>
+
+        <template v-else-if="section === 'remote'">
+          <div class="settings-section-heading">
+            <div>
+              <h3>局域网访问</h3>
+            </div>
+            <span class="remote-status-badge" :class="{ active: webStatus?.running }">
+              <span class="remote-status-dot" />
+              {{ webStatus?.running ? `运行中 · ${webStatus.clientCount} 台设备已连接` : '未开启' }}
+            </span>
+          </div>
+
+          <section class="settings-group">
+            <label class="provider-enabled-row">
+              <span>
+                <strong>启用局域网 Web 服务</strong>
+                <small>在本地同步启动 HTTP 与 WebSocket 服务，同一局域网下的手机、平板或电脑打开浏览器即可直接访问和控制当前 SeekClaw，权限与桌面端完全一致。</small>
+              </span>
+              <input v-model="webEnabled" class="sr-only" type="checkbox"
+                :disabled="action === 'webServer.enabled'" @change="toggleWebEnabled" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
+
+            <label class="provider-enabled-row">
+              <span>
+                <strong>随桌面端启动自动开启</strong>
+                <small>下次启动 SeekClaw 桌面应用时自动开启局域网访问服务；关闭主窗口最小化到系统托盘时，Web 服务也会继续保持运行。</small>
+              </span>
+              <input v-model="webAutoStart" class="sr-only" type="checkbox"
+                :disabled="action === 'webServer.autoStart'" @change="toggleWebAutoStart" />
+              <span class="toggle-switch" aria-hidden="true"><span /></span>
+            </label>
+          </section>
+
+          <section v-if="webStatus?.running && webStatus.urls.length" class="settings-group remote-access-card">
+            <div class="remote-access-grid">
+              <div class="remote-access-urls">
+                <div class="remote-card-label">可用访问地址</div>
+                <div v-for="url in webStatus.urls" :key="url" class="remote-url-row">
+                  <code>{{ url }}</code>
+                  <button
+                    type="button"
+                    class="secondary-button compact-button"
+                    @click="copyWebValue(url, `url:${url}`, '已复制访问地址')"
+                  >
+                    <Check v-if="copiedWebKey === `url:${url}`" :size="13" />
+                    <Copy v-else :size="13" />
+                    复制
+                  </button>
+                </div>
+                <div class="remote-quick-actions">
+                  <button
+                    type="button"
+                    class="secondary-button compact-button"
+                    @click="copyWebValue(webDirectUrl, 'directUrl', '已复制免输口令直达链接（注意妥善保管）')"
+                  >
+                    <Check v-if="copiedWebKey === 'directUrl'" :size="13" />
+                    <Copy v-else :size="13" />
+                    复制带口令直达链接
+                  </button>
+                  <button
+                    type="button"
+                    class="secondary-button compact-button"
+                    @click="showWebQr = !showWebQr"
+                  >
+                    <QrCode :size="13" />
+                    {{ showWebQr ? '隐藏二维码' : '显示二维码' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="secondary-button compact-button danger-hover"
+                    :disabled="!webStatus.clientCount || action === 'webServer.disconnectClients'"
+                    @click="disconnectWebClients"
+                  >
+                    <Unplug :size="13" />
+                    断开所有设备 ({{ webStatus.clientCount }})
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="showWebQr && webQrData" class="remote-qr-card">
+                <svg
+                  class="remote-qr-svg"
+                  :viewBox="webQrData.viewBox"
+                  shape-rendering="crispEdges"
+                  aria-label="局域网访问二维码"
+                >
+                  <rect :width="webQrData.size" :height="webQrData.size" fill="#ffffff" />
+                  <path :d="webQrData.path" fill="#111827" />
+                </svg>
+                <small>手机扫码免密直达</small>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-row">
+              <div>
+                <strong>监听范围</strong>
+                <small>选择“局域网所有设备”可从手机或其他电脑访问；选择“仅本机”仅允许本机浏览器访问。</small>
+              </div>
+              <div class="segmented-control segmented-control-text">
+                <button
+                  type="button"
+                  :class="{ active: webHost === '0.0.0.0' }"
+                  :disabled="action === 'webServer.host'"
+                  @click="changeWebHost('0.0.0.0')"
+                >
+                  局域网所有设备
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: webHost === '127.0.0.1' }"
+                  :disabled="action === 'webServer.host'"
+                  @click="changeWebHost('127.0.0.1')"
+                >
+                  仅本机
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-row">
+              <div>
+                <strong>服务端口</strong>
+                <small>支持 1024–65535 之间未被占用的端口（默认 19420）</small>
+              </div>
+              <div class="remote-inline-input">
+                <input
+                  v-model.number="webPort"
+                  type="number"
+                  min="1024"
+                  max="65535"
+                  class="remote-port-input"
+                  @keydown.enter.prevent="saveWebPort"
+                />
+                <button
+                  type="button"
+                  class="secondary-button compact-button"
+                  :disabled="action === 'webServer.port' || webPort === webStatus?.config.port"
+                  @click="saveWebPort"
+                >
+                  <Save :size="13" />
+                  应用
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-row remote-token-row">
+              <div>
+                <strong>访问口令 (Access Token)</strong>
+                <small>外部设备首次连接需要输入口令；支持自定义（至少 6 位）或随时重置使旧会话全部失效。</small>
+              </div>
+              <div class="remote-inline-input remote-token-controls">
+                <div class="remote-token-input-wrap">
+                  <input
+                    v-model="webToken"
+                    :type="showWebToken ? 'text' : 'password'"
+                    class="remote-token-input"
+                    @keydown.enter.prevent="saveWebToken"
+                  />
+                  <button
+                    type="button"
+                    class="icon-button-subtle"
+                    :title="showWebToken ? '隐藏口令' : '显示口令'"
+                    @click="showWebToken = !showWebToken"
+                  >
+                    <EyeOff v-if="showWebToken" :size="14" />
+                    <Eye v-else :size="14" />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  class="secondary-button compact-button"
+                  :disabled="action === 'webServer.token' || webToken === webStatus?.config.token"
+                  @click="saveWebToken"
+                >
+                  <Save :size="13" />
+                  保存
+                </button>
+                <button
+                  type="button"
+                  class="secondary-button compact-button"
+                  @click="copyWebValue(webToken, 'token', '已复制访问口令')"
+                >
+                  <Check v-if="copiedWebKey === 'token'" :size="13" />
+                  <Copy v-else :size="13" />
+                  复制
+                </button>
+                <button
+                  type="button"
+                  class="secondary-button compact-button"
+                  :disabled="action === 'webServer.regenerateToken'"
+                  @click="regenerateWebToken"
+                >
+                  <RefreshCw :size="13" />
+                  重新生成
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <p class="remote-footnote">
+            提示：首次开启局域网监听时，若 Windows 防火墙弹出安全警报，请勾选「专用网络」并允许访问；否则同局域网设备可能无法连入。在 Web 端选择工作区、文件、图片或技能时，会直接浏览并选择当前宿主机的文件目录。
+          </p>
+        </template>
+
         <template v-else-if="section === 'advanced'">
           <div class="settings-section-heading">
             <div>
@@ -2040,4 +2563,6 @@ onBeforeUnmount(() => {
   <ProviderEditorDialog :open="providerEditorOpen" :editing-id="editingProviderId" :value="providerForm"
     :saving="action === 'provider.save'" :error="providerEditorOpen ? error : ''" @close="providerEditorOpen = false"
     @save="saveProvider" />
+  <SshConnectionDialog :open="sshEditorOpen" :editing="editingSshConnection"
+    @close="sshEditorOpen = false" @saved="handleSshEditorSaved" />
 </template>

@@ -1,64 +1,17 @@
 <script setup lang="ts">
-import hljs from 'highlight.js/lib/core'
-import bash from 'highlight.js/lib/languages/bash'
-import cpp from 'highlight.js/lib/languages/cpp'
-import csharp from 'highlight.js/lib/languages/csharp'
-import css from 'highlight.js/lib/languages/css'
-import diff from 'highlight.js/lib/languages/diff'
-import go from 'highlight.js/lib/languages/go'
-import java from 'highlight.js/lib/languages/java'
-import javascript from 'highlight.js/lib/languages/javascript'
-import json from 'highlight.js/lib/languages/json'
-import markdown from 'highlight.js/lib/languages/markdown'
-import python from 'highlight.js/lib/languages/python'
-import rust from 'highlight.js/lib/languages/rust'
-import sql from 'highlight.js/lib/languages/sql'
-import typescript from 'highlight.js/lib/languages/typescript'
-import xml from 'highlight.js/lib/languages/xml'
-import yaml from 'highlight.js/lib/languages/yaml'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import MarkdownIt from 'markdown-it'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { getLinkVisualMeta, renderLinkIconHtml } from '../../../shared/markdown-links'
+import { requestSideLinkOpen } from '../side-link-preview'
+import { useStreamingText } from '../use-streaming-text'
+import { hljs } from './hljs-setup'
 import { renderMarkdownBlocks } from './markdown-blocks'
 import { encodeMarkdownData, isClosedFence, transformOutsideFences } from './markdown-fences'
-import { useStreamingText } from '../use-streaming-text'
 
-const props = defineProps<{ content: string; streaming?: boolean }>()
+const props = defineProps<{ content: string; streaming?: boolean; workspace?: string }>()
 const displayedContent = useStreamingText(() => props.content, () => props.streaming === true)
-
-hljs.registerLanguage('bash', bash)
-hljs.registerLanguage('sh', bash)
-hljs.registerLanguage('shell', bash)
-hljs.registerLanguage('zsh', bash)
-hljs.registerLanguage('csharp', csharp)
-hljs.registerLanguage('cs', csharp)
-hljs.registerLanguage('cpp', cpp)
-hljs.registerLanguage('c++', cpp)
-hljs.registerLanguage('c', cpp)
-hljs.registerLanguage('css', css)
-hljs.registerLanguage('scss', css)
-hljs.registerLanguage('diff', diff)
-hljs.registerLanguage('go', go)
-hljs.registerLanguage('golang', go)
-hljs.registerLanguage('java', java)
-hljs.registerLanguage('javascript', javascript)
-hljs.registerLanguage('js', javascript)
-hljs.registerLanguage('json', json)
-hljs.registerLanguage('markdown', markdown)
-hljs.registerLanguage('md', markdown)
-hljs.registerLanguage('python', python)
-hljs.registerLanguage('py', python)
-hljs.registerLanguage('rust', rust)
-hljs.registerLanguage('rs', rust)
-hljs.registerLanguage('sql', sql)
-hljs.registerLanguage('typescript', typescript)
-hljs.registerLanguage('ts', typescript)
-hljs.registerLanguage('vue', xml)
-hljs.registerLanguage('html', xml)
-hljs.registerLanguage('xml', xml)
-hljs.registerLanguage('yaml', yaml)
-hljs.registerLanguage('yml', yaml)
 
 const md = new MarkdownIt({
   html: false,
@@ -97,10 +50,40 @@ md.core.ruler.after('inline', 'task-lists', (state) => {
   }
 })
 
+const defaultValidateLink = md.validateLink.bind(md)
+md.validateLink = (url: string) => {
+  if (/^file:\/\//i.test(url.trim())) return true
+  return defaultValidateLink(url)
+}
+
 md.renderer.rules.link_open = (tokens, index, options, _env, self) => {
-  tokens[index]?.attrSet('target', '_blank')
-  tokens[index]?.attrSet('rel', 'noreferrer')
-  return self.renderToken(tokens, index, options)
+  const token = tokens[index]
+  token?.attrSet('target', '_blank')
+  token?.attrSet('rel', 'noreferrer')
+  const rawHref = token?.attrGet('href')
+  const hrefStr = typeof rawHref === 'string' ? rawHref : ''
+  if (hrefStr && !token?.attrGet('title')) {
+    let decodedTitle = hrefStr
+    try {
+      decodedTitle = decodeURIComponent(hrefStr)
+    } catch {
+      decodedTitle = hrefStr
+    }
+    token?.attrSet('title', decodedTitle)
+  }
+  let linkText = ''
+  let depth = 1
+  for (let i = index + 1; i < tokens.length && depth > 0; i++) {
+    const child = tokens[i]
+    if (!child) continue
+    if (child.type === 'link_open') depth++
+    else if (child.type === 'link_close') depth--
+    else if (child.content) linkText += child.content
+  }
+  const meta = getLinkVisualMeta(hrefStr, linkText)
+  token?.attrSet('class', `md-link md-link--${meta.kind}`)
+  token?.attrSet('data-link-kind', meta.kind)
+  return `${self.renderToken(tokens, index, options)}${renderLinkIconHtml(meta)}`
 }
 
 function formatLanguage(lang: string): string {
@@ -225,6 +208,17 @@ const renderedBlocks = computed(() => {
 // ---------------------------------------------------------------- mermaid
 
 const body = ref<HTMLElement | null>(null)
+const linkNotice = ref('')
+let linkNoticeTimer: ReturnType<typeof setTimeout> | undefined
+
+function showLinkNotice(message: string): void {
+  linkNotice.value = message
+  if (linkNoticeTimer) clearTimeout(linkNoticeTimer)
+  linkNoticeTimer = setTimeout(() => {
+    linkNotice.value = ''
+    linkNoticeTimer = undefined
+  }, 3500)
+}
 let mermaidPromise: Promise<typeof import('mermaid')> | null = null
 let initializedMermaidTheme: 'dark' | 'default' | null = null
 let mermaidSequence = 0
@@ -269,6 +263,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (linkNoticeTimer) {
+    clearTimeout(linkNoticeTimer)
+    linkNoticeTimer = undefined
+  }
   themeObserver?.disconnect()
   themeObserver = null
   darkMediaQuery?.removeEventListener?.('change', syncMermaidTheme)
@@ -398,6 +396,44 @@ async function handleClick(event: MouseEvent): Promise<void> {
         if (textSpan) textSpan.textContent = '复制表格'
       }, 1500)
     }
+    return
+  }
+
+  // 5. Open links (external URLs, local file paths, workspace-relative paths, fragments)
+  const anchor = target.closest<HTMLAnchorElement>('a[href]')
+  if (anchor) {
+    const rawHref = anchor.getAttribute('href')?.trim() ?? ''
+    event.preventDefault()
+    if (!rawHref) return
+
+    if (rawHref.startsWith('#')) {
+      let targetId = rawHref.slice(1)
+      try {
+        targetId = decodeURIComponent(targetId)
+      } catch {
+        // keep raw fragment
+      }
+      if (targetId && typeof document !== 'undefined') {
+        const matched = document.getElementById(targetId)
+          ?? (typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+            ? body.value?.querySelector<HTMLElement>(`#${CSS.escape(targetId)}`) ?? null
+            : null)
+        matched?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      return
+    }
+
+    if (typeof window !== 'undefined') {
+      requestSideLinkOpen({
+        href: rawHref,
+        workspace: props.workspace,
+        label: anchor.textContent?.trim(),
+        trigger: anchor
+      })
+      return
+    }
+
+    showLinkNotice('无法在当前环境打开该链接')
   }
 }
 </script>
@@ -405,12 +441,19 @@ async function handleClick(event: MouseEvent): Promise<void> {
 <template>
   <div v-if="renderedBlocks.length" ref="body" class="markdown-body" @click="handleClick">
     <div v-for="(html, index) in renderedBlocks" :key="index" class="markdown-block" v-html="html" />
+    <p v-if="linkNotice" class="markdown-link-notice" role="status">{{ linkNotice }}</p>
   </div>
 </template>
 
 <style scoped>
 .markdown-block {
   display: contents;
+}
+
+.markdown-link-notice {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .markdown-body :deep(.markdown-block:first-child > :first-child) {

@@ -7,6 +7,7 @@ import {
   Copy,
   FileText,
   GitFork,
+  Globe,
   Pencil,
   LoaderCircle,
   MoreHorizontal,
@@ -25,6 +26,7 @@ import ContextMenu from './ContextMenu.vue'
 import type { ContextMenuAnchor, ContextMenuEntry } from './context-menu'
 import logoUrl from '../../../../resources/logo.png?url'
 import type { ProjectItem, ThreadItem } from '../types'
+import { isSshWorkspacePath } from '../../../shared/ssh'
 import { useSidebarExpansion } from '../sidebar-expansion'
 
 const props = withDefaults(defineProps<{
@@ -403,7 +405,8 @@ onBeforeUnmount(stopResize)
               <button class="project-row" :title="project.path" :aria-expanded="expandedProjects.has(project.id)" :aria-controls="`project-tasks-${project.id}`"
                 @click="toggleProject(project.id)">
                 <span class="project-row-icon" aria-hidden="true">
-                  <FolderOpen v-if="expandedProjects.has(project.id)" :size="17" />
+                  <Globe v-if="isSshWorkspacePath(project.path)" :size="16" />
+                  <FolderOpen v-else-if="expandedProjects.has(project.id)" :size="17" />
                   <FolderClosed v-else :size="17" />
                 </span>
                 <span>{{ project.name }}</span>

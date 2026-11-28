@@ -6,13 +6,18 @@ import { release } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, shell, Tray } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../resources/logo.png?asset'
-import type { DaemonMessage, DaemonRequestOptions, RevertDiffItem } from '../shared/ipc.js'
+import type { AppInfo, DaemonMessage, DaemonRequestOptions, OpenLinkResult, RevertDiffItem } from '../shared/ipc.js'
+import { isExecutableLinkPath, resolveMarkdownLinkTarget } from '../shared/markdown-links.js'
+import { readLocalLinkPreview } from './file-preview.js'
 import { ConversationBrowser } from './conversation-browser.js'
 import type { BrowserCommand, BrowserPanelLayout } from '../shared/browser.js'
 import { DaemonClient } from './daemon-client.js'
 import { configureDesktopPaths } from './desktop-paths.js'
 import { PendingApprovalCache } from './pending-approval-cache.js'
 import { checkoutGitBranch, createGitBranch, getGitBranches, getGitCommitDiff, getGitHistory, getGitOverview, listWorkspaceFiles, openProjectTerminal, revertFileDiffs } from './project-tools.js'
+import { createServerDirectory, listServerDirectory, listServerRoots, readServerImages, saveUploadedFile } from './web-fs.js'
+import { isMutatingDaemonMethod, LanWebServer } from './web-server.js'
+import type { ServerFilePickerKind, WebServerConfig } from '../shared/web-server.js'
 import {
   destroyComputerOverlay,
   hideComputerOverlay,
@@ -32,6 +37,33 @@ let tray: Tray | null = null
 let isQuitting = false
 let managedDaemon: ChildProcess | null = null
 let runtimeShutdownStarted = false
+
+function buildAppInfo(): Omit<AppInfo, 'runtimeMode'> {
+  return {
+    version: app.getVersion(),
+    platform: process.platform as AppInfo['platform'],
+    supportsMica,
+    defaultWorkspace: is.dev ? resolve(app.getAppPath(), '..') : app.getPath('userData'),
+    documentsPath: app.getPath('documents'),
+    userProfilePath: desktopPaths.userProfile
+  }
+}
+
+const lanWebServer = new LanWebServer({
+  userDataPath: app.getPath('userData'),
+  daemon,
+  pendingApprovals,
+  getBrowser: () => conversationBrowser,
+  ensureBrowserAttached: () => attachBrowser(),
+  getAppInfo: buildAppInfo,
+  getRendererSource: () => ({
+    devUrl: is.dev ? process.env.ELECTRON_RENDERER_URL : undefined,
+    distDir: join(__dirname, '../renderer')
+  }),
+  onDesktopSyncRefresh: (reason) => {
+    mainWindow?.webContents.send('sync:refresh', reason)
+  }
+})
 const activeNotifications = new Set<Notification>()
 const supportsMica = process.platform === 'win32' && Number(release().split('.')[2] ?? 0) >= 22000
 const maxImageCount = 10
@@ -291,7 +323,10 @@ function createWindow(): void {
     }
   })
 
-  conversationBrowser = new ConversationBrowser(mainWindow, state => mainWindow?.webContents.send('browser:changed', state))
+  conversationBrowser = new ConversationBrowser(mainWindow, state => {
+    mainWindow?.webContents.send('browser:changed', state)
+    lanWebServer.broadcastBrowserState(state)
+  })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
   mainWindow.on('close', (event) => {
@@ -307,7 +342,7 @@ function createWindow(): void {
     if (!event.isMainFrame && !['about:srcdoc', 'about:blank'].includes(event.url)) event.preventDefault()
   })
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://') || url.startsWith('http://')) void shell.openExternal(url)
+    if (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('mailto:')) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -332,13 +367,44 @@ function browserFor(event: Electron.IpcMainInvokeEvent): ConversationBrowser {
 
 function registerIpc(): void {
   ipcMain.handle('app:info', () => ({
-    version: app.getVersion(),
-    platform: process.platform,
-    supportsMica,
-    defaultWorkspace: is.dev ? resolve(app.getAppPath(), '..') : app.getPath('userData'),
-    documentsPath: app.getPath('documents'),
-    userProfilePath: desktopPaths.userProfile
+    ...buildAppInfo(),
+    runtimeMode: 'desktop' as const
   }))
+
+  ipcMain.handle('web-server:status', () => lanWebServer.getStatus())
+  ipcMain.handle('web-server:update', (_event, patch: Partial<WebServerConfig>) => lanWebServer.updateConfig(patch))
+  ipcMain.handle('web-server:regenerate-token', () => lanWebServer.regenerateToken())
+  ipcMain.handle('web-server:disconnect-clients', () => lanWebServer.disconnectClients())
+
+  ipcMain.handle('server-fs:roots', async () => {
+    const info = buildAppInfo()
+    let projects: Array<{ id: string; name: string; path: string }> = []
+    if (daemon.state.connected) {
+      try {
+        const msg = await daemon.request('project.list')
+        const parsed = JSON.parse(msg.data) as { projects?: Array<{ id: string; name: string; path: string }> }
+        if (Array.isArray(parsed.projects)) projects = parsed.projects
+      } catch {
+        // ignore if project list fails
+      }
+    }
+    return listServerRoots({ userProfile: info.userProfilePath, documentsPath: info.documentsPath, projects })
+  })
+  ipcMain.handle('server-fs:list', (_event, params: { path?: string; kind?: ServerFilePickerKind; showHidden?: boolean }) =>
+    listServerDirectory({ ...params, fallbackPath: desktopPaths.userProfile })
+  )
+  ipcMain.handle('server-fs:mkdir', (_event, parentPath: string, name: string) => createServerDirectory(parentPath, name))
+  ipcMain.handle('server-fs:read-images', (_event, paths: string[]) => readServerImages(paths))
+  ipcMain.handle('server-fs:upload', (_event, params: { name: string; dataBase64: string; targetDir?: string }) =>
+    saveUploadedFile({
+      ...params,
+      fallbackTempDir: join(desktopPaths.userProfile, '.seekclaw', 'uploads')
+    })
+  )
+
+  lanWebServer.onStatus((status) => {
+    mainWindow?.webContents.send('web-server:status', status)
+  })
 
   ipcMain.handle('app:select-workspace', async () => {
     const options: Electron.OpenDialogOptions = {
@@ -438,6 +504,38 @@ function registerIpc(): void {
     shell.showItemInFolder(path)
   })
 
+  ipcMain.handle('app:open-link', async (_event, href: string, workspace?: string): Promise<OpenLinkResult> => {
+    const resolved = resolveMarkdownLinkTarget(typeof href === 'string' ? href : '', workspace, process.platform)
+    if (resolved.kind === 'external') {
+      await shell.openExternal(resolved.url)
+      return { ok: true, kind: 'external', target: resolved.url }
+    }
+    if (resolved.kind === 'fragment') {
+      return { ok: true, kind: 'external' }
+    }
+    if (resolved.kind === 'unsupported') {
+      return { ok: false, error: resolved.reason }
+    }
+    if (!existsSync(resolved.path)) {
+      return { ok: false, error: `找不到目标文件：${resolved.path}` }
+    }
+    const isDir = statSync(resolved.path).isDirectory()
+    if (!isDir && isExecutableLinkPath(resolved.path)) {
+      shell.showItemInFolder(resolved.path)
+      return { ok: true, kind: 'folder', target: resolved.path }
+    }
+    const openError = await shell.openPath(resolved.path)
+    if (openError) {
+      shell.showItemInFolder(resolved.path)
+      return { ok: true, kind: 'folder', target: resolved.path }
+    }
+    return { ok: true, kind: isDir ? 'folder' : 'path', target: resolved.path }
+  })
+
+  ipcMain.handle('app:read-link-preview', (_event, href: string, workspace?: string) =>
+    readLocalLinkPreview(typeof href === 'string' ? href : '', workspace)
+  )
+
   ipcMain.handle('app:close', () => mainWindow?.close())
   ipcMain.handle('app:exit', () => app.quit())
 
@@ -524,6 +622,7 @@ function registerIpc(): void {
       const response = await daemon.request(method, params, options)
       if (method === 'agent.approve' || method === 'agent.approval')
         pendingApprovals.acknowledge(params?.approvalId)
+      if (isMutatingDaemonMethod(method)) lanWebServer.broadcastSyncRefresh(method)
       return response
     })
 
@@ -567,10 +666,12 @@ function registerIpc(): void {
 
     showScheduleNativeNotification(message)
     mainWindow?.webContents.send('daemon:event', message)
+    lanWebServer.broadcastDaemonEvent(message)
   })
   daemon.on('state', (state) => {
     if (!state.connected) { pendingApprovals.clear(); browserConnectionGeneration++; browserAttachment = null; conversationBrowser?.cancelAgentRequests() }
     mainWindow?.webContents.send('daemon:state', state)
+    lanWebServer.broadcastDaemonState(state)
   })
 }
 
@@ -588,6 +689,7 @@ if (!hasSingleInstanceLock) {
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
     createTray()
     await ensureDaemonRunning().catch((error) => console.error('Unable to start SeekClaw Runtime:', error))
+    await lanWebServer.init().catch((error) => console.error('Unable to initialize LAN Web Server:', error))
     createWindow()
     nativeTheme.on('updated', syncNativeWindowTheme)
 
@@ -602,6 +704,7 @@ app.on('before-quit', (event) => {
   pendingApprovals.clear()
   destroyComputerOverlay()
   conversationBrowser?.dispose()
+  void lanWebServer.stop()
   if (tray) {
     tray.destroy()
     tray = null

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Code2, LoaderCircle, Monitor, RefreshCw, Smartphone, X } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ArtifactWidget } from '../types'
 import { previewDocument } from '../conversation-widgets'
 import '../conversation-widgets.css'
@@ -30,10 +30,11 @@ const props = withDefaults(defineProps<{
   artifact: ArtifactWidget
   sessionId: string
   workspace?: string
+  width?: number
 }>(), {
   open: true
 })
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; resize: [width: number] }>()
 const filename = computed(() => props.artifact.path.split(/[\\/]/).pop() || props.artifact.path)
 
 const panelRef = ref<HTMLElement | null>(null)
@@ -43,6 +44,7 @@ const loading = ref(false)
 const mobile = ref(false)
 const frameVersion = ref(0)
 const panelWidth = ref(loadStoredPanelWidth())
+const effectivePanelWidth = computed(() => props.width ?? panelWidth.value)
 const resizing = ref(false)
 const previewHtml = computed(() => html.value === null ? undefined : previewDocument(html.value))
 
@@ -98,10 +100,16 @@ function stopResize(): void {
     resizeRafId = null
   }
   savePanelWidth(pendingWidth)
+  emit('resize', pendingWidth)
   window.removeEventListener('pointermove', handleResize)
   window.removeEventListener('pointerup', stopResize)
   window.removeEventListener('pointercancel', stopResize)
   document.body.classList.remove('is-resizing-git-panel')
+  void nextTick(() => {
+    if (panelRef.value) {
+      panelRef.value.style.setProperty('--artifact-panel-width', `${effectivePanelWidth.value}px`)
+    }
+  })
 }
 
 function handleResize(event: PointerEvent): void {
@@ -142,9 +150,12 @@ function startResize(event: PointerEvent): void {
 function resetPanelWidth(): void {
   pendingWidth = DEFAULT_PANEL_WIDTH
   savePanelWidth(DEFAULT_PANEL_WIDTH)
-  if (panelRef.value) {
-    panelRef.value.style.setProperty('--artifact-panel-width', `${DEFAULT_PANEL_WIDTH}px`)
-  }
+  emit('resize', DEFAULT_PANEL_WIDTH)
+  void nextTick(() => {
+    if (panelRef.value) {
+      panelRef.value.style.setProperty('--artifact-panel-width', `${effectivePanelWidth.value}px`)
+    }
+  })
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -181,7 +192,7 @@ onBeforeUnmount(() => {
       ref="panelRef"
       class="artifact-preview-panel"
       :class="{ 'is-resizing': resizing }"
-      :style="{ '--artifact-panel-width': `${panelWidth}px` }"
+      :style="{ '--artifact-panel-width': `${effectivePanelWidth}px` }"
       :aria-label="`预览 ${artifact.title}`"
     >
       <div

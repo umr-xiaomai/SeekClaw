@@ -23,6 +23,7 @@ import ScheduledTasksDialog from './components/ScheduledTasksDialog.vue'
 import Composer from './components/Composer.vue'
 import ComposerProjectSelector from './components/ComposerProjectSelector.vue'
 import ConfigAnomalyDialog from './components/ConfigAnomalyDialog.vue'
+import CreateProjectDialog from './components/CreateProjectDialog.vue'
 import InlineApprovalCard from './components/InlineApprovalCard.vue'
 import InlineQuestionCard from './components/InlineQuestionCard.vue'
 
@@ -33,6 +34,10 @@ import ConversationBrowserPanel from './components/ConversationBrowserPanel.vue'
 import BrowserResultPanel from './components/BrowserResultPanel.vue'
 import ArtifactPreviewDialog from './components/ArtifactPreviewDialog.vue'
 import { ARTIFACT_PREVIEW_REQUEST, type ArtifactPreviewRequest } from './artifact-preview'
+import FileViewerPanel, { type FileViewerTab } from './components/FileViewerPanel.vue'
+import { SIDE_LINK_OPEN_REQUEST, type SideLinkOpenRequest } from './side-link-preview'
+import { resolveMarkdownLinkTarget } from '../../shared/markdown-links'
+import { computeThreePaneLayout } from './three-pane-layout'
 import ConversationToolbar from './components/ConversationToolbar.vue'
 import type { ConversationBrowserState } from '../../shared/browser'
 import CustomizationPage from './components/CustomizationPage.vue'
@@ -43,8 +48,11 @@ import ConversationTimeline from './components/ConversationTimeline.vue'
 import { extractConversationTurns, type ConversationTurn } from './components/conversation-turns'
 
 import ProjectPropertiesDialog from './components/ProjectPropertiesDialog.vue'
+import ServerFilePickerDialog from './components/ServerFilePickerDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
+import SshConnectionDialog from './components/SshConnectionDialog.vue'
 import Sidebar from './components/Sidebar.vue'
+import { parseSshWorkspacePath, type SshConnectionInfo } from '../../shared/ssh'
 import TaskSettingsDialog from './components/TaskSettingsDialog.vue'
 import TaskStepList from './components/TaskStepList.vue'
 import { toolPlan } from './components/tool-presentation'
@@ -149,6 +157,10 @@ const currentActivityItem = computed<'chat' | 'archived' | 'scheduled' | 'custom
 })
 
 function handleToggleSidebar(): void {
+  if (sidebarOpen.value && threePaneLayout.value.autoCollapseSidebar) {
+    closeConversationSidePanels()
+    return
+  }
   sidebarOpen.value = !sidebarOpen.value
   if (sidebarOpen.value && sidebarWidth.value < MIN_SIDEBAR_WIDTH) {
     sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH
@@ -218,6 +230,51 @@ const selectedSubAgent = ref<{ agent: SubAgentActivity; threadId: string } | nul
 const browserState = ref<ConversationBrowserState | null>(null)
 const browserResult = ref<{ tool: ToolActivity; sessionId?: string | null } | null>(null)
 const artifactPreview = shallowRef<ArtifactPreviewRequest | null>(null)
+const fileViewerTabs = ref<FileViewerTab[]>([])
+const activeFileViewerTabId = ref('')
+const DEFAULT_FILE_VIEWER_WIDTH = 560
+const MIN_FILE_VIEWER_WIDTH = 340
+const MAX_FILE_VIEWER_WIDTH = 1400
+const FILE_VIEWER_WIDTH_STORAGE_KEY = 'seekclaw-file-viewer-width-v1'
+const DEFAULT_ARTIFACT_PANEL_WIDTH = 560
+const MIN_ARTIFACT_PANEL_WIDTH = 320
+const MAX_ARTIFACT_PANEL_WIDTH = 1400
+const ARTIFACT_PANEL_WIDTH_STORAGE_KEY = 'seekclaw-artifact-panel-width-v1'
+
+function loadStoredPanelWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return fallback
+    const val = Number(raw)
+    if (Number.isFinite(val) && val >= min && val <= max) return val
+    return fallback
+  } catch {
+    return fallback
+  }
+}
+
+const fileViewerPanelWidth = ref(
+  loadStoredPanelWidth(FILE_VIEWER_WIDTH_STORAGE_KEY, DEFAULT_FILE_VIEWER_WIDTH, MIN_FILE_VIEWER_WIDTH, MAX_FILE_VIEWER_WIDTH)
+)
+const artifactPanelWidth = ref(
+  loadStoredPanelWidth(ARTIFACT_PANEL_WIDTH_STORAGE_KEY, DEFAULT_ARTIFACT_PANEL_WIDTH, MIN_ARTIFACT_PANEL_WIDTH, MAX_ARTIFACT_PANEL_WIDTH)
+)
+
+function resizeFileViewerPanel(width: number): void {
+  if (!Number.isFinite(width)) return
+  const maxWidth = Math.min(MAX_FILE_VIEWER_WIDTH, Math.max(MIN_FILE_VIEWER_WIDTH, Math.floor(window.innerWidth * 0.85)))
+  const nextWidth = Math.min(maxWidth, Math.max(MIN_FILE_VIEWER_WIDTH, Math.round(width)))
+  fileViewerPanelWidth.value = nextWidth
+  localStorage.setItem(FILE_VIEWER_WIDTH_STORAGE_KEY, String(nextWidth))
+}
+
+function resizeArtifactPanel(width: number): void {
+  if (!Number.isFinite(width)) return
+  const maxWidth = Math.min(MAX_ARTIFACT_PANEL_WIDTH, Math.max(MIN_ARTIFACT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.85)))
+  const nextWidth = Math.min(maxWidth, Math.max(MIN_ARTIFACT_PANEL_WIDTH, Math.round(width)))
+  artifactPanelWidth.value = nextWidth
+  localStorage.setItem(ARTIFACT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
+}
 const browserError = ref('')
 let unsubscribeBrowser: (() => void) | undefined
 let browserStateSequence = 0
@@ -296,7 +353,7 @@ const gitPanelWidth = ref(loadStoredGitPanelWidth())
 const toolDiff = shallowRef<ToolDiffPreview | null>(null)
 let diffPreviewTrigger: HTMLButtonElement | undefined
 
-const settingsSection = ref<'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'advanced'>('general')
+const settingsSection = ref<'general' | 'appearance' | 'models' | 'mcp' | 'skills' | 'diagnostics' | 'connections' | 'remote' | 'advanced'>('general')
 const extensionsSection = ref<'mcp' | 'skills'>('mcp')
 const taskSettingsThreadId = ref('')
 const worktreeBusy = ref(false)
@@ -478,6 +535,22 @@ const globalTaskActive = computed(() => activeThread.value ? !activeThread.value
 const currentWorkspacePath = computed(() => activeProject.value?.path || runtimeWorkspacePath.value || '')
 
 const isGlobalExplicit = ref(false)
+const sshConnections = ref<SshConnectionInfo[]>([])
+const selectedSshConnectionId = ref<string | null>(null)
+const createProjectOpen = ref(false)
+const createProjectInitialSshId = ref<string | null>(null)
+const sshDialogOpen = ref(false)
+const sshDialogSource = ref<'composer' | 'createProject' | null>(null)
+
+const activeSshConnectionId = computed(() => {
+  if (activeProject.value) {
+    return parseSshWorkspacePath(activeProject.value.path)?.connectionId ?? null
+  }
+  if (activeThread.value?.sshConnectionId) {
+    return activeThread.value.sshConnectionId
+  }
+  return selectedSshConnectionId.value
+})
 
 const showComposerProjectSelector = computed(() => {
   if (activePage.value !== 'main') return false
@@ -486,11 +559,28 @@ const showComposerProjectSelector = computed(() => {
   return activeThread.value.messages.length === 0 && !activeThread.value.running
 })
 
+async function loadSshConnections(): Promise<void> {
+  if (!daemonState.value.connected) return
+  try {
+    const res = await window.seekclaw.daemon.request('ssh.list')
+    const parsed = JSON.parse(res.data) as { connections?: SshConnectionInfo[] }
+    sshConnections.value = Array.isArray(parsed.connections) ? parsed.connections : []
+    if (selectedSshConnectionId.value && !sshConnections.value.some((c) => c.id === selectedSshConnectionId.value)) {
+      selectedSshConnectionId.value = null
+    }
+  } catch {
+    // ignore if daemon does not support ssh yet
+  }
+}
+
 function onSelectProjectFromComposer(project: ProjectItem): void {
   isGlobalExplicit.value = false
   selectedProjectId.value = project.id
+  const ssh = parseSshWorkspacePath(project.path)
+  selectedSshConnectionId.value = ssh?.connectionId ?? null
   if (activeThread.value && activeThread.value.messages.length === 0) {
     activeThread.value.projectId = project.id
+    activeThread.value.sshConnectionId = ssh?.connectionId
   } else if (!activeThread.value) {
     newTask(project.id)
   }
@@ -501,27 +591,49 @@ function onSelectGlobalFromComposer(): void {
   selectedProjectId.value = ''
   if (activeThread.value && activeThread.value.messages.length === 0) {
     activeThread.value.projectId = undefined
+    activeThread.value.sshConnectionId = selectedSshConnectionId.value ?? undefined
   } else if (!activeThread.value) {
     newTask(undefined)
   }
 }
 
-async function handleCreateProjectFromComposer(): Promise<void> {
-  const path = await window.seekclaw.selectWorkspace()
-  if (!path) return
-  if (isForbiddenProjectPath(path, appInfo.value.userProfilePath)) {
-    window.alert('不能把用户主目录或 SeekClaw 数据目录添加为项目，请选择具体的项目文件夹。')
-    return
+function onSelectSshFromComposer(connectionId: string | null): void {
+  selectedSshConnectionId.value = connectionId
+  if (activeProject.value) {
+    const projSshId = parseSshWorkspacePath(activeProject.value.path)?.connectionId ?? null
+    if (projSshId !== connectionId) {
+      selectedProjectId.value = ''
+      isGlobalExplicit.value = true
+      if (activeThread.value && activeThread.value.messages.length === 0) {
+        activeThread.value.projectId = undefined
+      }
+    }
   }
-  const project = await saveProject(ensureProject(path))
-  isGlobalExplicit.value = false
-  selectedProjectId.value = project.id
   if (activeThread.value && activeThread.value.messages.length === 0) {
-    activeThread.value.projectId = project.id
-  } else if (!activeThread.value) {
-    newTask(project.id)
+    activeThread.value.sshConnectionId = connectionId ?? undefined
   }
-  await refreshProjectSessions(project).catch(() => undefined)
+}
+
+function openSshDialogFrom(source: 'composer' | 'createProject'): void {
+  sshDialogSource.value = source
+  sshDialogOpen.value = true
+}
+
+function handleSshSavedFromModal(connection: SshConnectionInfo, allConnections: SshConnectionInfo[]): void {
+  sshConnections.value = allConnections
+  sshDialogOpen.value = false
+  const source = sshDialogSource.value
+  sshDialogSource.value = null
+  if (source === 'composer') {
+    onSelectSshFromComposer(connection.id)
+  } else if (source === 'createProject') {
+    createProjectInitialSshId.value = connection.id
+  }
+}
+
+function handleCreateProjectFromComposer(): void {
+  createProjectInitialSshId.value = activeSshConnectionId.value
+  createProjectOpen.value = true
 }
 
 const activeBranch = ref('')
@@ -1028,6 +1140,7 @@ async function loadRuntimeState(): Promise<void> {
     defaultModel.value = catalog.find((model) => model.active)?.ref
       ?? (available.includes(defaultModel.value) ? defaultModel.value : available[0] ?? '')
     mode.value = modeResponse.data
+    await loadSshConnections()
     await refreshAllProjectSessions()
     await migrateImplicitDocumentsProject()
 
@@ -1117,19 +1230,35 @@ async function refreshRuntimeState(): Promise<void> {
   else await reconnectDaemon()
 }
 
-async function openWorkspace(): Promise<void> {
-  const path = await window.seekclaw.selectWorkspace()
+function openWorkspace(): void {
+  createProjectInitialSshId.value = activeSshConnectionId.value
+  createProjectOpen.value = true
+}
+
+async function handleCreateProjectSubmitted(payload: { name: string; path: string }): Promise<void> {
+  createProjectOpen.value = false
+  const path = payload.path
   if (!path) return
   if (isForbiddenProjectPath(path, appInfo.value.userProfilePath)) {
     window.alert('不能把用户主目录或 SeekClaw 数据目录添加为项目，请选择具体的项目文件夹。')
     return
   }
-  const project = await saveProject(ensureProject(path))
+  const item = ensureProject(path)
+  if (payload.name.trim()) item.name = payload.name.trim()
+  const project = await saveProject(item)
+  isGlobalExplicit.value = false
   selectedProjectId.value = project.id
-  activeThreadId.value = ''
-  conversationSelectionToken.value++
-  conversationLoading.value = false
-  conversationLoadError.value = ''
+  const ssh = parseSshWorkspacePath(project.path)
+  selectedSshConnectionId.value = ssh?.connectionId ?? null
+  if (activeThread.value && activeThread.value.messages.length === 0) {
+    activeThread.value.projectId = project.id
+    activeThread.value.sshConnectionId = ssh?.connectionId
+  } else {
+    activeThreadId.value = ''
+    conversationSelectionToken.value++
+    conversationLoading.value = false
+    conversationLoadError.value = ''
+  }
   await refreshProjectSessions(project).catch(() => undefined)
 }
 
@@ -1182,6 +1311,9 @@ function newTask(projectId?: string): void {
   const current = activeThread.value
   if (current && !current.sessionId && current.messages.length === 0 && !current.running) {
     current.projectId = project?.id
+    const projSsh = project ? parseSshWorkspacePath(project.path)?.connectionId : undefined
+    current.sshConnectionId = projSsh ?? (project ? undefined : (selectedSshConnectionId.value ?? undefined))
+    if (project) selectedSshConnectionId.value = projSsh ?? null
     selectedProjectId.value = project?.id ?? ''
     isGlobalExplicit.value = !project
     conversationSelectionToken.value++
@@ -1195,10 +1327,13 @@ function newTask(projectId?: string): void {
   threads.value = threads.value.filter((t) => t.sessionId || t.messages.length > 0 || t.running)
 
   // 3. 创建单例的空会话草稿
+  const newProjSsh = project ? parseSshWorkspacePath(project.path)?.connectionId : undefined
+  if (project) selectedSshConnectionId.value = newProjSsh ?? null
   const thread: ThreadItem = {
     id: makeId(),
     title: '新任务',
     projectId: project?.id,
+    sshConnectionId: newProjSsh ?? (project ? undefined : (selectedSshConnectionId.value ?? undefined)),
     updatedAt: Date.now(),
     messages: [],
     modelRef: defaultModel.value || undefined,
@@ -2399,12 +2534,147 @@ function useStarterPrompt(prompt: string): void {
   composer.value?.setValue(prompt)
 }
 
-function closeConversationSidePanels(): void {
+function closeOtherPanelsForFileViewer(): void {
   closeGitPanel()
   browserPanelOpen.value = false
   browserResult.value = null
   selectedSubAgent.value = null
   artifactPreview.value = null
+}
+
+function closeConversationSidePanels(): void {
+  closeOtherPanelsForFileViewer()
+  fileViewerTabs.value = []
+  activeFileViewerTabId.value = ''
+}
+
+function fileLabelFromTarget(targetPath: string, fallback?: string): string {
+  const clean = targetPath.trim().replace(/[\\/]+$/, '')
+  const lastSep = Math.max(clean.lastIndexOf('/'), clean.lastIndexOf('\\'))
+  const base = lastSep >= 0 ? clean.slice(lastSep + 1) : clean
+  return base || fallback || clean || '文件预览'
+}
+
+async function openUrlInSideBrowser(url: string): Promise<void> {
+  const thread = activeThread.value
+  if (!thread) {
+    await window.seekclaw.openLink?.(url)
+    return
+  }
+  browserError.value = ''
+  try {
+    const project = projects.value.find(p => p.id === thread.projectId)
+    if (project) await ensureRuntimeProject(project)
+    const scope = sessionScope(thread, project)
+    if (!thread.sessionId) {
+      const modelRef = thread.modelRef ?? (defaultModel.value || undefined)
+      const response = await window.seekclaw.daemon.request('session.new', {
+        ...scope,
+        modelRef,
+        reasoningLevel: thread.reasoningLevel,
+        networkEnabled: thread.networkEnabled ?? true
+      })
+      thread.sessionId = response.data
+      thread.modelRef = modelRef
+      thread.sessionLoaded = true
+      if (thread.titleSource === 'manual') {
+        await window.seekclaw.daemon.request('session.update', { ...scope, id: thread.sessionId, title: thread.title })
+      }
+    }
+    const state = await window.seekclaw.browser.open({ ...scope, sessionId: thread.sessionId })
+    if (thread !== activeThread.value) return
+    showConversationBrowser(state)
+    const currentTab = state.tabs.find(t => t.id === state.activeTabId) ?? state.tabs[0]
+    const isBlankTab = Boolean(
+      currentTab && (!currentTab.url || currentTab.url === 'about:blank' || currentTab.url.startsWith('about:'))
+    )
+    const nextState = await window.seekclaw.browser.command(
+      state.scope,
+      isBlankTab ? { action: 'navigate', url } : { action: 'open', url }
+    )
+    if (thread === activeThread.value) {
+      handleBrowserState(nextState)
+    }
+  } catch {
+    await window.seekclaw.openLink?.(url)
+  }
+}
+
+function openFileInSideViewer(href: string, workspace?: string, label?: string): void {
+  if (activePage.value !== 'main') return
+  const effectiveWorkspace = workspace ?? activeProject.value?.path
+  const resolved = resolveMarkdownLinkTarget(href, effectiveWorkspace, appInfo.value?.platform || 'win32')
+  const tabId = resolved.kind === 'local'
+    ? (appInfo.value?.platform === 'win32' ? resolved.path.toLowerCase() : resolved.path)
+    : href.trim()
+  const line = resolved.kind === 'local' ? resolved.line : undefined
+  const endLine = resolved.kind === 'local' ? resolved.endLine : undefined
+  const tabLabel = resolved.kind === 'local'
+    ? fileLabelFromTarget(resolved.path, label)
+    : (label || fileLabelFromTarget(href))
+
+  closeOtherPanelsForFileViewer()
+
+  const existingIdx = fileViewerTabs.value.findIndex((t) => t.id === tabId)
+  if (existingIdx >= 0) {
+    const nextTabs = [...fileViewerTabs.value]
+    const prev = nextTabs[existingIdx]!
+    nextTabs[existingIdx] = {
+      ...prev,
+      href,
+      workspace: effectiveWorkspace ?? prev.workspace,
+      line,
+      endLine,
+      focusNonce: (prev.focusNonce ?? 0) + 1
+    }
+    fileViewerTabs.value = nextTabs
+  } else {
+    fileViewerTabs.value = [
+      ...fileViewerTabs.value,
+      {
+        id: tabId,
+        href,
+        workspace: effectiveWorkspace,
+        label: tabLabel,
+        line,
+        endLine,
+        focusNonce: 1
+      }
+    ]
+  }
+  activeFileViewerTabId.value = tabId
+}
+
+function closeFileViewerTab(tabId: string): void {
+  const idx = fileViewerTabs.value.findIndex((t) => t.id === tabId)
+  if (idx < 0) return
+  const next = fileViewerTabs.value.filter((t) => t.id !== tabId)
+  fileViewerTabs.value = next
+  if (activeFileViewerTabId.value === tabId) {
+    const fallback = next[Math.min(idx, next.length - 1)]
+    activeFileViewerTabId.value = fallback?.id ?? ''
+  }
+}
+
+function closeFileViewerPanel(): void {
+  fileViewerTabs.value = []
+  activeFileViewerTabId.value = ''
+}
+
+function onSideLinkOpenRequest(event: Event): void {
+  const request = (event as CustomEvent<SideLinkOpenRequest>).detail
+  if (!request?.href || activePage.value !== 'main') return
+  const effectiveWorkspace = request.workspace ?? activeProject.value?.path
+  const resolved = resolveMarkdownLinkTarget(request.href, effectiveWorkspace, appInfo.value?.platform || 'win32')
+  if (resolved.kind === 'external') {
+    if (/^mailto:/i.test(resolved.url)) {
+      void window.seekclaw.openLink?.(resolved.url)
+    } else {
+      void openUrlInSideBrowser(resolved.url)
+    }
+    return
+  }
+  openFileInSideViewer(request.href, effectiveWorkspace, request.label)
 }
 
 function onArtifactPreviewRequest(event: Event): void {
@@ -2422,6 +2692,66 @@ function closeArtifactPreview(): void {
   })
 }
 
+let unsubscribeSyncRefresh: (() => void) | undefined
+let syncRefreshTimer: number | null = null
+let syncRefreshInFlight = false
+
+const appBodyRef = ref<HTMLElement | null>(null)
+const appBodyWidth = ref(typeof window !== 'undefined' ? Math.max(320, window.innerWidth - 48) : 1200)
+let appBodyResizeObserver: ResizeObserver | null = null
+
+function measureAppBodyWidth(): void {
+  const el = appBodyRef.value
+  const measured = el ? el.clientWidth : 0
+  if (measured > 0) {
+    appBodyWidth.value = measured
+  } else if (typeof window !== 'undefined') {
+    appBodyWidth.value = Math.max(320, window.innerWidth - 48)
+  }
+}
+
+const activeRightPanelMeta = computed<{ preferred: number; min: number } | null>(() => {
+  if (activePage.value !== 'main') return null
+  if (activeSubAgent.value && activeThread.value?.sessionId) {
+    return { preferred: subagentPanelWidth.value, min: MIN_SUBAGENT_PANEL_WIDTH }
+  }
+  if (browserPanelOpen.value && browserState.value && browserState.value.sessionId === activeThread.value?.sessionId) {
+    return { preferred: browserPanelWidth.value, min: MIN_BROWSER_PANEL_WIDTH }
+  }
+  if (browserResult.value) {
+    return { preferred: browserPanelWidth.value, min: MIN_BROWSER_PANEL_WIDTH }
+  }
+  if (artifactPreview.value) {
+    return { preferred: artifactPanelWidth.value, min: MIN_ARTIFACT_PANEL_WIDTH }
+  }
+  if (fileViewerTabs.value.length > 0) {
+    return { preferred: fileViewerPanelWidth.value, min: MIN_FILE_VIEWER_WIDTH }
+  }
+  if (gitPanelOpen.value) {
+    return { preferred: gitPanelWidth.value, min: 200 }
+  }
+  return null
+})
+
+const threePaneLayout = computed(() =>
+  computeThreePaneLayout({
+    availableWidth: appBodyWidth.value,
+    sidebarOpen: sidebarOpen.value,
+    preferredSidebarWidth: sidebarWidth.value,
+    rightPanelOpen: Boolean(activeRightPanelMeta.value),
+    preferredRightWidth: activeRightPanelMeta.value?.preferred ?? 0,
+    minRightWidth: activeRightPanelMeta.value?.min ?? 300
+  })
+)
+
+const effectiveSidebarOpen = computed(() => sidebarOpen.value && !threePaneLayout.value.autoCollapseSidebar)
+const effectiveSidebarWidth = computed(() => threePaneLayout.value.sidebarWidth)
+const effectiveRightPanelWidth = computed(() => threePaneLayout.value.rightPanelWidth)
+
+watch(activePage, () => {
+  void nextTick(measureAppBodyWidth)
+})
+
 onMounted(async () => {
   applyTheme(theme.value)
   applyAccentColor(accentColor.value)
@@ -2431,13 +2761,35 @@ onMounted(async () => {
   appInfo.value = await window.seekclaw.getAppInfo()
   document.documentElement.dataset.platform = appInfo.value.platform
   document.documentElement.dataset.material = appInfo.value.supportsMica ? 'mica' : 'solid'
+  document.documentElement.dataset.runtimeMode = appInfo.value.runtimeMode || 'desktop'
   projects.value = loadStoredProjects()
   window.addEventListener(ARTIFACT_PREVIEW_REQUEST, onArtifactPreviewRequest)
+  window.addEventListener(SIDE_LINK_OPEN_REQUEST, onSideLinkOpenRequest)
   unsubscribeBrowser = window.seekclaw.browser.onChanged(handleBrowserState)
   unsubscribeEvent = window.seekclaw.daemon.onEvent(handleDaemonMessage)
   unsubscribeState = window.seekclaw.daemon.onState(handleDaemonState)
+  unsubscribeSyncRefresh = window.seekclaw.onSyncRefresh?.(() => {
+    if (syncRefreshTimer !== null) window.clearTimeout(syncRefreshTimer)
+    syncRefreshTimer = window.setTimeout(() => {
+      syncRefreshTimer = null
+      if (syncRefreshInFlight || conversationLoading.value || activeThread.value?.running) return
+      syncRefreshInFlight = true
+      void refreshRuntimeState().finally(() => {
+        syncRefreshInFlight = false
+      })
+    }, 400)
+  })
   appReadyForRecovery = true
   await runReconnectCycle()
+  measureAppBodyWidth()
+  if (typeof ResizeObserver !== 'undefined' && appBodyRef.value) {
+    appBodyResizeObserver = new ResizeObserver((entries) => {
+      const width = Math.round(entries[0]?.contentRect.width ?? 0)
+      if (width > 0) appBodyWidth.value = width
+    })
+    appBodyResizeObserver.observe(appBodyRef.value)
+  }
+  window.addEventListener('resize', measureAppBodyWidth)
   measureConversationViewport()
   window.addEventListener('resize', scheduleConversationViewportMeasure)
   if (!daemonState.value.connected) projects.value.forEach((project) => { project.loaded = true })
@@ -2450,13 +2802,22 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(viewportMeasureRafId)
     viewportMeasureRafId = null
   }
+  if (syncRefreshTimer !== null) {
+    window.clearTimeout(syncRefreshTimer)
+    syncRefreshTimer = null
+  }
   conversationScroller.dispose()
   conversationResizeObserver?.disconnect()
+  appBodyResizeObserver?.disconnect()
+  appBodyResizeObserver = null
+  window.removeEventListener('resize', measureAppBodyWidth)
   window.removeEventListener('resize', scheduleConversationViewportMeasure)
   window.removeEventListener(ARTIFACT_PREVIEW_REQUEST, onArtifactPreviewRequest)
+  window.removeEventListener(SIDE_LINK_OPEN_REQUEST, onSideLinkOpenRequest)
   unsubscribeBrowser?.()
   unsubscribeEvent?.()
   unsubscribeState?.()
+  unsubscribeSyncRefresh?.()
 })
 
 watch(theme, applyTheme)
@@ -2464,7 +2825,7 @@ watch(theme, applyTheme)
 
 <template>
   <div class="app-shell">
-    <AppTitleBar :sidebar-open="sidebarOpen" :project-path="globalTaskActive ? undefined : activeProject?.path"
+    <AppTitleBar :sidebar-open="effectiveSidebarOpen" :project-path="globalTaskActive ? undefined : activeProject?.path"
       :zoom-factor="zoomFactor" @change-zoom-factor="applyZoomFactor"
       @toggle-sidebar="handleToggleSidebar" @new-task="newTask(selectedProjectId || undefined)"
       @open-workspace="openWorkspace" @show-project="showActiveProject" @open-settings="openSettings('general')"
@@ -2475,7 +2836,7 @@ watch(theme, applyTheme)
     <div class="app-main-layout">
       <ActivityBar
         :active-item="currentActivityItem"
-        :sidebar-open="sidebarOpen"
+        :sidebar-open="effectiveSidebarOpen"
         @open-chat="handleActivityChat"
         @open-archived="openArchivedTasks"
         @open-scheduled-tasks="openScheduledTasks"
@@ -2485,20 +2846,21 @@ watch(theme, applyTheme)
 
       <div class="app-workspace-container">
         <div
+          ref="appBodyRef"
           class="app-body"
           v-show="activePage === 'main'"
-          :class="{ 'sidebar-collapsed': !sidebarOpen }"
-          :style="{ '--sidebar-width': `${sidebarWidth}px` }"
+          :class="{ 'sidebar-collapsed': !effectiveSidebarOpen }"
+          :style="{ '--sidebar-width': `${effectiveSidebarWidth}px` }"
         >
           <Transition name="sidebar-slide">
             <Sidebar
-              v-if="sidebarOpen"
+              v-if="effectiveSidebarOpen"
               :projects="projects"
               :projects-ready="projectsReady"
               :threads="threads"
               :active-thread-id="activeThreadId"
               :active-project-id="selectedProjectId"
-              :width="sidebarWidth"
+              :width="effectiveSidebarWidth"
               @new-task="newTask"
               @open-workspace="openWorkspace"
               @select-thread="selectThread"
@@ -2521,7 +2883,7 @@ watch(theme, applyTheme)
             />
           </Transition>
       <Transition name="scrim-fade">
-        <button v-if="sidebarOpen" class="sidebar-scrim" title="关闭侧栏" @click="sidebarOpen = false" />
+        <button v-if="effectiveSidebarOpen" class="sidebar-scrim" title="关闭侧栏" @click="sidebarOpen = false" />
       </Transition>
 
       <div class="workspace-content">
@@ -2545,7 +2907,7 @@ watch(theme, applyTheme)
               :changes-open="gitPanelOpen && gitPanelTab === 'diff'"
               :history-open="gitPanelOpen && gitPanelTab === 'history'"
               :browser-open="browserPanelOpen || Boolean(browserResult)"
-              :sidebar-open="sidebarOpen"
+              :sidebar-open="effectiveSidebarOpen"
               @show-project="showActiveProject"
               @open-terminal="openProjectTerminal"
               @open-changes="openGitPanel('diff')"
@@ -2729,11 +3091,15 @@ watch(theme, applyTheme)
                 <ComposerProjectSelector
                   :projects="projects"
                   :active-project="activeProject"
+                  :ssh-connections="sshConnections"
+                  :active-ssh-id="activeSshConnectionId"
                   :is-global-explicit="isGlobalExplicit"
                   :disabled="activeThread?.archived"
                   @select-project="onSelectProjectFromComposer"
                   @select-global="onSelectGlobalFromComposer"
                   @create-project="handleCreateProjectFromComposer"
+                  @select-ssh="onSelectSshFromComposer"
+                  @add-ssh="openSshDialogFrom('composer')"
                 />
               </template>
             </Composer>
@@ -2748,7 +3114,7 @@ watch(theme, applyTheme)
             :agents="activeThreadSubAgents"
             :session-id="activeThread.sessionId"
             :workspace="activeProject?.path"
-            :width="subagentPanelWidth"
+            :width="effectiveRightPanelWidth"
             @resize="resizeSubagentPanel"
             @select-agent="selectedSubAgent = { agent: $event, threadId: activeThread!.id }"
             @close="selectedSubAgent = null"
@@ -2759,18 +3125,33 @@ watch(theme, applyTheme)
         </Transition>
         <Transition name="side-panel">
           <ConversationBrowserPanel v-if="activePage === 'main' && browserPanelOpen && browserState && browserState.sessionId === activeThread?.sessionId"
-            :state="browserState" :width="browserPanelWidth" @changed="handleBrowserState" @resize="resizeBrowserPanel" @close="browserPanelOpen = false" />
+            :state="browserState" :width="effectiveRightPanelWidth" @changed="handleBrowserState" @resize="resizeBrowserPanel" @close="browserPanelOpen = false" />
         </Transition>
         <Transition name="side-panel">
           <BrowserResultPanel v-if="activePage === 'main' && browserResult"
-            :tool="browserResult.tool" :width="browserPanelWidth" :live-available="Boolean(resultBrowserState)"
+            :tool="browserResult.tool" :width="effectiveRightPanelWidth" :live-available="Boolean(resultBrowserState)"
             @resize="resizeBrowserPanel" @close="browserResult = null" @open-live="openLiveBrowserFromResult" />
         </Transition>
         <ArtifactPreviewDialog v-if="activePage === 'main' && artifactPreview"
           :key="`${artifactPreview.sessionId}:${artifactPreview.artifact.id}`" :artifact="artifactPreview.artifact"
-          :session-id="artifactPreview.sessionId" :workspace="artifactPreview.workspace" @close="closeArtifactPreview" />
+          :session-id="artifactPreview.sessionId" :workspace="artifactPreview.workspace" :width="effectiveRightPanelWidth"
+          @resize="resizeArtifactPanel" @close="closeArtifactPreview" />
+        <Transition name="side-panel">
+          <FileViewerPanel
+            v-if="activePage === 'main' && fileViewerTabs.length > 0"
+            :tabs="fileViewerTabs"
+            :active-tab-id="activeFileViewerTabId"
+            :workspace="activeProject?.path"
+            :width="effectiveRightPanelWidth"
+            @resize="resizeFileViewerPanel"
+            @select-tab="activeFileViewerTabId = $event"
+            @close-tab="closeFileViewerTab"
+            @open-path="(href, ws) => openFileInSideViewer(href, ws)"
+            @close="closeFileViewerPanel"
+          />
+        </Transition>
         <GitWorkspacePanel v-show="activePage === 'main'" :open="gitPanelOpen" :project="gitPanelProject"
-          :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="gitPanelWidth" @close="dismissGitPanel"
+          :initial-tab="gitPanelTab" :diff-override="toolDiff" :width="effectiveRightPanelWidth" @close="dismissGitPanel"
           @resize="resizeGitPanel" @open-terminal="openProjectTerminal" />
       </div>
     </div>
@@ -2801,7 +3182,8 @@ watch(theme, applyTheme)
       @change-mono-font-family="applyMonoFontFamily"
       @change-zoom-factor="applyZoomFactor"
        @open-workspace="openWorkspace"
-      @runtime-changed="refreshRuntimeState" />
+      @runtime-changed="refreshRuntimeState"
+      @ssh-changed="loadSshConnections" />
 
     <ScheduledTasksDialog :open="activePage === 'scheduled'" :projects="projects" :threads="threads" @close="closePage" />
 
@@ -2835,6 +3217,23 @@ watch(theme, applyTheme)
     <EditMessageDialog :open="editMessageDialogOpen" :message="editingUserMessage"
       :modified-files="editMessageModifiedFiles" @close="editMessageDialogOpen = false"
       @confirm="handleEditConfirm" />
+
+    <CreateProjectDialog
+      :open="createProjectOpen"
+      :ssh-connections="sshConnections"
+      :initial-ssh-id="createProjectInitialSshId"
+      @close="createProjectOpen = false"
+      @create="handleCreateProjectSubmitted"
+      @add-ssh="openSshDialogFrom('createProject')"
+    />
+
+    <SshConnectionDialog
+      :open="sshDialogOpen"
+      @close="sshDialogOpen = false"
+      @saved="handleSshSavedFromModal"
+    />
+
+    <ServerFilePickerDialog :projects="projects" />
 
     <ConfirmDialog />
   </div>

@@ -29,7 +29,7 @@ const icons = { shell: SquareTerminal, edit: Pencil, read: FileText, search: Sea
 const isWaiting = computed(() => props.awaitingApproval && state.value === 'running')
 const icon = computed(() => {
   if (isWaiting.value) return ShieldAlert
-  if (state.value === 'error' || state.value === 'interrupted') return CircleAlert
+  if (state.value === 'interrupted') return CircleAlert
   return icons[kind.value]
 })
 const target = computed(() => toolTarget(props.tool) || (kind.value === 'other' ? props.tool.name : ''))
@@ -81,7 +81,7 @@ function openFullDiff(): void {
 <template>
   <SubAgentActivityList v-if="subAgents.length" :agents="subAgents" @open-sub-agent="emit('openSubAgent', $event)" />
   <details v-else class="tool-call" :class="{
-    'is-running': state === 'running', 'is-error': state === 'error',
+    'is-running': state === 'running',
     'is-interrupted': state === 'interrupted', 'is-waiting': isWaiting
   }"
     :open="isExpanded" @toggle="onToggle">
@@ -102,7 +102,7 @@ function openFullDiff(): void {
     <div v-if="isExpanded" class="tool-call-body">
       <div class="tool-call-meta">
         <span>{{ tool.name }}</span>
-        <span v-if="command?.exitCode !== undefined" :class="{ 'command-error': command.exitCode !== 0 }">退出码 {{ command.exitCode }}</span>
+        <span v-if="command?.exitCode !== undefined">退出码 {{ command.exitCode }}</span>
         <span v-else-if="command?.status === 'running'">命令会话仍在运行</span>
       </div>
       <template v-if="plan">
@@ -170,7 +170,7 @@ function openFullDiff(): void {
 .tool-call[open] > summary .activity-chevron { transform: rotate(90deg); }
 .tool-diff-stats { display: inline-flex; align-items: center; gap: 5px; flex: none; font: 11px/1.4 var(--font-mono); }
 .stat-add { color: var(--success); }
-.stat-del, .is-error > summary, .is-error .activity-command, .is-error .activity-target, .command-error { color: var(--danger); }
+.stat-del { color: var(--danger); }
 .is-running > summary { color: var(--text-secondary); }
 .is-running .activity-command { color: var(--text); }
 .is-waiting > summary, .is-interrupted > summary { color: var(--warning); }

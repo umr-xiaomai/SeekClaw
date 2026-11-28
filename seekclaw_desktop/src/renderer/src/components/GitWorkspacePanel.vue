@@ -487,6 +487,11 @@ function stopResize(): void {
   window.removeEventListener('pointerup', stopResize)
   window.removeEventListener('pointercancel', stopResize)
   document.body.classList.remove('is-resizing-git-panel')
+  void nextTick(() => {
+    if (panelRef.value) {
+      panelRef.value.style.setProperty('--git-panel-width', `${props.width}px`)
+    }
+  })
 }
 
 function handleResize(event: PointerEvent): void {
@@ -521,10 +526,12 @@ function startResize(event: PointerEvent): void {
 
 function resetPanelWidth(): void {
   pendingMainWidth = DEFAULT_PANEL_WIDTH
-  if (panelRef.value) {
-    panelRef.value.style.setProperty('--git-panel-width', `${DEFAULT_PANEL_WIDTH}px`)
-  }
   emit('resize', DEFAULT_PANEL_WIDTH)
+  void nextTick(() => {
+    if (panelRef.value) {
+      panelRef.value.style.setProperty('--git-panel-width', `${props.width}px`)
+    }
+  })
 }
 
 function handleTreeResize(event: PointerEvent): void {

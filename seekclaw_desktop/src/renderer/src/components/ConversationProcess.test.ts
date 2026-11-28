@@ -95,7 +95,8 @@ describe('conversation process presentation', () => {
     expect(html).toContain('已编辑 1 个文件，读取并探索了 1 项，运行了 1 条命令')
     expect(progress).toBeGreaterThan(html.indexOf('已编辑 1 个文件'))
     expect(html.lastIndexOf('运行了 1 条命令')).toBeGreaterThan(progress)
-    expect(html).toContain('1 项失败')
+    expect(html).not.toContain('项失败')
+    expect(html).not.toContain('process-state is-error')
     expect(html).toMatch(/class="stat-add"[^>]*>\+2<\/span>/)
     for (const text of ['已完成思考', '思考记录', '定位保存入口', '/src/save.ts', 'pnpm run smoke:save', 'pnpm test -- save', 'smoke output']) {
       expect(html).not.toContain(text)
@@ -371,7 +372,8 @@ describe('conversation process presentation', () => {
     const { turns: [updated] } = buildConversationProjection(messages, { running: true, assistantId: commentary.id })
     const failed = await render(updated!)
     expect(failed.match(/<details class="tool-group"/g)).toHaveLength(1)
-    expect(failed).toContain('1 项失败')
+    expect(failed).not.toContain('项失败')
+    expect(failed).not.toContain('is-error')
     expect(failed).toContain('搜索失败')
     expect(failed).toContain('search result')
 

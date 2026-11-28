@@ -26,7 +26,8 @@ const groups = computed(() => {
     group = []
   }
   for (const tool of props.tools) {
-    if (isSubAgentTool(tool) || toolDisplayState(tool) !== 'done') {
+    const state = toolDisplayState(tool)
+    if (isSubAgentTool(tool) || state === 'running' || state === 'interrupted') {
       flush()
       anchor = `tool:${tool.id}`
       groups.push({ id: anchor, tool, tools: [] })

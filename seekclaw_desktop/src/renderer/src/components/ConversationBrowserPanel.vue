@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, CircleAlert, Globe2, LoaderCircle, Plus, RotateCw, X } from '@lucide/vue'
+import { ArrowLeft, ArrowRight, CircleAlert, Globe2, LoaderCircle, Plus, RotateCw, Send, X } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { BrowserCommand, ConversationBrowserState } from '../../../shared/browser'
+import type { RemoteBrowserFrame, RemoteBrowserInput } from '../../../shared/web-server'
 
 const props = withDefaults(defineProps<{
   state: ConversationBrowserState
@@ -21,9 +22,16 @@ const DEFAULT_PANEL_WIDTH = 520
 
 const panelRef = ref<HTMLElement | null>(null)
 const viewport = ref<HTMLElement | null>(null)
+const remoteCanvas = ref<HTMLCanvasElement | null>(null)
+const isRemoteStream = computed(() => Boolean(window.seekclaw.browser.subscribeStream))
+const remoteTextDraft = ref('')
 const address = ref('')
 const error = ref('')
 const resizing = ref(false)
+const frameSize = ref({ width: 520, height: 680 })
+let stopRemoteStream: (() => void) | null = null
+let streamResizeTimer: number | null = null
+let lastStreamKey = ''
 const tab = computed(() => props.state.tabs.find(tab => tab.id === props.state.activeTabId))
 const activeError = computed(() => tab.value?.error || error.value || '')
 const panelStyle = computed(() => ({
@@ -140,7 +148,12 @@ function stopResize(): void {
   window.removeEventListener('pointerup', stopResize)
   window.removeEventListener('pointercancel', stopResize)
   document.body.classList.remove('is-resizing-git-panel')
-  void nextTick(updateLayout)
+  void nextTick(() => {
+    if (panelRef.value) {
+      panelRef.value.style.setProperty('--browser-panel-width', `${props.width}px`)
+    }
+    updateLayout()
+  })
 }
 function handleResize(event: PointerEvent): void {
   if (!resizing.value) return
@@ -179,16 +192,22 @@ function startResize(event: PointerEvent): void {
 }
 function resetPanelWidth(): void {
   pendingWidth = DEFAULT_PANEL_WIDTH
-  if (panelRef.value) {
-    panelRef.value.style.setProperty('--browser-panel-width', `${DEFAULT_PANEL_WIDTH}px`)
-  }
   emit('resize', DEFAULT_PANEL_WIDTH)
-  void nextTick(updateLayout)
+  void nextTick(() => {
+    if (panelRef.value) {
+      panelRef.value.style.setProperty('--browser-panel-width', `${props.width}px`)
+    }
+    updateLayout()
+  })
 }
 function updateLayout(): void {
   if (disposed || frame) return
   frame = requestAnimationFrame(() => {
     frame = 0
+    if (isRemoteStream.value) {
+      syncRemoteStream()
+      return
+    }
     const rect = viewport.value?.getBoundingClientRect()
     // Native views sit above renderer content. Hide them whenever an app overlay is visible.
     const overlay = [...document.querySelectorAll('dialog[open], [role="dialog"], [role="menu"], [role="listbox"], .modal-backdrop, .artifact-preview-backdrop, .context-menu, .select-menu-popover')]
@@ -201,6 +220,180 @@ function updateLayout(): void {
       bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       visible: !!tab.value && tab.value.url !== 'about:blank' && !activeError.value && rect.width > 0 && rect.height > 0 && !overlay } : null).catch(() => undefined)
   })
+}
+
+function drawRemoteFrame(payload: RemoteBrowserFrame): void {
+  const canvas = remoteCanvas.value
+  if (!canvas || payload.scope !== props.state.scope) return
+  frameSize.value = { width: payload.width, height: payload.height }
+  const img = new Image()
+  img.onload = () => {
+    if (disposed || !remoteCanvas.value) return
+    if (remoteCanvas.value.width !== img.naturalWidth || remoteCanvas.value.height !== img.naturalHeight) {
+      remoteCanvas.value.width = img.naturalWidth
+      remoteCanvas.value.height = img.naturalHeight
+    }
+    const ctx = remoteCanvas.value.getContext('2d')
+    if (ctx) {
+      ctx.drawImage(img, 0, 0)
+    }
+  }
+  img.src = `data:image/jpeg;base64,${payload.data}`
+}
+
+function stopCurrentRemoteStream(): void {
+  if (streamResizeTimer !== null) {
+    window.clearTimeout(streamResizeTimer)
+    streamResizeTimer = null
+  }
+  if (stopRemoteStream) {
+    stopRemoteStream()
+    stopRemoteStream = null
+  }
+  lastStreamKey = ''
+}
+
+function syncRemoteStream(): void {
+  if (!isRemoteStream.value || !window.seekclaw.browser.subscribeStream) return
+  const shouldStream = Boolean(tab.value && tab.value.url !== 'about:blank' && !activeError.value)
+  if (!shouldStream) {
+    stopCurrentRemoteStream()
+    return
+  }
+  const rect = viewport.value?.getBoundingClientRect()
+  const width = Math.max(280, Math.round(rect?.width || 520))
+  const height = Math.max(220, Math.round(rect?.height || 680))
+  const key = `${props.state.scope}:${width}x${height}`
+  if (stopRemoteStream && key === lastStreamKey) return
+
+  const subscribe = (): void => {
+    if (disposed || !window.seekclaw.browser.subscribeStream) return
+    stopCurrentRemoteStream()
+    lastStreamKey = key
+    stopRemoteStream = window.seekclaw.browser.subscribeStream(props.state.scope, { width, height }, drawRemoteFrame)
+  }
+
+  if (stopRemoteStream) {
+    if (streamResizeTimer !== null) window.clearTimeout(streamResizeTimer)
+    streamResizeTimer = window.setTimeout(() => {
+      streamResizeTimer = null
+      subscribe()
+    }, 150)
+    return
+  }
+
+  subscribe()
+}
+
+function mapRemoteCoords(clientX: number, clientY: number): { x: number; y: number } | null {
+  const canvas = remoteCanvas.value
+  if (!canvas) return null
+  const rect = canvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  const scaleX = (frameSize.value.width || rect.width) / rect.width
+  const scaleY = (frameSize.value.height || rect.height) / rect.height
+  return {
+    x: Math.max(0, Math.round((clientX - rect.left) * scaleX)),
+    y: Math.max(0, Math.round((clientY - rect.top) * scaleY))
+  }
+}
+
+function sendRemoteInput(input: RemoteBrowserInput): void {
+  void window.seekclaw.browser.sendRemoteInput?.(props.state.scope, input).catch(() => undefined)
+}
+
+function pointerButtonName(button: number): 'left' | 'right' | 'middle' {
+  if (button === 2) return 'right'
+  if (button === 1) return 'middle'
+  return 'left'
+}
+
+function onCanvasPointerDown(event: PointerEvent): void {
+  remoteCanvas.value?.focus({ preventScroll: true })
+  const coords = mapRemoteCoords(event.clientX, event.clientY)
+  if (!coords) return
+  sendRemoteInput({
+    type: 'mousePressed',
+    x: coords.x,
+    y: coords.y,
+    button: pointerButtonName(event.button),
+    clickCount: Math.max(1, event.detail || 1)
+  })
+}
+
+function onCanvasPointerMove(event: PointerEvent): void {
+  const coords = mapRemoteCoords(event.clientX, event.clientY)
+  if (!coords) return
+  sendRemoteInput({
+    type: 'mouseMoved',
+    x: coords.x,
+    y: coords.y,
+    button: (event.buttons & 1) ? 'left' : (event.buttons & 2) ? 'right' : 'none'
+  })
+}
+
+function onCanvasPointerUp(event: PointerEvent): void {
+  const coords = mapRemoteCoords(event.clientX, event.clientY)
+  if (!coords) return
+  sendRemoteInput({
+    type: 'mouseReleased',
+    x: coords.x,
+    y: coords.y,
+    button: pointerButtonName(event.button),
+    clickCount: 1
+  })
+}
+
+function onCanvasWheel(event: WheelEvent): void {
+  const coords = mapRemoteCoords(event.clientX, event.clientY)
+  if (!coords) return
+  sendRemoteInput({
+    type: 'mouseWheel',
+    x: coords.x,
+    y: coords.y,
+    deltaX: Math.round(event.deltaX),
+    deltaY: Math.round(event.deltaY)
+  })
+}
+
+function onCanvasKeyDown(event: KeyboardEvent): void {
+  if (event.isComposing) return
+  const modifiers = (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0)
+  const text = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
+    ? event.key
+    : event.key === 'Enter'
+      ? '\r'
+      : undefined
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Tab', ' ', 'Enter'].includes(event.key)) {
+    event.preventDefault()
+  }
+  sendRemoteInput({
+    type: 'keyDown',
+    key: event.key,
+    code: event.code,
+    keyCode: event.keyCode || 0,
+    text,
+    modifiers
+  })
+}
+
+function onCanvasKeyUp(event: KeyboardEvent): void {
+  if (event.isComposing) return
+  const modifiers = (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0)
+  sendRemoteInput({
+    type: 'keyUp',
+    key: event.key,
+    code: event.code,
+    keyCode: event.keyCode || 0,
+    modifiers
+  })
+}
+
+function sendRemoteTextInput(): void {
+  const text = remoteTextDraft.value
+  if (!text) return
+  remoteTextDraft.value = ''
+  sendRemoteInput({ type: 'insertText', text })
 }
 const hadTabs = ref(props.state.tabs.length > 0)
 watch(() => [props.state.tabs.length, props.state.busy] as const, ([len, busy]) => {
@@ -216,20 +409,25 @@ watch(() => [props.state.scope, props.state.activeTabId, tab.value?.url, activeE
 onMounted(() => {
   resizeObserver = new ResizeObserver(updateLayout)
   if (viewport.value) resizeObserver.observe(viewport.value)
-  mutationObserver = new MutationObserver(updateLayout)
-  mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'] })
+  if (!isRemoteStream.value) {
+    mutationObserver = new MutationObserver(updateLayout)
+    mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'] })
+  }
   window.addEventListener('resize', updateLayout)
   updateLayout()
 })
 onBeforeUnmount(() => {
   disposed = true
   stopResize()
+  stopCurrentRemoteStream()
   cancelAnimationFrame(frame)
   resizeObserver?.disconnect()
   mutationObserver?.disconnect()
   window.removeEventListener('resize', updateLayout)
-  void window.seekclaw.browser.layout(null).catch(() => undefined)
-  void window.seekclaw.browser.overlay(false).catch(() => undefined)
+  if (!isRemoteStream.value) {
+    void window.seekclaw.browser.layout(null).catch(() => undefined)
+    void window.seekclaw.browser.overlay(false).catch(() => undefined)
+  }
 })
 </script>
 
@@ -271,7 +469,26 @@ onBeforeUnmount(() => {
         <button type="button" class="browser-retry-btn" @click="retryCurrentPage"><RotateCw :size="13" /><span>重新加载</span></button>
       </div>
       <div v-else-if="!tab || tab.url === 'about:blank'" class="browser-empty"><Globe2 :size="30" /><strong>会话专属浏览器</strong><span>输入网址，或让 Agent 打开页面</span></div>
+      <canvas
+        v-else-if="isRemoteStream"
+        ref="remoteCanvas"
+        class="browser-remote-canvas"
+        tabindex="0"
+        @pointerdown="onCanvasPointerDown"
+        @pointermove="onCanvasPointerMove"
+        @pointerup="onCanvasPointerUp"
+        @wheel.prevent="onCanvasWheel"
+        @keydown="onCanvasKeyDown"
+        @keyup="onCanvasKeyUp"
+        @contextmenu.prevent
+      />
     </div>
+    <form v-if="isRemoteStream && tab && tab.url !== 'about:blank' && !activeError" class="browser-remote-ime-bar" @submit.prevent="sendRemoteTextInput">
+      <input v-model="remoteTextDraft" type="text" placeholder="在此输入文本并发送至远程页面（支持中文输入法）" />
+      <button type="submit" class="icon-button" title="发送文本到页面" :disabled="!remoteTextDraft">
+        <Send :size="13" />
+      </button>
+    </form>
   </aside>
 </template>
 
@@ -298,6 +515,9 @@ onBeforeUnmount(() => {
 .browser-navigation input { flex: 1; min-width: 0; height: 32px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; font: 12px var(--font-sans); color: var(--text); }
 .browser-navigation input::placeholder { color: var(--text-muted); }
 .browser-viewport { position: relative; flex: 1; min-height: 0; background: white; }
+.browser-remote-canvas { display: block; width: 100%; height: 100%; object-fit: contain; background: #ffffff; cursor: default; outline: none; touch-action: none; }
+.browser-remote-ime-bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--border); background: var(--surface-subtle); }
+.browser-remote-ime-bar input { flex: 1; min-width: 0; height: 28px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; }
 .browser-empty, .browser-error-page { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; font-size: 12px; line-height: 1.65; text-align: center; color: var(--text-muted); background: var(--surface); }
 .browser-empty > strong, .browser-error-page > strong { margin-top: 2px; color: var(--text); font-size: 15px; font-weight: 600; }
 .browser-error-page > p { margin: 0; max-width: 340px; color: var(--text-secondary); font-size: 12.5px; overflow-wrap: anywhere; }

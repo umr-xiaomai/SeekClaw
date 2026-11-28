@@ -7,7 +7,7 @@ import { toolKind, toolTarget } from './tool-presentation'
 import type { ToolActivity } from '../types'
 
 describe('conversation activities', () => {
-  it('collapses consecutive completed edits and commands, keeping failures and running actions visible', async () => {
+  it('collapses consecutive settled edits and commands without failure badges, keeping running actions visible', async () => {
     const tools: ToolActivity[] = [
       { id: 'edit', name: 'edit_file', state: 'done', detail: 'app.ts', diff: '+code' },
       { id: 'run', name: 'command_session', state: 'done', detail: 'pnpm build', output: 'passed' },
@@ -15,9 +15,10 @@ describe('conversation activities', () => {
       { id: 'running', name: 'browser', state: 'running', detail: 'https://example.com' }
     ]
     const html = await renderToString(createSSRApp({ render: () => h(ToolActivityList, { tools }) }))
-    expect(html).toContain('已编辑 1 个文件，运行了 1 条命令')
+    expect(html).toContain('已编辑 1 个文件，运行了 2 条命令')
     expect(html).toContain('+1')
-    expect(html).toContain('命令失败')
+    expect(html).not.toContain('命令失败')
+    expect(html).not.toContain('项失败')
     expect(html).toContain('正在检查页面')
     expect(html).not.toContain('查看结果')
     expect(html).not.toContain('<pre') // Heavy results mount only when expanded.
@@ -49,6 +50,9 @@ describe('conversation activities', () => {
     expect(html).toContain('$ pnpm test')
     expect(html).toContain('退出码 1')
     expect(html).toContain('One test failed')
+    expect(html).not.toContain('is-error')
+    expect(html).not.toContain('command-error')
+    expect(html).not.toContain('lucide-circle-alert')
     expect(html).not.toContain('sessionId')
   })
 

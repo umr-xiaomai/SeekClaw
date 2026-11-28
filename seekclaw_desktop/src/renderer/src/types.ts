@@ -184,6 +184,7 @@ export interface ThreadItem {
   titleSource?: 'pending' | 'input' | 'generated' | 'manual'
   titleGenerating?: boolean
   projectId?: string
+  sshConnectionId?: string
   updatedAt: number
   messages: ChatMessage[]
   sessionId?: string

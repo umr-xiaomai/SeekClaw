@@ -64,7 +64,6 @@ const summary = computed(() => {
   const editedFiles = new Set<string>()
   let running: ToolActivity | undefined
   let approval: ToolActivity | undefined
-  let failures = 0
   let interrupted = 0
   let addedLines = 0
   let removedLines = 0
@@ -78,7 +77,6 @@ const summary = computed(() => {
       counts.set(kind, (counts.get(kind) ?? 0) + 1)
       if (kind === 'edit') editedFiles.add(tool.filePath || toolTarget(tool) || tool.id)
     }
-    if (state === 'error') failures++
     if (state === 'running') running = tool
     if (awaitsApproval(tool) && (!approval || (tool.callId ?? tool.id) === props.activeApprovalCallId)) {
       approval = tool
@@ -89,7 +87,7 @@ const summary = computed(() => {
   }
 
   const current = approval ?? running
-  const badges = { failures, addedLines, removedLines }
+  const badges = { addedLines, removedLines }
   if (current) {
     const kind = groupKind(current)
     const label = approval ? '等待批准' : toolLabel(current, 'running')
@@ -130,7 +128,6 @@ const summary = computed(() => {
         <span v-if="summary.addedLines > 0" class="stat-add" aria-hidden="true">+{{ summary.addedLines }}</span>
         <span v-if="summary.removedLines > 0" class="stat-del" aria-hidden="true">-{{ summary.removedLines }}</span>
       </span>
-      <span v-if="summary.failures" class="group-failures">{{ summary.failures }} 项失败</span>
       <ChevronRight :size="14" class="group-chevron" aria-hidden="true" />
     </summary>
     <div v-if="expanded" class="tool-group-items">
@@ -161,8 +158,7 @@ const summary = computed(() => {
 .group-summary:hover, .group-summary:focus-visible, details[open] > .group-summary:not(.is-active) { color: var(--text); }
 .group-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .group-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group-icon, .group-failures, .group-chevron { flex: none; }
-.group-failures { color: var(--danger); font-size: 11px; white-space: nowrap; }
+.group-icon, .group-chevron { flex: none; }
 .tool-group-diff-stats { display: inline-flex; align-items: center; gap: 5px; flex: none; font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
 .tool-group-diff-stats .stat-add { color: var(--hl-addition-color); }
 .tool-group-diff-stats .stat-del { color: var(--hl-deletion-color); }

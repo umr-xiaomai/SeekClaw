@@ -291,7 +291,7 @@ const isVisible = computed(() => {
     </template>
 
     <div v-else class="assistant-message">
-      <MarkdownMessage v-if="hasContent" :key="message.id" :content="displayContent"
+      <MarkdownMessage v-if="hasContent" :key="message.id" :content="displayContent" :workspace="workspace"
         :streaming="smoothOutput && streaming && message.state === 'streaming' && !hasError" />
       <SubAgentActivityList v-if="!hideSubAgents" :agents="subAgents" :events="message.subAgentEvents"
         :show-summary="showSubAgentSummary" @open-sub-agent="emit('openSubAgent', $event)" />

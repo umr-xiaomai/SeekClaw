@@ -106,4 +106,26 @@ describe('markdown message rendering', () => {
     const streamingLongHtml = await render(longFence, true)
     expect(streamingLongHtml).not.toContain('is-collapsed')
   })
+
+  it('renders file-type icons and chips without blocking valid local/external links while blocking javascript: links', async () => {
+    const html = await render([
+      '[markdown-links.ts](file:///E:/Project/markdown-links.ts)',
+      '[App.vue](E:/Project/App.vue#L10)',
+      '[设计文档](docs/design.md)',
+      '[外部网站](https://example.com)',
+      '[危险脚本](javascript:alert(1))'
+    ].join(' '))
+
+    expect(html).toContain('class="md-link md-link--file"')
+    expect(html).toContain('class="md-link md-link--web"')
+    expect(html).toContain('md-link-icon')
+    expect(html).toContain('>TS<')
+    expect(html).toContain('#41b883')
+    expect(html).toContain('href="file:///E:/Project/markdown-links.ts"')
+    expect(html).toContain('title="file:///E:/Project/markdown-links.ts"')
+    expect(html).toContain('href="E:/Project/App.vue#L10"')
+    expect(html).toContain('href="docs/design.md"')
+    expect(html).toContain('href="https://example.com"')
+    expect(html).not.toContain('href="javascript:alert(1)"')
+  })
 })

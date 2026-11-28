@@ -28,9 +28,19 @@ export function plainImages(images?: ImageAttachment[]): ImageAttachment[] {
   }))
 }
 
+import { formatSshWorkspacePath, isSshWorkspacePath, parseSshWorkspacePath } from '../../shared/ssh'
+
 export const makeId = (): string => crypto.randomUUID()
-export const pathName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
-export const normalizePath = (path: string): string => path.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase()
+export const pathName = (path: string): string => {
+  const ssh = parseSshWorkspacePath(path)
+  if (ssh) {
+    if (ssh.remotePath === '~' || ssh.remotePath === '/') return ssh.remotePath
+    return ssh.remotePath.replace(/\/+$/, '').split('/').pop() || ssh.remotePath
+  }
+  return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
+}
+export const normalizePath = (path: string): string =>
+  isSshWorkspacePath(path) ? path.trim().replace(/\/+$/, '') : path.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase()
 export const samePath = (left?: string, right?: string): boolean => Boolean(left && right && normalizePath(left) === normalizePath(right))
 
 export interface RuntimeSessionHeader {
@@ -371,7 +381,9 @@ export function sessionStats(saved: RuntimeSession): ThreadStats {
 }
 
 export function sessionScope(thread: ThreadItem, project?: ProjectItem): Record<string, unknown> {
-  return thread.projectId && project ? { workspace: project.path } : { global: true }
+  if (thread.projectId && project) return { workspace: project.path }
+  if (thread.sshConnectionId) return { workspace: formatSshWorkspacePath(thread.sshConnectionId, '~') }
+  return { global: true }
 }
 
 export function messageMatches(message: ChatMessage, query: string): boolean {

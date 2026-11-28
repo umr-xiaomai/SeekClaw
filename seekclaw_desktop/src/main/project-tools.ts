@@ -4,10 +4,12 @@ import { readdir, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { CheckoutBranchResult, CreateBranchResult, GitBranchInfo, GitCommit, GitHistory, GitOverview, RevertDiffItem, RevertDiffsResult, WorkspaceFileItem } from '../shared/ipc.js'
+import { isSshWorkspacePath } from '../shared/ssh.js'
 
 const execFileAsync = promisify(execFile)
 
 async function workspaceDirectory(path: string): Promise<string> {
+  if (isSshWorkspacePath(path)) throw new Error('SSH 远程项目暂不支持本地 Git 与终端面板')
   const directory = resolve(path)
   const info = await stat(directory)
   if (!info.isDirectory()) throw new Error(`Workspace is not a directory: ${directory}`)

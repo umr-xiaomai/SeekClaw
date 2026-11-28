@@ -17,6 +17,8 @@ const api: DesktopApi = {
   },
   selectSkillFiles: () => ipcRenderer.invoke('app:select-skill-files'),
   showItemInFolder: (path) => ipcRenderer.invoke('app:show-item', path),
+  openLink: (href, workspace) => ipcRenderer.invoke('app:open-link', href, workspace),
+  readLinkPreview: (href, workspace) => ipcRenderer.invoke('app:read-link-preview', href, workspace),
   closeApp: () => ipcRenderer.invoke('app:close'),
   exitApp: () => ipcRenderer.invoke('app:exit'),
   openDevTools: () => ipcRenderer.invoke('app:open-devtools'),
@@ -80,6 +82,30 @@ const api: DesktopApi = {
       ipcRenderer.on('daemon:state', handler)
       return () => ipcRenderer.removeListener('daemon:state', handler)
     }
+  },
+  webServer: {
+    status: () => ipcRenderer.invoke('web-server:status'),
+    update: (patch) => ipcRenderer.invoke('web-server:update', patch),
+    regenerateToken: () => ipcRenderer.invoke('web-server:regenerate-token'),
+    disconnectClients: () => ipcRenderer.invoke('web-server:disconnect-clients'),
+    onStatus: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: import('../shared/web-server.js').WebServerStatus): void =>
+        listener(status)
+      ipcRenderer.on('web-server:status', handler)
+      return () => ipcRenderer.removeListener('web-server:status', handler)
+    }
+  },
+  onSyncRefresh: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, reason?: string): void => listener(reason)
+    ipcRenderer.on('sync:refresh', handler)
+    return () => ipcRenderer.removeListener('sync:refresh', handler)
+  },
+  serverFs: {
+    roots: () => ipcRenderer.invoke('server-fs:roots'),
+    list: (params) => ipcRenderer.invoke('server-fs:list', params),
+    mkdir: (parentPath, name) => ipcRenderer.invoke('server-fs:mkdir', parentPath, name),
+    readImages: (paths) => ipcRenderer.invoke('server-fs:read-images', paths),
+    uploadFile: (params) => ipcRenderer.invoke('server-fs:upload', params)
   }
 }
 

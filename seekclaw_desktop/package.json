@@ -1,6 +1,6 @@
 {
   "name": "seekclaw-desktop",
-  "version": "2.2.36",
+  "version": "2.2.39",
   "private": true,
   "description": "SeekClaw desktop client",
   "main": "./out/main/index.js",

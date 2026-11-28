@@ -1,4 +1,13 @@
 import type { ConversationBrowserApi } from './browser.js'
+import type { FilePreviewDirectoryEntry, FilePreviewPayload, OpenLinkResult } from './markdown-links.js'
+import type {
+  ServerFilePickerKind,
+  ServerFsListResult,
+  ServerFsRoot,
+  WebServerConfig,
+  WebServerStatus
+} from './web-server.js'
+export type { FilePreviewDirectoryEntry, FilePreviewPayload, OpenLinkResult }
 export type DaemonEventName =
   | 'session.title'
   | 'browser.request'
@@ -72,6 +81,8 @@ export interface AppInfo {
   documentsPath: string
   /** Home profile used to reject non-project paths (user profile / SeekClaw state dir). */
   userProfilePath: string
+  /** 'desktop' when running inside Electron, 'web' when served via the LAN web server. */
+  runtimeMode?: 'desktop' | 'web'
 }
 
 export type AppearanceTheme = 'system' | 'light' | 'dark'
@@ -163,6 +174,8 @@ export interface DesktopApi {
   getPathForFile(file: File): string
   selectSkillFiles(): Promise<DesktopSkillFileSelection>
   showItemInFolder(path: string): Promise<void>
+  openLink?(href: string, workspace?: string): Promise<OpenLinkResult>
+  readLinkPreview?(href: string, workspace?: string): Promise<FilePreviewPayload>
   closeApp(): Promise<void>
   exitApp(): Promise<void>
   openDevTools(): Promise<void>
@@ -191,6 +204,21 @@ export interface DesktopApi {
     ): Promise<DaemonMessage>
     onEvent(listener: (message: DaemonMessage) => void): () => void
     onState(listener: (state: DaemonState) => void): () => void
+  }
+  webServer: {
+    status(): Promise<WebServerStatus>
+    update(patch: Partial<WebServerConfig>): Promise<WebServerStatus>
+    regenerateToken(): Promise<WebServerStatus>
+    disconnectClients(): Promise<WebServerStatus>
+    onStatus(listener: (status: WebServerStatus) => void): () => void
+  }
+  onSyncRefresh?: (listener: (reason?: string) => void) => () => void
+  serverFs?: {
+    roots(): Promise<ServerFsRoot[]>
+    list(params: { path?: string; kind?: ServerFilePickerKind; showHidden?: boolean }): Promise<ServerFsListResult>
+    mkdir(parentPath: string, name: string): Promise<{ path: string; name: string }>
+    readImages(paths: string[]): Promise<DesktopImageSelection>
+    uploadFile(params: { name: string; dataBase64: string; targetDir?: string }): Promise<{ path: string; name: string; sizeBytes: number }>
   }
 }
 
