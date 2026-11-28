@@ -1,6 +1,9 @@
+import { installWebPolyfills } from './web-polyfills'
+
+installWebPolyfills()
+
 import { createApp } from 'vue'
-import App from './App.vue'
 import './styles.css'
+import WebRoot from './WebRoot.vue'
 
-createApp(App).mount('#app')
-
+createApp(WebRoot).mount('#app')
